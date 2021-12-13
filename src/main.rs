@@ -1,19 +1,40 @@
-use std::iter;
+use std::{
+    iter,
+    sync::{Arc, Mutex},
+};
 
+use global::Global;
+use lazy_static::lazy_static;
+use parking_lot::RwLock;
+
+use switch_board::SwitchBoard;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
 
-struct State {
+mod controls;
+mod global;
+mod render;
+mod sound;
+mod switch_board;
+
+pub struct State {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
+    switch_board: Arc<RwLock<SwitchBoard>>,
+    stream: cpal::Stream,
     // NEW!
     render_pipeline: wgpu::RenderPipeline,
+}
+
+lazy_static! {
+    //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
 }
 
 impl State {
@@ -52,6 +73,7 @@ impl State {
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
         };
+
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
@@ -105,7 +127,10 @@ impl State {
                 alpha_to_coverage_enabled: false,
             },
         });
+        //Arc::clone(&self)
 
+        let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
+        let dupe_switch = Arc::clone(&switch_board);
         Self {
             surface,
             device,
@@ -113,6 +138,8 @@ impl State {
             size,
             config,
             render_pipeline,
+            switch_board,
+            stream: sound::init_sound(dupe_switch).unwrap(),
         }
     }
 
@@ -133,44 +160,7 @@ impl State {
     fn update(&mut self) {}
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            });
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: true,
-                    },
-                }],
-                depth_stencil_attachment: None,
-            });
-
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw(0..3, 0..1);
-        }
-
-        self.queue.submit(iter::once(encoder.finish()));
-        output.present();
-
-        Ok(())
+        render::render_loop(self)
     }
 }
 
@@ -178,7 +168,6 @@ fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
-
     // State::new uses async code, so we're going to wait for it to finish
     let mut state = pollster::block_on(State::new(&window));
 
@@ -189,26 +178,7 @@ fn main() {
                 window_id,
             } if window_id == window.id() => {
                 if !state.input(event) {
-                    match event {
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            input:
-                                KeyboardInput {
-                                    state: ElementState::Pressed,
-                                    virtual_keycode: Some(VirtualKeyCode::Escape),
-                                    ..
-                                },
-                            ..
-                        } => *control_flow = ControlFlow::Exit,
-                        WindowEvent::Resized(physical_size) => {
-                            state.resize(*physical_size);
-                        }
-                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                            // new_inner_size is &mut so w have to dereference it twice
-                            state.resize(**new_inner_size);
-                        }
-                        _ => {}
-                    }
+                    controls::controls_evaluate(event, &mut state, control_flow);
                 }
             }
             Event::RedrawRequested(_) => {
