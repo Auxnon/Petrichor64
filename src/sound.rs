@@ -126,11 +126,7 @@ where
         // println!("byte {}", b.len());
         //let f = [(sample_clock) as usize] as f32
 
-        let mut level = if switch_board.write().space {
-            6.0
-        } else {
-            12.0
-        };
+        let mut level = if switch_board.read().space { 6.0 } else { 12.0 };
         i += ((level - i) / sample_rate);
 
         let freq = i;
@@ -161,6 +157,7 @@ where
         let t = sample_clock * 2.0 * std::f32::consts::PI / sample_rate; //*440.
                                                                          //println!("t {}", t);
 
+        switch_board.write().h = t;
         //sine
         //(t).sin()
 
@@ -173,12 +170,12 @@ where
         (4. * a / p) * (((t - p / 4.) % p) - p / 2.).abs() - a
         */
         //square
-        /*
-        if (t * 1.8) % std::f32::consts::PI > 1. {
-            1.
-        } else {
-            0.
-        }*/
+
+        // if (t * 1.8) % std::f32::consts::PI > 1. {
+        //     1.
+        // } else {
+        //     0.
+        // }
 
         //cool small fourier series
         //t.sin() - (2. * t).sin() / 2.
@@ -197,7 +194,8 @@ where
         //     + pia(freq, t, 5., 16.)
         //     + pia(freq, t, 6., 32.);
         // s * s * s
-        (freq * t / 400.).sin() / 20.
+        (t * std::f32::consts::PI * freq).sin() / 20.
+        //(freq * t / 400.).sin() / 20.
     };
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
@@ -210,7 +208,7 @@ where
         err_fn,
     )?;
     //td::thread::spawn(f)
-    //stream.play()?;
+    stream.play()?;
     Ok(stream)
 
     //std::thread::sleep(std::time::Duration::from_millis(3000));
