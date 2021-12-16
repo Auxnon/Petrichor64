@@ -296,6 +296,13 @@ impl State {
             ],
         }];
 
+        let vertex_attr = wgpu::vertex_attr_array![0 => Sint8x4, 1 => Sint8x4];
+        let vb_desc = wgpu::VertexBufferLayout {
+            array_stride: vertex_size as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vertex_attr,
+        };
+
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -303,7 +310,7 @@ impl State {
                 module: &shader,
                 entry_point: "vs_main",
                 //targets:&[wgpu::],
-                buffers: &vertex_buffers, //,
+                buffers: &[vb_desc], //&vertex_buffers, //,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
