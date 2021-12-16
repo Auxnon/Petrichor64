@@ -1,4 +1,4 @@
-use std::{mem, sync::Arc};
+use std::{mem, rc::Rc, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
 use global::Global;
@@ -29,6 +29,10 @@ pub struct State {
     stream: cpal::Stream,
     // NEW!
     render_pipeline: wgpu::RenderPipeline,
+
+    vertex_buf: Rc<wgpu::Buffer>,
+    index_buf: Rc<wgpu::Buffer>,
+    index_count: usize,
 }
 
 #[repr(C)]
@@ -37,6 +41,16 @@ struct Vertex {
     _pos: [f32; 4],
     _tex_coord: [f32; 2],
 }
+// struct Entity {
+//     mx_world: cgmath::Matrix4<f32>,
+//     rotation_speed: f32,
+//     color: wgpu::Color,
+//     vertex_buf: Rc<wgpu::Buffer>,
+//     index_buf: Rc<wgpu::Buffer>,
+//     index_format: wgpu::IndexFormat,
+//     index_count: usize,
+//     uniform_offset: wgpu::DynamicOffset,
+// }
 
 fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
     Vertex {
@@ -45,7 +59,7 @@ fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
     }
 }
 
-fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
+fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
         vertex([-1, -1, 1], [0, 0]),
@@ -150,9 +164,26 @@ impl State {
 
         surface.configure(&device, &config);
 
+        let (cube_vertex_data, cube_index_data) = create_cube();
+        let cube_vertex_buf = Rc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Cubes Vertex Buffer"),
+                contents: bytemuck::cast_slice(&cube_vertex_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ));
+
+        let cube_index_buf = Rc::new(device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Cubes Index Buffer"),
+                contents: bytemuck::cast_slice(&cube_index_data),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        ));
+
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -168,16 +199,16 @@ impl State {
                     },
                     count: None,
                 },
-                // wgpu::BindGroupLayoutEntry {
-                //     binding: 1,
-                //     visibility: wgpu::ShaderStages::FRAGMENT,
-                //     ty: wgpu::BindingType::Texture {
-                //         multisampled: false,
-                //         sample_type: wgpu::TextureSampleType::Uint,
-                //         view_dimension: wgpu::TextureViewDimension::D2,
-                //     },
-                //     count: None,
-                // },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -223,24 +254,28 @@ impl State {
         // });
 
         let vertex_size = mem::size_of::<Vertex>();
-        let (vertex_data, index_data) = create_vertices();
+        let (vertex_data, index_data) = create_cube();
 
-        let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertex_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let vertex_buf = Rc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(&vertex_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+        );
 
-        let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(&index_data),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let index_buf = Rc::new(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(&index_data),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+        );
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout],
+                bind_group_layouts: &[], //&bind_group_layout
                 push_constant_ranges: &[],
             });
 
@@ -268,7 +303,7 @@ impl State {
                 module: &shader,
                 entry_point: "vs_main",
                 //targets:&[wgpu::],
-                buffers: &vertex_buffers,
+                buffers: &vertex_buffers, //,
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -313,6 +348,9 @@ impl State {
             config,
             render_pipeline,
             switch_board,
+            vertex_buf,
+            index_buf,
+            index_count: index_data.len(),
             stream: sound::init_sound(dupe_switch).unwrap(),
         }
     }

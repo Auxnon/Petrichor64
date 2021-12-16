@@ -1,0 +1,2 @@
+cd ~/Projects/naga
+cargo run ~/Projects/petrichor/src/shaders/forward.frag ~/Projects/petrichor/src/shaders/forward.frag.spv
