@@ -41,6 +41,12 @@ struct Vertex {
     _pos: [f32; 4],
     _tex_coord: [f32; 2],
 }
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GlobalUniforms {
+    proj: [[f32; 4]; 4],
+    //num_lights: [u32; 4],
+}
 // struct Entity {
 //     mx_world: cgmath::Matrix4<f32>,
 //     rotation_speed: f32,
@@ -252,6 +258,41 @@ impl State {
         //     ],
         //     label: None,
         // });
+
+        let mx_total = Self::generate_matrix(sc_desc.width as f32 / sc_desc.height as f32);
+        let forward_uniforms = GlobalUniforms {
+            proj: *mx_total.as_ref(),
+            num_lights: [lights.len() as u32, 0, 0, 0],
+        };
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::bytes_of(&forward_uniforms),
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+        });
+
+        // Create bind group
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                // wgpu::BindGroupEntry {
+                //     binding: 1,
+                //     resource: light_storage_buf.as_entire_binding(),
+                // },
+                // wgpu::BindGroupEntry {
+                //     binding: 2,
+                //     resource: wgpu::BindingResource::TextureView(&shadow_view),
+                // },
+                // wgpu::BindGroupEntry {
+                //     binding: 3,
+                //     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                // },
+            ],
+            label: None,
+        });
 
         let vertex_size = mem::size_of::<Vertex>();
         let (vertex_data, index_data) = create_cube();

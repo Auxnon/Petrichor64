@@ -61,6 +61,18 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     //     }
     // }
 
+    // queue.write_buffer(
+    //     &self.forward_pass.uniform_buf,
+    //     0,
+    //     bytemuck::cast_slice(mx_ref),
+    // );
+
+    // queue.write_buffer(
+    //     &self.entity_uniform_buf,
+    //     entity.uniform_offset as wgpu::BufferAddress,
+    //     bytemuck::bytes_of(&data),
+    // );
+
     state.queue.submit(iter::once(encoder.finish()));
     output.present();
 
