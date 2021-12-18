@@ -1,12 +1,35 @@
 use std::iter;
 
-use crate::State;
+use crate::{ent::EntityUniforms, State};
 
 pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     let output = state.surface.get_current_texture()?;
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
+
+    for entity in &mut state.entities {
+        if entity.rotation_speed != 0.0 {
+            let rotation = cgmath::Matrix4::from_angle_x(cgmath::Deg(entity.rotation_speed));
+            entity.pos.x += 0.1;
+            let pos = cgmath::Matrix4::from_translation(entity.pos);
+            entity.matrix = entity.matrix * rotation * pos;
+        }
+        let data = EntityUniforms {
+            model: entity.matrix.into(),
+            color: [
+                entity.color.r as f32,
+                entity.color.g as f32,
+                entity.color.b as f32,
+                entity.color.a as f32,
+            ],
+        };
+        state.queue.write_buffer(
+            &state.entity_uniform_buf,
+            entity.uniform_offset as wgpu::BufferAddress,
+            bytemuck::bytes_of(&data),
+        );
+    }
 
     let mut encoder = state
         .device
@@ -39,11 +62,20 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         });
 
         render_pass.set_pipeline(&state.render_pipeline);
-        //pass.set_bind_group(1, &self.entity_bind_group, &[entity.uniform_offset]);
-        render_pass.set_index_buffer(state.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
+        render_pass.set_bind_group(0, &state.bind_group, &[]);
+        //entity.uniform_offset
+        // render_pass.set_index_buffer(state.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+        // render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
+
+        for entity in &state.entities {
+            render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
+            render_pass.set_index_buffer(entity.index_buf.slice(..), entity.index_format);
+            render_pass.set_vertex_buffer(0, entity.vertex_buf.slice(..));
+            render_pass.draw_indexed(0..entity.index_count as u32, 0, 0..1);
+        }
+
         //render_pass.draw(0..3, 0..1);
-        render_pass.draw_indexed(0..state.index_count as u32, 0, 0..1);
+        //render_pass.draw_indexed(0..state.index_count as u32, 0, 0..1);
     }
     encoder.pop_debug_group();
 

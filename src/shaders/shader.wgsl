@@ -11,23 +11,38 @@ struct VertexOutput {
 //     color: vec4<f32>;
 // };
 
+[[block]]
+struct Globals {
+    view_proj: mat4x4<f32>;
+    //num_lights: vec4<u32>;
+};
+
 // [[group(1), binding(0)]]
 // var<uniform> u_entity: Entity;
 
-//[[group(0), binding(0)]]
+[[group(0), binding(0)]]
+var<uniform> u_globals: Globals;
 
+[[block]]
+struct Entity {
+    world: mat4x4<f32>;
+    color: vec4<f32>;
+};
+
+[[group(1), binding(0)]]
+var<uniform> u_entity: Entity;
 
 [[stage(vertex)]]
 fn vs_main(
     [[location(0)]] position: vec4<i32>,
     [[location(1)]] normal: vec4<i32>,
 ) -> VertexOutput {
-   // let w = u_entity.world;
-    let world_pos =  vec4<f32>(position); //u_entity.world *
+    let w = u_entity.world;
+    let world_pos =  u_entity.world *vec4<f32>(position); 
     var out: VertexOutput;
-    //out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
+    out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
-    //out.proj_position = u_globals.view_proj * world_pos;
+    out.proj_position = u_globals.view_proj * world_pos;
     return out;
 }
 
