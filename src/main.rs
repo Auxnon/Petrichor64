@@ -71,47 +71,49 @@ struct GlobalUniforms {
 struct Vertex {
     _pos: [i8; 4],
     _normal: [i8; 4],
+    _tex: [f32; 2],
 }
 
-fn vertex(pos: [i8; 3], nor: [i8; 3]) -> Vertex {
+fn vertex(pos: [i8; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
     Vertex {
         _pos: [pos[0], pos[1], pos[2], 1],
         _normal: [nor[0], nor[1], nor[2], 0],
+        _tex: [tex[0], tex[1]],
     }
 }
 
 fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
-        vertex([-1, -1, 1], [0, 0, 1]),
-        vertex([1, -1, 1], [0, 0, 1]),
-        vertex([1, 1, 1], [0, 0, 1]),
-        vertex([-1, 1, 1], [0, 0, 1]),
+        vertex([-1, -1, 1], [0, 0, 1], [0., 0.]),
+        vertex([1, -1, 1], [0, 0, 1], [1., 0.]),
+        vertex([1, 1, 1], [0, 0, 1], [1., 1.]),
+        vertex([-1, 1, 1], [0, 0, 1], [0., 1.]),
         // bottom (0, 0, -1)
-        vertex([-1, 1, -1], [0, 0, -1]),
-        vertex([1, 1, -1], [0, 0, -1]),
-        vertex([1, -1, -1], [0, 0, -1]),
-        vertex([-1, -1, -1], [0, 0, -1]),
+        vertex([-1, 1, -1], [0, 0, -1], [0., 0.]),
+        vertex([1, 1, -1], [0, 0, -1], [0., 0.]),
+        vertex([1, -1, -1], [0, 0, -1], [0., 0.]),
+        vertex([-1, -1, -1], [0, 0, -1], [0., 0.]),
         // right (1, 0, 0)
-        vertex([1, -1, -1], [1, 0, 0]),
-        vertex([1, 1, -1], [1, 0, 0]),
-        vertex([1, 1, 1], [1, 0, 0]),
-        vertex([1, -1, 1], [1, 0, 0]),
+        vertex([1, -1, -1], [1, 0, 0], [0., 0.]),
+        vertex([1, 1, -1], [1, 0, 0], [0., 0.]),
+        vertex([1, 1, 1], [1, 0, 0], [0., 0.]),
+        vertex([1, -1, 1], [1, 0, 0], [0., 0.]),
         // left (-1, 0, 0)
-        vertex([-1, -1, 1], [-1, 0, 0]),
-        vertex([-1, 1, 1], [-1, 0, 0]),
-        vertex([-1, 1, -1], [-1, 0, 0]),
-        vertex([-1, -1, -1], [-1, 0, 0]),
+        vertex([-1, -1, 1], [-1, 0, 0], [0., 0.]),
+        vertex([-1, 1, 1], [-1, 0, 0], [0., 0.]),
+        vertex([-1, 1, -1], [-1, 0, 0], [0., 0.]),
+        vertex([-1, -1, -1], [-1, 0, 0], [0., 0.]),
         // front (0, 1, 0)
-        vertex([1, 1, -1], [0, 1, 0]),
-        vertex([-1, 1, -1], [0, 1, 0]),
-        vertex([-1, 1, 1], [0, 1, 0]),
-        vertex([1, 1, 1], [0, 1, 0]),
+        vertex([1, 1, -1], [0, 1, 0], [0., 0.]),
+        vertex([-1, 1, -1], [0, 1, 0], [0., 0.]),
+        vertex([-1, 1, 1], [0, 1, 0], [0., 0.]),
+        vertex([1, 1, 1], [0, 1, 0], [0., 0.]),
         // back (0, -1, 0)
-        vertex([1, -1, 1], [0, -1, 0]),
-        vertex([-1, -1, 1], [0, -1, 0]),
-        vertex([-1, -1, -1], [0, -1, 0]),
-        vertex([1, -1, -1], [0, -1, 0]),
+        vertex([1, -1, 1], [0, -1, 0], [0., 0.]),
+        vertex([-1, -1, 1], [0, -1, 0], [0., 0.]),
+        vertex([-1, -1, -1], [0, -1, 0], [0., 0.]),
+        vertex([1, -1, -1], [0, -1, 0], [0., 0.]),
     ];
 
     let index_data: &[u16] = &[
@@ -128,10 +130,10 @@ fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
 
 fn create_plane(size: i8) -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
-        vertex([size, -size, 0], [0, 0, 1]),
-        vertex([size, size, 0], [0, 0, 1]),
-        vertex([-size, -size, 0], [0, 0, 1]),
-        vertex([-size, size, 0], [0, 0, 1]),
+        vertex([size, -size, 0], [0, 0, 1], [1., 0.]),
+        vertex([size, size, 0], [0, 0, 1], [1., 1.]),
+        vertex([-size, -size, 0], [0, 0, 1], [0., 0.]),
+        vertex([-size, size, 0], [0, 0, 1], [0., 1.]),
     ];
 
     let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
@@ -186,7 +188,6 @@ impl State {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        crate::assets::load_img("gameboy".to_string());
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
@@ -209,6 +210,19 @@ impl State {
             )
             .await
             .unwrap();
+
+        let (tex, img) = crate::assets::load_tex(&device, &queue, "gameboy".to_string());
+
+        let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -392,16 +406,22 @@ impl State {
                     },
                     count: None,
                 },
-                // wgpu::BindGroupLayoutEntry {
-                //     binding: 1,
-                //     visibility: wgpu::ShaderStages::FRAGMENT,
-                //     ty: wgpu::BindingType::Texture {
-                //         multisampled: false,
-                //         sample_type: wgpu::TextureSampleType::Uint,
-                //         view_dimension: wgpu::TextureViewDimension::D2,
-                //     },
-                //     count: None,
-                // },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -422,10 +442,20 @@ impl State {
         // Create bind group
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+            ],
             label: None,
         });
 
@@ -472,7 +502,7 @@ impl State {
         //     ],
         // }];
 
-        let vertex_attr = wgpu::vertex_attr_array![0 => Sint8x4, 1 => Sint8x4];
+        let vertex_attr = wgpu::vertex_attr_array![0 => Sint8x4, 1 => Sint8x4, 2=> Float32x2];
         let vb_desc = wgpu::VertexBufferLayout {
             array_stride: vertex_size as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,

@@ -2,7 +2,8 @@ struct VertexOutput {
     [[builtin(position)]] proj_position: vec4<f32>;
     [[location(0)]] world_normal: vec3<f32>;
     [[location(1)]] world_position: vec4<f32>;
-    [[location(2)]] vpos:vec4<f32>;
+    [[location(2)]] tex_coords: vec2<f32>;
+    [[location(3)]] vpos:vec4<f32>;
 };
 // var<private> gl_Position: vec4<f32>;
 // var<private> gl_VertexIndex: u32;
@@ -24,6 +25,10 @@ struct Globals {
 
 [[group(0), binding(0)]]
 var<uniform> u_globals: Globals;
+[[group(0), binding(1)]]
+var t_diffuse: texture_2d<f32>;
+[[group(0), binding(2)]]
+var s_diffuse: sampler;
 
 //[[block]]
 struct Entity {
@@ -38,6 +43,7 @@ var<uniform> u_entity: Entity;
 fn vs_main(
     [[location(0)]] position: vec4<i32>,
     [[location(1)]] normal: vec4<i32>,
+     [[location(2)]] tex_coords: vec2<f32>,
 
 ) -> VertexOutput {
     let w = u_entity.world;
@@ -46,6 +52,7 @@ fn vs_main(
     out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
     out.proj_position = u_globals.view_proj * world_pos;
+    out.tex_coords=tex_coords;
     let vpos:vec4<f32>=out.proj_position;
     //vpos.xyz=(vpos.y%0.1)*10.;
     //let vpos2=(vpos%1.0);
@@ -62,7 +69,7 @@ var<private> f_color: vec4<f32>;
 
 fn main_2(in:VertexOutput) {
     //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    f_color=vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+    f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
     return;
 }
 
