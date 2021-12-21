@@ -29,6 +29,7 @@ pub struct State {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    depth_texture: wgpu::TextureView,
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
     stream: cpal::Stream,
@@ -152,6 +153,27 @@ fn generate_matrix(aspect_ratio: f32) -> cgmath::Matrix4<f32> {
     mx_correction * mx_projection * mx_view
 }
 
+fn create_depth_texture(
+    config: &wgpu::SurfaceConfiguration,
+    device: &wgpu::Device,
+) -> wgpu::TextureView {
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        label: None,
+    });
+
+    depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
@@ -236,9 +258,9 @@ impl State {
         let cube_descs = [
             CubeDesc {
                 offset: cgmath::vec3(1.0, 0.0, 2.0),
-                angle: 0.0,
+                angle: 45.,
                 scale: 1.,
-                rotation: 0.0,
+                rotation: 0.,
             },
             CubeDesc {
                 offset: cgmath::vec3(4.0, 2.0, 2.0),
@@ -489,7 +511,13 @@ impl State {
                 conservative: false,
                 unclipped_depth: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less, // 1.
+                stencil: wgpu::StencilState::default(),     // 2.
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -499,6 +527,8 @@ impl State {
         });
         //Arc::clone(&self)
 
+        let depth_texture = create_depth_texture(&config, &device);
+
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
         let dupe_switch = Arc::clone(&switch_board);
         Self {
@@ -507,6 +537,7 @@ impl State {
             queue,
             size,
             config,
+            depth_texture,
             uniform_buf,
             camera_matrix: mx_total,
             render_pipeline,
@@ -526,6 +557,7 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth_texture = create_depth_texture(&self.config, &self.device);
         }
     }
 

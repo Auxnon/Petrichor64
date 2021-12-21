@@ -38,10 +38,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
     for entity in &mut state.entities {
         if entity.rotation_speed != 0.0 {
-            let rotation = cgmath::Matrix4::from_angle_x(cgmath::Deg(entity.rotation_speed));
-            entity.pos.x += 0.1;
-            let pos = cgmath::Matrix4::from_translation(entity.pos);
-            entity.matrix = entity.matrix * rotation * pos;
+            let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation_speed));
+            entity.rotation_speed += 0.1;
+            entity.rotation_speed %= std::f32::consts::PI * 2.;
+
+            //let pos = cgmath::Matrix4::from_translation(entity.pos);
+            entity.matrix = entity.matrix * rotation;
         }
         let data = EntityUniforms {
             model: entity.matrix.into(),
@@ -86,7 +88,14 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                     store: true,
                 },
             }],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &state.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: true,
+                }),
+                stencil_ops: None,
+            }),
         });
 
         render_pass.set_pipeline(&state.render_pipeline);
