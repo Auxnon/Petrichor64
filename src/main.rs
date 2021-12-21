@@ -17,6 +17,7 @@ use winit::{
 
 use crate::ent::EntityUniforms;
 
+mod assets;
 mod controls;
 mod ent;
 mod global;
@@ -185,6 +186,7 @@ impl State {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
+        crate::assets::load_img("gameboy".to_string());
         let instance = wgpu::Instance::new(wgpu::Backends::all());
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
