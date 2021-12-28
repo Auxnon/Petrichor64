@@ -37,6 +37,7 @@ pub struct State {
     // NEW!
     camera_matrix: cgmath::Matrix4<f32>,
     uniform_buf: Buffer,
+    uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
 
     entities: Vec<Ent>,
@@ -53,6 +54,7 @@ pub struct State {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalUniforms {
     proj: [[f32; 4]; 4],
+    time: [f32; 4],
     //num_lights: [u32; 4],
 }
 // struct Entity {
@@ -379,6 +381,8 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
         });
 
+        let uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
+        //println!("struct size is {}", uniform_size);
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[
@@ -388,7 +392,7 @@ impl State {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(64),
+                        min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
                     },
                     count: None,
                 },
@@ -411,8 +415,10 @@ impl State {
 
         let render_uniforms = GlobalUniforms {
             proj: *mx_total.as_ref(),
+            time: [0f32, 0f32, 0f32, 0f32],
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };
+
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
             contents: bytemuck::bytes_of(&render_uniforms),
@@ -541,6 +547,7 @@ impl State {
             config,
             depth_texture,
             uniform_buf,
+            uniform_alignment,
             camera_matrix: mx_total,
             render_pipeline,
             switch_board,

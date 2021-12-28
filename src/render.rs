@@ -36,6 +36,13 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .queue
         .write_buffer(&state.uniform_buf, 0, bytemuck::cast_slice(mx_ref));
 
+    let time_ref: [f32; 4] = ([state.value, 0., 0., 0.]);
+
+    //TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
+    state
+        .queue
+        .write_buffer(&state.uniform_buf, 64, bytemuck::cast_slice(&time_ref));
+
     for entity in &mut state.entities {
         if entity.rotation_speed != 0.0 {
             let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation_speed));

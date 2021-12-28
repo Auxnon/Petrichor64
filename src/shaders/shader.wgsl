@@ -16,6 +16,7 @@ struct VertexOutput {
 //[[block]]
 struct Globals {
     view_proj: mat4x4<f32>;
+    time: vec4<f32>;
     //num_lights: vec4<u32>;
 };
 
@@ -47,10 +48,11 @@ fn vs_main(
     out.world_position = world_pos;
     out.proj_position = u_globals.view_proj * world_pos;
     let vpos:vec4<f32>=out.proj_position;
+    //let vpos2=vec4<f32>(vpos.x,vpos.y,vpos.z+u_globals.time,vpos.w);
     //vpos.xyz=(vpos.y%0.1)*10.;
     //let vpos2=(vpos%1.0);
     //let vpos3=vec4<f32>(1.,0.,0.,0.);//vpos*100.;
-    out.vpos=world_pos;
+    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+u_globals.time.x,world_pos.w);
     return out;
 }
 
@@ -62,7 +64,8 @@ var<private> f_color: vec4<f32>;
 
 fn main_2(in:VertexOutput) {
     //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    f_color=vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+    let v=abs(floor(10.*in.vpos.z+0.01)/10.)%1.;
+    f_color=vec4<f32>(v,v,v,1.0);
     return;
 }
 
