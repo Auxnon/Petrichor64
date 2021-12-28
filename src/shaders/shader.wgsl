@@ -71,9 +71,10 @@ var<private> f_color: vec4<f32>;
 
 fn main_2(in:VertexOutput) {
     //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    let v=abs(floor(10.*in.vpos.z+0.01)/10.)%1.;
-    f_color=vec4<f32>(v,v,v,1.0);
-    //f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+    let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
+    
+    f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+    f_color=f_color*v; //vec4<f32>(v,v,v,1.0);
     return;
 }
 
