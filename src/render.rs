@@ -1,6 +1,9 @@
 use std::{f32::consts::PI, iter};
 
-use crate::{ent::EntityUniforms, State};
+use crate::{
+    ent::{Ent, EntityUniforms},
+    State,
+};
 
 fn generate_matrix(aspect_ratio: f32, rot: f32) -> cgmath::Matrix4<f32> {
     let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
@@ -21,6 +24,17 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     state.value += 0.002;
     if state.value > 1. {
         state.value = 0.;
+    }
+    state.value2 += 0.02;
+    if state.value2 > 1. {
+        state.value2 = 0.;
+        state.entities.push(Ent::new(
+            cgmath::vec3((2. * state.entities.len() as f32), 2., 2.),
+            0.,
+            1.,
+            0.,
+            (state.entities.len() as u64 * state.uniform_alignment) as u32,
+        ))
     }
 
     let mx_totals = generate_matrix(
@@ -112,10 +126,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
 
         for entity in &state.entities {
+            let model = entity.model.get().unwrap();
             render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
-            render_pass.set_index_buffer(entity.index_buf.slice(..), entity.index_format);
-            render_pass.set_vertex_buffer(0, entity.vertex_buf.slice(..));
-            render_pass.draw_indexed(0..entity.index_count as u32, 0, 0..1);
+            render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+            render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+            render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
         }
 
         //render_pass.draw(0..3, 0..1);

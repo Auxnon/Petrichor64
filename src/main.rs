@@ -1,6 +1,6 @@
+use bytemuck::{Pod, Zeroable};
 use std::{mem, rc::Rc, sync::Arc};
 
-use bytemuck::{Pod, Zeroable};
 use cgmath::{Matrix, SquareMatrix};
 use ent::Ent;
 use global::Global;
@@ -21,9 +21,12 @@ mod assets;
 mod controls;
 mod ent;
 mod global;
+mod model;
 mod render;
 mod sound;
 mod switch_board;
+
+const MAX_ENTS: u64 = 100;
 
 pub struct State {
     surface: wgpu::Surface,
@@ -48,6 +51,7 @@ pub struct State {
     entity_uniform_buf: Buffer,
     bind_group: BindGroup,
     value: f32,
+    value2: f32,
 }
 
 #[repr(C)]
@@ -67,81 +71,6 @@ struct GlobalUniforms {
 //     index_count: usize,
 //     uniform_offset: wgpu::DynamicOffset,
 // }
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    _pos: [i8; 4],
-    _normal: [i8; 4],
-    _tex: [f32; 2],
-}
-
-fn vertex(pos: [i8; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
-    Vertex {
-        _pos: [pos[0], pos[1], pos[2], 1],
-        _normal: [nor[0], nor[1], nor[2], 0],
-        _tex: [tex[0], tex[1]],
-    }
-}
-
-fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
-    let vertex_data = [
-        // top (0, 0, 1)
-        vertex([-1, -1, 1], [0, 0, 1], [0., 0.]),
-        vertex([1, -1, 1], [0, 0, 1], [1., 0.]),
-        vertex([1, 1, 1], [0, 0, 1], [1., 1.]),
-        vertex([-1, 1, 1], [0, 0, 1], [0., 1.]),
-        // bottom (0, 0, -1)
-        vertex([-1, 1, -1], [0, 0, -1], [0., 0.]),
-        vertex([1, 1, -1], [0, 0, -1], [1., 0.]),
-        vertex([1, -1, -1], [0, 0, -1], [1., 1.]),
-        vertex([-1, -1, -1], [0, 0, -1], [0., 1.]),
-        // right (1, 0, 0)
-        vertex([1, -1, -1], [1, 0, 0], [0., 0.]),
-        vertex([1, 1, -1], [1, 0, 0], [1., 0.]),
-        vertex([1, 1, 1], [1, 0, 0], [1., 1.]),
-        vertex([1, -1, 1], [1, 0, 0], [0., 1.]),
-        // left (-1, 0, 0)
-        vertex([-1, -1, 1], [-1, 0, 0], [0., 0.]),
-        vertex([-1, 1, 1], [-1, 0, 0], [1., 0.]),
-        vertex([-1, 1, -1], [-1, 0, 0], [1., 1.]),
-        vertex([-1, -1, -1], [-1, 0, 0], [0., 1.]),
-        // front (0, 1, 0)
-        vertex([1, 1, -1], [0, 1, 0], [0., 0.]),
-        vertex([-1, 1, -1], [0, 1, 0], [1., 0.]),
-        vertex([-1, 1, 1], [0, 1, 0], [1., 1.]),
-        vertex([1, 1, 1], [0, 1, 0], [0., 1.]),
-        // back (0, -1, 0)
-        vertex([1, -1, 1], [0, -1, 0], [0., 0.]),
-        vertex([-1, -1, 1], [0, -1, 0], [1., 0.]),
-        vertex([-1, -1, -1], [0, -1, 0], [1., 1.]),
-        vertex([1, -1, -1], [0, -1, 0], [0., 1.]),
-    ];
-
-    let index_data: &[u16] = &[
-        0, 1, 2, 2, 3, 0, // top
-        4, 5, 6, 6, 7, 4, // bottom
-        8, 9, 10, 10, 11, 8, // right
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // front
-        20, 21, 22, 22, 23, 20, // back
-    ];
-
-    (vertex_data.to_vec(), index_data.to_vec())
-}
-
-fn create_plane(size: i8) -> (Vec<Vertex>, Vec<u16>) {
-    let vertex_data = [
-        vertex([size, -size, 0], [0, 0, 1], [1., 0.]),
-        vertex([size, size, 0], [0, 0, 1], [1., 1.]),
-        vertex([-size, -size, 0], [0, 0, 1], [0., 0.]),
-        vertex([-size, size, 0], [0, 0, 1], [0., 1.]),
-    ];
-
-    let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
-
-    (vertex_data.to_vec(), index_data.to_vec())
-}
 
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -213,6 +142,8 @@ impl State {
             .await
             .unwrap();
 
+        model::init(&device);
+
         let (tex, img) = crate::assets::load_tex(&device, &queue, "gameboy".to_string());
 
         let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -236,86 +167,81 @@ impl State {
 
         surface.configure(&device, &config);
 
-        let (plane_vertex_data, plane_index_data) = create_plane(7);
-        let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Plane Vertex Buffer"),
-            contents: bytemuck::cast_slice(&plane_vertex_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Plane Index Buffer"),
-            contents: bytemuck::cast_slice(&plane_index_data),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let (cube_vertex_data, cube_index_data) = create_cube();
-        let cube_vertex_buf = Rc::new(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Cubes Vertex Buffer"),
-                contents: bytemuck::cast_slice(&cube_vertex_data),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        ));
-
-        let cube_index_buf = Rc::new(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Cubes Index Buffer"),
-                contents: bytemuck::cast_slice(&cube_index_data),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        ));
-
-        ///
-        struct CubeDesc {
-            offset: cgmath::Vector3<f32>,
-            angle: f32,
-            scale: f32,
-            rotation: f32,
-        }
-        let cube_descs = [
-            CubeDesc {
-                offset: cgmath::vec3(1.0, 0.0, 2.0),
-                angle: 45.,
-                scale: 1.,
-                rotation: 0.,
-            },
-            CubeDesc {
-                offset: cgmath::vec3(4.0, 2.0, 2.0),
-                angle: 0.0,
-                scale: 1.,
-                rotation: 0.,
-            },
-            CubeDesc {
-                offset: cgmath::vec3(6.0, 6.0, 2.0),
-                angle: 0.0,
-                scale: 1.,
-                rotation: 0.,
-            },
-            CubeDesc {
-                offset: cgmath::vec3(2.0, 2.0, 2.0),
-                angle: 0.0,
-                scale: 0.9,
-                rotation: 0.4,
-            },
-        ];
+        // struct CubeDesc {
+        //     offset: cgmath::Vector3<f32>,
+        //     angle: f32,
+        //     scale: f32,
+        //     rotation: f32,
+        // }
+        // let cube_descs = [
+        //     CubeDesc {
+        //         offset: cgmath::vec3(1.0, 0.0, 2.0),
+        //         angle: 45.,
+        //         scale: 1.,
+        //         rotation: 0.,
+        //     },
+        //     CubeDesc {
+        //         offset: cgmath::vec3(4.0, 2.0, 2.0),
+        //         angle: 0.0,
+        //         scale: 1.,
+        //         rotation: 0.,
+        //     },
+        //     CubeDesc {
+        //         offset: cgmath::vec3(6.0, 6.0, 2.0),
+        //         angle: 0.0,
+        //         scale: 1.,
+        //         rotation: 0.,
+        //     },
+        //     CubeDesc {
+        //         offset: cgmath::vec3(2.0, 2.0, 2.0),
+        //         angle: 0.0,
+        //         scale: 0.9,
+        //         rotation: 0.4,
+        //     },
+        // ];
 
         let entity_uniform_size = mem::size_of::<EntityUniforms>() as wgpu::BufferAddress;
-        let num_entities = 1 + cube_descs.len() as wgpu::BufferAddress;
+
         let uniform_alignment =
             device.limits().min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
         assert!(entity_uniform_size <= uniform_alignment);
+        let entities = vec![
+            Ent::new(cgmath::vec3(1.0, 0.0, 2.0), 45., 1., 0., 0),
+            Ent::new(
+                cgmath::vec3(4.0, 2.0, 2.0),
+                0.,
+                1.,
+                0.,
+                uniform_alignment as u32,
+            ),
+            Ent::new(
+                cgmath::vec3(6.0, 6.0, 2.0),
+                0.,
+                1.,
+                0.,
+                (uniform_alignment * 2) as u32,
+            ),
+            Ent::new(
+                cgmath::vec3(2.0, 2.0, 2.0),
+                0.,
+                0.9,
+                0.4,
+                (uniform_alignment * 3) as u32,
+            ),
+        ];
+        // let num_entities = 1 + entities.len() as wgpu::BufferAddress;
 
         let entity_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: num_entities * uniform_alignment,
+            size: MAX_ENTS * uniform_alignment,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+
         let index_format = wgpu::IndexFormat::Uint16;
 
-        let pbuf = Rc::new(plane_vertex_buf);
-        let ibuf = Rc::new(plane_index_buf);
+        //let pbuf = Rc::new(plane_vertex_buf);
+        //let ibuf = Rc::new(plane_index_buf);
 
         let test_vec = cgmath::vec3(6.0, 2.0, 2.0);
         use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
@@ -325,42 +251,42 @@ impl State {
             scale: 1.,
         };
         //let test_matrix=test_trans
-        let mut entities = vec![{
-            use cgmath::SquareMatrix;
-            Ent {
-                matrix: cgmath::Matrix4::from(test_trans),
-                //cgmath::Matrix4::identity(),
-                rotation_speed: 0.0,
-                color: wgpu::Color::WHITE,
-                vertex_buf: Rc::clone(&cube_vertex_buf),
-                index_buf: Rc::clone(&cube_index_buf),
-                index_format,
-                pos: cgmath::Vector3::new(0., 0., 0.),
-                index_count: cube_index_data.len(),
-                uniform_offset: 0,
-            }
-        }];
-        for (i, cube) in cube_descs.iter().enumerate() {
-            use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
+        // let mut entities = vec![{
+        //     use cgmath::SquareMatrix;
+        //     Ent {
+        //         matrix: cgmath::Matrix4::from(test_trans),
+        //         //cgmath::Matrix4::identity(),
+        //         rotation_speed: 0.0,
+        //         color: wgpu::Color::WHITE,
+        //         vertex_buf: Rc::clone(&cube_vertex_buf),
+        //         index_buf: Rc::clone(&cube_index_buf),
+        //         index_format,
+        //         pos: cgmath::Vector3::new(0., 0., 0.),
+        //         index_count: cube_index_data.len(),
+        //         uniform_offset: 0,
+        //     }
+        // }];
+        // for (i, cube) in cube_descs.iter().enumerate() {
+        //     use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
 
-            let transform = Decomposed {
-                disp: cube.offset,
-                rot: Quaternion::from_axis_angle(cube.offset.normalize(), Deg(cube.angle)),
-                scale: cube.scale,
-            };
-            println!("iter {}", i);
-            entities.push(Ent {
-                matrix: cgmath::Matrix4::from(transform), //cgmath::Matrix4::from(transform),
-                rotation_speed: cube.rotation,
-                color: wgpu::Color::GREEN,
-                vertex_buf: Rc::clone(&cube_vertex_buf),
-                index_buf: Rc::clone(&cube_index_buf),
-                index_format,
-                pos: cube.offset.clone(),
-                index_count: cube_index_data.len(),
-                uniform_offset: ((i + 1) * uniform_alignment as usize) as _,
-            });
-        }
+        //     let transform = Decomposed {
+        //         disp: cube.offset,
+        //         rot: Quaternion::from_axis_angle(cube.offset.normalize(), Deg(cube.angle)),
+        //         scale: cube.scale,
+        //     };
+        //     println!("iter {}", i);
+        //     // entities.push(Ent {
+        //     //     matrix: cgmath::Matrix4::from(transform), //cgmath::Matrix4::from(transform),
+        //     //     rotation_speed: cube.rotation,
+        //     //     color: wgpu::Color::GREEN,
+        //     //     vertex_buf: Rc::clone(&cube_vertex_buf),
+        //     //     index_buf: Rc::clone(&cube_index_buf),
+        //     //     index_format,
+        //     //     pos: cube.offset.clone(),
+        //     //     index_count: cube_index_data.len(),
+        //     //     uniform_offset: ((i + 1) * uniform_alignment as usize) as _,
+        //     // });
+        // }
 
         let local_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -389,7 +315,6 @@ impl State {
             label: None,
         });
 
-        ///
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
@@ -465,7 +390,7 @@ impl State {
             label: None,
         });
 
-        let vertex_size = mem::size_of::<Vertex>();
+        let vertex_size = mem::size_of::<crate::model::Vertex>();
         // let (vertex_data, index_data) = create_cube();
 
         // let vertex_buf = Rc::new(
@@ -582,11 +507,13 @@ impl State {
             render_pipeline,
             switch_board,
             entities,
+
             bind_group,
             entity_bind_group,
             entity_uniform_buf,
             stream: sound::init_sound(dupe_switch).unwrap(),
             value: 0.,
+            value2: 0.,
         }
     }
 
