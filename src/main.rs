@@ -144,18 +144,10 @@ impl State {
 
         model::init(&device);
 
-        let (tex, img) = crate::assets::load_tex(&device, &queue, "gameboy".to_string());
-
-        let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        crate::assets::init();
+        crate::assets::load_tex("gameboy".to_string());
+        crate::assets::load_tex("fatty".to_string());
+        let (diffuse_texture_view, diffuse_sampler) = crate::assets::finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -206,12 +198,20 @@ impl State {
             device.limits().min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
         assert!(entity_uniform_size <= uniform_alignment);
         let entities = vec![
-            Ent::new(cgmath::vec3(1.0, 0.0, 2.0), 45., 1., 0., 0),
+            Ent::new(
+                cgmath::vec3(1.0, 0.0, 2.0),
+                45.,
+                1.,
+                0.,
+                "gameboy".to_string(),
+                0,
+            ),
             Ent::new(
                 cgmath::vec3(4.0, 2.0, 2.0),
                 0.,
                 1.,
                 0.,
+                "fatty".to_string(),
                 uniform_alignment as u32,
             ),
             Ent::new(
@@ -219,6 +219,7 @@ impl State {
                 0.,
                 1.,
                 0.,
+                "gameboy".to_string(),
                 (uniform_alignment * 2) as u32,
             ),
             Ent::new(
@@ -226,6 +227,7 @@ impl State {
                 0.,
                 0.9,
                 0.4,
+                "fatty".to_string(),
                 (uniform_alignment * 3) as u32,
             ),
         ];

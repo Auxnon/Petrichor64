@@ -33,6 +33,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             0.,
             1.,
             0.,
+            "gameboy".to_string(),
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
         ))
     }
@@ -57,7 +58,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .queue
         .write_buffer(&state.uniform_buf, 64, bytemuck::cast_slice(&time_ref));
 
-    for entity in &mut state.entities {
+    for (i, entity) in &mut state.entities.iter_mut().enumerate() {
         if entity.rotation_speed != 0.0 {
             let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation_speed));
             entity.rotation_speed += 0.1;
@@ -74,7 +75,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 entity.color.b as f32,
                 entity.color.a as f32,
             ],
+            uv_mod: [entity.tex.x, entity.tex.y, entity.tex.z, entity.tex.w],
         };
+        //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
         state.queue.write_buffer(
             &state.entity_uniform_buf,
             entity.uniform_offset as wgpu::BufferAddress,

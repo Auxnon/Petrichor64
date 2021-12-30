@@ -35,6 +35,7 @@ var s_diffuse: sampler;
 struct Entity {
     world: mat4x4<f32>;
     color: vec4<f32>;
+    uv_mod:vec4<f32>;
 };
 
 [[group(1), binding(0)]]
@@ -53,7 +54,7 @@ fn vs_main(
     out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
     out.proj_position = u_globals.view_proj * world_pos;
-    out.tex_coords=tex_coords;
+    out.tex_coords=(tex_coords*vec2<f32>(u_entity.uv_mod.z,u_entity.uv_mod.w))+vec2<f32>(u_entity.uv_mod.x,u_entity.uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
     //let vpos2=vec4<f32>(vpos.x,vpos.y,vpos.z+u_globals.time,vpos.w);
     //vpos.xyz=(vpos.y%0.1)*10.;
@@ -80,7 +81,7 @@ fn main_2(in:VertexOutput) {
 
 [[stage(fragment)]]
 fn fs_main( in: VertexOutput) -> FragmentOutput {
-    main_2(in);
+    main_2(in); 
     let e3: vec4<f32> = f_color;
     return FragmentOutput(e3);
 }

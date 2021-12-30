@@ -9,6 +9,7 @@ use std::{rc::Rc, sync::Arc};
 pub struct EntityUniforms {
     pub model: [[f32; 4]; 4],
     pub color: [f32; 4],
+    pub uv_mod: [f32; 4],
 }
 
 pub struct Ent {
@@ -18,6 +19,7 @@ pub struct Ent {
     pub pos: cgmath::Vector3<f32>,
     pub model: Arc<OnceCell<Model>>,
     pub uniform_offset: wgpu::DynamicOffset,
+    pub tex: cgmath::Vector4<f32>,
 }
 impl Ent {
     pub fn new(
@@ -25,6 +27,7 @@ impl Ent {
         angle: f32,
         scale: f32,
         rotation: f32,
+        tex_name: String,
         uniform_offset: wgpu::DynamicOffset,
     ) -> Ent {
         let transform = Decomposed {
@@ -39,6 +42,7 @@ impl Ent {
             color: wgpu::Color::GREEN,
             pos: offset,
             model: crate::model::cube_model(),
+            tex: cgmath::Vector4::new(0., 0., 1., 1.), //crate::assets::get_tex(tex_name),
             uniform_offset,
         }
     }
