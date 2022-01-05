@@ -26,7 +26,7 @@ struct Globals {
 // var<uniform> u_entity: Entity;
 
 [[group(0), binding(0)]]
-var<uniform> u_globals: Globals;
+var<uniform> globals: Globals;
 [[group(0), binding(1)]]
 var t_diffuse: texture_2d<f32>;
 [[group(0), binding(2)]]
@@ -34,13 +34,14 @@ var s_diffuse: sampler;
 
 //[[block]]
 struct Entity {
-    world: mat4x4<f32>;
+    matrix: mat4x4<f32>;
     color: vec4<f32>;
     uv_mod:vec4<f32>;
+    effects:vec4<u32>;
 };
 
 [[group(1), binding(0)]]
-var<uniform> u_entity: Entity;
+var<uniform> ent: Entity;
 
 [[stage(vertex)]]
 fn vs_main(
@@ -49,12 +50,13 @@ fn vs_main(
     [[location(2)]] tex_coords: vec2<f32>,
 ) -> VertexOutput {
 
-    let w = u_entity.world;
-    let world_pos =  u_entity.world *vec4<f32>(position); 
+    let billboarded=false;
+    let w = ent.matrix;
+    let world_pos =  ent.matrix *vec4<f32>(position); 
     var out: VertexOutput;
     out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
-    let v=u_globals.view_mat;
+    let v=globals.view_mat;
 //    let ver:mat4x4<f32> =  mat4x4<f32>(
 //        vec4<f32>(1.0, 0.,0.,w.x.w),
 //     vec4<f32>(0.,1.,0.,w.y.w),  
@@ -79,17 +81,23 @@ fn vs_main(
 //   modelView[2][1] = 0.0; 
 //   modelView[2][2] = 1.0; 
 
-    //u_globals.view_proj
+    //globals.view_proj
     let pos=vec4<f32>(position);
-    //    out.proj_position = u_globals.view_proj * world_pos;
-    out.proj_position = u_globals.proj_mat*(u_globals.view_mat*u_entity.world*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.)) ; //*vec4<f32>(0.0, 0.0, 0.0, 1.0)+
-    out.tex_coords=(tex_coords*vec2<f32>(u_entity.uv_mod.z,u_entity.uv_mod.w))+vec2<f32>(u_entity.uv_mod.x,u_entity.uv_mod.y);
+    //    out.proj_position = globals.view_proj * world_pos;
+
+    if(ent.effects[0] > 0u){
+        out.proj_position=globals.proj_mat*(globals.view_mat*ent.matrix*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
+    }else{
+        out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
+    }
+
+    out.tex_coords=(tex_coords*vec2<f32>(ent.uv_mod.z,ent.uv_mod.w))+vec2<f32>(ent.uv_mod.x,ent.uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
-    //let vpos2=vec4<f32>(vpos.x,vpos.y,vpos.z+u_globals.time,vpos.w);
+    //let vpos2=vec4<f32>(vpos.x,vpos.y,vpos.z+globals.time,vpos.w);
     //vpos.xyz=(vpos.y%0.1)*10.;
     //let vpos2=(vpos%1.0);
     //let vpos3=vec4<f32>(1.,0.,0.,0.);//vpos*100.;
-    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+u_globals.time.x,world_pos.w);
+    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.time.x,world_pos.w);
     return out;
 }
 

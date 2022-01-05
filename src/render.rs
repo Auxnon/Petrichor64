@@ -38,6 +38,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             0.,
             "guy3".to_string(),
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
+            state.entities.len() % 2 == 0,
         ))
     }
 
@@ -84,6 +85,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 entity.color.a as f32,
             ],
             uv_mod: [entity.tex.x, entity.tex.y, entity.tex.z, entity.tex.w],
+            effects: [
+                entity.effects.x,
+                entity.effects.y,
+                entity.effects.z,
+                entity.effects.w,
+            ],
         };
         //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
         state.queue.write_buffer(

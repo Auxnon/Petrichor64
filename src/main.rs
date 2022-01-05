@@ -233,6 +233,7 @@ impl State {
                 0.,
                 "chicken".to_string(),
                 0,
+                true,
             ),
             Ent::new(
                 cgmath::vec3(4.0, 2.0, 2.0),
@@ -241,6 +242,7 @@ impl State {
                 0.,
                 "chicken".to_string(),
                 uniform_alignment as u32,
+                false,
             ),
             Ent::new(
                 cgmath::vec3(6.0, 6.0, 2.0),
@@ -249,6 +251,7 @@ impl State {
                 0.,
                 "gameboy".to_string(),
                 (uniform_alignment * 2) as u32,
+                false,
             ),
             Ent::new(
                 cgmath::vec3(2.0, 2.0, 2.0),
@@ -257,6 +260,7 @@ impl State {
                 0.4,
                 "guy3".to_string(),
                 (uniform_alignment * 3) as u32,
+                true,
             ),
         ];
         // let num_entities = 1 + entities.len() as wgpu::BufferAddress;
