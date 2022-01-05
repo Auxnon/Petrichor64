@@ -9,7 +9,7 @@ pub fn generate_matrix(
     aspect_ratio: f32,
     rot: f32,
 ) -> (cgmath::Matrix4<f32>, cgmath::Matrix4<f32>) {
-    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
+    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 80.0);
     let mx_view = cgmath::Matrix4::look_at_rh(
         cgmath::Point3::new(20. * rot.cos(), 20. * rot.sin(), 16.0),
         cgmath::Point3::new(0f32, 0.0, 0.0),
@@ -31,14 +31,24 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     state.value2 += 0.02;
     if state.value2 > 1. {
         state.value2 = 0.;
+        let typeOf = state.entities.len() % 2 == 0;
         state.entities.push(Ent::new(
-            cgmath::vec3((2. * state.entities.len() as f32), 2., 2.),
+            cgmath::vec3((2. * state.entities.len() as f32) - 100., 0., 2.),
             0.,
             1.,
             0.,
-            "guy3".to_string(),
+            if typeOf {
+                "chicken".to_string()
+            } else {
+                "gameboy".to_string()
+            },
+            if typeOf {
+                "plane".to_string()
+            } else {
+                "cube".to_string()
+            },
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
-            state.entities.len() % 2 == 0,
+            typeOf,
         ))
     }
 

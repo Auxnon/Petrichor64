@@ -31,6 +31,7 @@ impl Ent {
         scale: f32,
         rotation: f32,
         tex_name: String,
+        model: String,
         uniform_offset: wgpu::DynamicOffset,
         billboarded: bool,
     ) -> Ent {
@@ -45,7 +46,7 @@ impl Ent {
             rotation_speed: rotation,
             color: wgpu::Color::GREEN,
             pos: offset,
-            model: crate::model::cube_model(), //0.5, 1., 32. / 512., 32. / 512.
+            model: crate::model::get_model(model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
             tex: crate::assets::get_tex(tex_name),

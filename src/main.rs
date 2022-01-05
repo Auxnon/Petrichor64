@@ -60,49 +60,16 @@ struct GlobalUniforms {
     view: [[f32; 4]; 4],
     persp: [[f32; 4]; 4],
     time: [f32; 4],
-    //num_lights: [u32; 4],
 }
-// struct Entity {
-//     mx_world: cgmath::Matrix4<f32>,
-//     rotation_speed: f32,
-//     color: wgpu::Color,
-//     vertex_buf: Rc<wgpu::Buffer>,
-//     index_buf: Rc<wgpu::Buffer>,
-//     index_format: wgpu::IndexFormat,
-//     index_count: usize,
-//     uniform_offset: wgpu::DynamicOffset,
-// }
 
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
 );
 
-// fn generate_matrix(aspect_ratio: f32) -> cgmath::Matrix4<f32> {
-//     let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
-//     let mx_view = cgmath::Matrix4::look_at_rh(
-//         cgmath::Point3::new(3.0f32, -10.0, 4.0),
-//         cgmath::Point3::new(0f32, 0.0, 0.0),
-//         cgmath::Vector3::unit_z(),
-//     );
-//     let mx_correction = OPENGL_TO_WGPU_MATRIX;
-//     mx_correction * mx_projection * mx_view
-// }
-
 fn create_depth_texture(
     config: &wgpu::SurfaceConfiguration,
     device: &wgpu::Device,
 ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
-    // let desc = wgpu::TextureDescriptor {
-    //     label: Some("depth"),
-    //     size,
-    //     mip_level_count: 1,
-    //     sample_count: 1,
-    //     dimension: wgpu::TextureDimension::D2,
-    //     format: Self::DEPTH_FORMAT,
-    //     usage: wgpu::TextureUsages::RENDER_ATTACHMENT // 3.
-    //         | wgpu::TextureUsages::TEXTURE_BINDING,
-    // };
-
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
             width: config.width,
@@ -175,6 +142,8 @@ impl State {
         crate::assets::load_tex("gameboy".to_string());
         crate::assets::load_tex("guy3".to_string());
         crate::assets::load_tex("chicken".to_string());
+        crate::assets::load_tex("grass_down".to_string());
+
         let (diffuse_texture_view, diffuse_sampler) = crate::assets::finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
@@ -187,82 +156,70 @@ impl State {
 
         surface.configure(&device, &config);
 
-        // struct CubeDesc {
-        //     offset: cgmath::Vector3<f32>,
-        //     angle: f32,
-        //     scale: f32,
-        //     rotation: f32,
-        // }
-        // let cube_descs = [
-        //     CubeDesc {
-        //         offset: cgmath::vec3(1.0, 0.0, 2.0),
-        //         angle: 45.,
-        //         scale: 1.,
-        //         rotation: 0.,
-        //     },
-        //     CubeDesc {
-        //         offset: cgmath::vec3(4.0, 2.0, 2.0),
-        //         angle: 0.0,
-        //         scale: 1.,
-        //         rotation: 0.,
-        //     },
-        //     CubeDesc {
-        //         offset: cgmath::vec3(6.0, 6.0, 2.0),
-        //         angle: 0.0,
-        //         scale: 1.,
-        //         rotation: 0.,
-        //     },
-        //     CubeDesc {
-        //         offset: cgmath::vec3(2.0, 2.0, 2.0),
-        //         angle: 0.0,
-        //         scale: 0.9,
-        //         rotation: 0.4,
-        //     },
-        // ];
-
         let entity_uniform_size = mem::size_of::<EntityUniforms>() as wgpu::BufferAddress;
 
         let uniform_alignment =
             device.limits().min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
         assert!(entity_uniform_size <= uniform_alignment);
-        let entities = vec![
+        let mut entities = vec![
             Ent::new(
-                cgmath::vec3(1.0, 0.0, 2.0),
+                cgmath::vec3(0.0, 4.0, 2.0),
                 45.,
                 1.,
                 0.,
                 "chicken".to_string(),
+                "cube".to_string(),
                 0,
                 true,
             ),
             Ent::new(
-                cgmath::vec3(4.0, 2.0, 2.0),
+                cgmath::vec3(4.0, 4.0, 2.0),
                 0.,
                 1.,
                 0.,
                 "chicken".to_string(),
+                "cube".to_string(),
                 uniform_alignment as u32,
                 false,
             ),
             Ent::new(
-                cgmath::vec3(6.0, 6.0, 2.0),
+                cgmath::vec3(6.0, -6.0, 2.0),
                 0.,
                 1.,
                 0.,
                 "gameboy".to_string(),
+                "cube".to_string(),
                 (uniform_alignment * 2) as u32,
                 false,
             ),
             Ent::new(
-                cgmath::vec3(2.0, 2.0, 2.0),
+                cgmath::vec3(-2.0, 4.0, 2.0),
                 0.,
-                0.9,
+                1.,
                 0.4,
                 "guy3".to_string(),
+                "cube".to_string(),
                 (uniform_alignment * 3) as u32,
                 true,
             ),
         ];
+
+        let mut offset = 4;
+        for i in -3..3 {
+            for j in -3..3 {
+                entities.push(Ent::new(
+                    cgmath::vec3(i as f32 * 8., j as f32 * 8., 1.0),
+                    0.,
+                    4.,
+                    0.,
+                    "grass_down".to_string(),
+                    "plane".to_string(),
+                    (uniform_alignment * offset) as u32,
+                    false,
+                ));
+                offset += 1;
+            }
+        }
         // let num_entities = 1 + entities.len() as wgpu::BufferAddress;
 
         let entity_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -274,9 +231,6 @@ impl State {
 
         let index_format = wgpu::IndexFormat::Uint16;
 
-        //let pbuf = Rc::new(plane_vertex_buf);
-        //let ibuf = Rc::new(plane_index_buf);
-
         let test_vec = cgmath::vec3(6.0, 2.0, 2.0);
         use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
         let test_trans = cgmath::Decomposed {
@@ -284,43 +238,6 @@ impl State {
             rot: Quaternion::from_axis_angle(test_vec.normalize(), Deg(0.)),
             scale: 1.,
         };
-        //let test_matrix=test_trans
-        // let mut entities = vec![{
-        //     use cgmath::SquareMatrix;
-        //     Ent {
-        //         matrix: cgmath::Matrix4::from(test_trans),
-        //         //cgmath::Matrix4::identity(),
-        //         rotation_speed: 0.0,
-        //         color: wgpu::Color::WHITE,
-        //         vertex_buf: Rc::clone(&cube_vertex_buf),
-        //         index_buf: Rc::clone(&cube_index_buf),
-        //         index_format,
-        //         pos: cgmath::Vector3::new(0., 0., 0.),
-        //         index_count: cube_index_data.len(),
-        //         uniform_offset: 0,
-        //     }
-        // }];
-        // for (i, cube) in cube_descs.iter().enumerate() {
-        //     use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
-
-        //     let transform = Decomposed {
-        //         disp: cube.offset,
-        //         rot: Quaternion::from_axis_angle(cube.offset.normalize(), Deg(cube.angle)),
-        //         scale: cube.scale,
-        //     };
-        //     println!("iter {}", i);
-        //     // entities.push(Ent {
-        //     //     matrix: cgmath::Matrix4::from(transform), //cgmath::Matrix4::from(transform),
-        //     //     rotation_speed: cube.rotation,
-        //     //     color: wgpu::Color::GREEN,
-        //     //     vertex_buf: Rc::clone(&cube_vertex_buf),
-        //     //     index_buf: Rc::clone(&cube_index_buf),
-        //     //     index_format,
-        //     //     pos: cube.offset.clone(),
-        //     //     index_count: cube_index_data.len(),
-        //     //     uniform_offset: ((i + 1) * uniform_alignment as usize) as _,
-        //     // });
-        // }
 
         let local_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -388,10 +305,8 @@ impl State {
             ],
         });
 
-        // Create other resources
         let (mx_view, mx_persp) =
             render::generate_matrix(size.width as f32 / size.height as f32, 0.);
-        //let mx_ref: &[f32; 16] = mx_total.as_ref();
 
         let render_uniforms = GlobalUniforms {
             view: *mx_view.as_ref(),
@@ -427,23 +342,6 @@ impl State {
         });
 
         let vertex_size = mem::size_of::<crate::model::Vertex>();
-        // let (vertex_data, index_data) = create_cube();
-
-        // let vertex_buf = Rc::new(
-        //     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //         label: Some("Vertex Buffer"),
-        //         contents: bytemuck::cast_slice(&vertex_data),
-        //         usage: wgpu::BufferUsages::VERTEX,
-        //     }),
-        // );
-
-        // let index_buf = Rc::new(
-        //     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        //         label: Some("Index Buffer"),
-        //         contents: bytemuck::cast_slice(&index_data),
-        //         usage: wgpu::BufferUsages::INDEX,
-        //     }),
-        // );
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

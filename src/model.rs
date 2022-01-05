@@ -7,6 +7,7 @@ use wgpu::{util::DeviceExt, Device};
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref cube: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
+    pub static ref plane: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
 }
 
 #[repr(C)]
@@ -73,10 +74,10 @@ fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
 
 fn create_plane(size: i8) -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
-        vertex([size, -size, 0], [0, 0, 1], [1., 0.]),
-        vertex([size, size, 0], [0, 0, 1], [1., 1.]),
-        vertex([-size, -size, 0], [0, 0, 1], [0., 0.]),
-        vertex([-size, size, 0], [0, 0, 1], [0., 1.]),
+        vertex([size, -size, 0], [0, 0, 1], [1., 1.]),
+        vertex([size, size, 0], [0, 0, 1], [1., 0.]),
+        vertex([-size, -size, 0], [0, 0, 1], [0., 1.]),
+        vertex([-size, size, 0], [0, 0, 1], [0., 0.]),
     ];
 
     let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
@@ -85,19 +86,31 @@ fn create_plane(size: i8) -> (Vec<Vertex>, Vec<u16>) {
 }
 
 pub fn init(device: &Device) {
-    let (plane_vertex_data, plane_index_data) = create_plane(7);
+    let (plane_vertex_data, plane_index_data) = create_plane(1);
     //device.create_buffer_init(desc)
-    let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Plane Vertex Buffer"),
-        contents: bytemuck::cast_slice(&plane_vertex_data),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
+    let plane_vertex_buf = Arc::new(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Plane Vertex Buffer"),
+            contents: bytemuck::cast_slice(&plane_vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+    );
 
-    let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Plane Index Buffer"),
-        contents: bytemuck::cast_slice(&plane_index_data),
-        usage: wgpu::BufferUsages::INDEX,
-    });
+    let plane_index_buf = Arc::new(
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Plane Index Buffer"),
+            contents: bytemuck::cast_slice(&plane_index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        }),
+    );
+
+    let planeModel = Model {
+        vertex_buf: plane_vertex_buf,
+        index_buf: plane_index_buf,
+        index_format: wgpu::IndexFormat::Uint16,
+        index_count: plane_index_data.len(),
+    };
+    plane.get_or_init(|| planeModel);
 
     let (cube_vertex_data, cube_index_data) = create_cube();
     let cube_vertex_buf = Arc::new(
@@ -123,8 +136,16 @@ pub fn init(device: &Device) {
     cube.get_or_init(|| cubeModel);
 }
 pub fn cube_model() -> Arc<OnceCell<Model>> {
-    // Model
     Arc::clone(&cube)
+}
+pub fn plane_model() -> Arc<OnceCell<Model>> {
+    Arc::clone(&plane)
+}
+pub fn get_model(str: String) -> Arc<OnceCell<Model>> {
+    if str == "plane" {
+        return plane_model();
+    }
+    cube_model()
 }
 pub struct Model {
     pub vertex_buf: Arc<wgpu::Buffer>,
