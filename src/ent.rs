@@ -21,6 +21,7 @@ pub struct Ent {
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: cgmath::Vector4<f32>,
 }
+
 impl Ent {
     pub fn new(
         offset: Vector3<f32>,
@@ -41,8 +42,10 @@ impl Ent {
             rotation_speed: rotation,
             color: wgpu::Color::GREEN,
             pos: offset,
-            model: crate::model::cube_model(),
-            tex: cgmath::Vector4::new(0., 0., 1., 1.), //crate::assets::get_tex(tex_name),
+            model: crate::model::cube_model(), //0.5, 1., 32. / 512., 32. / 512.
+            //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
+            // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
+            tex: crate::assets::get_tex(tex_name),
             uniform_offset,
         }
     }

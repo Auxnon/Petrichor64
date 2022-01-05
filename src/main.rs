@@ -37,8 +37,8 @@ pub struct State {
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
     stream: cpal::Stream,
-    // NEW!
-    camera_matrix: cgmath::Matrix4<f32>,
+    view_matrix: cgmath::Matrix4<f32>,
+    perspective_matrix: cgmath::Matrix4<f32>,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
@@ -57,7 +57,8 @@ pub struct State {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GlobalUniforms {
-    proj: [[f32; 4]; 4],
+    view: [[f32; 4]; 4],
+    persp: [[f32; 4]; 4],
     time: [f32; 4],
     //num_lights: [u32; 4],
 }
@@ -76,21 +77,32 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
 );
 
-fn generate_matrix(aspect_ratio: f32) -> cgmath::Matrix4<f32> {
-    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
-    let mx_view = cgmath::Matrix4::look_at_rh(
-        cgmath::Point3::new(3.0f32, -10.0, 4.0),
-        cgmath::Point3::new(0f32, 0.0, 0.0),
-        cgmath::Vector3::unit_z(),
-    );
-    let mx_correction = OPENGL_TO_WGPU_MATRIX;
-    mx_correction * mx_projection * mx_view
-}
+// fn generate_matrix(aspect_ratio: f32) -> cgmath::Matrix4<f32> {
+//     let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
+//     let mx_view = cgmath::Matrix4::look_at_rh(
+//         cgmath::Point3::new(3.0f32, -10.0, 4.0),
+//         cgmath::Point3::new(0f32, 0.0, 0.0),
+//         cgmath::Vector3::unit_z(),
+//     );
+//     let mx_correction = OPENGL_TO_WGPU_MATRIX;
+//     mx_correction * mx_projection * mx_view
+// }
 
 fn create_depth_texture(
     config: &wgpu::SurfaceConfiguration,
     device: &wgpu::Device,
-) -> wgpu::TextureView {
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+    // let desc = wgpu::TextureDescriptor {
+    //     label: Some("depth"),
+    //     size,
+    //     mip_level_count: 1,
+    //     sample_count: 1,
+    //     dimension: wgpu::TextureDimension::D2,
+    //     format: Self::DEPTH_FORMAT,
+    //     usage: wgpu::TextureUsages::RENDER_ATTACHMENT // 3.
+    //         | wgpu::TextureUsages::TEXTURE_BINDING,
+    // };
+
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
             width: config.width,
@@ -101,11 +113,26 @@ fn create_depth_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        label: None,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        label: Some("depth"),
     });
 
-    depth_texture.create_view(&wgpu::TextureViewDescriptor::default())
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        // 4.
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        compare: Some(wgpu::CompareFunction::LessEqual), // 5.
+        lod_min_clamp: -100.0,
+        lod_max_clamp: 100.0,
+        ..Default::default()
+    });
+
+    let view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (depth_texture, view, sampler)
 }
 
 lazy_static! {
@@ -146,7 +173,8 @@ impl State {
 
         crate::assets::init();
         crate::assets::load_tex("gameboy".to_string());
-        crate::assets::load_tex("fatty".to_string());
+        crate::assets::load_tex("guy3".to_string());
+        crate::assets::load_tex("chicken".to_string());
         let (diffuse_texture_view, diffuse_sampler) = crate::assets::finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
@@ -203,7 +231,7 @@ impl State {
                 45.,
                 1.,
                 0.,
-                "gameboy".to_string(),
+                "chicken".to_string(),
                 0,
             ),
             Ent::new(
@@ -211,7 +239,7 @@ impl State {
                 0.,
                 1.,
                 0.,
-                "fatty".to_string(),
+                "chicken".to_string(),
                 uniform_alignment as u32,
             ),
             Ent::new(
@@ -227,7 +255,7 @@ impl State {
                 0.,
                 0.9,
                 0.4,
-                "fatty".to_string(),
+                "guy3".to_string(),
                 (uniform_alignment * 3) as u32,
             ),
         ];
@@ -357,11 +385,13 @@ impl State {
         });
 
         // Create other resources
-        let mx_total = generate_matrix(size.width as f32 / size.height as f32);
+        let (mx_view, mx_persp) =
+            render::generate_matrix(size.width as f32 / size.height as f32, 0.);
         //let mx_ref: &[f32; 16] = mx_total.as_ref();
 
         let render_uniforms = GlobalUniforms {
-            proj: *mx_total.as_ref(),
+            view: *mx_view.as_ref(),
+            persp: *mx_persp.as_ref(),
             time: [0f32, 0f32, 0f32, 0f32],
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };
@@ -451,15 +481,23 @@ impl State {
                 //targets:&[wgpu::],
                 buffers: &[vb_desc], //&vertex_buffers, //,
             },
+
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
                 targets: &[wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),
+                    // blend: Some(wgpu::BlendState {
+                    //     color: wgpu::BlendComponent::OVER,
+                    //     alpha: wgpu::BlendComponent::OVER,
+                    // }),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    // blend: Some(wgpu::Blend {
+                    //     src_factor: wgpu::BlendFactor::One,
+                    //     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    //     operation: wgpu::BlendOperation::Add,
+                    // }),
+                    // write_mask: wgpu::ColorWrites::ALL,
                     write_mask: wgpu::ColorWrites::ALL,
                 }],
             }),
@@ -492,7 +530,7 @@ impl State {
         });
         //Arc::clone(&self)
 
-        let depth_texture = create_depth_texture(&config, &device);
+        let depth = create_depth_texture(&config, &device);
 
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
         let dupe_switch = Arc::clone(&switch_board);
@@ -502,10 +540,11 @@ impl State {
             queue,
             size,
             config,
-            depth_texture,
+            depth_texture: depth.1,
             uniform_buf,
             uniform_alignment,
-            camera_matrix: mx_total,
+            view_matrix: mx_view,
+            perspective_matrix: mx_persp,
             render_pipeline,
             switch_board,
             entities,
@@ -525,7 +564,8 @@ impl State {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture = create_depth_texture(&self.config, &self.device);
+            let d = create_depth_texture(&self.config, &self.device);
+            self.depth_texture = d.1;
         }
     }
 

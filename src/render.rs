@@ -5,14 +5,17 @@ use crate::{
     State,
 };
 
-fn generate_matrix(aspect_ratio: f32, rot: f32) -> cgmath::Matrix4<f32> {
+pub fn generate_matrix(
+    aspect_ratio: f32,
+    rot: f32,
+) -> (cgmath::Matrix4<f32>, cgmath::Matrix4<f32>) {
     let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1.0, 40.0);
     let mx_view = cgmath::Matrix4::look_at_rh(
         cgmath::Point3::new(20. * rot.cos(), 20. * rot.sin(), 16.0),
         cgmath::Point3::new(0f32, 0.0, 0.0),
         cgmath::Vector3::unit_z(),
     );
-    mx_projection * mx_view
+    (mx_view, mx_projection)
 }
 
 pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
@@ -33,12 +36,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             0.,
             1.,
             0.,
-            "gameboy".to_string(),
+            "guy3".to_string(),
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
         ))
     }
 
-    let mx_totals = generate_matrix(
+    let (mx_view, mx_persp) = generate_matrix(
         state.size.width as f32 / state.size.height as f32,
         state.value * 2. * std::f32::consts::PI,
     );
@@ -46,17 +49,22 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     // let rot = cgmath::Matrix4::from_angle_y(a);
     // //let mx_ref: = mx_total.as_ref();
     // let mx_totals = rot * state.camera_matrix;
-    let mx_ref: &[f32; 16] = mx_totals.as_ref();
-    state
-        .queue
-        .write_buffer(&state.uniform_buf, 0, bytemuck::cast_slice(mx_ref));
+    let mx_view_ref: &[f32; 16] = mx_view.as_ref();
+    let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
     let time_ref: [f32; 4] = ([state.value, 0., 0., 0.]);
+
+    state
+        .queue
+        .write_buffer(&state.uniform_buf, 0, bytemuck::cast_slice(mx_view_ref));
+    state
+        .queue
+        .write_buffer(&state.uniform_buf, 64, bytemuck::cast_slice(mx_persp_ref));
 
     //TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
     state
         .queue
-        .write_buffer(&state.uniform_buf, 64, bytemuck::cast_slice(&time_ref));
+        .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
         if entity.rotation_speed != 0.0 {
