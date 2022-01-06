@@ -15,7 +15,7 @@ pub struct EntityUniforms {
 
 pub struct Ent {
     pub matrix: cgmath::Matrix4<f32>,
-    pub rotation_speed: f32,
+    pub rotation: f32,
     pub color: wgpu::Color,
     pub pos: cgmath::Vector3<f32>,
     pub model: Arc<OnceCell<Model>>,
@@ -43,13 +43,13 @@ impl Ent {
 
         Ent {
             matrix: cgmath::Matrix4::from(transform),
-            rotation_speed: rotation,
+            rotation,
             color: wgpu::Color::GREEN,
             pos: offset,
             model: crate::model::get_model(model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
-            tex: crate::assets::get_tex(tex_name),
+            tex: crate::assets::get_tex(tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
             uniform_offset,
             effects: cgmath::Vector4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
         }

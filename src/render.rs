@@ -35,12 +35,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.entities.push(Ent::new(
             cgmath::vec3((2. * state.entities.len() as f32) - 100., 0., 2.),
             0.,
-            1.,
+            if typeOf { 1. } else { 1. / 2. },
             0.,
             if typeOf {
                 "chicken".to_string()
             } else {
-                "gameboy".to_string()
+                "lil-house".to_string()
             },
             if typeOf {
                 "plane".to_string()
@@ -78,10 +78,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
-        if entity.rotation_speed != 0.0 {
-            let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation_speed));
-            entity.rotation_speed += 0.1;
-            entity.rotation_speed %= std::f32::consts::PI * 2.;
+        if entity.rotation != 0.0 {
+            //cgmath::Matrix4::from_angle_x(theta)
+            let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+            //entity.rotation += 0.1;
+            //entity.rotation %= std::f32::consts::PI * 2.;
 
             //let pos = cgmath::Matrix4::from_translation(entity.pos);
             entity.matrix = entity.matrix * rotation;

@@ -21,6 +21,7 @@ mod assets;
 mod controls;
 mod ent;
 mod global;
+mod log;
 mod model;
 mod render;
 mod sound;
@@ -136,9 +137,10 @@ impl State {
             .await
             .unwrap();
 
+        //this order is important, since models can load their own textures we need assets to init first
+        crate::assets::init();
         model::init(&device);
 
-        crate::assets::init();
         crate::assets::load_tex("gameboy".to_string());
         crate::assets::load_tex("guy3".to_string());
         crate::assets::load_tex("chicken".to_string());
@@ -168,7 +170,7 @@ impl State {
                 1.,
                 0.,
                 "chicken".to_string(),
-                "cube".to_string(),
+                "plane".to_string(),
                 0,
                 true,
             ),
@@ -178,7 +180,7 @@ impl State {
                 1.,
                 0.,
                 "chicken".to_string(),
-                "cube".to_string(),
+                "plane".to_string(),
                 uniform_alignment as u32,
                 false,
             ),
@@ -188,7 +190,7 @@ impl State {
                 1.,
                 0.,
                 "gameboy".to_string(),
-                "cube".to_string(),
+                "plane".to_string(),
                 (uniform_alignment * 2) as u32,
                 false,
             ),
@@ -198,7 +200,7 @@ impl State {
                 1.,
                 0.4,
                 "guy3".to_string(),
-                "cube".to_string(),
+                "plane".to_string(),
                 (uniform_alignment * 3) as u32,
                 true,
             ),
@@ -367,7 +369,7 @@ impl State {
         //     ],
         // }];
 
-        let vertex_attr = wgpu::vertex_attr_array![0 => Sint8x4, 1 => Sint8x4, 2=> Float32x2];
+        let vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
         let vb_desc = wgpu::VertexBufferLayout {
             array_stride: vertex_size as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,

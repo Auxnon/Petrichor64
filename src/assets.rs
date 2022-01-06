@@ -38,33 +38,51 @@ pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
     let adim = atlas_dim.lock();
     let w = source.width();
     let h = source.height();
-    if (apos.x != 0 && apos.y != 0) {
-        //while (!found && apos.y < m_ref.height()) {
 
-        if (apos.x + w) <= adim.x {
-            found = true;
-            apos.x += w;
-        } else {
-            apos.x = 0;
-            apos.y += apos.w;
-            if (apos.x + w) < adim.x && (apos.y + h) < adim.y {
-                found = true;
-            }
-        }
-        //if()
-        //}
-    } else {
+    if apos.x + w <= adim.x && apos.y + h <= adim.y {
         found = true;
         apos.x += w;
+    } else {
+        if apos.x + w > adim.x {
+            apos.x = w;
+            apos.y += apos.w;
+            cpos.x = 0;
+            cpos.y = apos.y;
+            found = true;
+        } else if apos.y + h < adim.y {
+            panic!("Texture atlas couldnt find an empty spot?");
+        }
     }
+    // if (apos.x != 0 && apos.y != 0) {
+    //     //while (!found && apos.y < m_ref.height()) {
+
+    //     if (apos.x + w) <= adim.x {
+    //         found = true;
+    //         apos.x += w;
+    //     } else {
+    //         apos.x = 0;
+    //         apos.y += apos.w;
+    //         cpos.x = 0;
+    //         cpos.y = apos.y;
+    //         if (apos.x + w) < adim.x && (apos.y + h) < adim.y {
+    //             found = true;
+    //         }
+    //         apos.x += w;
+    //     }
+
+    //     //if()
+    //     //}
+    // } else {
+    //     found = true;
+    //     apos.x += w;
+    // }
     if found && apos.w < h {
         apos.w = h;
     }
 
     assert!(found, "Texture atlas couldnt find an empty spot?");
-    println!("found position {} {}", cpos.x, cpos.y);
+    log(format!("found position {} {}", cpos.x, cpos.y));
     stich(m_ref, source, cpos.x, cpos.y);
-    println!("applied texture to atlas");
     cgmath::Vector4::new(
         cpos.x as f32 / adim.x as f32,
         cpos.y as f32 / adim.y as f32,
@@ -78,16 +96,83 @@ fn _load_img(str: String) -> DynamicImage {
     //Path::new(".").join("entities");
     let img = image::open(text).unwrap();
     // The dimensions method returns the images width and height.
-    println!("dimensions height {:?}", img.height());
+    //println!("dimensions height {:?}", img.height());
 
     // The color method returns the image's `ColorType`.
-    println!("{:?}", img.color());
+    //println!("{:?}", img.color());
     img
 }
 pub fn load_tex(str: String) {
-    println!("apply texture {}", str);
+    log(format!("apply texture {}", str));
     let img = _load_img(str.clone());
     let pos = locate(img.into_rgba8());
+    dictionary.lock().insert(str, pos);
+}
+
+pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
+    let pvec = im
+        .iter()
+        .flat_map(|d| d.pixels.as_slice().to_owned())
+        .collect::<Vec<_>>();
+
+    let mut pos = cgmath::Vector4::new(0., 0., 0., 0.);
+    let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
+        Some(o) => o,
+        None => {
+            error("Failed to load texture from mesh".to_string());
+            dictionary.lock().insert(str, pos);
+            return;
+        }
+    };
+
+    // let pp = image::ImageBuffer::from_raw(128, 128, pvec.as_slice());
+
+    //let pvec = im.iter().flat_map(|d| d.into()).collect::<Vec<_>>();
+
+    // let pixels = pvec.as_slice();
+    // println!("pixels length {}", (pixels.len() as f32).sqrt());
+
+    // for i in pixels {
+    //     print!("{},", i);
+    // }
+
+    //let v=im.as_chunks().;
+
+    //let o = im.into_iter().zip(); //.map(|d| d.pixels);
+
+    //let k = o.into_iter().map(|d| d.to_owned().as_slice()).collect();
+    // let u = im
+    //     .iter()
+    //     .flat_map(|d| d.pixels)
+    //     .collect::<[u8]>()
+    //     .try_into()
+    //     .unwrap();
+    //let u = im.iter().map(|d| d.pixels.as_slice()).collect::<[u8]>();
+    //let u = im.iter().map(|d| d.pixels.as_slice()).;
+    image::save_buffer_with_format(
+        "assets/pic.png",
+        &image_buffer,
+        64,
+        64,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    );
+
+    //image::guess_format(buffer)
+
+    /*
+    match image::load_from_memory(&po) {
+        Ok(i) => {
+            println!("image is {} {}", i.width(), i.height());
+            pos = locate(i.into_rgba8());
+        }
+        Err(er) => {
+            error(format!("Cannot load in texture for mesh {} :: {}", str, er));
+        }
+    }*/
+
+    pos = locate(image_buffer);
+
     dictionary.lock().insert(str, pos);
 }
 
@@ -99,11 +184,10 @@ pub fn get_tex(str: String) -> cgmath::Vector4<f32> {
 }
 
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
-    println!("go");
     image::imageops::overlay(master_img, &source, x, y);
 }
 pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (TextureView, Sampler) {
-    println!("make master texture");
+    log("make master texture".to_string());
     let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
@@ -157,4 +241,11 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (Textu
         ..Default::default()
     });
     (diffuse_texture_view, diffuse_sampler)
+}
+
+fn log(str: String) {
+    crate::log::log(format!("assets::{}", str));
+}
+fn error(str: String) {
+    crate::log::log(format!("❗Error❗assets::{}", str));
 }
