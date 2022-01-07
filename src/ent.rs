@@ -2,7 +2,7 @@ use crate::model::Model;
 use bytemuck::{Pod, Zeroable};
 use cgmath::{Decomposed, Deg, InnerSpace, Matrix, Quaternion, Rotation3, SquareMatrix, Vector3};
 use once_cell::sync::OnceCell;
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -22,6 +22,7 @@ pub struct Ent {
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: cgmath::Vector4<f32>,
     pub effects: cgmath::Vector4<u32>,
+    pub brain: String,
 }
 
 impl Ent {
@@ -52,6 +53,7 @@ impl Ent {
             tex: crate::assets::get_tex(tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
             uniform_offset,
             effects: cgmath::Vector4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
+            brain: "".to_string(),
         }
     }
 }

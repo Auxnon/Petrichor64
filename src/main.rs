@@ -20,6 +20,7 @@ use crate::ent::EntityUniforms;
 mod assets;
 mod controls;
 mod ent;
+mod ent_manager;
 mod global;
 mod log;
 mod model;
@@ -165,7 +166,7 @@ impl State {
         assert!(entity_uniform_size <= uniform_alignment);
         let mut entities = vec![
             Ent::new(
-                cgmath::vec3(0.0, 4.0, 2.0),
+                cgmath::vec3(0.0, 4.0, 0.0),
                 45.,
                 1.,
                 0.,
@@ -175,7 +176,7 @@ impl State {
                 true,
             ),
             Ent::new(
-                cgmath::vec3(4.0, 4.0, 2.0),
+                cgmath::vec3(4.0, 4.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -185,7 +186,7 @@ impl State {
                 false,
             ),
             Ent::new(
-                cgmath::vec3(6.0, -6.0, 2.0),
+                cgmath::vec3(6.0, -6.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -195,7 +196,7 @@ impl State {
                 false,
             ),
             Ent::new(
-                cgmath::vec3(-2.0, 4.0, 2.0),
+                cgmath::vec3(-2.0, 4.0, 0.0),
                 0.,
                 1.,
                 0.4,
@@ -210,7 +211,7 @@ impl State {
         for i in -3..3 {
             for j in -3..3 {
                 entities.push(Ent::new(
-                    cgmath::vec3(i as f32 * 8., j as f32 * 8., 1.0),
+                    cgmath::vec3(i as f32 * 8., j as f32 * 8., -0.0001),
                     0.,
                     4.,
                     0.,
@@ -233,13 +234,13 @@ impl State {
 
         let index_format = wgpu::IndexFormat::Uint16;
 
-        let test_vec = cgmath::vec3(6.0, 2.0, 2.0);
-        use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
-        let test_trans = cgmath::Decomposed {
-            disp: test_vec,
-            rot: Quaternion::from_axis_angle(test_vec.normalize(), Deg(0.)),
-            scale: 1.,
-        };
+        // let test_vec = cgmath::vec3(6.0, 2.0, 2.0);
+        // use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
+        // let test_trans = cgmath::Decomposed {
+        //     disp: test_vec,
+        //     rot: Quaternion::from_axis_angle(test_vec.normalize(), Deg(0.)),
+        //     scale: 1.,
+        // };
 
         let local_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -489,6 +490,8 @@ fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
+    window.set_title("Petrichor");
+    // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
     let mut state = pollster::block_on(State::new(&window));
 

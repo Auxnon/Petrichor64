@@ -3,7 +3,7 @@ use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 use wgpu::{util::DeviceExt, Device};
 
 lazy_static! {
@@ -32,9 +32,9 @@ fn vertex(pos: [i16; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
 fn vertexx(pos: [f32; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
     Vertex {
         _pos: [
-            (pos[0] * 16.) as i16,
-            (pos[1] * 16.) as i16,
-            (pos[2] * 16.) as i16,
+            ((pos[0]) * 16.) as i16,
+            ((pos[1]) * 16.) as i16,
+            ((pos[2]) * 16.) as i16,
             1,
         ],
         _normal: [nor[0], nor[1], nor[2], 0],
@@ -90,10 +90,10 @@ fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
 
 fn create_plane(size: i16) -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
-        vertex([size, -size, 0], [0, 0, 1], [1., 1.]),
-        vertex([size, size, 0], [0, 0, 1], [1., 0.]),
-        vertex([-size, -size, 0], [0, 0, 1], [0., 1.]),
-        vertex([-size, size, 0], [0, 0, 1], [0., 0.]),
+        vertex([size, 0, 0], [0, 0, 1], [1., 1.]),
+        vertex([size, size * 2, 0], [0, 0, 1], [1., 0.]),
+        vertex([-size, 0, 0], [0, 0, 1], [0., 1.]),
+        vertex([-size, size * 2, 0], [0, 0, 1], [0., 0.]),
     ];
 
     let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
@@ -143,7 +143,7 @@ pub fn init(device: &Device) {
     };
     cube.get_or_init(|| cubeModel);
 
-    load("lil-house", device);
+    load("package", device);
 }
 pub fn cube_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&cube)
@@ -171,8 +171,8 @@ pub fn load(str: &str, device: &Device) {
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
 
-    crate::assets::load_tex_from_img(str.to_string(), &image_data);
-    crate::assets::load_tex("gameboy".to_string());
+    crate::assets::load_tex_from_img("custom".to_string(), &image_data);
+
     //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
     //tex.set_filter(FilterMode::Nearest);
     for mesh in nodes.meshes() {
@@ -226,12 +226,13 @@ pub fn load(str: &str, device: &Device) {
                     str.to_string(),
                     vertices.len()
                 );
+                println!("ind #{} verts #{}", indices.len(), vertices.len());
 
                 let customModel = Model {
                     vertex_buf: mesh_vertex_buf,
                     index_buf: mesh_index_buf,
                     index_format: wgpu::IndexFormat::Uint16,
-                    index_count: vertices.len(),
+                    index_count: indices.len(),
                 };
                 custom.get_or_init(|| customModel);
 
