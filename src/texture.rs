@@ -244,8 +244,8 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (Textu
 }
 
 fn log(str: String) {
-    crate::log::log(format!("assets::{}", str));
+    crate::log::log(format!("🎨texture::{}", str));
 }
 fn error(str: String) {
-    crate::log::log(format!("❗Error❗assets::{}", str));
+    crate::log::log(format!("‼︎ERROR::🎨texture::{}", str));
 }

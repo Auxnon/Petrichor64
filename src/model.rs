@@ -3,7 +3,7 @@ use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use wgpu::{util::DeviceExt, Device};
 
 lazy_static! {
@@ -142,8 +142,6 @@ pub fn init(device: &Device) {
         index_count: cube_index_data.len(),
     };
     cube.get_or_init(|| cubeModel);
-
-    load("package", device);
 }
 pub fn cube_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&cube)
@@ -171,7 +169,7 @@ pub fn load(str: &str, device: &Device) {
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
 
-    crate::assets::load_tex_from_img("custom".to_string(), &image_data);
+    crate::texture::load_tex_from_img("custom".to_string(), &image_data);
 
     //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
     //tex.set_filter(FilterMode::Nearest);
@@ -248,4 +246,8 @@ pub fn load(str: &str, device: &Device) {
         None => {}
     }
     //return meshes;
+}
+
+fn log(str: String) {
+    crate::log::log(format!("model::{}", str));
 }

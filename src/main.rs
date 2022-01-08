@@ -17,7 +17,7 @@ use winit::{
 
 use crate::ent::EntityUniforms;
 
-mod assets;
+mod asset;
 mod controls;
 mod ent;
 mod ent_manager;
@@ -27,6 +27,7 @@ mod model;
 mod render;
 mod sound;
 mod switch_board;
+mod texture;
 
 const MAX_ENTS: u64 = 100;
 
@@ -139,15 +140,16 @@ impl State {
             .unwrap();
 
         //this order is important, since models can load their own textures we need assets to init first
-        crate::assets::init();
+        crate::texture::init();
         model::init(&device);
+        crate::asset::init(&device);
 
-        crate::assets::load_tex("gameboy".to_string());
-        crate::assets::load_tex("guy3".to_string());
-        crate::assets::load_tex("chicken".to_string());
-        crate::assets::load_tex("grass_down".to_string());
+        // crate::texture::load_tex("gameboy".to_string());
+        // crate::texture::load_tex("guy3".to_string());
+        // crate::texture::load_tex("chicken".to_string());
+        // crate::texture::load_tex("grass_down".to_string());
 
-        let (diffuse_texture_view, diffuse_sampler) = crate::assets::finalize(&device, &queue);
+        let (diffuse_texture_view, diffuse_sampler) = crate::texture::finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
