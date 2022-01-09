@@ -250,6 +250,7 @@ pub fn load(str: &String, device: &Device) {
                     once.get_or_init(|| model);
                     let i = Arc::new(once);
                     dictionary.lock().insert(name.to_string(), i);
+                    log(format!("populated mesh {}", name));
                     //custom.get_or_init(|| customModel);
                 }
 
@@ -268,5 +269,5 @@ pub fn load(str: &String, device: &Device) {
 }
 
 fn log(str: String) {
-    crate::log::log(format!("model::{}", str));
+    crate::log::log(format!("🎦model::{}", str));
 }

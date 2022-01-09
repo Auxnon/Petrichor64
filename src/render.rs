@@ -44,12 +44,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             if typeOf {
                 "chicken".to_string()
             } else {
-                "custom".to_string()
+                "package".to_string()
             },
             if typeOf {
                 "plane".to_string()
             } else {
-                "cube".to_string()
+                "package".to_string()
             },
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
             typeOf,
