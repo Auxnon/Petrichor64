@@ -47,7 +47,7 @@ impl Ent {
             rotation,
             color: wgpu::Color::GREEN,
             pos: offset,
-            model: crate::model::get_model(model), //0.5, 1., 32. / 512., 32. / 512.
+            model: crate::model::get_model(&model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
             tex: crate::texture::get_tex(tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),

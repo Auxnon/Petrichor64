@@ -9,8 +9,6 @@ pub fn init(device: &Device) {
     let input_path = Path::new(".").join("assets");
     log(format!("dir is {}", input_path.display()));
 
-    crate::model::load("package", device);
-
     let dir: Vec<PathBuf> = read_dir(&input_path)
         .expect("Assets directory failed to load")
         .filter(Result::is_ok)

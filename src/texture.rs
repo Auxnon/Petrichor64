@@ -92,8 +92,9 @@ pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
 }
 
 fn _load_img(str: String) -> DynamicImage {
-    let text = format!("assets/{}.png", str);
+    let text = format!("assets/{}", str);
     //Path::new(".").join("entities");
+    log(text.clone());
     let img = image::open(text).unwrap();
     // The dimensions method returns the images width and height.
     //println!("dimensions height {:?}", img.height());
@@ -106,7 +107,15 @@ pub fn load_tex(str: String) {
     log(format!("apply texture {}", str));
     let img = _load_img(str.clone());
     let pos = locate(img.into_rgba8());
-    dictionary.lock().insert(str, pos);
+
+    dictionary.lock().insert(get_name(str), pos);
+}
+fn get_name(str: String) -> String {
+    let bits = str.split(".").collect::<Vec<_>>();
+    match bits.get(0) {
+        Some(o) => o.to_string(),
+        None => str,
+    }
 }
 
 pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
@@ -173,7 +182,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
 
     pos = locate(image_buffer);
 
-    dictionary.lock().insert(str, pos);
+    dictionary.lock().insert(get_name(str), pos);
 }
 
 pub fn get_tex(str: String) -> cgmath::Vector4<f32> {

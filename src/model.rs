@@ -3,7 +3,8 @@ use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use std::{path::Path, sync::Arc};
+use parking_lot::Mutex;
+use std::{collections::HashMap, path::Path, sync::Arc};
 use wgpu::{util::DeviceExt, Device};
 
 lazy_static! {
@@ -11,6 +12,7 @@ lazy_static! {
     pub static ref cube: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
     pub static ref plane: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
     pub static ref custom: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
+    pub static ref dictionary:Mutex<HashMap<String,Arc<OnceCell<Model>> >> =Mutex::new(HashMap::new());
 }
 
 #[repr(C)]
@@ -150,11 +152,16 @@ pub fn plane_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&plane)
 }
 
-pub fn get_model(str: String) -> Arc<OnceCell<Model>> {
+pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
     if str == "plane" {
         return plane_model();
     }
-    Arc::clone(&custom)
+
+    match dictionary.lock().get(str) {
+        Some(model) => Arc::clone(model),
+        None => cube_model(),
+    }
+    //Arc::clone(&custom)
 }
 pub struct Model {
     pub vertex_buf: wgpu::Buffer,
@@ -163,16 +170,20 @@ pub struct Model {
     pub index_count: usize,
 }
 
-pub fn load(str: &str, device: &Device) {
-    let target = format!("assets/{}.glb", str);
+pub fn load(str: &String, device: &Device) {
+    let bits = str.split(".").collect::<Vec<_>>();
+    let name = bits.get(0).unwrap();
+    let target = format!("assets/{}", str);
+    log(target.to_string());
     let (nodes, buffers, image_data) = gltf::import(target).unwrap();
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
 
-    crate::texture::load_tex_from_img("custom".to_string(), &image_data);
+    crate::texture::load_tex_from_img(str.to_string(), &image_data);
 
     //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
     //tex.set_filter(FilterMode::Nearest);
+    let mut first_instance = true;
     for mesh in nodes.meshes() {
         for primitive in mesh.primitives() {
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
@@ -226,13 +237,21 @@ pub fn load(str: &str, device: &Device) {
                 );
                 println!("ind #{} verts #{}", indices.len(), vertices.len());
 
-                let customModel = Model {
+                let model = Model {
                     vertex_buf: mesh_vertex_buf,
                     index_buf: mesh_index_buf,
                     index_format: wgpu::IndexFormat::Uint16,
                     index_count: indices.len(),
                 };
-                custom.get_or_init(|| customModel);
+
+                if first_instance {
+                    first_instance = false;
+                    let once = OnceCell::new();
+                    once.get_or_init(|| model);
+                    let i = Arc::new(once);
+                    dictionary.lock().insert(name.to_string(), i);
+                    //custom.get_or_init(|| customModel);
+                }
 
                 //rand::srand(6);
 
