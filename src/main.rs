@@ -1,11 +1,13 @@
 use bytemuck::{Pod, Zeroable};
+use lua_define::LuaCore;
+use once_cell::sync::OnceCell;
 use std::{mem, rc::Rc, sync::Arc};
 
 use cgmath::{Matrix, SquareMatrix};
 use ent::Ent;
 use global::Global;
 use lazy_static::lazy_static;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, BufferUsages};
@@ -23,6 +25,8 @@ mod ent;
 mod ent_manager;
 mod global;
 mod log;
+mod lua_define;
+mod lua_ent;
 mod model;
 mod render;
 mod sound;
@@ -108,10 +112,11 @@ fn create_depth_texture(
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
+    pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
 }
 
 impl State {
-    async fn new(window: &Window) -> Self {
+    async fn new(window: &Window) -> State {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -142,6 +147,9 @@ impl State {
         //this order is important, since models can load their own textures we need assets to init first
         crate::texture::init();
         model::init(&device);
+        let lua_guard = lua_master.lock();
+        let lua_core = lua_guard.get_or_init(|| lua_define::LuaCore::new());
+        parking_lot::MutexGuard::unlock_fair(lua_guard);
         crate::asset::init(&device);
 
         // crate::texture::load_tex("gameboy".to_string());
@@ -176,6 +184,7 @@ impl State {
                 "plane".to_string(),
                 0,
                 true,
+                Some("walker".to_string()),
             ),
             Ent::new(
                 cgmath::vec3(4.0, 4.0, 0.0),
@@ -186,6 +195,7 @@ impl State {
                 "plane".to_string(),
                 uniform_alignment as u32,
                 false,
+                Some("walker".to_string()),
             ),
             Ent::new(
                 cgmath::vec3(6.0, -6.0, 0.0),
@@ -196,6 +206,7 @@ impl State {
                 "plane".to_string(),
                 (uniform_alignment * 2) as u32,
                 false,
+                Some("walker".to_string()),
             ),
             Ent::new(
                 cgmath::vec3(-2.0, 4.0, 0.0),
@@ -206,6 +217,7 @@ impl State {
                 "plane".to_string(),
                 (uniform_alignment * 3) as u32,
                 true,
+                Some("walker".to_string()),
             ),
         ];
 
@@ -221,6 +233,7 @@ impl State {
                     "plane".to_string(),
                     (uniform_alignment * offset) as u32,
                     false,
+                    None,
                 ));
                 offset += 1;
             }

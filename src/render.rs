@@ -1,8 +1,8 @@
 use std::{f32::consts::PI, iter};
 
 use crate::{
-    ent::{Ent, EntityUniforms},
-    State,
+    ent::{self, Ent, EntityUniforms},
+    lua_define, State,
 };
 
 pub fn generate_matrix(
@@ -53,6 +53,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             },
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
             typeOf,
+            Some("walker".to_string()),
         ))
     }
 
@@ -82,15 +83,24 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
-        if entity.rotation != 0.0 {
-            //cgmath::Matrix4::from_angle_x(theta)
-            let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
-            //entity.rotation += 0.1;
-            //entity.rotation %= std::f32::consts::PI * 2.;
+        entity.run();
 
-            //let pos = cgmath::Matrix4::from_translation(entity.pos);
-            entity.matrix = entity.matrix * rotation;
-        }
+        //cgmath::Matrix4::from_angle_x(theta)
+        let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+        //entity.rotation += 0.1;
+        //entity.rotation %= std::f32::consts::PI * 2.;
+        //entity.pos.x += 1.;
+
+        let transform = cgmath::Decomposed {
+            disp: entity.pos,
+            rot: cgmath::Quaternion::from_sv(entity.rotation, cgmath::Vector3::new(0., 0., 1.)),
+            //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+            scale: entity.scale,
+        };
+
+        // let pos = cgmath::Matrix4::from_translation(entity.pos);
+        entity.matrix = cgmath::Matrix4::from(transform);
+
         let data = EntityUniforms {
             model: entity.matrix.into(),
             color: [
