@@ -85,20 +85,29 @@ pub fn init(device: &Device) {
 }
 
 pub fn get_file_name(str: String) -> String {
-    let bits = str.split(".").collect::<Vec<_>>();
-    match bits.get(0) {
-        Some(o) => o.to_string(),
+    let path = Path::new(&str);
+
+    // let bits = str.split(".").collect::<Vec<_>>();
+    // match bits.get(0) {
+    //     Some(o) => o.to_string(),
+    //     None => str,
+    // }
+    match path.file_stem() {
+        Some(o) => match o.to_os_string().into_string() {
+            Ok(n) => n,
+            Err(e) => str,
+        },
         None => str,
     }
 }
-pub fn get_file_file_name(str: String) -> String {
-    let s = get_file_name(str);
-    let bits = s.split("/").collect::<Vec<_>>();
-    match bits.get(1) {
-        Some(o) => o.to_string(),
-        None => s,
-    }
-}
+// pub fn get_file_file_name(str: String) -> String {
+//     let s = get_file_name(str);
+//     let bits = s.split("/").collect::<Vec<_>>();
+//     match bits.get(1) {
+//         Some(o) => o.to_string(),
+//         None => s,
+//     }
+// }
 
 fn log(str: String) {
     crate::log::log(format!("📦assets::{}", str));

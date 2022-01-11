@@ -148,7 +148,7 @@ impl LuaCore {
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
         guard.send((func, path, ent, tx));
-        MutexGuard::unlock_fair(guard);
+        //MutexGuard::unlock_fair(guard);
         if bool {
             match rx.recv() {
                 Ok(lua_out) => {
@@ -245,7 +245,7 @@ fn lua_load(lua: &Lua, input_path: &String) {
     //     .join(str.to_owned())
     //     .with_extension("lua");
     log(format!("script in as {}", input_path));
-    let name = crate::asset::get_file_file_name(input_path.to_owned());
+    let name = crate::asset::get_file_name(input_path.to_owned());
     let st = fs::read_to_string(input_path).unwrap_or_default();
     log(format!("got script {} :\n{}", input_path, st));
     let chunk = lua.load(&st);
