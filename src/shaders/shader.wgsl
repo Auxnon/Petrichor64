@@ -101,6 +101,15 @@ fn vs_main(
     return out;
 }
 
+fn gui_vs_main(
+    [[location(0)]] position: vec4<i32>,
+    [[location(1)]] normal: vec4<i32>,
+    [[location(2)]] tex_coords: vec2<f32>,
+) -> VertexOutput {
+    var out: VertexOutput;
+    return out;
+}
+
 struct FragmentOutput {
     [[location(0)]] f_color: vec4<f32>;
 };
@@ -120,6 +129,15 @@ fn main_2(in:VertexOutput) {
 fn fs_main( in: VertexOutput) -> FragmentOutput {
     main_2(in); 
     let e3: vec4<f32> = f_color;
+    if (e3.a < 0.5) {
+        discard;
+    }
+    return FragmentOutput(e3);
+}
+
+fn gui_fs_main( in: VertexOutput) -> FragmentOutput {
+   
+    let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
     if (e3.a < 0.5) {
         discard;
     }

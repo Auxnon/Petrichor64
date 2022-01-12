@@ -18,12 +18,14 @@ use winit::{
 };
 
 use crate::ent::EntityUniforms;
+use crate::gui::Gui;
 
 mod asset;
 mod controls;
 mod ent;
 mod ent_manager;
 mod global;
+mod gui;
 mod log;
 mod lua_define;
 mod lua_ent;
@@ -57,6 +59,8 @@ pub struct State {
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     bind_group: BindGroup,
+    gui: Gui,
+
     value: f32,
     value2: f32,
 }
@@ -454,6 +458,118 @@ impl State {
 
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
         let dupe_switch = Arc::clone(&switch_board);
+
+        //Gui
+
+        // let gui_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //     label: None,
+        //     entries: &[
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 0,
+        //             visibility: wgpu::ShaderStages::VERTEX,
+        //             ty: wgpu::BindingType::Buffer {
+        //                 ty: wgpu::BufferBindingType::Uniform,
+        //                 has_dynamic_offset: false,
+        //                 min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+        //             },
+        //             count: None,
+        //         },
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 1,
+        //             visibility: wgpu::ShaderStages::FRAGMENT,
+        //             ty: wgpu::BindingType::Texture {
+        //                 multisampled: false,
+        //                 sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+        //                 view_dimension: wgpu::TextureViewDimension::D2,
+        //             },
+        //             count: None,
+        //         },
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 2,
+        //             visibility: wgpu::ShaderStages::FRAGMENT,
+        //             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        //             count: None,
+        //         },
+        //     ],
+        // });
+
+        let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let gui_vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
+        let gui_desc = wgpu::VertexBufferLayout {
+            array_stride: vertex_size as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &gui_vertex_attr,
+        };
+
+        let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Gui Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "gui_vs_main",
+                //targets:&[wgpu::],
+                buffers: &[gui_desc], //&vertex_buffers, //,
+            },
+
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "gui_fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    // blend: Some(wgpu::BlendState {
+                    //     color: wgpu::BlendComponent::OVER,
+                    //     alpha: wgpu::BlendComponent::OVER,
+                    // }),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    // blend: Some(wgpu::Blend {
+                    //     src_factor: wgpu::BlendFactor::One,
+                    //     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    //     operation: wgpu::BlendOperation::Add,
+                    // }),
+                    // write_mask: wgpu::ColorWrites::ALL,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLAMPING
+                //clamp_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+                unclipped_depth: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
         Self {
             surface,
             device,
@@ -468,7 +584,7 @@ impl State {
             render_pipeline,
             switch_board,
             entities,
-
+            gui: Gui::new(gui_pipeline, gui_group),
             bind_group,
             entity_bind_group,
             entity_uniform_buf,

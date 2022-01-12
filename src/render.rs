@@ -131,7 +131,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             label: Some("Render Encoder"),
         });
 
-    encoder.push_debug_group("Lil Thing");
+    encoder.push_debug_group("World Render");
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -162,18 +162,27 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             }),
         });
 
-        render_pass.set_pipeline(&state.render_pipeline);
-        render_pass.set_bind_group(0, &state.bind_group, &[]);
-        //entity.uniform_offset
-        // render_pass.set_index_buffer(state.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-        // render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
+        //world space
+        {
+            render_pass.set_pipeline(&state.render_pipeline);
+            render_pass.set_bind_group(0, &state.bind_group, &[]);
+            //entity.uniform_offset
+            // render_pass.set_index_buffer(state.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+            // render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
 
-        for entity in &state.entities {
-            let model = entity.model.get().unwrap();
-            render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
-            render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-            render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-            render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            for entity in &state.entities {
+                let model = entity.model.get().unwrap();
+                render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
+                render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+                render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            }
+        }
+
+        //gui space
+        {
+            render_pass.set_pipeline(&state.gui.gui_pipeline);
+            render_pass.set_bind_group(0, &state.gui.gui_group, &[]);
         }
 
         //render_pass.draw(0..3, 0..1);
