@@ -68,7 +68,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
-    let time_ref: [f32; 4] = ([state.value, 0., 0., 0.]);
+    let time_ref: [f32; 4] = ([
+        state.value,
+        0.,
+        state.size.width as f32,
+        state.size.height as f32,
+    ]);
 
     state
         .queue
@@ -166,9 +171,6 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         {
             render_pass.set_pipeline(&state.render_pipeline);
             render_pass.set_bind_group(0, &state.bind_group, &[]);
-            //entity.uniform_offset
-            // render_pass.set_index_buffer(state.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-            // render_pass.set_vertex_buffer(0, state.vertex_buf.slice(..));
 
             for entity in &state.entities {
                 let model = entity.model.get().unwrap();
@@ -181,8 +183,16 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         //gui space
         {
+            // let res = state.gui.model.get();
+            // if res.is_some() {
+            //     let model = res.unwrap();
             render_pass.set_pipeline(&state.gui.gui_pipeline);
             render_pass.set_bind_group(0, &state.gui.gui_group, &[]);
+            render_pass.draw(0..3, 0..1);
+            //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+            //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+            //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            //}
         }
 
         //render_pass.draw(0..3, 0..1);

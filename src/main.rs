@@ -526,7 +526,7 @@ impl State {
                 module: &shader,
                 entry_point: "gui_vs_main",
                 //targets:&[wgpu::],
-                buffers: &[gui_desc], //&vertex_buffers, //,
+                buffers: &[], //&vertex_buffers, //,
             },
 
             fragment: Some(wgpu::FragmentState {
@@ -551,7 +551,7 @@ impl State {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
+                front_face: wgpu::FrontFace::Cw,
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
@@ -561,7 +561,13 @@ impl State {
                 conservative: false,
                 unclipped_depth: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less, // 1.
+                stencil: wgpu::StencilState::default(),     // 2.
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,

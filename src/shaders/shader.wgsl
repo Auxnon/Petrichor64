@@ -5,16 +5,8 @@ struct VertexOutput {
     [[location(2)]] tex_coords: vec2<f32>;
     [[location(3)]] vpos:vec4<f32>;
 };
-// var<private> gl_Position: vec4<f32>;
-// var<private> gl_VertexIndex: u32;
-//var<f32> vpos: vec4<f32>;
 
-// struct Entity {
-//     world: mat4x4<f32>;
-//     color: vec4<f32>;
-// };
 
-//[[block]]
 struct Globals {
     view_mat: mat4x4<f32>;
     proj_mat: mat4x4<f32>;
@@ -32,7 +24,6 @@ var t_diffuse: texture_2d<f32>;
 [[group(0), binding(2)]]
 var s_diffuse: sampler;
 
-//[[block]]
 struct Entity {
     matrix: mat4x4<f32>;
     color: vec4<f32>;
@@ -57,29 +48,7 @@ fn vs_main(
     out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
     let v=globals.view_mat;
-//    let ver:mat4x4<f32> =  mat4x4<f32>(
-//        vec4<f32>(1.0, 0.,0.,w.x.w),
-//     vec4<f32>(0.,1.,0.,w.y.w),  
-//     v.z.xyzw,//vec4<f32>(0.,0.,1.,w.z.w),  
-//    v.w.xyzw);
 
-
-//     modelView[0][0] = 1.0; 
-//   modelView[0][1] = 0.0; 
-//   modelView[0][2] = 0.0; 
-
-//   if (spherical == 1)
-//   {
-//     // Second colunm.
-//     modelView[1][0] = 0.0; 
-//     modelView[1][1] = 1.0; 
-//     modelView[1][2] = 0.0; 
-//   }
-
-//   // Thrid colunm.
-//   modelView[2][0] = 0.0; 
-//   modelView[2][1] = 0.0; 
-//   modelView[2][2] = 1.0; 
 
     //globals.view_proj
     let pos=vec4<f32>(position);
@@ -101,18 +70,31 @@ fn vs_main(
     return out;
 }
 
-fn gui_vs_main(
-    [[location(0)]] position: vec4<i32>,
-    [[location(1)]] normal: vec4<i32>,
-    [[location(2)]] tex_coords: vec2<f32>,
-) -> VertexOutput {
-    var out: VertexOutput;
+struct GuiFrag {
+     [[builtin(position)]] pos: vec4<f32>; 
+    [[location(1)]] screen: vec2<f32>;
+};
+
+[[stage(vertex)]]
+fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
+    // [[location(0)]] position: vec4<i32>,
+    // [[location(1)]] normal: vec4<i32>,
+    //) -> VertexOutput {
+    
+
+    var out: GuiFrag;
+    //return out;
+    let x = f32(i32(in_vertex_index) - 1);
+    let y = f32(i32(in_vertex_index & 1u) * 2 - 1);
+    out.pos=vec4<f32>(x, y, 0.0, 1.0);
+    out.screen=vec2<f32>(globals.time.z,globals.time.w);
     return out;
 }
 
 struct FragmentOutput {
     [[location(0)]] f_color: vec4<f32>;
 };
+
 
 var<private> f_color: vec4<f32>;
 
@@ -135,11 +117,13 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
     return FragmentOutput(e3);
 }
 
-fn gui_fs_main( in: VertexOutput) -> FragmentOutput {
-   
-    let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    if (e3.a < 0.5) {
-        discard;
-    }
-    return FragmentOutput(e3);
+[[stage(fragment)]]
+fn gui_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
+  
+    // let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
+    // if (e3.a < 0.5) {
+    //     discard;
+    // }
+    //return FragmentOutput(e3);
+   return vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }
