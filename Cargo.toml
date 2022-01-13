@@ -24,3 +24,4 @@ gltf="0.16.0"
 itertools="0.10.3"
 serde="1.0.133"
 mlua={version= "^0.7.1", features=["lua54","vendored"]}
+rand="0.8.4"

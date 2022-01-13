@@ -83,10 +83,22 @@ fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
     
 
     var out: GuiFrag;
-    //return out;
-    let x = f32(i32(in_vertex_index) - 1);
-    let y = f32(i32(in_vertex_index & 1u) * 2 - 1);
-    out.pos=vec4<f32>(x, y, 0.0, 1.0);
+    // //return out;
+    // let n=i32(in_vertex_index)%2;
+    // let m=i32(in_vertex_index)/2;
+    // let x = f32(n - 1);
+    // let y = f32(max(m+n,1)  - 1);
+
+    if (in_vertex_index==0u){
+        out.pos=vec4<f32>(-1.,-1., 0.0, 1.0);
+    }else if (in_vertex_index==1u){
+        out.pos=vec4<f32>(1.,-1., 0.0, 1.0);
+    }else if (in_vertex_index==2u){
+        out.pos=vec4<f32>(-1.,1., 0.0, 1.0);
+    }else{
+        out.pos=vec4<f32>(1.,1., 0.0, 1.0);
+    }
+    
     out.screen=vec2<f32>(globals.time.z,globals.time.w);
     return out;
 }
@@ -125,5 +137,7 @@ fn gui_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
     //     discard;
     // }
     //return FragmentOutput(e3);
-   return vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
+    let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
+    f_color=textureSample(t_diffuse, s_diffuse, p);
+   return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }

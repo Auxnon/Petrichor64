@@ -24,6 +24,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
+    state.gui.render(&state.device, &state.queue);
+
     state.value += 0.002;
     if state.value > 1. {
         state.value = 0.;
@@ -188,7 +190,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             //     let model = res.unwrap();
             render_pass.set_pipeline(&state.gui.gui_pipeline);
             render_pass.set_bind_group(0, &state.gui.gui_group, &[]);
-            render_pass.draw(0..3, 0..1);
+            render_pass.draw(0..4, 0..4);
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
             //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);

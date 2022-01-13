@@ -1,10 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
-use wgpu::{Queue, Sampler, Texture, TextureView};
+use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
 
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -21,7 +21,7 @@ pub fn init() {
     d.y = 512;
     let rgba = master.lock().get_or_init(|| img);
 }
-pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler) {
+pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
     make_tex(device, queue, master.lock().get().unwrap())
 }
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
@@ -91,8 +91,8 @@ pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
     )
 }
 
-fn _load_img(str: String) -> DynamicImage {
-    let text = format!("assets/{}", str);
+pub fn load_img(str: String) -> DynamicImage {
+    let text = Path::new("assets").join(str).to_str().unwrap().to_string();
     //Path::new(".").join("entities");
     log(text.clone());
     let img = image::open(text).unwrap();
@@ -105,7 +105,7 @@ fn _load_img(str: String) -> DynamicImage {
 }
 pub fn load_tex(str: String) {
     log(format!("apply texture {}", str));
-    let img = _load_img(str.clone());
+    let img = load_img(str.clone());
     let pos = locate(img.into_rgba8());
 
     dictionary.lock().insert(get_name(str), pos);
@@ -195,7 +195,39 @@ pub fn get_tex(str: String) -> cgmath::Vector4<f32> {
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x, y);
 }
-pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (TextureView, Sampler) {
+pub fn write_tex(device: &wgpu::Device, queue: &Queue, texture: &Texture, img: &RgbaImage) {
+    let dimensions = img.dimensions();
+
+    let texture_size = wgpu::Extent3d {
+        width: dimensions.0,
+        height: dimensions.1,
+        depth_or_array_layers: 1,
+    };
+
+    queue.write_texture(
+        // Tells wgpu where to copy the pixel data
+        wgpu::ImageCopyTexture {
+            texture: texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        // The actual pixel data
+        img,
+        // The layout of the texture
+        wgpu::ImageDataLayout {
+            offset: 0,
+            bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
+            rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+        },
+        texture_size,
+    );
+}
+pub fn make_tex(
+    device: &wgpu::Device,
+    queue: &Queue,
+    img: &RgbaImage,
+) -> (TextureView, Sampler, Texture) {
     log("make master texture".to_string());
     let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
@@ -239,7 +271,6 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (Textu
         texture_size,
     );
     let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-
     let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         address_mode_u: wgpu::AddressMode::Repeat,
         address_mode_v: wgpu::AddressMode::Repeat,
@@ -249,7 +280,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> (Textu
         mipmap_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
-    (diffuse_texture_view, diffuse_sampler)
+    (diffuse_texture_view, diffuse_sampler, tex)
 }
 
 fn log(str: String) {

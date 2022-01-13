@@ -161,7 +161,8 @@ impl State {
         // crate::texture::load_tex("chicken".to_string());
         // crate::texture::load_tex("grass_down".to_string());
 
-        let (diffuse_texture_view, diffuse_sampler) = crate::texture::finalize(&device, &queue);
+        let (diffuse_texture_view, diffuse_sampler, diff_tex) =
+            crate::texture::finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -493,6 +494,8 @@ impl State {
         //     ],
         // });
 
+        let (gui_texture_view, gui_sampler, gui_texture, gui_image) =
+            gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
         let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             entries: &[
@@ -502,11 +505,11 @@ impl State {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                    resource: wgpu::BindingResource::TextureView(&gui_texture_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                    resource: wgpu::BindingResource::Sampler(&gui_sampler),
                 },
             ],
             label: None,
@@ -549,9 +552,9 @@ impl State {
                 }],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
@@ -590,7 +593,7 @@ impl State {
             render_pipeline,
             switch_board,
             entities,
-            gui: Gui::new(gui_pipeline, gui_group),
+            gui: Gui::new(gui_pipeline, gui_group, gui_texture, gui_image),
             bind_group,
             entity_bind_group,
             entity_uniform_buf,
