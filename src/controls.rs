@@ -37,6 +37,11 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
             ..
         } => {
             state.switch_board.write().space = false;
+            let input_path = std::path::Path::new("scripts").join("walker.lua");
+
+            state
+                .gui
+                .add_text(std::fs::read_to_string(input_path).unwrap_or_default());
             //globals.write().space = false;
         }
         WindowEvent::Resized(physical_size) => {
