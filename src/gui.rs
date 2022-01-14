@@ -31,7 +31,21 @@ impl Gui {
         let letters = match crate::texture::load_img("4x4unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
             Err(err) => {
-                let d = include_bytes!("..\\assets\\4x4unicode.png");
+                #[cfg(not(windows))]
+                macro_rules! sp {
+                    () => {
+                        "/"
+                    };
+                }
+
+                #[cfg(windows)]
+                macro_rules! sp {
+                    () => {
+                        r#"\"#
+                    };
+                }
+
+                let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "4x4unicode.png"));
                 crate::texture::load_img_from_buffer(d)
                     .unwrap()
                     .into_rgba8()
