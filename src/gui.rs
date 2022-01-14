@@ -72,6 +72,30 @@ impl Gui {
         self.apply_text();
     }
     pub fn apply_text(&mut self) {
+        let mut im = RgbaImage::new(self.size[0] / 2, self.size[1]);
+        image::imageops::horizontal_gradient(
+            &mut im,
+            &image::Rgba([255, 255, 0, 255]),
+            &image::Rgba([0, 0, 0, 0]),
+        );
+        self.img = RgbaImage::new(self.size[0], self.size[1]);
+        image::imageops::replace(&mut self.img, &im, 0, 0);
+        // struct col {};
+        // impl image::imageops::colorops::ColorMap for col {
+        //     type Color = image::Rgba<u8>;
+
+        //     fn index_of(&self, color: &Self::Color) -> usize {
+        //         // todo!()
+        //         0
+        //     }
+
+        //     fn map_color(&self, color: &mut Self::Color) {
+        //         //todo!()
+        //         color.0[0] = 255;
+        //         color.0[1] = 0;
+        //     }
+        // };
+        // image::imageops::dither(&mut self.img, &col {});
         for (i, line) in self.text.lines().enumerate() {
             let y = i as u32 * 6;
             let mut x = 4;
@@ -100,24 +124,33 @@ impl Gui {
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
-                image::imageops::replace(&mut self.img, &sub, x, y);
+                image::imageops::overlay(&mut self.img, &sub, x, y);
                 x += 5;
             }
         }
+
+        self.img = image::imageops::huerotate(&mut self.img, rand::thread_rng().gen_range(0..360));
         self.dirty = true;
     }
 
-    pub fn render(&mut self, device: &Device, queue: &Queue) {
+    pub fn render(&mut self, device: &Device, queue: &Queue, time: f32) {
         //let mut rng = rand::thread_rng();
 
-        self.time += 0.01;
+        self.time = time;
         if crate::log::is_dirty() {
-            self.text = crate::log::get();
+            self.text = crate::log::get((self.size[1] / 4) as usize);
             self.apply_text();
+            crate::log::clean();
         }
         if self.dirty {
             crate::texture::write_tex(device, queue, &self.texture, &self.img);
             self.dirty = false;
+        }
+
+        if time % 0.2 == 0.0 {
+            log(format!("time {}", self.time));
+            //self.img = image::imageops::huerotate(&mut self.img, (time * 360.) as i32);
+            //crate::texture::write_tex(device, queue, &self.texture, &self.img);
         }
 
         // let mut x: u32 = (rng.gen_range(0..self.size[0]) / 4) * 4;
@@ -180,4 +213,7 @@ pub fn init_image(
     let out = crate::texture::make_tex(device, queue, &img);
     (out.0, out.1, out.2, img)
 }
-pub fn draw() {}
+
+fn log(str: String) {
+    crate::log::log(format!("📺gui::{}", str));
+}

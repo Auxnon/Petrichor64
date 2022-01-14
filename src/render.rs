@@ -24,7 +24,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    state.gui.render(&state.device, &state.queue);
+    state.gui.render(&state.device, &state.queue, state.value2);
 
     state.value += 0.002;
     if state.value > 1. {
