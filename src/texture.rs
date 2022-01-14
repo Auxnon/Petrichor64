@@ -91,11 +91,24 @@ pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
     )
 }
 
-pub fn load_img(str: String) -> DynamicImage {
+pub fn load_img(str: String) -> Result<DynamicImage, image::ImageError> {
     let text = Path::new("assets").join(str).to_str().unwrap().to_string();
     //Path::new(".").join("entities");
     log(text.clone());
-    let img = image::open(text).unwrap();
+
+    let img = image::open(text);
+    // The dimensions method returns the images width and height.
+    //println!("dimensions height {:?}", img.height());
+
+    // The color method returns the image's `ColorType`.
+    //println!("{:?}", img.color());
+    img
+}
+pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageError> {
+    //Path::new(".").join("entities");
+    //log(text.clone());
+
+    let img = image::load_from_memory(buffer);
     // The dimensions method returns the images width and height.
     //println!("dimensions height {:?}", img.height());
 
@@ -105,10 +118,18 @@ pub fn load_img(str: String) -> DynamicImage {
 }
 pub fn load_tex(str: String) {
     log(format!("apply texture {}", str));
-    let img = load_img(str.clone());
-    let pos = locate(img.into_rgba8());
 
-    dictionary.lock().insert(get_name(str), pos);
+    match load_img(str.clone()) {
+        Ok(img) => {
+            let pos = locate(img.into_rgba8());
+            dictionary.lock().insert(get_name(str), pos);
+        }
+        Err(err) => {
+            dictionary
+                .lock()
+                .insert(get_name(str), cgmath::Vector4::new(0., 0., 0., 0.));
+        }
+    }
 }
 fn get_name(str: String) -> String {
     let bits = str.split(".").collect::<Vec<_>>();

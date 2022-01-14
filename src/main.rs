@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use bytemuck::{Pod, Zeroable};
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
@@ -579,6 +581,8 @@ impl State {
             multiview: None,
         });
 
+        let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
+        gui.add_text("initialized".to_string());
         Self {
             surface,
             device,
@@ -593,7 +597,7 @@ impl State {
             render_pipeline,
             switch_board,
             entities,
-            gui: Gui::new(gui_pipeline, gui_group, gui_texture, gui_image),
+            gui,
             bind_group,
             entity_bind_group,
             entity_uniform_buf,

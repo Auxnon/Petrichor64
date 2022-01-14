@@ -12,76 +12,95 @@ pub fn init(device: &Device) {
     let scripts_path = Path::new(".").join("scripts");
     log(format!("assets dir is {}", assets_path.display()));
 
-    let assets_dir: Vec<PathBuf> = read_dir(&assets_path)
-        .expect("Assets directory failed to load")
-        .filter(Result::is_ok)
-        .map(|e| e.unwrap().path())
-        .collect();
+    match read_dir(&assets_path) {
+        Ok(dir) => {
+            let assets_dir: Vec<PathBuf> = dir
+                .filter(Result::is_ok)
+                .map(|e| e.unwrap().path())
+                .collect();
 
-    for entry in assets_dir {
-        log(format!("asset to load {}", entry.display()));
-        match entry.extension() {
-            Some(e) => {
-                let s = e.to_ascii_lowercase();
-                let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
-                if s == "glb" || s == "gltf" {
-                    log(format!("loading {} as glb/gltf model", file_name));
-                    crate::model::load(file_name, device);
-                } else if s == "png" {
-                    log(format!("loading {} as png image", file_name));
-                    crate::texture::load_tex(file_name.to_string());
-                } else {
-                    log(format!("unknown file type {}", file_name));
+            for entry in assets_dir {
+                log(format!("asset to load {}", entry.display()));
+                match entry.extension() {
+                    Some(e) => {
+                        let s = e.to_ascii_lowercase();
+                        let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
+                        if s == "glb" || s == "gltf" {
+                            log(format!("loading {} as glb/gltf model", file_name));
+                            crate::model::load(file_name, device);
+                        } else if s == "png" {
+                            log(format!("loading {} as png image", file_name));
+                            crate::texture::load_tex(file_name.to_string());
+                        } else {
+                            log(format!("unknown file type {}", file_name));
+                        }
+                    }
+                    None => {
+                        log(format!("invalid asset {:?}", entry));
+                    }
                 }
+                // let f = File::open(&entry).expect("Failed opening an entity file");
+                // let schema: PreEntSchema = match from_reader(f) {
+                //     Ok(x) => x,
+                //     Err(e) => {
+                //         println!("Failed to apply entity RON schema, defaulting: {}", e);
+                //         //std::process::exit(1);
+                //         PreEntSchema::default()
+                //     }
+                // };
             }
-            None => {}
         }
-        // let f = File::open(&entry).expect("Failed opening an entity file");
-        // let schema: PreEntSchema = match from_reader(f) {
-        //     Ok(x) => x,
-        //     Err(e) => {
-        //         println!("Failed to apply entity RON schema, defaulting: {}", e);
-        //         //std::process::exit(1);
-        //         PreEntSchema::default()
-        //     }
-        // };
+        Err(err) => {
+            log("assets directory cannot be located".to_string());
+        }
     }
 
     log(format!("scripts dir is {}", scripts_path.display()));
 
-    let scripts_dir: Vec<PathBuf> = read_dir(&scripts_path)
-        .expect("Scripts directory failed to load")
-        .filter(Result::is_ok)
-        .map(|e| e.unwrap().path())
-        .collect();
-    for entry in scripts_dir {
-        match entry.extension() {
-            Some(e) => {
-                let s = e.to_ascii_lowercase();
-                let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
-                if s == "lua" {
-                    log(format!("loading  script {}", file_name));
+    match read_dir(&scripts_path) {
+        Ok(dir) => {
+            let scripts_dir: Vec<PathBuf> = dir
+                .filter(Result::is_ok)
+                .map(|e| e.unwrap().path())
+                .collect();
 
-                    let path = Path::new("scripts")
-                        .join(file_name.to_owned())
-                        .with_extension("lua")
-                        .to_str()
-                        .unwrap()
-                        .to_string();
+            for entry in scripts_dir {
+                match entry.extension() {
+                    Some(e) => {
+                        let s = e.to_ascii_lowercase();
+                        let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
+                        if s == "lua" {
+                            log(format!("loading  script {}", file_name));
 
-                    let mutex = crate::lua_master.lock();
-                    //log(format!("hooked {}", path));
-                    let d = mutex.get().unwrap();
+                            let path = Path::new("scripts")
+                                .join(file_name.to_owned())
+                                .with_extension("lua")
+                                .to_str()
+                                .unwrap()
+                                .to_string();
 
-                    d.load(path);
-                    //crate::model::load(file_name, device);
-                } else {
-                    log(format!("skipping file type {}", file_name));
+                            let mutex = crate::lua_master.lock();
+                            //log(format!("hooked {}", path));
+                            let d = mutex.get().unwrap();
+
+                            d.load(path);
+                            //crate::model::load(file_name, device);
+                        } else {
+                            log(format!("skipping file type {}", file_name));
+                        }
+                    }
+                    None => {
+                        log(format!("invalid script {:?}", entry));
+                    }
                 }
             }
-            None => {}
+        }
+        Err(err) => {
+            log("scripts directory cannot be located".to_string());
         }
     }
+
+    //.expect("Scripts directory failed to load")
 }
 
 pub fn get_file_name(str: String) -> String {

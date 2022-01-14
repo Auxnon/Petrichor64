@@ -28,7 +28,15 @@ impl Gui {
     ) -> Gui {
         let d = img.dimensions();
 
-        let letters = crate::texture::load_img("4x4letters.png".to_string()).into_rgba8();
+        let letters = match crate::texture::load_img("4x4unicode.png".to_string()) {
+            Ok(img) => img.into_rgba8(),
+            Err(err) => {
+                let d = include_bytes!("..\\assets\\4x4unicode.png");
+                crate::texture::load_img_from_buffer(d)
+                    .unwrap()
+                    .into_rgba8()
+            }
+        };
 
         Gui {
             gui_pipeline,
@@ -43,6 +51,7 @@ impl Gui {
             dirty: true,
         }
     }
+
     //pub fn type()
     pub fn add_text(&mut self, str: String) {
         self.text = format!("{}\n{}", self.text, str);
@@ -50,26 +59,30 @@ impl Gui {
     }
     pub fn apply_text(&mut self) {
         for (i, line) in self.text.lines().enumerate() {
-            let y = i as u32 * 5;
-            let mut x = 64;
+            let y = i as u32 * 6;
+            let mut x = 4;
             for c in line.chars() {
-                let res = c.to_digit(36);
-                let ind = match res {
-                    Some(u) => {
-                        //match v.get(&u) {
-                        // Some(o) => *o,
-                        // None => u,
-                        if u < 10 {
-                            u
-                        } else {
-                            u + 16
-                        }
-                    }
+                let mut ind = c as u32;
+                // let res = c.to_digit(36);
+                // let ind = match res {
+                //     Some(u) => {
+                //         //match v.get(&u) {
+                //         // Some(o) => *o,
+                //         // None => u,
+                //         if u < 10 {
+                //             u
+                //         } else {
+                //             u + 16
+                //         }
+                //     }
 
-                    None => 3 * 26 + 25,
-                };
-                let index_x = (ind % 26);
-                let index_y = (ind / 26);
+                //     None => 3 * 26 + 25,
+                // };
+                if ind > 255 {
+                    ind = 255;
+                }
+                let index_x = (ind % 16);
+                let index_y = (ind / 16);
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
@@ -84,6 +97,10 @@ impl Gui {
         //let mut rng = rand::thread_rng();
 
         self.time += 0.01;
+        if crate::log::is_dirty() {
+            self.text = crate::log::get();
+            self.apply_text();
+        }
         if self.dirty {
             crate::texture::write_tex(device, queue, &self.texture, &self.img);
             self.dirty = false;
