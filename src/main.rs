@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+//#![windows_subsystem = "windows"]
 
 use bytemuck::{Pod, Zeroable};
 use lua_define::LuaCore;
@@ -35,6 +35,7 @@ mod model;
 mod render;
 mod sound;
 mod switch_board;
+mod text;
 mod texture;
 
 const MAX_ENTS: u64 = 100;
@@ -63,6 +64,7 @@ pub struct State {
     bind_group: BindGroup,
     gui: Gui,
 
+    input_helper: winit_input_helper::WinitInputHelper,
     value: f32,
     value2: f32,
 }
@@ -604,6 +606,7 @@ impl State {
             stream: sound::init_sound(dupe_switch).unwrap(),
             value: 0.,
             value2: 0.,
+            input_helper: winit_input_helper::WinitInputHelper::new(),
         }
     }
 
@@ -640,6 +643,7 @@ fn main() {
     let mut state = pollster::block_on(State::new(&window));
 
     event_loop.run(move |event, _, control_flow| {
+        state.input_helper.update(&event);
         match event {
             Event::WindowEvent {
                 ref event,

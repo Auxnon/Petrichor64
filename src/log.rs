@@ -12,8 +12,9 @@ pub fn log(str: String) {
     //let mut n = "\n".to_string();
     //n.push_str(&str);
     println!("{}", str);
+    let mut s = str.lines().map(|l| l.to_string()).collect::<Vec<String>>();
 
-    buffer.lock().push(str);
+    buffer.lock().append(&mut s);
     let n = buffer.lock().len();
     if n > 150 {
         buffer.lock().drain(0..50);
@@ -22,7 +23,11 @@ pub fn log(str: String) {
 }
 pub fn get(height: usize) -> String {
     let n = buffer.lock().len() - height;
-    buffer.lock()[n..].join("\n")
+    println!("get len {}, n{} height{}", buffer.lock().len(), n, height);
+    let s = buffer.lock()[n..].join("\n");
+
+    println!(" lines {} ", s.split("\n").collect::<Vec<&str>>().len());
+    s
 }
 pub fn is_dirty() -> bool {
     *log_dirty.lock()

@@ -138,7 +138,7 @@ impl Gui {
 
         self.time = time;
         if crate::log::is_dirty() {
-            self.text = crate::log::get((self.size[1] / 4) as usize);
+            self.text = crate::log::get((self.size[1] / 5 - 8) as usize);
             self.apply_text();
             crate::log::clean();
         }
@@ -148,7 +148,7 @@ impl Gui {
         }
 
         if time % 0.2 == 0.0 {
-            log(format!("time {}", self.time));
+            //log(format!("time {}", self.time));
             //self.img = image::imageops::huerotate(&mut self.img, (time * 360.) as i32);
             //crate::texture::write_tex(device, queue, &self.texture, &self.img);
         }
