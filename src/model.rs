@@ -1,4 +1,5 @@
 use bytemuck::{Pod, Zeroable};
+use cgmath::{Vector3, Vector4};
 use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
@@ -22,6 +23,17 @@ pub struct Vertex {
     _normal: [i8; 4],
     _tex: [f32; 2],
 }
+impl Vertex {
+    pub fn trans(&mut self, pos: cgmath::Vector3<i16>) {
+        self._pos[0] += pos.x;
+        self._pos[1] += pos.y;
+        self._pos[2] += pos.z;
+    }
+    pub fn texture(&mut self, uv: cgmath::Vector4<f32>) {
+        self._tex[0] = (self._tex[0] * uv.z) + uv.x;
+        self._tex[1] = (self._tex[1] * uv.w) + uv.y;
+    }
+}
 
 fn vertex(pos: [i16; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
     Vertex {
@@ -44,7 +56,7 @@ fn vertexx(pos: [f32; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
     }
 }
 
-fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
+pub fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
     let vertex_data = [
         // top (0, 0, 1)
         vertex([-1, -1, 1], [0, 0, 1], [0., 1.]),
@@ -90,21 +102,59 @@ fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
-fn create_plane(size: i16) -> (Vec<Vertex>, Vec<u16>) {
+pub fn create_plane(
+    size: i16,
+    offset: Option<Vector3<i16>>,
+    uv: Option<Vector4<f32>>,
+) -> (Vec<Vertex>, Vec<u32>) {
+    let v: Vector4<f32> = match uv {
+        Some(v2) => v2,
+        None => cgmath::vec4(0., 0., 1., 1.),
+    };
+    let o: Vector3<i16> = match offset {
+        Some(o) => o,
+        None => cgmath::vec3(0, 0, 0),
+    };
+    let ex = 1. * v.z + v.x;
+    let sx = v.x;
+    let ey = 1. * v.w + v.y;
+    let sy = v.y;
+
     let vertex_data = [
-        vertex([size, 0, 0], [0, 0, 1], [1., 1.]),
-        vertex([size, size * 2, 0], [0, 0, 1], [1., 0.]),
-        vertex([-size, 0, 0], [0, 0, 1], [0., 1.]),
-        vertex([-size, size * 2, 0], [0, 0, 1], [0., 0.]),
+        vertex([o.x + size, o.y, o.z], [0, 0, 1], [ex, ey]),
+        vertex([o.x + size, o.y + size, o.z], [0, 0, 1], [ex, sy]),
+        vertex([o.x, o.y, o.z], [0, 0, 1], [sx, ey]),
+        vertex([o.x, o.y + size, o.z], [0, 0, 1], [sx, sy]),
     ];
 
-    let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
+    let index_data: &[u32] = &[0, 1, 2, 2, 1, 3];
 
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
+pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec<u16>) -> Model {
+    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Chunk Vertex Buffer"),
+        contents: bytemuck::cast_slice(verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Chunk Index Buffer"),
+        contents: bytemuck::cast_slice(inds),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+    Model {
+        vertex_buf,
+        index_buf,
+        index_format: wgpu::IndexFormat::Uint32,
+        index_count: inds.len(),
+        data: None,
+    }
+}
+
 pub fn init(device: &Device) {
-    let (plane_vertex_data, plane_index_data) = create_plane(1);
+    let (plane_vertex_data, plane_index_data) = create_plane(2, Some(cgmath::vec3(-1, 0, 0)), None);
     //device.create_buffer_init(desc)
     let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Plane Vertex Buffer"),
@@ -121,8 +171,9 @@ pub fn init(device: &Device) {
     let planeModel = Model {
         vertex_buf: plane_vertex_buf,
         index_buf: plane_index_buf,
-        index_format: wgpu::IndexFormat::Uint16,
+        index_format: wgpu::IndexFormat::Uint32,
         index_count: plane_index_data.len(),
+        data: None,
     };
     plane.get_or_init(|| planeModel);
 
@@ -140,8 +191,9 @@ pub fn init(device: &Device) {
     let cubeModel = Model {
         vertex_buf: cube_vertex_buf,
         index_buf: cube_index_buf,
-        index_format: wgpu::IndexFormat::Uint16,
+        index_format: wgpu::IndexFormat::Uint32,
         index_count: cube_index_data.len(),
+        data: None,
     };
     cube.get_or_init(|| cubeModel);
 }
@@ -163,11 +215,26 @@ pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
     }
     //Arc::clone(&custom)
 }
+pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
+    match dictionary.lock().get(str) {
+        Some(model) => {
+            let m = model.get();
+            if m.is_some() {
+                if m.unwrap().data.is_some() {
+                    return Some(Arc::clone(model));
+                }
+            }
+            return None;
+        }
+        None => None,
+    }
+}
 pub struct Model {
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,
     pub index_format: wgpu::IndexFormat,
     pub index_count: usize,
+    pub data: Option<(Vec<Vertex>, Vec<u32>)>,
 }
 
 pub fn load(str: &String, device: &Device) {
@@ -205,7 +272,7 @@ pub fn load(str: &String, device: &Device) {
                 .collect::<Vec<Vertex>>();
 
             if let Some(inds) = reader.read_indices() {
-                let indices = inds.into_u32().map(|u| u as u16).collect::<Vec<u16>>();
+                let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
 
                 // let mesh = macroquad::models::Mesh {
                 //     vertices,
@@ -240,8 +307,9 @@ pub fn load(str: &String, device: &Device) {
                 let model = Model {
                     vertex_buf: mesh_vertex_buf,
                     index_buf: mesh_index_buf,
-                    index_format: wgpu::IndexFormat::Uint16,
+                    index_format: wgpu::IndexFormat::Uint32,
                     index_count: indices.len(),
+                    data: Some((vertices, indices)),
                 };
 
                 if first_instance {
@@ -261,10 +329,10 @@ pub fn load(str: &String, device: &Device) {
             };
         }
     }
-    match custom.get() {
-        Some(m) => println!("yeah we model here it's {}", m.index_count),
-        None => {}
-    }
+    // match custom.get() {
+    //     Some(m) => println!("yeah we model here it's {}", m.index_count),
+    //     None => {}
+    // }
     //return meshes;
 }
 

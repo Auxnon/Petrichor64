@@ -1,5 +1,7 @@
 use std::{f32::consts::PI, iter};
 
+use cgmath::SquareMatrix;
+
 use crate::{
     ent::{self, Ent, EntityUniforms},
     lua_define, State,
@@ -9,9 +11,9 @@ pub fn generate_matrix(
     aspect_ratio: f32,
     rot: f32,
 ) -> (cgmath::Matrix4<f32>, cgmath::Matrix4<f32>) {
-    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 80.0);
+    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 8000.0);
     let mx_view = cgmath::Matrix4::look_at_rh(
-        cgmath::Point3::new(20. * rot.cos(), 20. * rot.sin(), 16.0),
+        cgmath::Point3::new(20. * rot.cos(), 20. * rot.sin(), 56.0),
         cgmath::Point3::new(0f32, 0.0, 0.0),
         cgmath::Vector3::unit_z(),
     );
@@ -88,6 +90,20 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     state
         .queue
         .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
+
+    let m: cgmath::Matrix4<f32> = cgmath::Matrix4::identity();
+    let data = EntityUniforms {
+        model: m.into(),
+        color: [1., 1., 1., 1.],
+        uv_mod: [0., 0., 1., 1.],
+        effects: [0, 0, 0, 0],
+    };
+    //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
+    state.queue.write_buffer(
+        &state.entity_uniform_buf,
+        0 as wgpu::BufferAddress,
+        bytemuck::bytes_of(&data),
+    );
 
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
         entity.run();
@@ -173,6 +189,14 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         {
             render_pass.set_pipeline(&state.render_pipeline);
             render_pass.set_bind_group(0, &state.bind_group, &[]);
+            let c = state.world.get_tile_mut(0, 0);
+            if c.buffers.is_some() {
+                let b = c.buffers.as_ref().unwrap();
+                render_pass.set_bind_group(1, &state.entity_bind_group, &[0]);
+                render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.set_vertex_buffer(0, b.0.slice(..));
+                render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+            }
 
             for entity in &state.entities {
                 let model = entity.model.get().unwrap();
@@ -212,4 +236,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     output.present();
 
     Ok(())
+}
+
+pub fn log(str: String) {
+    crate::log::log(format!("🖌render::{}", str));
 }

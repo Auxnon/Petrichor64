@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{mem, rc::Rc, sync::Arc};
+use tile::World;
 
 use cgmath::{Matrix, SquareMatrix};
 use ent::Ent;
@@ -37,6 +38,7 @@ mod sound;
 mod switch_board;
 mod text;
 mod texture;
+mod tile;
 
 const MAX_ENTS: u64 = 100;
 
@@ -54,7 +56,7 @@ pub struct State {
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
-
+    world: World,
     entities: Vec<Ent>,
     // vertex_buf: Rc<wgpu::Buffer>,
     // index_buf: Rc<wgpu::Buffer>,
@@ -191,7 +193,7 @@ impl State {
                 0.,
                 "chicken".to_string(),
                 "plane".to_string(),
-                0,
+                uniform_alignment as u32,
                 true,
                 Some("walker".to_string()),
             ),
@@ -202,20 +204,20 @@ impl State {
                 0.,
                 "chicken".to_string(),
                 "plane".to_string(),
-                uniform_alignment as u32,
+                (uniform_alignment * 2) as u32,
                 false,
                 Some("walker".to_string()),
             ),
             Ent::new(
-                cgmath::vec3(6.0, -6.0, 0.0),
+                cgmath::vec3(0.0, 0.0, 0.0),
                 0.,
                 1.,
                 0.,
                 "gameboy".to_string(),
                 "plane".to_string(),
-                (uniform_alignment * 2) as u32,
+                (uniform_alignment * 3) as u32,
                 false,
-                Some("walker".to_string()),
+                None,
             ),
             Ent::new(
                 cgmath::vec3(-2.0, 4.0, 0.0),
@@ -224,30 +226,29 @@ impl State {
                 0.4,
                 "guy3".to_string(),
                 "plane".to_string(),
-                (uniform_alignment * 3) as u32,
+                (uniform_alignment * 4) as u32,
                 true,
                 Some("walker".to_string()),
             ),
         ];
 
-        let mut offset = 4;
-        for i in -3..3 {
-            for j in -3..3 {
-                entities.push(Ent::new(
-                    cgmath::vec3(i as f32 * 8., j as f32 * 8., -0.0001),
-                    0.,
-                    4.,
-                    0.,
-                    "grass_down".to_string(),
-                    "plane".to_string(),
-                    (uniform_alignment * offset) as u32,
-                    false,
-                    None,
-                ));
-                offset += 1;
-            }
-        }
-        // let num_entities = 1 + entities.len() as wgpu::BufferAddress;
+        // let mut offset = 4;
+        // for i in -3..3 {
+        //     for j in -3..3 {
+        //         entities.push(Ent::new(
+        //             cgmath::vec3(i as f32 * 8., j as f32 * 8., -0.0001),
+        //             0.,
+        //             4.,
+        //             0.,
+        //             "grass_down".to_string(),
+        //             "plane".to_string(),
+        //             (uniform_alignment * offset) as u32,
+        //             false,
+        //             None,
+        //         ));
+        //         offset += 1;
+        //     }
+        // }
 
         let entity_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -257,14 +258,6 @@ impl State {
         });
 
         let index_format = wgpu::IndexFormat::Uint16;
-
-        // let test_vec = cgmath::vec3(6.0, 2.0, 2.0);
-        // use cgmath::{Decomposed, Deg, InnerSpace, Quaternion, Rotation3};
-        // let test_trans = cgmath::Decomposed {
-        //     disp: test_vec,
-        //     rot: Quaternion::from_axis_angle(test_vec.normalize(), Deg(0.)),
-        //     scale: 1.,
-        // };
 
         let local_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -377,23 +370,6 @@ impl State {
                 push_constant_ranges: &[],
             });
 
-        // let vertex_buffers = [wgpu::VertexBufferLayout {
-        //     array_stride: vertex_size as wgpu::BufferAddress,
-        //     step_mode: wgpu::VertexStepMode::Vertex,
-        //     attributes: &[
-        //         wgpu::VertexAttribute {
-        //             format: wgpu::VertexFormat::Float32x4,
-        //             offset: 0,
-        //             shader_location: 0,
-        //         },
-        //         wgpu::VertexAttribute {
-        //             format: wgpu::VertexFormat::Float32x2,
-        //             offset: 4 * 4,
-        //             shader_location: 1,
-        //         },
-        //     ],
-        // }];
-
         let vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
         let vb_desc = wgpu::VertexBufferLayout {
             array_stride: vertex_size as wgpu::BufferAddress,
@@ -457,7 +433,6 @@ impl State {
             },
             multiview: None,
         });
-        //Arc::clone(&self)
 
         let depth = create_depth_texture(&config, &device);
 
@@ -465,38 +440,6 @@ impl State {
         let dupe_switch = Arc::clone(&switch_board);
 
         //Gui
-
-        // let gui_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //     label: None,
-        //     entries: &[
-        //         wgpu::BindGroupLayoutEntry {
-        //             binding: 0,
-        //             visibility: wgpu::ShaderStages::VERTEX,
-        //             ty: wgpu::BindingType::Buffer {
-        //                 ty: wgpu::BufferBindingType::Uniform,
-        //                 has_dynamic_offset: false,
-        //                 min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
-        //             },
-        //             count: None,
-        //         },
-        //         wgpu::BindGroupLayoutEntry {
-        //             binding: 1,
-        //             visibility: wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Texture {
-        //                 multisampled: false,
-        //                 sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
-        //                 view_dimension: wgpu::TextureViewDimension::D2,
-        //             },
-        //             count: None,
-        //         },
-        //         wgpu::BindGroupLayoutEntry {
-        //             binding: 2,
-        //             visibility: wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        //             count: None,
-        //         },
-        //     ],
-        // });
 
         let (gui_texture_view, gui_sampler, gui_texture, gui_image) =
             gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
@@ -585,6 +528,7 @@ impl State {
 
         let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
         gui.add_text("initialized".to_string());
+        let world = World::new(&device);
         Self {
             surface,
             device,
@@ -606,6 +550,7 @@ impl State {
             stream: sound::init_sound(dupe_switch).unwrap(),
             value: 0.,
             value2: 0.,
+            world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
         }
     }

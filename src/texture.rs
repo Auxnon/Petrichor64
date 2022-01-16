@@ -145,12 +145,15 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
         .flat_map(|d| d.pixels.as_slice().to_owned())
         .collect::<Vec<_>>();
 
+    let actual_name = get_name(str);
+    log(format!("inject image {} from buffer", actual_name));
+
     let mut pos = cgmath::Vector4::new(0., 0., 0., 0.);
     let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
         Some(o) => o,
         None => {
             error("Failed to load texture from mesh".to_string());
-            dictionary.lock().insert(str, pos);
+            dictionary.lock().insert(actual_name, pos);
             return;
         }
     };
@@ -179,14 +182,15 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
     //     .unwrap();
     //let u = im.iter().map(|d| d.pixels.as_slice()).collect::<[u8]>();
     //let u = im.iter().map(|d| d.pixels.as_slice()).;
-    image::save_buffer_with_format(
-        "assets/pic.png",
-        &image_buffer,
-        64,
-        64,
-        image::ColorType::Rgba8,
-        image::ImageFormat::Png,
-    );
+
+    // image::save_buffer_with_format(
+    //     "assets/pic.png",
+    //     &image_buffer,
+    //     64,
+    //     64,
+    //     image::ColorType::Rgba8,
+    //     image::ImageFormat::Png,
+    // );
 
     //image::guess_format(buffer)
 
@@ -203,7 +207,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
 
     pos = locate(image_buffer);
 
-    dictionary.lock().insert(get_name(str), pos);
+    dictionary.lock().insert(actual_name, pos);
 }
 
 pub fn get_tex(str: String) -> cgmath::Vector4<f32> {

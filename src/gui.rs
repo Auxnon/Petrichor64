@@ -72,13 +72,13 @@ impl Gui {
         self.apply_text();
     }
     pub fn apply_text(&mut self) {
-        let mut im = RgbaImage::new(self.size[0] / 2, self.size[1]);
-        image::imageops::horizontal_gradient(
-            &mut im,
-            &image::Rgba([255, 255, 0, 255]),
-            &image::Rgba([0, 0, 0, 0]),
-        );
-        self.img = RgbaImage::new(self.size[0], self.size[1]);
+        let mut im = RgbaImage::new(self.size[0], self.size[1]);
+        // image::imageops::horizontal_gradient(
+        //     &mut im,
+        //     &image::Rgba([255, 255, 0, 255]),
+        //     &image::Rgba([0, 0, 0, 0]),
+        // );
+        // self.img = RgbaImage::new(self.size[0], self.size[1]);
         image::imageops::replace(&mut self.img, &im, 0, 0);
         // struct col {};
         // impl image::imageops::colorops::ColorMap for col {
