@@ -23,6 +23,15 @@ pub fn init() {
     let rgba = master.lock().get_or_init(|| img);
 }
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
+    image::save_buffer_with_format(
+        "pic.png",
+        &master.lock().get().unwrap(),
+        512,
+        512,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    );
+
     make_tex(device, queue, master.lock().get().unwrap())
 }
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
@@ -122,19 +131,35 @@ fn tile_locate(name: String, dim: (u32, u32), pos: Vector4<f32>) {
     let dh = dim.1 / 16;
     let iw = 1. / dw as f32;
     let ih = 1. / dh as f32;
+
+    /*
+    assert!(found, "Texture atlas couldnt find an empty spot?");
+    log(format!("found position {} {}", cpos.x, cpos.y));
+    stich(m_ref, source, cpos.x, cpos.y);
+    cgmath::Vector4::new(
+        cpos.x as f32 / adim.x as f32,
+        cpos.y as f32 / adim.y as f32,
+        w as f32 / adim.x as f32,
+        h as f32 / adim.y as f32,
+    ) */
+    // println!(
+    //     "d {} {} {} {} and seed pos {} {} {} {}",
+    //     dw, dh, iw, ih, pos.x, pos.y, pos.z, pos.w
+    // );
     for x in 0..dw {
         for y in 0..dh {
             let n = x + (y * dw);
             let mut p = pos.clone();
-            p.x += iw * x as f32;
-            p.y += ih * y as f32;
-            p.z /= dw as f32;
-            p.w /= dh as f32;
+
+            p.z *= (iw as f32);
+            p.w *= (ih as f32);
+            p.x += p.z * x as f32;
+            p.y += p.w * y as f32;
             let str = format!("{}{}", name, n);
-            log(format!(
-                "made tile tex {} at {} {} {} {}",
-                str, p.x, p.y, p.z, p.w
-            ));
+            // log(format!(
+            //     "made tile tex {} at {} {} {} {}",
+            //     str, p.x, p.y, p.z, p.w
+            // ));
             dictionary.lock().insert(str, p);
         }
     }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rand::Rng;
 use wgpu::{util::DeviceExt, Buffer, Device};
 
@@ -8,23 +10,70 @@ pub struct World {
 }
 impl World {
     pub fn new(device: &Device) -> World {
-        let mut w = World {
+        let mut world = World {
             layer: Layer::new(),
         };
 
         // add_tile(&mut w, "grass_down".to_string(), 0, 0, 0);
         // add_tile(&mut w, "grass_down".to_string(), 0, 1, 0);
         // add_tile(&mut w, "grass_down".to_string(), 1, 1, 0);
-        let mut rn = rand::thread_rng();
-        for i in 0..10000 {
-            //1000000
-            let x = ((i as f32 * 20.).cos() * 48.) as i32;
-            let y = ((i as f32 * 20.).sin() * 48.) as i32; //rn.gen_range(0..128) - 64;
-            add_tile(&mut w, "grass_down".to_string(), x, y, -i * 2);
-        }
+        let path = [[0, 1, 0], [1, 1, 0], [0, 1, 0]];
+        let w = path.len();
+        let h = path[0].len();
+        let mut hash = HashMap::new();
+        hash.insert(2, 28);
+        hash.insert(10, 29);
+        hash.insert(8, 31);
+        hash.insert(4, 25);
+        hash.insert(11, 19); //27
+        hash.insert(15, 33);
 
-        w.get_tile_mut(0, 0).cook(device);
-        w
+        for xi in 0..path.len() {
+            let row = path[xi];
+            for yi in 0..row.len() {
+                let c = row[yi];
+                let x = xi as i32 * 16;
+                let y = yi as i32 * 16;
+                if c == 1 {
+                    let l = if xi > 0 { path[xi - 1][yi] } else { 0 };
+                    let r = if xi < w - 1 { path[xi + 1][yi] } else { 0 };
+                    let u = if yi > 0 { path[xi][yi - 1] } else { 0 };
+                    let d = if yi < h - 1 { path[xi][yi + 1] } else { 0 };
+                    let bit = u | r << 1 | d << 2 | l << 3;
+                    let h = match hash.get(&bit) {
+                        Some(n) => n.clone(),
+                        _ => 34,
+                    };
+                    println!("x{} y{} b{}", xi, yi, bit);
+                    add_tile(&mut world, format!("grass{}", h), x, y, 0);
+                } else {
+                    add_tile(&mut world, format!("grass{}", 34), x, y, 0);
+                }
+
+                //if c == 1 {
+
+                //} else {
+                // add_tile(&mut w, format!("grass{}", 5), x, y, 0);
+                //}
+            }
+        }
+        // let mut rn = rand::thread_rng();
+        // let mut ind = 0;
+        // for i in 0..1000 {
+        //     //1000000
+        //     let x = ((i as f32 * 20.).cos() * 48.) as i32;
+        //     let y = ((i as f32 * 20.).sin() * 48.) as i32; //rn.gen_range(0..128) - 64;
+        //     let model = format!("grass{}", ind); //"grass_down".to_string();
+
+        //     add_tile(&mut w, model, x, y, -i * 2);
+        //     ind += 1;
+        //     if ind >= 16 {
+        //         ind = 0;
+        //     }
+        // }
+
+        world.get_tile_mut(0, 0).cook(device);
+        world
     }
     pub fn get_tile_mut(&mut self, x: i32, y: i32) -> &mut Chunk {
         self.layer.get_tile_mut(x, y)
@@ -82,45 +131,40 @@ pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32)
     //println!("index bit adjustment {}", current_count);
     let offset = cgmath::vec3(ix as i16, iy as i16, iz as i16);
 
-    let (mut verts, mut inds) = match crate::model::get_adjustable_model(&"plane".to_string()) {
+    let uv = crate::texture::get_tex(model);
+
+    let (verts, inds) = match crate::model::get_adjustable_model(&"plane".to_string()) {
         Some(m) => {
-            let data = m.get().unwrap().data.as_ref().unwrap();
-            let uv = crate::texture::get_tex("grass12".to_string());
-            let vert = data
-                .0
-                .iter()
-                .map(|v| {
-                    let mut v2 = v.clone();
-                    v2.trans(offset);
-                    v2.texture(uv);
-                    v2
-                })
-                .collect::<Vec<Vertex>>();
-
-            let inds2 = data
-                .1
-                .iter()
-                .map(|i| *i + current_count)
-                .collect::<Vec<u32>>();
-
-            (vert, inds2)
+            let data = m.get().unwrap().data.as_ref().unwrap().clone();
+            (data.0, data.1)
         }
-        None => {
-            let (verts, inds) = crate::model::create_plane(
-                16,
-                Some(offset),
-                Some(crate::texture::get_tex("grass1".to_string())),
-            );
-            let inds2 = inds
-                .iter()
-                .map(|i| *i + current_count)
-                .collect::<Vec<u32>>();
-            (verts, inds2)
-        }
+        None => crate::model::create_plane(16, None, None),
     };
 
-    c.vert_data.append(&mut verts);
+    //println!("model is {} {} {} {}", uv.x, uv.y, uv.z, uv.w);
+    let mut verts2 = verts
+        .iter()
+        .map(|v| {
+            let mut v2 = v.clone();
+            v2.trans(offset);
+            v2.texture(uv);
+            v2
+        })
+        .collect::<Vec<Vertex>>();
+
+    // let inds2 = data
+    //     .1
+    //     .iter()
+    //     .map(|i| *i + current_count)
+    //     .collect::<Vec<u32>>();
+
+    let mut inds2 = inds
+        .iter()
+        .map(|i| i.clone() + current_count)
+        .collect::<Vec<u32>>();
+
+    c.vert_data.append(&mut verts2);
 
     // let ind2 = i
-    c.ind_data.append(&mut inds);
+    c.ind_data.append(&mut inds2);
 }

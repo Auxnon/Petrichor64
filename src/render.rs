@@ -11,9 +11,9 @@ pub fn generate_matrix(
     aspect_ratio: f32,
     rot: f32,
 ) -> (cgmath::Matrix4<f32>, cgmath::Matrix4<f32>) {
-    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 8000.0);
+    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 800.0);
     let mx_view = cgmath::Matrix4::look_at_rh(
-        cgmath::Point3::new(20. * rot.cos(), 20. * rot.sin(), 56.0),
+        cgmath::Point3::new(128. * rot.cos(), 128. * rot.sin(), 114.0),
         cgmath::Point3::new(0f32, 0.0, 0.0),
         cgmath::Vector3::unit_z(),
     );
