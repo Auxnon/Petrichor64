@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
+use cgmath::Vector4;
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
@@ -116,26 +117,60 @@ pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageE
     //println!("{:?}", img.color());
     img
 }
+fn tile_locate(name: String, dim: (u32, u32), pos: Vector4<f32>) {
+    let dw = dim.0 / 16;
+    let dh = dim.1 / 16;
+    let iw = 1. / dw as f32;
+    let ih = 1. / dh as f32;
+    for x in 0..dw {
+        for y in 0..dh {
+            let n = x + (y * dw);
+            let mut p = pos.clone();
+            p.x += iw * x as f32;
+            p.y += ih * y as f32;
+            p.z /= dw as f32;
+            p.w /= dh as f32;
+            let str = format!("{}{}", name, n);
+            log(format!(
+                "made tile tex {} at {} {} {} {}",
+                str, p.x, p.y, p.z, p.w
+            ));
+            dictionary.lock().insert(str, p);
+        }
+    }
+    //dictionary.lock().insert(name, pos);
+}
 pub fn load_tex(str: String) {
     log(format!("apply texture {}", str));
-
-    match load_img(str.clone()) {
+    let (name, is_tile) = get_name(str.clone());
+    match load_img(str) {
         Ok(img) => {
-            let pos = locate(img.into_rgba8());
-            dictionary.lock().insert(get_name(str), pos);
+            if is_tile {
+                let dim = (img.width(), img.height());
+                let pos = locate(img.into_rgba8());
+                tile_locate(name, dim, pos);
+            } else {
+                let pos = locate(img.into_rgba8());
+                dictionary.lock().insert(name, pos);
+            }
         }
         Err(err) => {
-            dictionary
-                .lock()
-                .insert(get_name(str), cgmath::Vector4::new(0., 0., 0., 0.));
+            // dictionary
+            //     .lock()
+            //     .insert(name, cgmath::Vector4::new(0., 0., 0., 0.));
         }
     }
 }
-fn get_name(str: String) -> String {
+fn get_name(str: String) -> (String, bool) {
     let bits = str.split(".").collect::<Vec<_>>();
     match bits.get(0) {
-        Some(o) => o.to_string(),
-        None => str,
+        Some(o) => {
+            if bits.len() > 2 && bits.get(1).unwrap() == &"tile" {
+                return (o.to_string(), true);
+            }
+            (o.to_string(), false)
+        }
+        None => (str, false),
     }
 }
 
@@ -145,7 +180,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
         .flat_map(|d| d.pixels.as_slice().to_owned())
         .collect::<Vec<_>>();
 
-    let actual_name = get_name(str);
+    let (actual_name, bool) = get_name(str);
     log(format!("inject image {} from buffer", actual_name));
 
     let mut pos = cgmath::Vector4::new(0., 0., 0., 0.);

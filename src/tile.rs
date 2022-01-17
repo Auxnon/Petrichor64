@@ -79,13 +79,13 @@ impl Chunk {
 pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32) {
     let mut c = world.get_tile_mut(ix, iy);
     let current_count = c.vert_data.len() as u32;
-    println!("index bit adjustment {}", current_count);
+    //println!("index bit adjustment {}", current_count);
     let offset = cgmath::vec3(ix as i16, iy as i16, iz as i16);
 
-    let (mut verts, mut inds) = match crate::model::get_adjustable_model(&"lil-house".to_string()) {
+    let (mut verts, mut inds) = match crate::model::get_adjustable_model(&"plane".to_string()) {
         Some(m) => {
             let data = m.get().unwrap().data.as_ref().unwrap();
-            let uv = crate::texture::get_tex("lil-house".to_string());
+            let uv = crate::texture::get_tex("grass12".to_string());
             let vert = data
                 .0
                 .iter()
@@ -106,8 +106,11 @@ pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32)
             (vert, inds2)
         }
         None => {
-            let (verts, inds) =
-                crate::model::create_plane(16, Some(offset), Some(crate::texture::get_tex(model)));
+            let (verts, inds) = crate::model::create_plane(
+                16,
+                Some(offset),
+                Some(crate::texture::get_tex("grass1".to_string())),
+            );
             let inds2 = inds
                 .iter()
                 .map(|i| *i + current_count)
