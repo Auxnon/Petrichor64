@@ -18,36 +18,41 @@ impl World {
         // add_tile(&mut w, "grass_down".to_string(), 0, 1, 0);
         // add_tile(&mut w, "grass_down".to_string(), 1, 1, 0);
         let path = [[0, 1, 0], [1, 1, 0], [0, 1, 0]];
-        let w = path.len();
-        let h = path[0].len();
+        let h = path.len();
+        let w = path[0].len();
         let mut hash = HashMap::new();
-        hash.insert(2, 28);
-        hash.insert(10, 29);
-        hash.insert(8, 31);
-        hash.insert(4, 25);
-        hash.insert(11, 19); //27
-        hash.insert(15, 33);
+        hash.insert(4, 3);
+        hash.insert(2, 33);
+        hash.insert(13, 52);
+        hash.insert(1, 25);
 
-        for xi in 0..path.len() {
-            let row = path[xi];
-            for yi in 0..row.len() {
-                let c = row[yi];
+        // hash.insert(2, 28);
+        // hash.insert(10, 29);
+        // hash.insert(8, 31);
+        // hash.insert(4, 25);
+        // hash.insert(11, 19); //27
+        // hash.insert(15, 33);
+
+        for yi in 0..path.len() {
+            let row = path[yi];
+            for xi in 0..row.len() {
+                let c = row[xi];
                 let x = xi as i32 * 16;
                 let y = yi as i32 * 16;
                 if c == 1 {
-                    let l = if xi > 0 { path[xi - 1][yi] } else { 0 };
-                    let r = if xi < w - 1 { path[xi + 1][yi] } else { 0 };
-                    let u = if yi > 0 { path[xi][yi - 1] } else { 0 };
-                    let d = if yi < h - 1 { path[xi][yi + 1] } else { 0 };
+                    let u = if yi > 0 { path[yi - 1][xi] } else { 0 };
+                    let d = if yi < h - 1 { path[yi + 1][xi] } else { 0 };
+                    let l = if xi > 0 { path[yi][xi - 1] } else { 0 };
+                    let r = if xi < w - 1 { path[yi][xi + 1] } else { 0 };
                     let bit = u | r << 1 | d << 2 | l << 3;
                     let h = match hash.get(&bit) {
                         Some(n) => n.clone(),
                         _ => 34,
                     };
                     println!("x{} y{} b{}", xi, yi, bit);
-                    add_tile(&mut world, format!("grass{}", h), x, y, 0);
+                    add_tile(&mut world, format!("map{}", h), x, y, 0);
                 } else {
-                    add_tile(&mut world, format!("grass{}", 34), x, y, 0);
+                    add_tile(&mut world, format!("map{}", 44), x, y, 0); //36
                 }
 
                 //if c == 1 {
