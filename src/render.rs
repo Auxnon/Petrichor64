@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, iter};
+use std::{f32::consts::PI, iter, ops::Mul};
 
 use cgmath::SquareMatrix;
 
@@ -115,10 +115,10 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //entity.pos.x += 1.;
 
         let transform = cgmath::Decomposed {
-            disp: entity.pos,
+            disp: entity.pos.mul(16.),
             rot: cgmath::Quaternion::from_sv(entity.rotation, cgmath::Vector3::new(0., 0., 1.)),
             //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-            scale: entity.scale,
+            scale: entity.scale * 16.,
         };
 
         // let pos = cgmath::Matrix4::from_translation(entity.pos);
