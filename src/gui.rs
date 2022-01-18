@@ -71,6 +71,43 @@ impl Gui {
         self.text = format!("{}\n{}", self.text, str);
         self.apply_text();
     }
+    pub fn add_img(&self, str: String) {
+        match crate::texture::load_img(str) {
+            Ok(t) => {
+                let mut im = t.to_rgba8();
+                let w = im.width() / 16;
+                let h = im.height() / 16;
+                for x in 0..w {
+                    for y in 0..h {
+                        let n = x + y * w;
+                        let digits: Vec<_> = n
+                            .to_string()
+                            .chars()
+                            .map(|d| d.to_digit(10).unwrap())
+                            .collect();
+                        for (i, d) in digits.into_iter().enumerate() {
+                            let sub = image::imageops::crop_imm(&self.letters, d * 4, 12, 4, 4);
+                            image::imageops::replace(&mut im, &sub, x * 16 + i as u32 * 5, y * 16);
+                        }
+
+                        //image::imageops::overlay(&mut self.img, &sub, x, y);
+                    }
+                }
+
+                image::save_buffer_with_format(
+                    "tile.png",
+                    &im,
+                    im.width(),
+                    im.height(),
+                    image::ColorType::Rgba8,
+                    image::ImageFormat::Png,
+                );
+            }
+            Err(e) => {
+                log(format!("{}", e));
+            }
+        }
+    }
     pub fn apply_text(&mut self) {
         let mut im = RgbaImage::new(self.size[0], self.size[1]);
         // image::imageops::horizontal_gradient(

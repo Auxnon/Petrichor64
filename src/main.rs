@@ -528,6 +528,7 @@ impl State {
 
         let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
         gui.add_text("initialized".to_string());
+        gui.add_img("map.tile.png".to_string());
         let world = World::new(&device);
         Self {
             surface,
