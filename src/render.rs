@@ -108,11 +108,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
         entity.run();
 
-        //cgmath::Matrix4::from_angle_x(theta)
         let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
-        //entity.rotation += 0.1;
-        //entity.rotation %= std::f32::consts::PI * 2.;
-        //entity.pos.x += 1.;
 
         let transform = cgmath::Decomposed {
             disp: entity.pos.mul(16.),
@@ -121,8 +117,25 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             scale: entity.scale * 16.,
         };
 
-        // let pos = cgmath::Matrix4::from_translation(entity.pos);
         entity.matrix = cgmath::Matrix4::from(transform);
+
+        // DEV i32
+        /*
+        let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+
+        let v = entity.pos.mul(16.).cast::<i32>().unwrap();
+        let rot = cgmath::Quaternion::<i32>::from_sv(
+            entity.rotation as i32,
+            cgmath::Vector3::<i32>::new(0, 0, 1),
+        );
+        let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
+            disp: v,
+            rot: rot,
+            //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+            scale: (entity.scale * 16.) as i32,
+        };
+        let matrix = cgmath::Matrix4::<i32>::from(transform);
+        */
 
         let data = EntityUniforms {
             model: entity.matrix.into(),
