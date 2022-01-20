@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use cgmath::{Vector3, Vector4};
+use glam::{ivec3, vec3, vec4, IVec3, Vec3, Vec4};
 use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
@@ -24,12 +24,12 @@ pub struct Vertex {
     _tex: [f32; 2],
 }
 impl Vertex {
-    pub fn trans(&mut self, pos: cgmath::Vector3<i16>) {
-        self._pos[0] += pos.x;
-        self._pos[1] += pos.y;
-        self._pos[2] += pos.z;
+    pub fn trans(&mut self, pos: IVec3) {
+        self._pos[0] += pos.x as i16;
+        self._pos[1] += pos.y as i16;
+        self._pos[2] += pos.z as i16;
     }
-    pub fn texture(&mut self, uv: cgmath::Vector4<f32>) {
+    pub fn texture(&mut self, uv: Vec4) {
         self._tex[0] = (self._tex[0] * uv.z) + uv.x;
         self._tex[1] = (self._tex[1] * uv.w) + uv.y;
     }
@@ -102,18 +102,14 @@ pub fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
-pub fn create_plane(
-    size: i16,
-    offset: Option<Vector3<i16>>,
-    uv: Option<Vector4<f32>>,
-) -> (Vec<Vertex>, Vec<u32>) {
-    let v: Vector4<f32> = match uv {
+pub fn create_plane(size: i16, offset: Option<IVec3>, uv: Option<Vec4>) -> (Vec<Vertex>, Vec<u32>) {
+    let v: Vec4 = match uv {
         Some(v2) => v2,
-        None => cgmath::vec4(0., 0., 1., 1.),
+        None => vec4(0., 0., 1., 1.),
     };
-    let o: Vector3<i16> = match offset {
+    let o: IVec3 = match offset {
         Some(o) => o,
-        None => cgmath::vec3(0, 0, 0),
+        None => ivec3(0, 0, 0),
     };
     let ex = 1. * v.z + v.x;
     let sx = v.x;
@@ -121,10 +117,22 @@ pub fn create_plane(
     let sy = v.y;
 
     let vertex_data = [
-        vertex([o.x + size, o.y, o.z], [0, 0, 1], [ex, ey]),
-        vertex([o.x + size, o.y + size, o.z], [0, 0, 1], [ex, sy]),
-        vertex([o.x, o.y, o.z], [0, 0, 1], [sx, ey]),
-        vertex([o.x, o.y + size, o.z], [0, 0, 1], [sx, sy]),
+        vertex(
+            [o.x as i16 + size, o.y as i16, o.z as i16],
+            [0, 0, 1],
+            [ex, ey],
+        ),
+        vertex(
+            [o.x as i16 + size, o.y as i16 + size, o.z as i16],
+            [0, 0, 1],
+            [ex, sy],
+        ),
+        vertex([o.x as i16, o.y as i16, o.z as i16], [0, 0, 1], [sx, ey]),
+        vertex(
+            [o.x as i16, o.y as i16 + size, o.z as i16],
+            [0, 0, 1],
+            [sx, sy],
+        ),
     ];
 
     let index_data: &[u32] = &[0, 1, 2, 2, 1, 3];
@@ -154,7 +162,7 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
 }
 
 pub fn init(device: &Device) {
-    let (plane_vertex_data, plane_index_data) = create_plane(2, Some(cgmath::vec3(-1, 0, 0)), None);
+    let (plane_vertex_data, plane_index_data) = create_plane(2, Some(ivec3(-1, 0, 0)), None);
     //device.create_buffer_init(desc)
     let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Plane Vertex Buffer"),

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use cgmath::Vector4;
+use glam::{UVec2, UVec4, Vec4};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
@@ -10,9 +10,9 @@ use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref master: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
-    pub static ref atlas_pos:Mutex<cgmath::Vector4<u32>>= Mutex::new(cgmath::Vector4::new(0,0,0,0));
-    pub static ref atlas_dim:Mutex<cgmath::Vector2<u32>>= Mutex::new(cgmath::Vector2::new(0,0));
-    pub static ref dictionary:Mutex<HashMap<String,cgmath::Vector4<f32>>> =Mutex::new(HashMap::new());
+    pub static ref atlas_pos:Mutex<UVec4> = Mutex::new(UVec4::new(0,0,0,0));
+    pub static ref atlas_dim:Mutex<UVec2>= Mutex::new(UVec2::new(0,0));
+    pub static ref dictionary:Mutex<HashMap<String,Vec4>> =Mutex::new(HashMap::new());
 }
 
 pub fn init() {
@@ -35,7 +35,7 @@ pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, 
     make_tex(device, queue, master.lock().get().unwrap())
 }
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
-pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
+pub fn locate(source: RgbaImage) -> Vec4 {
     let mut m_guard = master.lock();
     let m_ref = m_guard.get_mut().unwrap();
     assert!(
@@ -93,7 +93,7 @@ pub fn locate(source: RgbaImage) -> cgmath::Vector4<f32> {
     assert!(found, "Texture atlas couldnt find an empty spot?");
     log(format!("found position {} {}", cpos.x, cpos.y));
     stich(m_ref, source, cpos.x, cpos.y);
-    cgmath::Vector4::new(
+    Vec4::new(
         cpos.x as f32 / adim.x as f32,
         cpos.y as f32 / adim.y as f32,
         w as f32 / adim.x as f32,
@@ -126,7 +126,7 @@ pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageE
     //println!("{:?}", img.color());
     img
 }
-fn tile_locate(name: String, dim: (u32, u32), pos: Vector4<f32>) {
+fn tile_locate(name: String, dim: (u32, u32), pos: Vec4) {
     let dw = dim.0 / 16;
     let dh = dim.1 / 16;
     let iw = 1. / dw as f32;
@@ -208,7 +208,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
     let (actual_name, bool) = get_name(str);
     log(format!("inject image {} from buffer", actual_name));
 
-    let mut pos = cgmath::Vector4::new(0., 0., 0., 0.);
+    let mut pos = Vec4::new(0., 0., 0., 0.);
     let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
         Some(o) => o,
         None => {
@@ -270,10 +270,10 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
     dictionary.lock().insert(actual_name, pos);
 }
 
-pub fn get_tex(str: String) -> cgmath::Vector4<f32> {
+pub fn get_tex(str: String) -> Vec4 {
     match dictionary.lock().get(&str) {
         Some(v) => v.clone(),
-        None => cgmath::Vector4::new(0., 0., 0., 0.),
+        None => Vec4::new(0., 0., 0., 0.),
     }
 }
 

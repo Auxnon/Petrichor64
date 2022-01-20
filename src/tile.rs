@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use glam::{ivec3, vec3};
 use rand::Rng;
 use wgpu::{util::DeviceExt, Buffer, Device};
 
@@ -134,7 +135,7 @@ pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32)
     let mut c = world.get_tile_mut(ix, iy);
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
-    let offset = cgmath::vec3(ix as i16, iy as i16, iz as i16);
+    let offset = ivec3(ix as i32, iy as i32, iz as i32);
 
     let uv = crate::texture::get_tex(model);
 

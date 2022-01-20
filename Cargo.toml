@@ -11,7 +11,7 @@ resolver = "2"
 wgpu = "0.12.0"
 cpal="0.13.4"
 bytemuck= { version = "1.7.2", features = ["derive"] }
-cgmath="0.18.0"
+
 winit = "0.26.0"
 winit_input_helper="0.11.0"
 pollster = "0.2"
@@ -27,3 +27,4 @@ itertools="0.10.3"
 serde="1.0.133"
 mlua={version= "^0.7.1", features=["lua54","vendored"]}
 rand="0.8.4"
+glam="0.20.2"

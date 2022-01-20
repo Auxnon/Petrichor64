@@ -4,7 +4,8 @@ use crate::{
     model::Model,
 };
 use bytemuck::{Pod, Zeroable};
-use cgmath::{Decomposed, Deg, InnerSpace, Matrix, Quaternion, Rotation3, SquareMatrix, Vector3};
+
+use glam::{IVec4, Mat4, Quat, UVec4, Vec3, Vec4};
 use mlua::Function;
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -19,24 +20,24 @@ pub struct EntityUniforms {
 }
 
 pub struct Ent {
-    pub matrix: cgmath::Matrix4<f32>,
+    pub matrix: Mat4,
     pub rotation: f32,
     pub color: wgpu::Color,
     pub scale: f32,
-    pub pos: cgmath::Vector3<f32>,
-    pub vel: cgmath::Vector3<f32>,
-    pub rot: cgmath::Vector3<f32>,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub rot: Vec3,
     pub model: Arc<OnceCell<Model>>,
     pub uniform_offset: wgpu::DynamicOffset,
-    pub tex: cgmath::Vector4<f32>,
-    pub effects: cgmath::Vector4<u32>,
+    pub tex: Vec4,
+    pub effects: UVec4,
     //pub brain: Option<Function<'lua>>,
     pub brain_name: Option<String>,
 }
 
 impl<'lua> Ent {
     pub fn new(
-        offset: Vector3<f32>,
+        offset: Vec3,
         angle: f32,
         scale: f32,
         rotation: f32,
@@ -46,11 +47,14 @@ impl<'lua> Ent {
         billboarded: bool,
         brain: Option<String>,
     ) -> Ent {
-        let transform = Decomposed {
-            disp: offset,
-            rot: Quaternion::from_axis_angle(offset.normalize(), Deg(angle)),
-            scale: scale,
-        };
+        //glam::Mat4::from_rotation_translation(rotation, translation);
+
+        // let transform = Decomposed {
+        //     disp: offset,
+        //     rot: Quaternion::from_axis_angle(offset.normalize(), Deg(angle)),
+        //     scale: scale,
+        // };
+        let quat = Quat::from_axis_angle(offset.normalize(), angle);
 
         let mut brain_name = "".to_string();
         // let brain_func = match brain {
@@ -67,19 +71,23 @@ impl<'lua> Ent {
         // };
 
         Ent {
-            matrix: cgmath::Matrix4::from(transform),
+            matrix: Mat4::from_scale_rotation_translation(
+                Vec3::new(scale, scale, scale),
+                quat,
+                offset,
+            ),
             rotation,
-            rot: cgmath::Vector3::new(0., 0., 0.),
+            rot: Vec3::new(0., 0., 0.),
             color: wgpu::Color::GREEN,
             scale,
             pos: offset,
-            vel: cgmath::Vector3::new(0., 0., 0.),
+            vel: Vec3::new(0., 0., 0.),
             model: crate::model::get_model(&model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
             tex: crate::texture::get_tex(tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
             uniform_offset,
-            effects: cgmath::Vector4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
+            effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
             //brain: None,
             brain_name: brain,
         }

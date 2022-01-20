@@ -6,8 +6,8 @@ use once_cell::sync::OnceCell;
 use std::{mem, rc::Rc, sync::Arc};
 use tile::World;
 
-use cgmath::{Matrix, SquareMatrix};
 use ent::Ent;
+use glam::{vec3, Mat4};
 use global::Global;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -51,8 +51,8 @@ pub struct State {
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
     stream: cpal::Stream,
-    view_matrix: cgmath::Matrix4<f32>,
-    perspective_matrix: cgmath::Matrix4<f32>,
+    view_matrix: Mat4,
+    perspective_matrix: Mat4,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
@@ -79,9 +79,9 @@ struct GlobalUniforms {
     time: [f32; 4],
 }
 
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
-);
+// pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
+//     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
+// };
 
 fn create_depth_texture(
     config: &wgpu::SurfaceConfiguration,
@@ -187,7 +187,7 @@ impl State {
         assert!(entity_uniform_size <= uniform_alignment);
         let mut entities = vec![
             Ent::new(
-                cgmath::vec3(0.0, 4.0, 0.0),
+                vec3(0.0, 4.0, 0.0),
                 45.,
                 1.,
                 0.,
@@ -198,7 +198,7 @@ impl State {
                 Some("walker".to_string()),
             ),
             Ent::new(
-                cgmath::vec3(4.0, 4.0, 0.0),
+                vec3(4.0, 4.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -209,7 +209,7 @@ impl State {
                 Some("walker".to_string()),
             ),
             Ent::new(
-                cgmath::vec3(0.0, 0.0, 0.0),
+                vec3(0.0, 0.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -220,7 +220,7 @@ impl State {
                 None,
             ),
             Ent::new(
-                cgmath::vec3(-2.0, 4.0, 0.0),
+                vec3(-2.0, 4.0, 0.0),
                 0.,
                 1.,
                 0.4,
@@ -329,8 +329,8 @@ impl State {
             render::generate_matrix(size.width as f32 / size.height as f32, 0.);
 
         let render_uniforms = GlobalUniforms {
-            view: *mx_view.as_ref(),
-            persp: *mx_persp.as_ref(),
+            view: mx_view.to_cols_array_2d(),
+            persp: mx_persp.to_cols_array_2d(),
             time: [0f32, 0f32, 0f32, 0f32],
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };

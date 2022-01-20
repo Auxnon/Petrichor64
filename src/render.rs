@@ -1,21 +1,25 @@
 use std::{f32::consts::PI, iter, ops::Mul};
 
-use cgmath::SquareMatrix;
+use glam::{vec3, Mat4, Quat, Vec3};
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
     lua_define, State,
 };
 
-pub fn generate_matrix(
-    aspect_ratio: f32,
-    rot: f32,
-) -> (cgmath::Matrix4<f32>, cgmath::Matrix4<f32>) {
-    let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 800.0);
-    let mx_view = cgmath::Matrix4::look_at_rh(
-        cgmath::Point3::new(128. * rot.cos(), 128. * rot.sin(), 114.0),
-        cgmath::Point3::new(0f32, 0.0, 0.0),
-        cgmath::Vector3::unit_z(),
+pub fn generate_matrix(aspect_ratio: f32, rot: f32) -> (Mat4, Mat4) {
+    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 800.0);
+    //let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 800.0);
+
+    // let mx_view = cgmath::Matrix4::look_at_rh(
+    //     cgmath::Point3::new(128. * rot.cos(), 128. * rot.sin(), 114.0),
+    //     cgmath::Point3::new(0f32, 0.0, 0.0),
+    //     cgmath::Vector3::unit_z(),
+    // );
+    let mx_view = Mat4::look_at_rh(
+        vec3(128. * rot.cos(), 128. * rot.sin(), 114.0),
+        vec3(0f32, 0.0, 0.0),
+        Vec3::Z,
     );
     (mx_view, mx_projection)
 }
@@ -37,7 +41,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.value2 = 0.;
         let typeOf = state.entities.len() % 2 == 0;
         state.entities.push(Ent::new(
-            cgmath::vec3(
+            vec3(
                 (2. * state.entities.len() as f32) - 100.,
                 if typeOf { 0. } else { -9. },
                 0.,
@@ -91,9 +95,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .queue
         .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
-    let m: cgmath::Matrix4<f32> = cgmath::Matrix4::identity();
+    let m: Mat4 = Mat4::IDENTITY;
     let data = EntityUniforms {
-        model: m.into(),
+        model: m.to_cols_array_2d(),
         color: [1., 1., 1., 1.],
         uv_mod: [0., 0., 1., 1.],
         effects: [0, 0, 0, 0],
@@ -108,16 +112,22 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     for (i, entity) in &mut state.entities.iter_mut().enumerate() {
         entity.run();
 
-        let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+        let rotation = Mat4::from_rotation_z(entity.rotation);
 
-        let transform = cgmath::Decomposed {
-            disp: entity.pos.mul(16.),
-            rot: cgmath::Quaternion::from_sv(entity.rotation, cgmath::Vector3::new(0., 0., 1.)),
-            //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-            scale: entity.scale * 16.,
-        };
+        let quat = Quat::from_axis_angle(vec3(0., 0., 1.), entity.rotation);
 
-        entity.matrix = cgmath::Matrix4::from(transform);
+        // let transform = cgmath::Decomposed {
+        //     disp: entity.pos.mul(16.),
+        //     rot: ),
+        //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+        //     scale: entity.scale * 16.,
+        // };
+
+        entity.matrix = Mat4::from_scale_rotation_translation(
+            vec3(entity.scale, entity.scale, entity.scale),
+            quat,
+            entity.pos,
+        );
 
         // DEV i32
         /*
@@ -138,7 +148,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         */
 
         let data = EntityUniforms {
-            model: entity.matrix.into(),
+            model: entity.matrix.to_cols_array_2d(),
             color: [
                 entity.color.r as f32,
                 entity.color.g as f32,
