@@ -14,3 +14,5 @@ Cargo.lock
 
 /target
 .DS_Store
+pic.png
+tile.png
