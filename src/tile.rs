@@ -39,7 +39,7 @@ impl World {
             for xi in 0..row.len() {
                 let c = row[xi];
                 let x = xi as i32 * 16;
-                let y = yi as i32 * 16;
+                let y = yi as i32 * -16;
                 if c == 1 {
                     let u = if yi > 0 { path[yi - 1][xi] } else { 0 };
                     let d = if yi < h - 1 { path[yi + 1][xi] } else { 0 };

@@ -53,23 +53,38 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
         }
         _ => {
             state.switch_board.write().space = state.input_helper.key_held(VirtualKeyCode::Space);
-            let t = state.input_helper.text();
 
-            if t.len() > 0 {
-                let mut neg = 0;
-                let emp: char;
-                let mut st = vec![];
-                for tt in t.iter() {
-                    match tt {
-                        winit_input_helper::TextChar::Back => {
-                            neg += 1;
-                        }
-                        winit_input_helper::TextChar::Char(c) => st.push(*c),
+            if state.input_helper.mouse_pressed(0) {
+                match state.input_helper.mouse() {
+                    Some((x, y)) => {
+                        state.mouse = (x / state.size.width as f32, y / state.size.height as f32);
+                        state.value2 = 2.;
                     }
+                    _ => {}
                 }
-                crate::log::log(String::from_iter(st));
+            }
 
-                //println!(" {}", String::from_iter(st));
+            if state.input_helper.key_released(VirtualKeyCode::Grave) {
+                state.gui.toggle_output()
+            } else {
+                let t = state.input_helper.text();
+
+                if t.len() > 0 {
+                    let mut neg = 0;
+                    let emp: char;
+                    let mut st = vec![];
+                    for tt in t.iter() {
+                        match tt {
+                            winit_input_helper::TextChar::Back => {
+                                neg += 1;
+                            }
+                            winit_input_helper::TextChar::Char(c) => st.push(*c),
+                        }
+                    }
+                    crate::log::log(String::from_iter(st));
+
+                    //println!(" {}", String::from_iter(st));
+                }
             }
         }
     }

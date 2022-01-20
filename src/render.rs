@@ -1,6 +1,10 @@
-use std::{f32::consts::PI, iter, ops::Mul};
+use std::{
+    f32::consts::PI,
+    iter,
+    ops::{Div, Mul},
+};
 
-use glam::{vec3, Mat4, Quat, Vec3};
+use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec3, Vec4Swizzles};
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
@@ -17,7 +21,7 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32) -> (Mat4, Mat4) {
     //     cgmath::Vector3::unit_z(),
     // );
     let mx_view = Mat4::look_at_rh(
-        vec3(128. * rot.cos(), 128. * rot.sin(), 114.0),
+        vec3(92. * rot.cos(), -128., 82.0),
         vec3(0f32, 0.0, 0.0),
         Vec3::Z,
     );
@@ -36,18 +40,29 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     if state.value > 1. {
         state.value = 0.;
     }
-    state.value2 += 0.02;
+
+    let (mx_view, mx_persp) = generate_matrix(
+        state.size.width as f32 / state.size.height as f32,
+        state.value * 2. * std::f32::consts::PI,
+    );
+
     if state.value2 > 1. {
         state.value2 = 0.;
         let typeOf = state.entities.len() % 2 == 0;
+
+        let inv = mx_persp.mul(mx_view).inverse();
+        let v = vec4(state.mouse.0 * 4. - 2., 0., state.mouse.1 * 4. - 2., 1.);
+        //let p = inv.mul_vec4(v);
+        // let p = v * inv;
+        //inv.mul_vec4(other)
+        let t = inv.mul_vec4(v).div(40.);
+        println!("{}", t);
+        //Mat4::project_point3(&self, other)
+
         state.entities.push(Ent::new(
-            vec3(
-                (2. * state.entities.len() as f32) - 100.,
-                if typeOf { 0. } else { -9. },
-                0.,
-            ),
+            t.xyz(),
             0.,
-            if typeOf { 1. } else { 1. / 8. },
+            if typeOf { 1. } else { 1. },
             0.,
             if typeOf {
                 "chicken".to_string()
@@ -61,14 +76,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             },
             (state.entities.len() as u64 * state.uniform_alignment) as u32,
             typeOf,
-            Some("walker".to_string()),
+            None, //Some("walker".to_string()),
         ))
     }
-
-    let (mx_view, mx_persp) = generate_matrix(
-        state.size.width as f32 / state.size.height as f32,
-        state.value * 2. * std::f32::consts::PI,
-    );
 
     // let rot = cgmath::Matrix4::from_angle_y(a);
     // //let mx_ref: = mx_total.as_ref();
@@ -122,30 +132,32 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
         //     scale: entity.scale * 16.,
         // };
+        let s = entity.scale;
 
-        entity.matrix = Mat4::from_scale_rotation_translation(
-            vec3(entity.scale, entity.scale, entity.scale),
-            quat,
-            entity.pos,
-        );
+        entity.matrix =
+            Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, entity.pos.mul(16.));
 
         // DEV i32
         /*
-        let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+                let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
 
-        let v = entity.pos.mul(16.).cast::<i32>().unwrap();
-        let rot = cgmath::Quaternion::<i32>::from_sv(
-            entity.rotation as i32,
-            cgmath::Vector3::<i32>::new(0, 0, 1),
-        );
-        let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
-            disp: v,
-            rot: rot,
-            //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-            scale: (entity.scale * 16.) as i32,
-        };
-        let matrix = cgmath::Matrix4::<i32>::from(transform);
-        */
+                let v = entity.pos.mul(16.).cast::<i32>().unwrap();
+                let rot = cgmath::Quaternion::<i32>::from_sv(
+                    entity.rotation as i32,
+                    cgmath::Vector3::<i32>::new(0, 0, 1),
+                );
+                let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
+                    disp: v,
+                    rot: rot,
+                    //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+        <<<<<<< Updated upstream
+                    scale: (entity.scale * 16.) as i32,
+        =======
+                    scale: entity.scale,
+        >>>>>>> Stashed changes
+                };
+                let matrix = cgmath::Matrix4::<i32>::from(transform);
+                */
 
         let data = EntityUniforms {
             model: entity.matrix.to_cols_array_2d(),

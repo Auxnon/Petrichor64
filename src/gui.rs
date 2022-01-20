@@ -17,6 +17,7 @@ pub struct Gui {
     pub letters: RgbaImage,
     pub size: [u32; 2],
     dirty: bool,
+    output: bool,
 }
 
 impl Gui {
@@ -63,6 +64,7 @@ impl Gui {
             time: 0.,
             size: [d.0, d.1],
             dirty: true,
+            output: false,
         }
     }
 
@@ -170,11 +172,28 @@ impl Gui {
         self.dirty = true;
     }
 
+    pub fn enable_output(&mut self) {
+        self.text = crate::log::get((self.size[1] / 5 - 8) as usize);
+        self.output = true;
+        self.apply_text();
+    }
+    pub fn disable_output(&mut self) {
+        self.text = "".to_string();
+        self.output = false;
+        self.apply_text();
+    }
+    pub fn toggle_output(&mut self) {
+        if self.output {
+            self.disable_output();
+        } else {
+            self.enable_output();
+        }
+    }
     pub fn render(&mut self, device: &Device, queue: &Queue, time: f32) {
         //let mut rng = rand::thread_rng();
 
         self.time = time;
-        if crate::log::is_dirty() {
+        if self.output && crate::log::is_dirty() {
             self.text = crate::log::get((self.size[1] / 5 - 8) as usize);
             self.apply_text();
             crate::log::clean();

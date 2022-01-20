@@ -162,7 +162,7 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
 }
 
 pub fn init(device: &Device) {
-    let (plane_vertex_data, plane_index_data) = create_plane(2, Some(ivec3(-1, 0, 0)), None);
+    let (plane_vertex_data, plane_index_data) = create_plane(16, Some(ivec3(-8, 0, 0)), None);
     //device.create_buffer_init(desc)
     let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Plane Vertex Buffer"),

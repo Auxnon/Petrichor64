@@ -69,6 +69,7 @@ pub struct State {
     input_helper: winit_input_helper::WinitInputHelper,
     value: f32,
     value2: f32,
+    mouse: (f32, f32),
 }
 
 #[repr(C)]
@@ -187,7 +188,7 @@ impl State {
         assert!(entity_uniform_size <= uniform_alignment);
         let mut entities = vec![
             Ent::new(
-                vec3(0.0, 4.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
                 45.,
                 1.,
                 0.,
@@ -195,10 +196,10 @@ impl State {
                 "plane".to_string(),
                 uniform_alignment as u32,
                 true,
-                Some("walker".to_string()),
+                None,
             ),
             Ent::new(
-                vec3(4.0, 4.0, 0.0),
+                vec3(1.0, 1.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -206,10 +207,10 @@ impl State {
                 "plane".to_string(),
                 (uniform_alignment * 2) as u32,
                 false,
-                Some("walker".to_string()),
+                None,
             ),
             Ent::new(
-                vec3(0.0, 0.0, 0.0),
+                vec3(2.0, 1.0, 0.0),
                 0.,
                 1.,
                 0.,
@@ -220,10 +221,10 @@ impl State {
                 None,
             ),
             Ent::new(
-                vec3(-2.0, 4.0, 0.0),
+                vec3(-1.0, 1.0, 0.0),
                 0.,
                 1.,
-                0.4,
+                0.,
                 "guy3".to_string(),
                 "plane".to_string(),
                 (uniform_alignment * 4) as u32,
@@ -553,6 +554,7 @@ impl State {
             value2: 0.,
             world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
+            mouse: (0., 0.),
         }
     }
 
