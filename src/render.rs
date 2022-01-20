@@ -50,8 +50,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.value2 = 0.;
         let typeOf = state.entities.len() % 2 == 0;
 
-        let inv = mx_persp.mul(mx_view).inverse();
-        let v = vec4(state.mouse.0 * 4. - 2., 0., state.mouse.1 * 4. - 2., 1.);
+        let inv = mx_persp.inverse();
+        let v = vec4(state.mouse.0 * 4. - 2., state.mouse.1 * 4. - 2., 0., 1.);
         //let p = inv.mul_vec4(v);
         // let p = v * inv;
         //inv.mul_vec4(other)
