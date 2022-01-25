@@ -54,6 +54,7 @@ fn vs_main(
     let pos=vec4<f32>(position);
     //    out.proj_position = globals.view_proj * world_pos;
 
+    //billboard if true
     if(ent.effects[0] > 0u){
         out.proj_position=globals.proj_mat*(globals.view_mat*ent.matrix*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
     }else{
