@@ -1,7 +1,7 @@
 use std::{
     f32::consts::PI,
     iter,
-    ops::{Div, Mul},
+    ops::{Div, DivAssign, Mul},
 };
 
 use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec3, Vec4Swizzles};
@@ -13,18 +13,18 @@ use crate::{
 
 pub fn generate_matrix(aspect_ratio: f32, rot: f32) -> (Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 800.0);
-    //let mx_projection = cgmath::perspective(cgmath::Deg(45f32), aspect_ratio, 1., 800.0);
 
-    // let mx_view = cgmath::Matrix4::look_at_rh(
-    //     cgmath::Point3::new(128. * rot.cos(), 128. * rot.sin(), 114.0),
-    //     cgmath::Point3::new(0f32, 0.0, 0.0),
-    //     cgmath::Vector3::unit_z(),
-    // );
+    let r = 0.5f32;
     let mx_view = Mat4::look_at_rh(
-        vec3(92. * rot.cos(), -128., 82.0),
+        vec3(92. * r.cos(), -128., 82.0),
         vec3(0f32, 0.0, 0.0),
         Vec3::Z,
     );
+
+    //let mx_view = Mat4::IDENTITY;
+
+    let mx_view = Mat4::look_at_rh(vec3(60., 0., 0.), vec3(60., -10., 0.), Vec3::Z);
+
     (mx_view, mx_projection)
 }
 
@@ -50,17 +50,123 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.value2 = 0.;
         let typeOf = state.entities.len() % 2 == 0;
 
-        let inv = mx_persp.inverse();
-        let v = vec4(state.mouse.0 * 4. - 2., state.mouse.1 * 4. - 2., 0., 1.);
+        let inv = (mx_persp * mx_view).inverse();
+        //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
+        //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
+        // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
+        // pp.y -= viewport.y;
+        // let out = vec3(
+        //     (2. * pp.x) / viewport.z - 1.,
+        //     (2. * pp.y) / viewport.w - 1.,
+        //     2. * pp.z - 1.,
+        // );
+
+        //         float pt_x = (point.x / screenSize.x) * 2.f - 1.f;
+        // float pt_y = -(point.y / screenSize.y) * 2.f + 1.f;
+
+        //                       z value from 0.f to 1.f for d3d
+        // vec4 origin = math::mul(vec4(pt_x, pt_y, -1.f, 1.f), VPinv);
+        // origin.w = 1.0f / origin.w;
+        // origin.x *= origin.w;
+        // origin.y *= origin.w;
+        // origin.z *= origin.w;
+
+        // let screen = vec4(state.mouse.0 * 2. - 1., -state.mouse.1 * 2. + 1., -1., 1.);
+        // let mut origin = inv.mul_vec4(screen);
+        // origin.w = 1. / origin.w;
+        // origin.x *= origin.w;
+        // origin.y *= origin.w;
+        // origin.z *= origin.w;
+
+        // let cam_eye = vec4(
+        //     92. * (state.value * 2. * std::f32::consts::PI).cos(),
+        //     -128.,
+        //     82.0,
+        //     1.,
+        // );
+
+        let cam_eye = vec4(60., 0., 0., 1.);
+
+        let cam_center = vec4(0., 0., 0., 0.01);
+
+        let win_coord = vec3(state.mouse.0, state.mouse.1, 1.);
+
+        let screen_coord = vec4(
+            2. * (win_coord.x) - 1.,
+            -2. * (win_coord.y) + 1.,
+            win_coord.z, //2. * win.z - 1.,
+            1.,
+        );
+        let mut screen_unproj = inv.mul_vec4(screen_coord);
+        screen_unproj.div_assign(screen_unproj.w);
+
+        let dir = screen_unproj + cam_eye;
+        let out_point = dir.xyz().normalize().mul(20.); //dir.xyz().normalize().mul(20.);
+
+        //screen_unproj.normalize().mul(10.);
+        //result.div_assign(40.);
+
+        /*
+
+
+            let _2: N = na::convert(2.0);
+        let transform = (proj * model).try_inverse().unwrap_or_else(TMat4::zeros);
+        let pt = TVec4::new(
+            _2 * (win.x - viewport.x) / viewport.z - N::one(),
+            _2 * (win.y - viewport.y) / viewport.w - N::one(),
+            _2 * win.z - N::one(),
+            N::one(),
+        );
+
+        let result = transform * pt;
+        result.fixed_rows::<U3>(0) / result.w
+
+        */
+
+        /*
+
+
+                 var vector = new THREE.Vector3();
+                vector.set(( Control.screenX() / window.innerWidth ) * 2 - 1, - ( Control.screenY() / window.innerHeight ) * 2 + 1,0.05 );
+                vector.unproject(camera)
+                var dir = vector.sub( camera.position ).normalize();
+                var distance = - camera.position.z / dir.z;
+                var pos = camera.position.clone().add( dir.multiplyScalar( distance ) );
+
+                pointer.position.x =pos.x;
+                pointer.position.y =pos.y
+                Control.setVector(pointer.position);
+
+        multiply proj inverse by camera pos matrix?
+        unproject(camera) {
+                    return this.applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld);
+                }
+                */
+        //transform(out, out, invProjectionView);
+        // let v = vec4(
+        //     (state.mouse.0 * 2. - 1.),
+        //     (state.mouse.1 * 2. - 1.),
+        //     10.,
+        //     1.,
+        // );
+        //state.size.width as f32 *
+        //state.size.height as f32 *
         //let p = inv.mul_vec4(v);
         // let p = v * inv;
-        //inv.mul_vec4(other)
-        let t = inv.mul_vec4(v).div(40.);
-        println!("{}", t);
+
+        // let t = inv.mul_vec4(v);
+        // let t = (inv.transform_vector3(screen) - center).normalize();
+        // let distance = -center.z / t.z;
+
+        // let pos = center + (t.mul(distance));
+        println!(
+            "win {}  dir {} world space {}",
+            screen_coord, dir, out_point
+        );
         //Mat4::project_point3(&self, other)
 
         state.entities.push(Ent::new(
-            t.xyz(),
+            out_point,
             0.,
             if typeOf { 1. } else { 1. },
             0.,
