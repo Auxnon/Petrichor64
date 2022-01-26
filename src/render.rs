@@ -48,6 +48,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     );
 
     if true {
+        //let trans = Mat4::from_translation(state.camera_pos);
         let inv = (mx_persp * mx_view).inverse();
         //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
         //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
@@ -106,15 +107,28 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             0.05, //2. * win.z - 1.,
             1.,
         );
-        let mut screen_unproj = inv.mul_vec4(screen_coord);
-        screen_unproj.div_assign(screen_unproj.w);
+        let mut screen_unproj = inv.project_point3(screen_coord.xyz()); //inv.mul_vec4(screen_coord);
+                                                                        //screen_unproj.div_assign(screen_unproj.w);
 
-        let mut near_unproj = inv.mul_vec4(near_coord);
-        near_unproj.div_assign(near_unproj.w);
+        let mut near_unproj = inv.project_point3(near_coord.xyz()); //inv.mul_vec4(near_coord);
+                                                                    //near_unproj.div_assign(near_unproj.w);
 
-        let dir = (screen_unproj.xyz() - near_unproj.xyz()).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
+        //let cam_unproj = inv.project_point3(state.camera_pos);
 
-        let out_point = dir.mul(20.); //dir.xyz().normalize().mul(20.);
+        let dir = (screen_unproj - near_unproj).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
+
+        //     var d = Vector3.Dot(planeP, -planeN);
+        // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
+        // return rayP + t * rayD;
+        let planeP = vec3(0., -10., 0.);
+        let planeN = vec3(0., 1., 0.);
+        let rayP = cam_eye.xyz();
+        let rayD = screen_unproj;
+        let d = planeP.dot(-planeN);
+        let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)
+            / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
+
+        let out_point = rayP + t * rayD; // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
 
         //screen_unproj.normalize().mul(10.);
         //result.div_assign(40.);
