@@ -7,7 +7,7 @@ use std::{mem, rc::Rc, sync::Arc};
 use tile::World;
 
 use ent::Ent;
-use glam::{vec3, Mat4};
+use glam::{vec3, Mat4, Vec3};
 use global::Global;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
@@ -69,7 +69,9 @@ pub struct State {
     input_helper: winit_input_helper::WinitInputHelper,
     value: f32,
     value2: f32,
-    mouse: (f32, f32),
+    mouse_click_pos: (f32, f32),
+    mouse_active_pos: (f32, f32),
+    camera_pos: Vec3,
 }
 
 #[repr(C)]
@@ -327,7 +329,7 @@ impl State {
         });
 
         let (mx_view, mx_persp) =
-            render::generate_matrix(size.width as f32 / size.height as f32, 0.);
+            render::generate_matrix(size.width as f32 / size.height as f32, 0., vec3(0., 0., 0.));
 
         let render_uniforms = GlobalUniforms {
             view: mx_view.to_cols_array_2d(),
@@ -554,7 +556,9 @@ impl State {
             value2: 0.,
             world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
-            mouse: (0., 0.),
+            mouse_active_pos: (0., 0.),
+            mouse_click_pos: (0., 0.),
+            camera_pos: vec3(0., 0., 0.),
         }
     }
 

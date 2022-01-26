@@ -11,7 +11,7 @@ use crate::{
     lua_define, State,
 };
 
-pub fn generate_matrix(aspect_ratio: f32, rot: f32) -> (Mat4, Mat4) {
+pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 800.0);
 
     let r = 0.5f32;
@@ -21,9 +21,9 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32) -> (Mat4, Mat4) {
         Vec3::Z,
     );
 
-    //let mx_view = Mat4::IDENTITY;
+    let mx_view = Mat4::IDENTITY;
 
-    let mx_view = Mat4::look_at_rh(vec3(60., 0., 0.), vec3(60., -10., 0.), Vec3::Z);
+    let mx_view = Mat4::look_at_rh(camera_pos, vec3(0., -10., 0.) + camera_pos, Vec3::Z);
 
     (mx_view, mx_projection)
 }
@@ -44,12 +44,10 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     let (mx_view, mx_persp) = generate_matrix(
         state.size.width as f32 / state.size.height as f32,
         state.value * 2. * std::f32::consts::PI,
+        state.camera_pos,
     );
 
-    if state.value2 > 1. {
-        state.value2 = 0.;
-        let typeOf = state.entities.len() % 2 == 0;
-
+    if true {
         let inv = (mx_persp * mx_view).inverse();
         //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
         //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
@@ -85,11 +83,16 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //     1.,
         // );
 
-        let cam_eye = vec4(60., 0., 0., 1.);
+        let cam_eye = vec4(
+            state.camera_pos.x,
+            state.camera_pos.y,
+            state.camera_pos.z,
+            1.,
+        );
 
-        let cam_center = vec4(0., 0., 0., 0.01);
+        let cam_center = vec4(0., 0., 0., 1.);
 
-        let win_coord = vec3(state.mouse.0, state.mouse.1, 1.);
+        let win_coord = vec3(state.mouse_active_pos.0, state.mouse_active_pos.1, 1.);
 
         let screen_coord = vec4(
             2. * (win_coord.x) - 1.,
@@ -97,11 +100,21 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             win_coord.z, //2. * win.z - 1.,
             1.,
         );
+        let near_coord = vec4(
+            2. * (win_coord.x) - 1.,
+            -2. * (win_coord.y) + 1.,
+            0.05, //2. * win.z - 1.,
+            1.,
+        );
         let mut screen_unproj = inv.mul_vec4(screen_coord);
         screen_unproj.div_assign(screen_unproj.w);
 
-        let dir = screen_unproj + cam_eye;
-        let out_point = dir.xyz().normalize().mul(20.); //dir.xyz().normalize().mul(20.);
+        let mut near_unproj = inv.mul_vec4(near_coord);
+        near_unproj.div_assign(near_unproj.w);
+
+        let dir = (screen_unproj.xyz() - near_unproj.xyz()).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
+
+        let out_point = dir.mul(20.); //dir.xyz().normalize().mul(20.);
 
         //screen_unproj.normalize().mul(10.);
         //result.div_assign(40.);
@@ -159,31 +172,38 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // let distance = -center.z / t.z;
 
         // let pos = center + (t.mul(distance));
-        println!(
-            "win {}  dir {} world space {}",
-            screen_coord, dir, out_point
-        );
-        //Mat4::project_point3(&self, other)
 
-        state.entities.push(Ent::new(
-            out_point,
-            0.,
-            if typeOf { 1. } else { 1. },
-            0.,
-            if typeOf {
-                "chicken".to_string()
-            } else {
-                "package".to_string()
-            },
-            if typeOf {
-                "plane".to_string()
-            } else {
-                "package".to_string()
-            },
-            (state.entities.len() as u64 * state.uniform_alignment) as u32,
-            typeOf,
-            None, //Some("walker".to_string()),
-        ))
+        if state.value2 >= 1. {
+            let typeOf = state.entities.len() % 2 == 0;
+            state.value2 = 0.;
+
+            println!(
+                "win {}  dir {} world space {}",
+                screen_coord, dir, out_point
+            );
+
+            state.entities.push(Ent::new(
+                out_point,
+                0.,
+                if typeOf { 1. } else { 1. },
+                0.,
+                if typeOf {
+                    "chicken".to_string()
+                } else {
+                    "package".to_string()
+                },
+                if typeOf {
+                    "plane".to_string()
+                } else {
+                    "package".to_string()
+                },
+                (state.entities.len() as u64 * state.uniform_alignment) as u32,
+                typeOf,
+                None, //Some("walker".to_string()),
+            ))
+        }
+
+        state.entities[0].pos = out_point;
     }
 
     // let rot = cgmath::Matrix4::from_angle_y(a);

@@ -53,15 +53,26 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
         }
         _ => {
             state.switch_board.write().space = state.input_helper.key_held(VirtualKeyCode::Space);
+            match state.input_helper.mouse() {
+                Some((x, y)) => {
+                    state.mouse_active_pos =
+                        (x / state.size.width as f32, y / state.size.height as f32);
+                }
+                _ => {}
+            }
 
             if state.input_helper.mouse_pressed(0) {
-                match state.input_helper.mouse() {
-                    Some((x, y)) => {
-                        state.mouse = (x / state.size.width as f32, y / state.size.height as f32);
-                        state.value2 = 2.;
-                    }
-                    _ => {}
-                }
+                state.mouse_click_pos = state.mouse_active_pos;
+                state.value2 = 1.;
+            }
+            if state.input_helper.key_pressed(VirtualKeyCode::Left) {
+                state.camera_pos.x += 10.;
+            } else if state.input_helper.key_pressed(VirtualKeyCode::Right) {
+                state.camera_pos.x -= 10.;
+            } else if state.input_helper.key_pressed(VirtualKeyCode::Up) {
+                state.camera_pos.y += 10.;
+            } else if state.input_helper.key_pressed(VirtualKeyCode::Down) {
+                state.camera_pos.y -= 10.;
             }
 
             if state.input_helper.key_released(VirtualKeyCode::Grave) {
