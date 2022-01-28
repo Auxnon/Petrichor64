@@ -22,8 +22,13 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
     );
 
     let mx_view = Mat4::IDENTITY;
+    let r = std::f32::consts::PI * (camera_pos.x % 100.) / 50.;
 
-    let mx_view = Mat4::look_at_rh(camera_pos, vec3(0., -10., 0.) + camera_pos, Vec3::Z);
+    let mx_view = Mat4::look_at_rh(
+        vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
+        vec3(0., 0., 0.),
+        Vec3::Z,
+    );
 
     (mx_view, mx_projection)
 }
@@ -49,7 +54,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
     if true {
         //let trans = Mat4::from_translation(state.camera_pos);
+        let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
         let inv = (mx_persp * mx_view).inverse();
+
         //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
         //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
         // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
@@ -83,6 +90,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //     82.0,
         //     1.,
         // );
+        // let cam_proj = (mx_persp).project_point3(state.camera_pos);
+        // println!("cam pos proj {}", cam_proj);
 
         let cam_eye = vec4(
             state.camera_pos.x,
@@ -101,10 +110,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             win_coord.z, //2. * win.z - 1.,
             1.,
         );
+
         let near_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
-            0.05, //2. * win.z - 1.,
+            0., //2. * win.z - 1.,
             1.,
         );
         let mut screen_unproj = inv.project_point3(screen_coord.xyz()); //inv.mul_vec4(screen_coord);
@@ -120,9 +130,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //     var d = Vector3.Dot(planeP, -planeN);
         // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
         // return rayP + t * rayD;
-        let planeP = vec3(0., -10., 0.);
+        let planeP = vec3(0., 16., 0.);
         let planeN = vec3(0., 1., 0.);
-        let rayP = cam_eye.xyz();
+        let rayP = cam_center.xyz();
         let rayD = screen_unproj;
         let d = planeP.dot(-planeN);
         let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)

@@ -77,6 +77,11 @@ impl World {
         //         ind = 0;
         //     }
         // }
+        for i in 0..16 {
+            for j in 0..16 {
+                add_tile(&mut world, format!("grid"), (i - 8) * 16, (j - 8) * 16, -32)
+            }
+        }
 
         world.get_tile_mut(0, 0).cook(device);
         world
