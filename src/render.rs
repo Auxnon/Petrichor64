@@ -22,7 +22,7 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
     );
 
     let mx_view = Mat4::IDENTITY;
-    let r = std::f32::consts::PI * (camera_pos.x % 100.) / 50.;
+    let r = std::f32::consts::PI * (0.5 + (camera_pos.x % 100.) / 50.);
 
     let mx_view = Mat4::look_at_rh(
         vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -108,20 +108,20 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
             win_coord.z, //2. * win.z - 1.,
-            1.,
+            0.,
         );
 
         let near_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
             0., //2. * win.z - 1.,
-            1.,
+            0.,
         );
-        let mut screen_unproj = inv.project_point3(screen_coord.xyz()); //inv.mul_vec4(screen_coord);
-                                                                        //screen_unproj.div_assign(screen_unproj.w);
+        let mut screen_unproj = inv.transform_point3(screen_coord.xyz()); //inv.mul_vec4(screen_coord);
+                                                                          //screen_unproj.div_assign(screen_unproj.w);
 
-        let mut near_unproj = inv.project_point3(near_coord.xyz()); //inv.mul_vec4(near_coord);
-                                                                    //near_unproj.div_assign(near_unproj.w);
+        let mut near_unproj = inv.transform_point3(cam_center.xyz()); //inv.mul_vec4(near_coord);
+                                                                      //near_unproj.div_assign(near_unproj.w);
 
         //let cam_unproj = inv.project_point3(state.camera_pos);
 
@@ -130,8 +130,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //     var d = Vector3.Dot(planeP, -planeN);
         // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
         // return rayP + t * rayD;
-        let planeP = vec3(0., 16., 0.);
-        let planeN = vec3(0., 1., 0.);
+        let planeP = vec3(16., 0., 0.);
+        let planeN = vec3(1., 0., 0.);
         let rayP = cam_center.xyz();
         let rayD = screen_unproj;
         let d = planeP.dot(-planeN);
