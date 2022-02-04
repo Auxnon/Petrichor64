@@ -204,6 +204,9 @@ pub fn init(device: &Device) {
         data: None,
     };
     cube.get_or_init(|| cubeModel);
+    dictionary
+        .lock()
+        .insert("cube".to_string(), Arc::clone(&cube));
 }
 pub fn cube_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&cube)
