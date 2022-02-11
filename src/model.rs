@@ -56,41 +56,41 @@ fn vertexx(pos: [f32; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
     }
 }
 
-pub fn create_cube() -> (Vec<Vertex>, Vec<u16>) {
+pub fn create_cube(i: i16) -> (Vec<Vertex>, Vec<u32>) {
     let vertex_data = [
         // top (0, 0, 1)
-        vertex([-1, -1, 1], [0, 0, 1], [0., 1.]),
-        vertex([1, -1, 1], [0, 0, 1], [1., 1.]),
-        vertex([1, 1, 1], [0, 0, 1], [1., 0.]),
-        vertex([-1, 1, 1], [0, 0, 1], [0., 0.]),
+        vertex([-i, -i, i], [0, 0, 1], [0., 1.]),
+        vertex([i, -i, i], [0, 0, 1], [1., 1.]),
+        vertex([i, i, i], [0, 0, 1], [1., 0.]),
+        vertex([-i, i, i], [0, 0, 1], [0., 0.]),
         // bottom (0, 0, -1)
-        vertex([-1, 1, -1], [0, 0, -1], [0., 0.]),
-        vertex([1, 1, -1], [0, 0, -1], [1., 0.]),
-        vertex([1, -1, -1], [0, 0, -1], [1., 1.]),
-        vertex([-1, -1, -1], [0, 0, -1], [0., 1.]),
+        vertex([-i, i, -i], [0, 0, -1], [0., 0.]),
+        vertex([i, i, -i], [0, 0, -1], [1., 0.]),
+        vertex([i, -i, -i], [0, 0, -1], [1., 1.]),
+        vertex([-i, -i, -i], [0, 0, -1], [0., 1.]),
         // right (1, 0, 0)
-        vertex([1, -1, -1], [1, 0, 0], [0., 0.]),
-        vertex([1, 1, -1], [1, 0, 0], [1., 0.]),
-        vertex([1, 1, 1], [1, 0, 0], [1., 1.]),
-        vertex([1, -1, 1], [1, 0, 0], [0., 1.]),
+        vertex([i, -i, -i], [1, 0, 0], [0., 0.]),
+        vertex([i, i, -i], [1, 0, 0], [1., 0.]),
+        vertex([i, i, i], [1, 0, 0], [1., 1.]),
+        vertex([i, -i, i], [1, 0, 0], [0., 1.]),
         // left (-1, 0, 0)
-        vertex([-1, -1, 1], [-1, 0, 0], [0., 0.]),
-        vertex([-1, 1, 1], [-1, 0, 0], [1., 0.]),
-        vertex([-1, 1, -1], [-1, 0, 0], [1., 1.]),
-        vertex([-1, -1, -1], [-1, 0, 0], [0., 1.]),
+        vertex([-i, -i, i], [-1, 0, 0], [0., 0.]),
+        vertex([-i, i, i], [-1, 0, 0], [1., 0.]),
+        vertex([-i, i, -i], [-1, 0, 0], [1., 1.]),
+        vertex([-i, -i, -i], [-1, 0, 0], [0., 1.]),
         // front (0, 1, 0)
-        vertex([1, 1, -1], [0, 1, 0], [0., 0.]),
-        vertex([-1, 1, -1], [0, 1, 0], [1., 0.]),
-        vertex([-1, 1, 1], [0, 1, 0], [1., 1.]),
-        vertex([1, 1, 1], [0, 1, 0], [0., 1.]),
+        vertex([i, i, -i], [0, 1, 0], [0., 0.]),
+        vertex([-i, i, -i], [0, 1, 0], [1., 0.]),
+        vertex([-i, i, i], [0, 1, 0], [1., 1.]),
+        vertex([i, i, i], [0, 1, 0], [0., 1.]),
         // back (0, -1, 0)
-        vertex([1, -1, 1], [0, -1, 0], [0., 0.]),
-        vertex([-1, -1, 1], [0, -1, 0], [1., 0.]),
-        vertex([-1, -1, -1], [0, -1, 0], [1., 1.]),
-        vertex([1, -1, -1], [0, -1, 0], [0., 1.]),
+        vertex([i, -i, i], [0, -1, 0], [0., 0.]),
+        vertex([-i, -i, i], [0, -1, 0], [1., 0.]),
+        vertex([-i, -i, -i], [0, -1, 0], [1., 1.]),
+        vertex([i, -i, -i], [0, -1, 0], [0., 1.]),
     ];
 
-    let index_data: &[u16] = &[
+    let index_data: &[u32] = &[
         0, 1, 2, 2, 3, 0, // top
         4, 5, 6, 6, 7, 4, // bottom
         8, 9, 10, 10, 11, 8, // right
@@ -185,7 +185,7 @@ pub fn init(device: &Device) {
     };
     plane.get_or_init(|| planeModel);
 
-    let (cube_vertex_data, cube_index_data) = create_cube();
+    let (cube_vertex_data, cube_index_data) = create_cube(8);
     let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Cubes Vertex Buffer"),
         contents: bytemuck::cast_slice(&cube_vertex_data),
@@ -201,10 +201,10 @@ pub fn init(device: &Device) {
         index_buf: cube_index_buf,
         index_format: wgpu::IndexFormat::Uint32,
         index_count: cube_index_data.len(),
-        data: None,
+        data: Some((cube_vertex_data, cube_index_data)),
     };
     cube.get_or_init(|| cubeModel);
-    dictionary
+    let d = dictionary
         .lock()
         .insert("cube".to_string(), Arc::clone(&cube));
 }
@@ -230,9 +230,12 @@ pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
     match dictionary.lock().get(str) {
         Some(model) => {
             let m = model.get();
+
             if m.is_some() {
                 if m.unwrap().data.is_some() {
                     return Some(Arc::clone(model));
+                } else {
+                    log(format!("missing model data field for {}", str));
                 }
             }
             return None;

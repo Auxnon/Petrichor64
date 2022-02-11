@@ -18,7 +18,7 @@ impl World {
         // add_tile(&mut w, "grass_down".to_string(), 0, 0, 0);
         // add_tile(&mut w, "grass_down".to_string(), 0, 1, 0);
         // add_tile(&mut w, "grass_down".to_string(), 1, 1, 0);
-        let path = [[0, 1, 0], [1, 1, 0], [0, 1, 0]];
+        let path = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
         let h = path.len();
         let w = path[0].len();
         let mut hash = HashMap::new();
@@ -78,8 +78,25 @@ impl World {
         //     }
         // }
         for i in 0..16 {
-            for j in 0..8 {
-                add_tile(&mut world, format!("grid"), (i - 8) * 16, (j - 8) * 16, -32)
+            for j in 0..16 {
+                add_tile(
+                    &mut world,
+                    format!("grid"),
+                    (i - 8) * 16,
+                    (j - 8) * 16,
+                    -32 * 3,
+                )
+            }
+        }
+        for i in 0..16 {
+            for j in 0..16 {
+                add_tile(
+                    &mut world,
+                    format!("grid"),
+                    16 * 16,
+                    (i - 8) * 16,
+                    (j - 8) * 16,
+                )
             }
         }
 
@@ -146,12 +163,12 @@ pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32)
 
     let (verts, inds) = match crate::model::get_adjustable_model(&"cube".to_string()) {
         Some(m) => {
-            println!("we got a cube model");
+            //println!("🟢we got a cube model");
             let data = m.get().unwrap().data.as_ref().unwrap().clone();
             (data.0, data.1)
         }
         None => {
-            println!("failed to locate cube model");
+            //println!("🔴failed to locate cube model");
             crate::model::create_plane(16, None, None)
         }
     };

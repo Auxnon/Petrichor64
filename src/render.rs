@@ -11,7 +11,7 @@ use crate::{
     lua_define, State,
 };
 
-pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, Mat4) {
+pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 800.0);
 
     let r = 0.5f32;
@@ -23,6 +23,9 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
 
     let mx_view = Mat4::IDENTITY;
     let r = std::f32::consts::PI * (0.5 + (camera_pos.x % 100.) / 50.);
+    let quat = Quat::from_axis_angle(vec3(0., 0., 1.), -r);
+    let model_mat =
+        Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(0., 0., camera_pos.y));
 
     let mx_view = Mat4::look_at_rh(
         vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -30,7 +33,7 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
         Vec3::Z,
     );
 
-    (mx_view, mx_projection)
+    (mx_view, mx_projection, model_mat)
 }
 
 pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
@@ -46,7 +49,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.value = 0.;
     }
 
-    let (mx_view, mx_persp) = generate_matrix(
+    let (mx_view, mx_persp, mx_model) = generate_matrix(
         state.size.width as f32 / state.size.height as f32,
         state.value * 2. * std::f32::consts::PI,
         state.camera_pos,
@@ -54,7 +57,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
     if true {
         //let trans = Mat4::from_translation(state.camera_pos);
-        let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
+        //let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
+        //mx_model
         let inv = (mx_persp * mx_view).inverse();
 
         //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
@@ -102,43 +106,61 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         let cam_center = vec4(0., 0., 0., 1.);
 
-        let win_coord = vec3(state.mouse_active_pos.0, state.mouse_active_pos.1, 1.);
-
-        let screen_coord = vec4(
-            2. * (win_coord.x) - 1.,
-            -2. * (win_coord.y) + 1.,
-            win_coord.z, //2. * win.z - 1.,
-            0.,
-        );
-
+        let win_coord = vec3(state.mouse_active_pos.0, state.mouse_active_pos.1, 0.);
+        let aspect = state.size.width as f32 / state.size.height as f32;
         let near_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
-            0., //2. * win.z - 1.,
-            0.,
+            win_coord.z, //2. * win.z - 1.,
+            1.,
         );
-        let mut screen_unproj = inv.transform_point3(screen_coord.xyz()); //inv.mul_vec4(screen_coord);
-                                                                          //screen_unproj.div_assign(screen_unproj.w);
+        //println!(" x {} y {}", near_coord.x, near_coord.y);
 
-        let mut near_unproj = inv.transform_point3(cam_center.xyz()); //inv.mul_vec4(near_coord);
-                                                                      //near_unproj.div_assign(near_unproj.w);
+        let far_coord = vec4(
+            2. * (win_coord.x) - 1.,
+            -2. * (win_coord.y) + 1.,
+            1., //2. * win.z - 1.,
+            1.,
+        );
+        //inv.project_point3(other)
+        let mut near_unproj = inv.project_point3(near_coord.xyz()).normalize(); //inv.mul_vec4(screen_coord);
+                                                                                //screen_unproj.div_assign(screen_unproj.w);
+
+        let mut far_unproj = inv.project_point3(far_coord.xyz()); //inv.mul_vec4(near_coord);
+                                                                  //near_unproj.div_assign(near_unproj.w);
 
         //let cam_unproj = inv.project_point3(state.camera_pos);
 
-        let dir = (screen_unproj - near_unproj).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
+        let dir = (near_unproj - far_unproj).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
 
         //     var d = Vector3.Dot(planeP, -planeN);
         // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
         // return rayP + t * rayD;
-        let planeP = vec3(16., 0., 0.);
-        let planeN = vec3(1., 0., 0.);
-        let rayP = cam_center.xyz();
-        let rayD = screen_unproj;
-        let d = planeP.dot(-planeN);
-        let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)
-            / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
 
-        let out_point = rayP + t * rayD; // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
+        let mut out_point;
+
+        if true {
+            let planeP = vec3(16., 0., 0.);
+            let planeN = vec3(1., 0., 0.);
+
+            // Calculate distance of intersection point from r.origin.
+            // let denominator = planeP.dot(dir); // Vector3.Dot(p.Normal, ray.Direction);
+            // let numerator = planeN.dot(near_unproj) + 4.; //+ planeN//Vector3.Dot(p.Normal, ray.Position) + p.D;
+            // let t = -(numerator / denominator);
+
+            // Calculate the picked position on the y = 0 plane.
+            // out_point = near_unproj + dir * t;
+
+            let rayP = near_unproj;
+            let rayD = dir;
+            let d = planeP.dot(-planeN);
+            let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)
+                / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
+
+            out_point = rayP + t * rayD; // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
+        } else {
+            out_point = dir.mul(-16.) + cam_center.xyz();
+        }
 
         //screen_unproj.normalize().mul(10.);
         //result.div_assign(40.);
@@ -201,10 +223,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             let typeOf = state.entities.len() % 2 == 0;
             state.value2 = 0.;
 
-            println!(
-                "win {}  dir {} world space {}",
-                screen_coord, dir, out_point
-            );
+            println!("  dir {} world space {}", dir, out_point);
 
             state.entities.push(Ent::new(
                 out_point,

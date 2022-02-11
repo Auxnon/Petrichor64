@@ -328,7 +328,7 @@ impl State {
             ],
         });
 
-        let (mx_view, mx_persp) =
+        let (mx_view, mx_persp, mx_model) =
             render::generate_matrix(size.width as f32 / size.height as f32, 0., vec3(0., 0., 0.));
 
         let render_uniforms = GlobalUniforms {
