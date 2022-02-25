@@ -8,11 +8,11 @@ use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec3, Vec4Swizzles};
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
-    lua_define, State,
+    State,
 };
 
 pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, Mat4, Mat4) {
-    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 800.0);
+    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
 
     let r = 0.5f32;
     let mx_view = Mat4::look_at_rh(
@@ -23,13 +23,14 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
 
     let mx_view = Mat4::IDENTITY;
     let r = std::f32::consts::PI * (0.5 + (camera_pos.x % 100.) / 50.);
-    let quat = Quat::from_axis_angle(vec3(0., 0., 1.), -r);
+    let quat = Quat::from_axis_angle(vec3(0., 1., 0.), r);
     let model_mat =
         Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(0., 0., camera_pos.y));
 
     let mx_view = Mat4::look_at_rh(
-        vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
-        vec3(0., 0., 0.),
+        //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
+        vec3(camera_pos.x, camera_pos.z + 16., camera_pos.y),
+        vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         Vec3::Z,
     );
 
@@ -59,17 +60,19 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         //let trans = Mat4::from_translation(state.camera_pos);
         //let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
         //mx_model
-        let inv = (mx_persp * mx_view).inverse();
-
-        //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
-        //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
-        // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
-        // pp.y -= viewport.y;
-        // let out = vec3(
-        //     (2. * pp.x) / viewport.z - 1.,
-        //     (2. * pp.y) / viewport.w - 1.,
-        //     2. * pp.z - 1.,
-        // );
+        let tran = Mat4::from_translation(state.camera_pos);
+        // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
+        //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
+        let inv = (mx_persp * mx_view).inverse(); //Mat4::IDENTITY;
+                                                  //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
+                                                  //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
+                                                  // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
+                                                  // pp.y -= viewport.y;
+                                                  // let out = vec3(
+                                                  //     (2. * pp.x) / viewport.z - 1.,
+                                                  //     (2. * pp.y) / viewport.w - 1.,
+                                                  //     2. * pp.z - 1.,
+                                                  // );
 
         //         float pt_x = (point.x / screenSize.x) * 2.f - 1.f;
         // float pt_y = -(point.y / screenSize.y) * 2.f + 1.f;
@@ -104,42 +107,56 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             1.,
         );
 
-        let cam_center = vec4(0., 0., 0., 1.);
+        let aspect = state.size.width as f32 / state.size.height as f32;
+        // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
+
+        //let cam_center = vec4(0., 0., 0., 1.);
+        let cam_center = vec4(state.camera_pos.x, 0., state.camera_pos.y, 1.);
 
         let win_coord = vec3(state.mouse_active_pos.0, state.mouse_active_pos.1, 0.);
-        let aspect = state.size.width as f32 / state.size.height as f32;
         let near_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
             win_coord.z, //2. * win.z - 1.,
             1.,
         );
-        //println!(" x {} y {}", near_coord.x, near_coord.y);
-
-        let far_coord = vec4(
+        let mut far_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
             1., //2. * win.z - 1.,
             1.,
         );
+
+        let n = near_coord.xyz();
+        let f = far_coord.xyz();
+
+        //let n2 = persp2.unproject_point(&nalgebra::Point3::new(n.x, n.y, n.z));
+        //let f2 = persp2.unproject_point(&nalgebra::Point3::new(f.x, f.y, f.z));
+        // let dir2 = n2 - f2;
+        //persp2.unproject_point(p)
+        let FoV = 1.27323980963;
+
+        //far_coord.x *= FoV * FoV;
+        //far_coord.y *= FoV * FoV;
         //inv.project_point3(other)
-        let mut near_unproj = inv.project_point3(near_coord.xyz()).normalize(); //inv.mul_vec4(screen_coord);
-                                                                                //screen_unproj.div_assign(screen_unproj.w);
+        let mut near_unproj = inv.project_point3(near_coord.xyz()); //inv.mul_vec4(screen_coord);
+                                                                    //screen_unproj.div_assign(screen_unproj.w);
 
         let mut far_unproj = inv.project_point3(far_coord.xyz()); //inv.mul_vec4(near_coord);
                                                                   //near_unproj.div_assign(near_unproj.w);
 
         //let cam_unproj = inv.project_point3(state.camera_pos);
 
-        let dir = (near_unproj - far_unproj).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
-
-        //     var d = Vector3.Dot(planeP, -planeN);
-        // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
-        // return rayP + t * rayD;
+        let mut dir = (near_unproj - far_unproj).normalize(); // - (state.camera_pos + vec3(0., -10., 0.))
+                                                              //dir = mx_view.inverse().project_point3(dir);
+                                                              //     var d = Vector3.Dot(planeP, -planeN);
+                                                              // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
+                                                              // return rayP + t * rayD;
 
         let mut out_point;
 
-        if true {
+        let PLANE_COLLIDE = false;
+        if PLANE_COLLIDE {
             let planeP = vec3(16., 0., 0.);
             let planeN = vec3(1., 0., 0.);
 
@@ -159,7 +176,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
             out_point = rayP + t * rayD; // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
         } else {
-            out_point = dir.mul(-16.) + cam_center.xyz();
+            out_point = dir.mul(-16.); // + cam_center.xyz();
         }
 
         //screen_unproj.normalize().mul(10.);

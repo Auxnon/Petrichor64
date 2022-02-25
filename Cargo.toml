@@ -28,3 +28,4 @@ serde="1.0.133"
 mlua={version= "^0.7.1", features=["lua54","vendored"]}
 rand="0.8.4"
 glam="0.20.2"
+nalgebra="0.30.1"

@@ -70,9 +70,19 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
             } else if state.input_helper.key_pressed(VirtualKeyCode::Right) {
                 state.camera_pos.x -= 10.;
             } else if state.input_helper.key_pressed(VirtualKeyCode::Up) {
-                state.camera_pos.y += 10.;
+                if state.input_helper.held_shift() {
+                    state.camera_pos.z += 10.;
+                    println!("z {}", state.camera_pos.z)
+                } else {
+                    state.camera_pos.y += 10.;
+                }
             } else if state.input_helper.key_pressed(VirtualKeyCode::Down) {
-                state.camera_pos.y -= 10.;
+                if state.input_helper.held_shift() {
+                    state.camera_pos.z -= 10.;
+                    println!("z {}", state.camera_pos.z)
+                } else {
+                    state.camera_pos.y -= 10.;
+                }
             }
 
             if state.input_helper.key_released(VirtualKeyCode::Grave) {

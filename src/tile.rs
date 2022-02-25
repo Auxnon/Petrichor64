@@ -99,6 +99,7 @@ impl World {
                 )
             }
         }
+        add_tile(&mut world, format!("grid"), 0, 0, 16 * 0);
 
         world.get_tile_mut(0, 0).cook(device);
         world
