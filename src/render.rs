@@ -4,14 +4,20 @@ use std::{
     ops::{Div, DivAssign, Mul},
 };
 
-use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec3, Vec4Swizzles};
+use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
     State,
 };
 
-pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, Mat4, Mat4) {
+pub fn generate_matrix(
+    aspect_ratio: f32,
+    rot: f32,
+    camera_pos: Vec3,
+    mouse: Vec2,
+) -> (Mat4, Mat4, Mat4) {
+    let pi = std::f32::consts::PI;
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
 
     let r = 0.5f32;
@@ -22,11 +28,18 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
     );
 
     let mx_view = Mat4::IDENTITY;
-    let r = std::f32::consts::PI * (0.5 + (camera_pos.x % 100.) / 50.);
-    let quat = Quat::from_axis_angle(vec3(0., 1., 0.), r);
-    let model_mat =
-        Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(camera_pos.z, 0., 0.));
-    let model_mat = Mat4::from_translation(vec3(camera_pos.z * 0.785398 * 2., 0., 0.));
+    // let r = pi * (0.5 + (mouse.0 % 100.) / 50.);
+    // let azimuth = pi * (0.5 + (mouse.1 % 100.) / 50.);
+    let r = (1. - mouse.x) * pi * 2.;
+    let azimuth = mouse.y * pi * 2.;
+    let pos = vec3(camera_pos.z, 0., 0.);
+    let az = azimuth.cos() * 100.;
+    let c = vec3(r.cos() * az, r.sin() * az, azimuth.sin() * 100.);
+
+    // let quat = Quat::from_axis_angle(vec3(0., 1., 0.), r);
+    // let model_mat =
+    //     Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(camera_pos.z, 0., 0.));
+    // let model_mat = Mat4::from_translation(vec3(camera_pos.z * 0.785398 * 2., 0., 0.));
 
     let model_mat = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -37,15 +50,17 @@ pub fn generate_matrix(aspect_ratio: f32, rot: f32, camera_pos: Vec3) -> (Mat4, 
         Vec3::Z,
     );
 
-    let pos = vec3(camera_pos.z, 0., 0.);
     let mx_view = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
         pos,
-        vec3(10. + camera_pos.z, camera_pos.y, camera_pos.x), //+ camera_pos.z
+        c,
+        // vec3(10. + camera_pos.z, camera_pos.y, camera_pos.x), //+ camera_pos.z
         //vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
         Vec3::Z,
     );
+
+    //let mx_view = Mat4::from_rotation_z(r) * Mat4::from_rotation_y(azimuth);
 
     // let mx_view = Mat4::look_at_rh(
     //     //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -63,29 +78,36 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    state.gui.render(&state.device, &state.queue, state.value2);
+    state.gui.render(
+        &state.device,
+        &state.queue,
+        state.global.get("value2".to_string()),
+    );
 
-    state.value += 0.002;
-    if state.value > 1. {
-        state.value = 0.;
+    let mut v = state.global.get("value".to_string());
+    v += 0.002;
+    if v > 1. {
+        v = 0.
     }
+    state.global.set("value".to_string(), v);
 
     let (mx_view, mx_persp, mx_model) = generate_matrix(
         state.size.width as f32 / state.size.height as f32,
-        state.value * 2. * std::f32::consts::PI,
-        state.camera_pos,
+        v * 2. * std::f32::consts::PI,
+        state.global.camera_pos,
+        state.global.mouse_active_pos,
     );
 
     if true {
         //let trans = Mat4::from_translation(state.camera_pos);
         //let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
         //mx_model
-        let tran = Mat4::from_translation(state.camera_pos);
+        let tran = Mat4::from_translation(state.global.camera_pos);
         // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
         //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
         //let inv = (mx_persp.inverse() * Mat4::IDENTITY) * mx_view.inverse();
 
-        let inv = (mx_persp * mx_model).inverse();
+        let inv = (mx_persp * mx_view).inverse();
         //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
         //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
         // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
@@ -123,9 +145,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // println!("cam pos proj {}", cam_proj);
 
         let cam_eye = vec4(
-            state.camera_pos.x,
-            state.camera_pos.y,
-            state.camera_pos.z,
+            state.global.camera_pos.x,
+            state.global.camera_pos.y,
+            state.global.camera_pos.z,
             1.,
         );
 
@@ -133,9 +155,13 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
 
         //let cam_center = vec4(0., 0., 0., 1.);
-        let cam_center = vec3(state.camera_pos.z, 0., 0.); // vec4(state.camera_pos.x, 0., state.camera_pos.y, 1.);
+        let cam_center = vec3(state.global.camera_pos.z, 0., 0.); // vec4(state.camera_pos.x, 0., state.camera_pos.y, 1.);
 
-        let win_coord = vec3(state.mouse_active_pos.0, state.mouse_active_pos.1, 0.);
+        let win_coord = vec3(
+            state.global.mouse_active_pos.x,
+            state.global.mouse_active_pos.y,
+            0.,
+        );
 
         let near_coord = vec4(
             2. * (win_coord.x) - 1.,
@@ -185,7 +211,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         // Calculate the picked position on the y = 0 plane.
         // out_point = near_unproj + dir * t;
-        println!("dir {}", dir);
+        // println!("near_unproj {}", near_unproj);
         if PLANE_COLLIDE {
             let planeP = vec3(16., 0., 0.) - near_unproj;
             let planeN = vec3(1., 0., 0.);
@@ -260,9 +286,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         // let pos = center + (t.mul(distance));
 
-        if state.value2 >= 1. {
+        if state.global.get("value2".to_string()) >= 1. {
             let typeOf = state.entities.len() % 2 == 0;
-            state.value2 = 0.;
+            state.global.set("value2".to_string(), 0.);
 
             println!("  dir {} world space {}", dir, out_point);
 
@@ -297,7 +323,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
     let time_ref: [f32; 4] = ([
-        state.value,
+        state.global.get("value".to_string()),
         0.,
         state.size.width as f32,
         state.size.height as f32,

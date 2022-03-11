@@ -1,7 +1,7 @@
-use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-use crate::{globals, State};
+use crate::State;
 
 pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &mut ControlFlow) {
     match event {
@@ -53,39 +53,45 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
         }
         _ => {
             state.switch_board.write().space = state.input_helper.key_held(VirtualKeyCode::Space);
-            match state.input_helper.mouse() {
-                Some((x, y)) => {
-                    state.mouse_active_pos =
-                        (x / state.size.width as f32, y / state.size.height as f32);
-                }
-                _ => {}
-            }
+            let diff = state.input_helper.mouse_diff();
+            // state.global.mouse_delta.x = diff.0;
+            // state.global.mouse_delta.y = diff.1;
+            // state.global.mouse_active_pos.x += diff.0 / 10000.;
+            // state.global.mouse_active_pos.y += diff.1 / 10000.;
+
+            // match state.input_helper.mouse() {
+            //     Some((x, y)) => {
+            //         // state.global.mouse_active_pos.x = x / state.size.width as f32;
+            //         state.global.mouse_active_pos.y = y / state.size.height as f32;
+            //     }
+            //     _ => {}
+            // }
 
             if state.input_helper.mouse_pressed(0) {
-                state.mouse_click_pos = state.mouse_active_pos;
-                state.value2 = 1.;
+                state.global.mouse_click_pos = state.global.mouse_active_pos.clone();
+                state.global.set("value2".to_string(), 1.);
             }
             if state.input_helper.key_pressed(VirtualKeyCode::Left) {
-                state.camera_pos.x += 10.;
-                println!("x {}", state.camera_pos.x)
+                state.global.camera_pos.x += 10.;
+                println!("x {}", state.global.camera_pos.x)
             } else if state.input_helper.key_pressed(VirtualKeyCode::Right) {
-                state.camera_pos.x -= 10.;
-                println!("x {}", state.camera_pos.x)
+                state.global.camera_pos.x -= 10.;
+                println!("x {}", state.global.camera_pos.x)
             } else if state.input_helper.key_pressed(VirtualKeyCode::Up) {
                 if state.input_helper.held_shift() {
-                    state.camera_pos.z += 10.;
-                    println!("z {}", state.camera_pos.z)
+                    state.global.camera_pos.z += 10.;
+                    println!("z {}", state.global.camera_pos.z)
                 } else {
-                    state.camera_pos.y += 10.;
-                    println!("y {}", state.camera_pos.y)
+                    state.global.camera_pos.y += 10.;
+                    println!("y {}", state.global.camera_pos.y)
                 }
             } else if state.input_helper.key_pressed(VirtualKeyCode::Down) {
                 if state.input_helper.held_shift() {
-                    state.camera_pos.z -= 10.;
-                    println!("z {}", state.camera_pos.z)
+                    state.global.camera_pos.z -= 10.;
+                    println!("z {}", state.global.camera_pos.z)
                 } else {
-                    state.camera_pos.y -= 10.;
-                    println!("y {}", state.camera_pos.y)
+                    state.global.camera_pos.y -= 10.;
+                    println!("y {}", state.global.camera_pos.y)
                 }
             }
 

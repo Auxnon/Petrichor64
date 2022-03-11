@@ -1,3 +1,4 @@
+/**  global state handler to go beyond threads */
 pub struct SwitchBoard {
     pub space: bool,
     pub h: f32,

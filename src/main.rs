@@ -1,22 +1,24 @@
 //#![windows_subsystem = "windows"]
 
 use bytemuck::{Pod, Zeroable};
+use global::Global;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{mem, rc::Rc, sync::Arc};
 use tile::World;
 
 use ent::Ent;
-use glam::{vec3, Mat4, Vec3};
-use global::Global;
+use glam::{vec2, vec3, Mat4, Vec3};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, BufferUsages};
 use winit::{
+    dpi::{LogicalPosition, LogicalSize, PhysicalPosition},
     event::*,
     event_loop::{ControlFlow, EventLoop},
+    platform::macos::WindowExtMacOS,
     window::{Window, WindowBuilder},
 };
 
@@ -50,6 +52,7 @@ pub struct State {
     depth_texture: wgpu::TextureView,
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
+    global: Global,
     stream: cpal::Stream,
     view_matrix: Mat4,
     perspective_matrix: Mat4,
@@ -67,11 +70,6 @@ pub struct State {
     gui: Gui,
 
     input_helper: winit_input_helper::WinitInputHelper,
-    value: f32,
-    value2: f32,
-    mouse_click_pos: (f32, f32),
-    mouse_active_pos: (f32, f32),
-    camera_pos: Vec3,
 }
 
 #[repr(C)]
@@ -124,7 +122,7 @@ fn create_depth_texture(
 
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
+    // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
 }
 
@@ -328,8 +326,12 @@ impl State {
             ],
         });
 
-        let (mx_view, mx_persp, mx_model) =
-            render::generate_matrix(size.width as f32 / size.height as f32, 0., vec3(0., 0., 0.));
+        let (mx_view, mx_persp, mx_model) = render::generate_matrix(
+            size.width as f32 / size.height as f32,
+            0.,
+            vec3(0., 0., 0.),
+            vec2(0., 0.),
+        );
 
         let render_uniforms = GlobalUniforms {
             view: mx_view.to_cols_array_2d(),
@@ -545,6 +547,7 @@ impl State {
             view_matrix: mx_view,
             perspective_matrix: mx_persp,
             render_pipeline,
+            global: Global::new(),
             switch_board,
             entities,
             gui,
@@ -552,13 +555,8 @@ impl State {
             entity_bind_group,
             entity_uniform_buf,
             stream: sound::init_sound(dupe_switch).unwrap(),
-            value: 0.,
-            value2: 0.,
             world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
-            mouse_active_pos: (0., 0.),
-            mouse_click_pos: (0., 0.),
-            camera_pos: vec3(0., 0., 0.),
         }
     }
 
@@ -590,11 +588,22 @@ fn main() {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
     window.set_title("Petrichor");
+    let s = window.inner_size();
+
+    // window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+    //     window.current_monitor(),
+    // )));
+
+    // window.set_simple_fullscreen(true);
+    window.set_cursor_grab(true);
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
     let mut state = pollster::block_on(State::new(&window));
-
     event_loop.run(move |event, _, control_flow| {
+        // window.set_cursor_position(PhysicalPosition {
+        //     x: s.width,
+        //     y: s.height,
+        // });
         state.input_helper.update(&event);
         match event {
             Event::WindowEvent {
@@ -605,6 +614,19 @@ fn main() {
                     controls::controls_evaluate(event, &mut state, control_flow);
                 }
             }
+            Event::DeviceEvent { device_id, event } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    state.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
+                    state.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
+                    let pi = std::f32::consts::PI / 8.;
+                    if state.global.mouse_active_pos.y > 0.72 {
+                        state.global.mouse_active_pos.y = 0.72
+                    } else if state.global.mouse_active_pos.y < 0.4 {
+                        state.global.mouse_active_pos.y = 0.4;
+                    }
+                }
+                _ => {}
+            },
             Event::RedrawRequested(_) => {
                 state.update();
                 match state.render() {
@@ -617,6 +639,12 @@ fn main() {
                     Err(e) => eprintln!("{:?}", e),
                 }
             }
+            // DeviceEvent::MouseMotion { delta } => {}
+
+            // DeviceEvent::MouseMotion { delta } => {
+            //     state.global.mouse_delta.x = delta.0 as f32;
+            //     state.global.mouse_delta.y = delta.1 as f32;
+            // }
             Event::MainEventsCleared => {
                 // RedrawRequested will only trigger once, unless we manually
                 // request it.

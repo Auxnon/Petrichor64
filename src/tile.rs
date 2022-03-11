@@ -81,7 +81,7 @@ impl World {
             for j in 0..16 {
                 add_tile(
                     &mut world,
-                    format!("grid"),
+                    format!("fatty"),
                     (i - 8) * 16,
                     (j - 8) * 16,
                     -32 * 3,
