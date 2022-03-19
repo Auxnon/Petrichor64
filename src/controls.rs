@@ -1,3 +1,4 @@
+use glam::{IVec2, IVec3};
 use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
@@ -67,9 +68,19 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
             //     _ => {}
             // }
 
+            if state.input_helper.mouse_held(0) {}
             if state.input_helper.mouse_pressed(0) {
                 state.global.mouse_click_pos = state.global.mouse_active_pos.clone();
-                state.global.set("value2".to_string(), 1.);
+                // state.global.set("value2".to_string(), 1.);
+                let i = (state.global.cursor_projected_pos / 1.).floor() * 16.;
+                // println!("i pos {}", i);
+                state
+                    .world
+                    .set_tile("grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
+                state
+                    .world
+                    .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
+                    .cook(&state.device);
             }
             if state.input_helper.key_pressed(VirtualKeyCode::Left) {
                 state.global.camera_pos.x += 10.;
@@ -96,25 +107,48 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
             }
 
             if state.input_helper.key_released(VirtualKeyCode::Grave) {
-                state.gui.toggle_output()
-            } else {
-                let t = state.input_helper.text();
-
-                if t.len() > 0 {
-                    let mut neg = 0;
-                    let emp: char;
-                    let mut st = vec![];
-                    for tt in t.iter() {
-                        match tt {
-                            winit_input_helper::TextChar::Back => {
-                                neg += 1;
+                state.global.console = !state.global.console;
+                if state.global.console {
+                    state.gui.enable_output()
+                } else {
+                    state.gui.disable_output()
+                }
+            } else if state.global.console {
+                if state.input_helper.key_released(VirtualKeyCode::Return) {
+                    let command = crate::log::carriage();
+                    if command.is_some() {
+                        if state.global.test {
+                            // println!("command isss {}", command.unwrap());
+                            let guard = crate::lua_master.lock();
+                            let core = guard.get();
+                            if core.is_some() {
+                                let com = command.unwrap();
+                                let s = core.unwrap().func(com.to_owned());
+                                println!("command was {}, result was {}", com, s);
                             }
-                            winit_input_helper::TextChar::Char(c) => st.push(*c),
+                        } else {
+                            state.global.test = true;
                         }
                     }
-                    crate::log::log(String::from_iter(st));
+                } else {
+                    let t = state.input_helper.text();
 
-                    //println!(" {}", String::from_iter(st));
+                    if t.len() > 0 {
+                        let mut neg = 0;
+                        let emp: char;
+                        let mut st = vec![];
+                        for tt in t.iter() {
+                            match tt {
+                                winit_input_helper::TextChar::Back => {
+                                    neg += 1;
+                                }
+                                winit_input_helper::TextChar::Char(c) => st.push(*c),
+                            }
+                        }
+                        crate::log::add(String::from_iter(st));
+
+                        //println!(" {}", String::from_iter(st));
+                    }
                 }
             }
         }

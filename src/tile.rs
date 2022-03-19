@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 use glam::{ivec3, vec3};
 use rand::Rng;
@@ -51,9 +51,9 @@ impl World {
                         _ => 34,
                     };
                     println!("x{} y{} b{}", xi, yi, bit);
-                    add_tile(&mut world, format!("map{}", h), x, y, 0);
+                    world.set_tile(format!("map{}", h), x, y, 0);
                 } else {
-                    add_tile(&mut world, format!("map{}", 44), x, y, 0); //36
+                    world.set_tile(format!("map{}", 44), x, y, 0); //36
                 }
 
                 //if c == 1 {
@@ -79,64 +79,121 @@ impl World {
         // }
         for i in 0..16 {
             for j in 0..16 {
-                add_tile(
-                    &mut world,
-                    format!("fatty"),
-                    (i - 8) * 16,
-                    (j - 8) * 16,
-                    -32 * 3,
-                )
+                world.set_tile(format!("fatty"), (i - 8) * 16, (j - 8) * 16, -32 * 3)
             }
         }
         for i in 0..16 {
             for j in 0..16 {
-                add_tile(
-                    &mut world,
-                    format!("grid"),
-                    16 * 16,
-                    (i - 8) * 16,
-                    (j - 8) * 16,
-                )
+                world.set_tile(format!("grid"), 16 * 16, (i - 8) * 16, (j - 8) * 16)
             }
         }
-        add_tile(&mut world, format!("grid"), 0, 0, 16 * 0);
+        world.set_tile(format!("grid"), 0, 0, 16 * 0);
 
-        world.get_tile_mut(0, 0).cook(device);
+        world.get_chunk_mut(0, 0, 0).cook(device);
         world
     }
-    pub fn get_tile_mut(&mut self, x: i32, y: i32) -> &mut Chunk {
-        self.layer.get_tile_mut(x, y)
+    pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
+        self.layer.get_chunk_mut(x, y, z)
+    }
+    pub fn build_chunk(&mut self, ix: i32, iy: i32, iz: i32) {
+        let mut c = self.get_chunk_mut(ix, iy, iz);
+        c.vert_data = vec![];
+        c.ind_data = vec![];
+        c.buffers = None;
+        let model = "grid".to_string();
+        for (cell, i) in c.cells.clone().iter_mut().enumerate() {
+            if cell == 1 {
+                _add_tile_model(
+                    c,
+                    model.clone(),
+                    ((*i / 256) % 16) as i32,
+                    ((*i / 16) % 16) as i32,
+                    (*i % 16) as i32,
+                );
+            }
+        }
+        // for (ii, i) in c.cells.iter().enumerate() {
+        //     for (ij, j) in i.iter().enumerate() {
+        //         for (ik, k) in j.iter().enumerate() {
+        //             if *k == 1 {
+        //                 _add_tile_model(
+        //                     c,
+        //                     model,
+        //                     (ii * 16) as i32,
+        //                     (ij * 16) as i32,
+        //                     (ik * 16) as i32,
+        //                 );
+        //             }
+        //         }
+        //     }
+        // }
+    }
+
+    pub fn set_tile(&mut self, tile: String, ix: i32, iy: i32, iz: i32) {
+        let t = match tile.as_str() {
+            "grid" => 1,
+            "fatty" => 2,
+            _ => 0,
+        };
+        let mut c = self.get_chunk_mut(ix, iy, iz);
+        let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
+            + ((iz / 16).rem_euclid(16))) as usize;
+        c.cells[index] = t;
+        println!(
+            "cell {:?} {} {} {}",
+            index,
+            (ix / 16).rem_euclid(16),
+            (iy / 16).rem_euclid(16),
+            (iz / 16).rem_euclid(16)
+        );
+    }
+    pub fn add_tile_model(&mut self, model: String, ix: i32, iy: i32, iz: i32) {
+        let mut c = self.get_chunk_mut(ix, iy, iz);
+        _add_tile_model(c, model, ix, iy, iz);
     }
 }
 pub struct Layer {
-    chunks: Vec<Chunk>,
+    chunks: HashMap<String, Chunk>,
 }
 impl Layer {
     pub fn new() -> Layer {
         Layer {
-            chunks: vec![Chunk::new()],
+            chunks: HashMap::new(), // ![Chunk::new()],
         }
     }
-    pub fn get_tile_mut(&mut self, x: i32, y: i32) -> &mut Chunk {
-        self.chunks.get_mut(0).unwrap()
+
+    pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
+        let key = format!("{}-{}-{}", x / 16, y / 16, z / 16);
+        match self.chunks.entry(key) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => v.insert(Chunk::new()),
+        }
     }
 }
 pub struct Chunk {
+    pub dirty: bool,
     pub vert_data: Vec<Vertex>,
     pub ind_data: Vec<u32>,
     pub buffers: Option<(Buffer, Buffer)>,
+    pub cells: [u32; 16 * 16 * 16],
 }
 impl Chunk {
     pub fn new() -> Chunk {
         Chunk {
+            dirty: true,
             vert_data: vec![],
             ind_data: vec![],
             buffers: None,
+            cells: [0; 16 * 16 * 16],
         }
     }
     pub fn is_empty(&self) -> bool {
         self.vert_data.len() < 3
     }
+    fn zero_cells(&mut self) {
+        self.cells = [0; 16 * 16 * 16];
+    }
+
     pub fn cook(&mut self, device: &Device) {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
@@ -154,8 +211,7 @@ impl Chunk {
     }
 }
 
-pub fn add_tile(mut world: &mut World, model: String, ix: i32, iy: i32, iz: i32) {
-    let mut c = world.get_tile_mut(ix, iy);
+fn _add_tile_model(c: &mut Chunk, model: String, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset = ivec3(ix as i32, iy as i32, iz as i32);

@@ -84,16 +84,16 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         state.global.get("value2".to_string()),
     );
 
-    let mut v = state.global.get("value".to_string());
-    v += 0.002;
-    if v > 1. {
-        v = 0.
+    // let mut v = state.global.get("value".to_string());
+    let v = state.global.get_mut("value".to_string());
+    *v += 0.002;
+    if *v > 1. {
+        *v = 0.
     }
-    state.global.set("value".to_string(), v);
 
     let (mx_view, mx_persp, mx_model) = generate_matrix(
         state.size.width as f32 / state.size.height as f32,
-        v * 2. * std::f32::consts::PI,
+        *v * 2. * std::f32::consts::PI,
         state.global.camera_pos,
         state.global.mouse_active_pos,
     );
@@ -213,8 +213,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // out_point = near_unproj + dir * t;
         // println!("near_unproj {}", near_unproj);
         if PLANE_COLLIDE {
-            let planeP = vec3(16., 0., 0.) - near_unproj;
-            let planeN = vec3(1., 0., 0.);
+            // let planeP = vec3(16., 0., 0.) - near_unproj;
+            let planeP = vec3(0., 0., -6.);
+            let planeN = vec3(0., 0., 1.);
 
             let rayP = far_unproj; // + vec3(10., 0., 0.);
             let rayD = dir;
@@ -228,6 +229,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         } else {
             out_point = dir.mul(-16.); // + cam_center.xyz();
         }
+        state.global.cursor_projected_pos = out_point;
 
         //screen_unproj.normalize().mul(10.);
         //result.div_assign(40.);
@@ -460,7 +462,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         {
             render_pass.set_pipeline(&state.render_pipeline);
             render_pass.set_bind_group(0, &state.bind_group, &[]);
-            let c = state.world.get_tile_mut(0, 0);
+            let c = state.world.get_chunk_mut(0, 0, 0);
             if c.buffers.is_some() {
                 let b = c.buffers.as_ref().unwrap();
                 render_pass.set_bind_group(1, &state.entity_bind_group, &[0]);

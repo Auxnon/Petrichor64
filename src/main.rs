@@ -617,6 +617,10 @@ fn main() {
             Event::DeviceEvent { device_id, event } => match event {
                 DeviceEvent::MouseMotion { delta } => {
                     state.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
+                    state.global.mouse_active_pos.x %= 1.;
+                    if state.global.mouse_active_pos.x < 0. {
+                        state.global.mouse_active_pos.x += 1.;
+                    }
                     state.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
                     let pi = std::f32::consts::PI / 8.;
                     if state.global.mouse_active_pos.y > 0.72 {

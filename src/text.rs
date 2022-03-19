@@ -6,17 +6,25 @@ lazy_static! {
 }
 
 pub fn add_text(str: &String, neg: u16) {
-    // let n = contents.lock().len();
+    let n = contents.lock().len();
     // let t = contents.lock().get_mut(n - 1);
 
-    // match contents.lock().last() {
-    //     Some(t) => {
-    //         if t.len() > 51 {
-    //         } else {
-    //             contents.lock().last() = t + str;
-    //             //*t += str;
-    //         }
-    //     }
-    //     _ => {}
-    // }
+    match contents.lock().last() {
+        Some(t) => {
+            println!("last string: {} ", t);
+            if t.len() > 51 {
+                contents.lock().push(str.to_owned());
+            } else {
+                t.to_owned().push_str(str);
+                contents.lock().last().replace(t);
+                //*t += str;
+            }
+        }
+        _ => {
+            contents.lock().push(str.to_owned());
+        }
+    }
 }
+// pub fn get_range(){
+//     let l=contents.lock().iter().enumerate()
+// }

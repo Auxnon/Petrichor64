@@ -73,6 +73,9 @@ impl Gui {
         self.text = format!("{}\n{}", self.text, str);
         self.apply_text();
     }
+    pub fn type_text(&mut self, str: String) {
+        self.text = format!("{}\n{}", self.text, str);
+    }
     pub fn add_img(&self, str: String) {
         match crate::texture::load_img(str) {
             Ok(t) => {
