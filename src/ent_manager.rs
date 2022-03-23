@@ -1,5 +1,12 @@
-// use lazy_static::lazy_static;
-// use once_cell::sync::OnceCell;
+use std::sync::Arc;
+
+use glam::vec3;
+use lazy_static::lazy_static;
+
+use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
+
+use crate::{ent::Ent, lua_ent::LuaEnt};
 // use serde::Deserialize;
 // use std::{
 //     collections::HashMap,
@@ -8,6 +15,59 @@
 //     sync::Arc,
 // };
 
+pub struct EntManager {
+    pub entities: Vec<Ent>,
+    pub create: Vec<LuaEnt>,
+    pub uniform_alignment: u32,
+}
+impl EntManager {
+    pub fn new() -> EntManager {
+        EntManager {
+            entities: vec![],
+            create: vec![],
+            uniform_alignment: 0,
+        }
+    }
+    pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
+        let mut ent = LuaEnt::empty();
+        ent.x = x;
+        ent.y = y;
+        ent.z = z;
+        self.create.push(ent.clone());
+        ent
+    }
+    pub fn check_create(&mut self) {
+        if self.create.len() > 0 {
+            println!("create an ent");
+            let typeOf = true;
+            for c in &self.create {
+                self.entities.push(Ent::new(
+                    vec3(c.x, c.y, c.z),
+                    0.,
+                    if typeOf { 1. } else { 1. },
+                    0.,
+                    if typeOf {
+                        "chicken".to_string()
+                    } else {
+                        "package".to_string()
+                    },
+                    if typeOf {
+                        "plane".to_string()
+                    } else {
+                        "package".to_string()
+                    },
+                    (self.entities.len() as u32 * self.uniform_alignment) as u32,
+                    typeOf,
+                    None, //Some("walker".to_string()),
+                ));
+            }
+            self.create.clear();
+        }
+    }
+    pub fn get_uuid() -> String {
+        uuid::Uuid::new_v4().to_simple().to_string()
+    }
+}
 // use crate::model::Model;
 
 // #[derive(Default, Debug, Deserialize)]

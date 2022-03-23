@@ -45,6 +45,10 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
         //         .add_text(std::fs::read_to_string(input_path).unwrap_or_default());
         //     //globals.write().space = false;
         // }
+        WindowEvent::DroppedFile(path) => {
+            println!("dropped file {}", path.as_os_str().to_string_lossy());
+            // winit::ControlFlow::Continue
+        }
         WindowEvent::Resized(physical_size) => {
             state.resize(*physical_size);
         }
@@ -123,13 +127,20 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
                             let core = guard.get();
                             if core.is_some() {
                                 let com = command.unwrap();
-                                let s = core.unwrap().func(com.to_owned());
-                                println!("command was {}, result was {}", com, s);
+                                let result = core.unwrap().func(com.to_owned());
+                                crate::log::log(result.clone());
+
+                                crate::log::next_line();
+                                println!("command was {}, result was {}", com, result);
                             }
                         } else {
                             state.global.test = true;
                         }
                     }
+                } else if state.input_helper.key_pressed(VirtualKeyCode::Up) {
+                    crate::log::history()
+                // } else if state.input_helper.key_released(VirtualKeyCode::Back) {
+                // crate::log::back();
                 } else {
                     let t = state.input_helper.text();
 
@@ -139,15 +150,22 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
                         let mut st = vec![];
                         for tt in t.iter() {
                             match tt {
+                                winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                                    127 => {
+                                        crate::log::back();
+                                    }
+                                    _ => st.push(*c),
+                                },
                                 winit_input_helper::TextChar::Back => {
-                                    neg += 1;
+                                    // crate::log::back();
+                                    // neg += 1;
+                                    // st.remove(st.len() - 1);
                                 }
-                                winit_input_helper::TextChar::Char(c) => st.push(*c),
                             }
                         }
-                        crate::log::add(String::from_iter(st));
+                        crate::log::add(String::from_iter(st.clone()));
 
-                        //println!(" {}", String::from_iter(st));
+                        // println!(" char {}", String::from_iter(st));
                     }
                 }
             }

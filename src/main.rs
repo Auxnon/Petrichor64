@@ -1,6 +1,7 @@
 //#![windows_subsystem = "windows"]
 
 use bytemuck::{Pod, Zeroable};
+use ent_manager::EntManager;
 use global::Global;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
@@ -34,6 +35,7 @@ mod gui;
 mod log;
 mod lua_define;
 mod lua_ent;
+mod lua_sys;
 mod model;
 mod render;
 mod sound;
@@ -60,7 +62,7 @@ pub struct State {
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
     world: World,
-    entities: Vec<Ent>,
+    // ent_manager: EntManager,
     // vertex_buf: Rc<wgpu::Buffer>,
     // index_buf: Rc<wgpu::Buffer>,
     // index_count: usize,
@@ -124,6 +126,7 @@ lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
+    pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
 }
 
 impl State {
@@ -158,9 +161,7 @@ impl State {
         //this order is important, since models can load their own textures we need assets to init first
         crate::texture::init();
         model::init(&device);
-        let lua_guard = lua_master.lock();
-        let lua_core = lua_guard.get_or_init(|| lua_define::LuaCore::new());
-        parking_lot::MutexGuard::unlock_fair(lua_guard);
+
         crate::asset::init(&device);
 
         // crate::texture::load_tex("gameboy".to_string());
@@ -186,52 +187,6 @@ impl State {
         let uniform_alignment =
             device.limits().min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
         assert!(entity_uniform_size <= uniform_alignment);
-        let mut entities = vec![
-            Ent::new(
-                vec3(0.0, 1.0, 0.0),
-                45.,
-                1.,
-                0.,
-                "chicken".to_string(),
-                "plane".to_string(),
-                uniform_alignment as u32,
-                true,
-                None,
-            ),
-            Ent::new(
-                vec3(1.0, 1.0, 0.0),
-                0.,
-                1.,
-                0.,
-                "chicken".to_string(),
-                "plane".to_string(),
-                (uniform_alignment * 2) as u32,
-                false,
-                None,
-            ),
-            Ent::new(
-                vec3(2.0, 1.0, 0.0),
-                0.,
-                1.,
-                0.,
-                "gameboy".to_string(),
-                "plane".to_string(),
-                (uniform_alignment * 3) as u32,
-                false,
-                None,
-            ),
-            Ent::new(
-                vec3(-1.0, 1.0, 0.0),
-                0.,
-                1.,
-                0.,
-                "guy3".to_string(),
-                "plane".to_string(),
-                (uniform_alignment * 4) as u32,
-                true,
-                Some("walker".to_string()),
-            ),
-        ];
 
         // let mut offset = 4;
         // for i in -3..3 {
@@ -549,7 +504,6 @@ impl State {
             render_pipeline,
             global: Global::new(),
             switch_board,
-            entities,
             gui,
             bind_group,
             entity_bind_group,
@@ -598,7 +552,67 @@ fn main() {
     window.set_cursor_grab(true);
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
+
+    let lua_guard = lua_master.lock();
+    let lua_core = lua_guard.get_or_init(|| lua_define::LuaCore::new());
+    parking_lot::MutexGuard::unlock_fair(lua_guard);
+
     let mut state = pollster::block_on(State::new(&window));
+
+    let ent_guard = ent_master.lock();
+    let mut eman = EntManager::new();
+    eman.uniform_alignment = state.uniform_alignment as u32;
+
+    eman.entities.push(Ent::new(
+        vec3(0.0, 1.0, 0.0),
+        45.,
+        1.,
+        0.,
+        "chicken".to_string(),
+        "plane".to_string(),
+        state.uniform_alignment as u32,
+        true,
+        None,
+    ));
+
+    eman.entities.push(Ent::new(
+        vec3(1.0, 1.0, 0.0),
+        0.,
+        1.,
+        0.,
+        "chicken".to_string(),
+        "plane".to_string(),
+        (state.uniform_alignment * 2) as u32,
+        false,
+        None,
+    ));
+    eman.entities.push(Ent::new(
+        vec3(2.0, 1.0, 0.0),
+        0.,
+        1.,
+        0.,
+        "gameboy".to_string(),
+        "plane".to_string(),
+        (state.uniform_alignment * 3) as u32,
+        false,
+        None,
+    ));
+    eman.entities.push(Ent::new(
+        vec3(-1.0, 1.0, 0.0),
+        0.,
+        1.,
+        0.,
+        "guy3".to_string(),
+        "plane".to_string(),
+        (state.uniform_alignment * 4) as u32,
+        true,
+        Some("walker".to_string()),
+    ));
+
+    ent_guard.get_or_init(|| eman);
+
+    std::mem::drop(ent_guard);
+
     event_loop.run(move |event, _, control_flow| {
         // window.set_cursor_position(PhysicalPosition {
         //     x: s.width,

@@ -1,4 +1,4 @@
-use crate::{ent::Ent, lua_ent::LuaEnt};
+use crate::{ent::Ent, lua_ent::LuaEnt, State};
 use lazy_static::lazy_static;
 use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
 use once_cell::sync::OnceCell;
@@ -47,8 +47,7 @@ impl LuaCore {
             // let lua_clone = Arc::clone(&crate::lua_master);
             let globals = lua_ctx.globals();
 
-            let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
-            globals.set("multi", multi.unwrap());
+            crate::lua_sys::init_lua_sys(&lua_ctx, &globals);
 
             let closure = |_, (str, x, y): (String, f32, f32)| {
                 //let result = entity_factory.lock().unwrap().get_mut();
@@ -73,13 +72,11 @@ impl LuaCore {
                 let m = lua_ctx.create_function(closure);
                 m.unwrap()
             });
-            let default_func = lua_ctx.create_function(|_, e: f32| Ok("ye")).unwrap();
-            globals.set("default_func", default_func);
 
             // let temple: rlua::Table = globals.get("temple").unwrap();
             // let filters: rlua::Table = temple.get("_filters").unwrap();
             // let concat2: rlua::Function = filters.get("concat2").unwrap();
-            println!("💫 lua_thread::orbiting");
+            log("💫 lua_thread::orbiting".to_string());
             for m in reciever {
                 //}
                 let (s1, s2, ent, channel) = m;
@@ -89,41 +86,28 @@ impl LuaCore {
                 if s1 == "load" {
                     lua_load(&lua_ctx, &s2);
                 } else {
-                    let res = globals.get::<_, Function>(s1.to_owned());
-
-                    if res.is_ok() {
-                        // println!("we have a func! {:?}", res.clone().unwrap());
-                        if ent.is_some() {
+                    // println!("we have a func! {:?}", res.clone().unwrap());
+                    if ent.is_some() {
+                        let res = globals.get::<_, Function>(s1.to_owned());
+                        if res.is_ok() {
                             match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
                                 Ok(o) => channel.send((None, Some(o))).unwrap(),
                                 Err(er) => channel.send((None, None)).unwrap(),
                             }
                         } else {
-                            match match res.unwrap().call::<String, String>(s2.to_owned()) {
-                                Ok(o) => {
-                                    println!("suss ok {}", o);
-                                    channel.send((None, None))
-                                }
-                                Err(er) => {
-                                    println!("shitty err {}", er);
-                                    channel.send((Some(er.to_string()), None))
-                                }
-                            } {
-                                Ok(s) => {}
-                                Err(e) => {
-                                    println!("lua server communication error occured -> {}", e)
-                                }
-                            }
+                            channel.send((None, None));
                         }
                     } else {
-                        // let t =
-                        channel.send((None, None));
-                        // if t.is_err() {
-                        //     let er = t.unwrap_err();
-
-                        //     let res = er.0;
-                        //     res
-                        // }
+                        match match lua_ctx.load(&s1).eval::<String>() {
+                            //res.unwrap().call::<String, String>(s2.to_owned()) {
+                            Ok(o) => channel.send((Some(o), None)),
+                            Err(er) => channel.send((Some(er.to_string()), None)),
+                        } {
+                            Ok(s) => {}
+                            Err(e) => {
+                                log(format!("lua server communication error occured -> {}", e))
+                            }
+                        }
                     }
                 }
                 //thread::sleep(std::time::Duration::from_millis(10));
@@ -174,25 +158,20 @@ impl LuaCore {
     pub fn call(&self, func: String, ent: LuaEnt) -> LuaEnt {
         match self.inject(func, "".to_string(), Some(ent.clone())).1 {
             Some(ento) => {
-                //println!("returned");
+                // println!("ye");
                 ento
             }
             None => ent,
         }
     }
+
     pub fn func(&self, func: String) -> String {
-        println!("passing func {}", func);
         match self.inject(func, "0".to_string(), None).0 {
-            Some(str) => {
-                println!("returned {}", str);
-                str
-            }
-            None => {
-                println!("naw");
-                "".to_string()
-            }
+            Some(str) => str,
+            None => "".to_string(),
         }
     }
+
     fn inject(
         &self,
         func: String,
@@ -203,23 +182,24 @@ impl LuaCore {
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
         guard.send((func, path, ent, tx));
+
         //MutexGuard::unlock_fair(guard);
-        if bool {
-            match rx.recv() {
-                Ok(lua_out) => {
-                    // println!(
-                    //     "returned {}",
-                    //     match &lua_out {
-                    //         Some(l) => l.x,
-                    //         None => -1.,
-                    //     }
-                    // );
-                    lua_out
-                }
-                Err(e) => (None, None),
+        match rx.recv() {
+            Ok(lua_out) => {
+                // println!(
+                //     "returned {}",
+                //     match &lua_out {
+                //         Some(l) => l.x,
+                //         None => -1.,
+                //     }
+                // );
+
+                lua_out
             }
-        } else {
-            (None, None)
+            Err(e) => {
+                // println!("ye {}", e);
+                (None, None)
+            }
         }
 
         // let (tx, rx) = sync_channel::<String>(0);
@@ -318,7 +298,8 @@ fn lua_load(lua: &Lua, input_path: &String) {
                 "::lua::  bad lua code for 📜{} !! Assigning default \"{}\"",
                 name, err
             );
-            globals.set(name, globals.get::<_, Function>("default_func").unwrap());
+            // default needs to exist, otherwise... i don't know? crash the whole lua thread is probably best
+            globals.set(name, globals.get::<_, Function>("_default_func").unwrap());
         }
     }
 }

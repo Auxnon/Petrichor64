@@ -92,6 +92,7 @@ impl<'lua> Ent {
             brain_name: brain,
         }
     }
+
     pub fn to_lua(&self) -> LuaEnt {
         LuaEnt {
             x: self.pos.x,
@@ -106,6 +107,7 @@ impl<'lua> Ent {
             rot_z: self.rot.z,
         }
     }
+
     fn from_lua(&mut self, ent: LuaEnt) {
         self.pos.x = ent.x;
         self.pos.y = ent.y;
@@ -122,6 +124,8 @@ impl<'lua> Ent {
 
     pub fn run(&mut self) {
         let lua_ent = self.to_lua();
+        // println!("{:?}", &self.brain_name);
+
         match &self.brain_name {
             Some(brain) => {
                 let result = crate::lua_master

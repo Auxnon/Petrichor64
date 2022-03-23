@@ -2,6 +2,7 @@ use std::{
     f32::consts::PI,
     iter,
     ops::{Div, DivAssign, Mul},
+    slice::SliceIndex,
 };
 
 use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
@@ -83,6 +84,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         &state.queue,
         state.global.get("value2".to_string()),
     );
+
+    let mut mutex = crate::ent_master.lock();
+    //log(format!("hooked {}", path));
+    let entity_manager = mutex.get_mut().unwrap();
+    let ents = &mut entity_manager.entities;
 
     // let mut v = state.global.get("value".to_string());
     let v = state.global.get_mut("value".to_string());
@@ -287,14 +293,16 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // let distance = -center.z / t.z;
 
         // let pos = center + (t.mul(distance));
+        // let ent_guard=ent_master.lock();
+        // ent_guard.get_mut(slice);
 
         if state.global.get("value2".to_string()) >= 1. {
-            let typeOf = state.entities.len() % 2 == 0;
+            let typeOf = ents.len() % 2 == 0;
             state.global.set("value2".to_string(), 0.);
 
             println!("  dir {} world space {}", dir, out_point);
 
-            state.entities.push(Ent::new(
+            ents.push(Ent::new(
                 out_point,
                 0.,
                 if typeOf { 1. } else { 1. },
@@ -309,13 +317,13 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 } else {
                     "package".to_string()
                 },
-                (state.entities.len() as u64 * state.uniform_alignment) as u32,
+                (ents.len() as u64 * state.uniform_alignment) as u32,
                 typeOf,
                 None, //Some("walker".to_string()),
             ))
         }
 
-        state.entities[0].pos = out_point;
+        ents[0].pos = out_point;
     }
 
     // let rot = cgmath::Matrix4::from_angle_y(a);
@@ -357,7 +365,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         bytemuck::bytes_of(&data),
     );
 
-    for (i, entity) in &mut state.entities.iter_mut().enumerate() {
+    for (i, entity) in &mut ents.iter_mut().enumerate() {
         entity.run();
 
         let rotation = Mat4::from_rotation_z(entity.rotation);
@@ -471,7 +479,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
             }
 
-            for entity in &state.entities {
+            for entity in ents {
                 let model = entity.model.get().unwrap();
                 render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
                 render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
@@ -507,6 +515,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
     state.queue.submit(iter::once(encoder.finish()));
     output.present();
+
+    entity_manager.check_create();
 
     Ok(())
 }

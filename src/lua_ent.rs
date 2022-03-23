@@ -11,6 +11,7 @@ pub struct LuaEnt {
     pub vel_x: f32,
     pub vel_y: f32,
     pub vel_z: f32,
+    // pub uuid: String,
 }
 
 impl UserData for LuaEnt {
@@ -59,6 +60,7 @@ impl LuaEnt {
         }
     }
 }
+
 // pub fn new() -> LuaEnt {
 //     return LuaEnt { x: 10., y: 12. };
 // }
