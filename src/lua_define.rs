@@ -38,6 +38,7 @@ impl LuaCore {
             Option<LuaEnt>,
             SyncSender<(Option<String>, Option<LuaEnt>)>,
         )>();
+        println!("init lua core");
 
         let lua_thread = thread::spawn(move || {
             let lua_ctx = Lua::new();
@@ -126,35 +127,6 @@ impl LuaCore {
         }
     }
 
-    pub fn init(
-        &self,
-        // entity_factory: Arc<Mutex<OnceCell<EntFactory>>>,
-        // meshes: Rc<RefCell<Vec<Ent<'a>>>>,
-    ) {
-
-        //let to_lua_tx = Mutex::new(to_lua_tx);
-        // env.add_filter(
-        //     "concat2",
-        //     move |_env: &minijinja::Environment,
-        //           s1: String,
-        //           s2: String|
-        //           -> anyhow::Result<String, minijinja::Error> {
-        //         let (tx, rx) = sync_channel::<String>(0);
-        //         to_lua_tx.lock().unwrap().send((s1, s2, tx)).unwrap();
-        //         let res = rx.recv().unwrap();
-        //         Ok(res)
-        //     },
-        // );
-
-        // let globals = self.lua.globals();
-
-        //let multi = self.lua.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
-        // let t = multi.unwrap();
-        //globals.set("multi", multi.unwrap());
-
-        //drop(globals);
-    }
-
     pub fn call(&self, func: String, ent: LuaEnt) -> LuaEnt {
         match self.inject(func, "".to_string(), Some(ent.clone())).1 {
             Some(ento) => {
@@ -185,28 +157,12 @@ impl LuaCore {
 
         //MutexGuard::unlock_fair(guard);
         match rx.recv() {
-            Ok(lua_out) => {
-                // println!(
-                //     "returned {}",
-                //     match &lua_out {
-                //         Some(l) => l.x,
-                //         None => -1.,
-                //     }
-                // );
-
-                lua_out
-            }
+            Ok(lua_out) => lua_out,
             Err(e) => {
                 // println!("ye {}", e);
                 (None, None)
             }
         }
-
-        // let (tx, rx) = sync_channel::<String>(0);
-        //             to_lua_tx.lock().unwrap().send((s1, s2, tx)).unwrap();
-        //             let res = rx.recv().unwrap();
-
-        //self.to_lua_tx.
     }
     pub fn load(&self, file: String) {
         log("loading script".to_string());

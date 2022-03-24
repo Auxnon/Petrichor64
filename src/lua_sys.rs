@@ -3,6 +3,8 @@ use mlua::{Error, Lua, Table};
 use crate::ent_master;
 
 pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
+    println!("init lua sys");
+
     let default_func = lua_ctx
         .create_function(|_, e: f32| Ok("placeholder func uwu"))
         .unwrap();

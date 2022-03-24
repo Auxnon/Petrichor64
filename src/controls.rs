@@ -1,8 +1,11 @@
 use glam::{IVec2, IVec3};
+use once_cell::sync::OnceCell;
+use rand::Error;
 use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-use crate::State;
+use crate::lua_define::LuaCore;
+use crate::{lua_master, State};
 
 pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &mut ControlFlow) {
     match event {
@@ -57,7 +60,27 @@ pub fn controls_evaluate(event: &WindowEvent, state: &mut State, control_flow: &
             state.resize(**new_inner_size);
         }
         _ => {
-            state.switch_board.write().space = state.input_helper.key_held(VirtualKeyCode::Space);
+            let space_down = state.input_helper.key_held(VirtualKeyCode::Space);
+            state.switch_board.write().space = space_down;
+            if space_down {
+                let mutex = crate::lua_master.lock();
+                // mutex.get_or_init::<LuaCore>(|| Ok(crate::lua_define::LuaCore::new()));
+                // Some(d) => {}
+                // None => {
+                //     match lua_master.try_lock() {
+                //         Some(lua_guard) => {
+                //             println!("yr");
+                //             let lua_core = lua_guard.get_or_init();
+                //             parking_lot::MutexGuard::unlock_fair(lua_guard);
+                //             crate::asset::init(&state.device);
+                //         }
+                //         _ => {
+                //             println!("naw");
+                //         }
+                //     }
+                //     //
+                // }
+            }
             let diff = state.input_helper.mouse_diff();
             // state.global.mouse_delta.x = diff.0;
             // state.global.mouse_delta.y = diff.1;

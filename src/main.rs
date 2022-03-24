@@ -162,8 +162,6 @@ impl State {
         crate::texture::init();
         model::init(&device);
 
-        crate::asset::init(&device);
-
         // crate::texture::load_tex("gameboy".to_string());
         // crate::texture::load_tex("guy3".to_string());
         // crate::texture::load_tex("chicken".to_string());
@@ -553,10 +551,6 @@ fn main() {
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
 
-    let lua_guard = lua_master.lock();
-    let lua_core = lua_guard.get_or_init(|| lua_define::LuaCore::new());
-    parking_lot::MutexGuard::unlock_fair(lua_guard);
-
     let mut state = pollster::block_on(State::new(&window));
 
     let ent_guard = ent_master.lock();
@@ -575,39 +569,39 @@ fn main() {
         None,
     ));
 
-    eman.entities.push(Ent::new(
-        vec3(1.0, 1.0, 0.0),
-        0.,
-        1.,
-        0.,
-        "chicken".to_string(),
-        "plane".to_string(),
-        (state.uniform_alignment * 2) as u32,
-        false,
-        None,
-    ));
-    eman.entities.push(Ent::new(
-        vec3(2.0, 1.0, 0.0),
-        0.,
-        1.,
-        0.,
-        "gameboy".to_string(),
-        "plane".to_string(),
-        (state.uniform_alignment * 3) as u32,
-        false,
-        None,
-    ));
-    eman.entities.push(Ent::new(
-        vec3(-1.0, 1.0, 0.0),
-        0.,
-        1.,
-        0.,
-        "guy3".to_string(),
-        "plane".to_string(),
-        (state.uniform_alignment * 4) as u32,
-        true,
-        Some("walker".to_string()),
-    ));
+    // eman.entities.push(Ent::new(
+    //     vec3(1.0, 1.0, 0.0),
+    //     0.,
+    //     1.,
+    //     0.,
+    //     "chicken".to_string(),
+    //     "plane".to_string(),
+    //     (state.uniform_alignment * 2) as u32,
+    //     false,
+    //     None,
+    // ));
+    // eman.entities.push(Ent::new(
+    //     vec3(2.0, 1.0, 0.0),
+    //     0.,
+    //     1.,
+    //     0.,
+    //     "gameboy".to_string(),
+    //     "plane".to_string(),
+    //     (state.uniform_alignment * 3) as u32,
+    //     false,
+    //     None,
+    // ));
+    // eman.entities.push(Ent::new(
+    //     vec3(-1.0, 1.0, 0.0),
+    //     0.,
+    //     1.,
+    //     0.,
+    //     "guy3".to_string(),
+    //     "plane".to_string(),
+    //     (state.uniform_alignment * 4) as u32,
+    //     true,
+    //     Some("walker".to_string()),
+    // ));
 
     ent_guard.get_or_init(|| eman);
 

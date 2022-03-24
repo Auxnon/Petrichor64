@@ -56,7 +56,7 @@ pub fn init(device: &Device) {
     }
 
     log(format!("scripts dir is {}", scripts_path.display()));
-
+    return;
     match read_dir(&scripts_path) {
         Ok(dir) => {
             let scripts_dir: Vec<PathBuf> = dir
@@ -81,9 +81,12 @@ pub fn init(device: &Device) {
 
                             let mutex = crate::lua_master.lock();
                             //log(format!("hooked {}", path));
-                            let d = mutex.get().unwrap();
 
-                            d.load(path);
+                            match mutex.get() {
+                                Some(d) => d.load(path),
+                                None => log("Lua core not loaded!".to_string()),
+                            }
+
                             //crate::model::load(file_name, device);
                         } else {
                             log(format!("skipping file type {}", file_name));

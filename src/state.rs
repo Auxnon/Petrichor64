@@ -1,1 +1,1 @@
-
+// crate::asset::init(&device);
