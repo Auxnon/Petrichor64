@@ -216,7 +216,7 @@ fn _add_tile_model(c: &mut Chunk, model: String, ix: i32, iy: i32, iz: i32) {
     //println!("index bit adjustment {}", current_count);
     let offset = ivec3(ix as i32, iy as i32, iz as i32);
 
-    let uv = crate::texture::get_tex(model);
+    let uv = crate::texture::get_tex(&model);
 
     let (verts, inds) = match crate::model::get_adjustable_model(&"cube".to_string()) {
         Some(m) => {

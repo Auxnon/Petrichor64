@@ -9,7 +9,7 @@ use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
-    State,
+    Core,
 };
 
 pub fn generate_matrix(
@@ -73,16 +73,16 @@ pub fn generate_matrix(
     (mx_view, mx_projection, model_mat)
 }
 
-pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
-    let output = state.surface.get_current_texture()?;
+pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
+    let output = core.surface.get_current_texture()?;
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    state.gui.render(
-        &state.device,
-        &state.queue,
-        state.global.get("value2".to_string()),
+    core.gui.render(
+        &core.device,
+        &core.queue,
+        core.global.get("value2".to_string()),
     );
 
     let mut mutex = crate::ent_master.lock();
@@ -90,32 +90,32 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     let entity_manager = mutex.get_mut().unwrap();
     let ents = &mut entity_manager.entities;
 
-    // let mut v = state.global.get("value".to_string());
-    let v = state.global.get_mut("value".to_string());
+    // let mut v = core.global.get("value".to_string());
+    let v = core.global.get_mut("value".to_string());
     *v += 0.002;
     if *v > 1. {
         *v = 0.
     }
 
     let (mx_view, mx_persp, mx_model) = generate_matrix(
-        state.size.width as f32 / state.size.height as f32,
+        core.size.width as f32 / core.size.height as f32,
         *v * 2. * std::f32::consts::PI,
-        state.global.camera_pos,
-        state.global.mouse_active_pos,
+        core.global.camera_pos,
+        core.global.mouse_active_pos,
     );
 
     if true {
-        //let trans = Mat4::from_translation(state.camera_pos);
-        //let mm = Mat4::from_translation(state.camera_pos) * Mat4::IDENTITY;
+        //let trans = Mat4::from_translation(core.camera_pos);
+        //let mm = Mat4::from_translation(core.camera_pos) * Mat4::IDENTITY;
         //mx_model
-        let tran = Mat4::from_translation(state.global.camera_pos);
+        let tran = Mat4::from_translation(core.global.camera_pos);
         // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
         //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
         //let inv = (mx_persp.inverse() * Mat4::IDENTITY) * mx_view.inverse();
 
         let inv = (mx_persp * mx_view).inverse();
-        //let viewport = vec4(0., 0., state.size.width as f32, state.size.height as f32);
-        //let screen = vec3(state.mouse.0, state.mouse.1, 20.);
+        //let viewport = vec4(0., 0., core.size.width as f32, core.size.height as f32);
+        //let screen = vec3(core.mouse.0, core.mouse.1, 20.);
         // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
         // pp.y -= viewport.y;
         // let out = vec3(
@@ -134,7 +134,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // origin.y *= origin.w;
         // origin.z *= origin.w;
 
-        // let screen = vec4(state.mouse.0 * 2. - 1., -state.mouse.1 * 2. + 1., -1., 1.);
+        // let screen = vec4(core.mouse.0 * 2. - 1., -core.mouse.1 * 2. + 1., -1., 1.);
         // let mut origin = inv.mul_vec4(screen);
         // origin.w = 1. / origin.w;
         // origin.x *= origin.w;
@@ -142,30 +142,30 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // origin.z *= origin.w;
 
         // let cam_eye = vec4(
-        //     92. * (state.value * 2. * std::f32::consts::PI).cos(),
+        //     92. * (core.value * 2. * std::f32::consts::PI).cos(),
         //     -128.,
         //     82.0,
         //     1.,
         // );
-        // let cam_proj = (mx_persp).project_point3(state.camera_pos);
+        // let cam_proj = (mx_persp).project_point3(core.camera_pos);
         // println!("cam pos proj {}", cam_proj);
 
         let cam_eye = vec4(
-            state.global.camera_pos.x,
-            state.global.camera_pos.y,
-            state.global.camera_pos.z,
+            core.global.camera_pos.x,
+            core.global.camera_pos.y,
+            core.global.camera_pos.z,
             1.,
         );
 
-        let aspect = state.size.width as f32 / state.size.height as f32;
+        let aspect = core.size.width as f32 / core.size.height as f32;
         // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
 
         //let cam_center = vec4(0., 0., 0., 1.);
-        let cam_center = vec3(state.global.camera_pos.z, 0., 0.); // vec4(state.camera_pos.x, 0., state.camera_pos.y, 1.);
+        let cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
 
         let win_coord = vec3(
-            state.global.mouse_active_pos.x,
-            state.global.mouse_active_pos.y,
+            core.global.mouse_active_pos.x,
+            core.global.mouse_active_pos.y,
             0.,
         );
 
@@ -196,11 +196,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // println!("{}", near_unproj);
 
         let mut far_unproj = inv.project_point3(far_coord.xyz());
-        //let cam_unproj = inv.project_point3(state.camera_pos);
+        //let cam_unproj = inv.project_point3(core.camera_pos);
 
         let mut dir = (near_unproj - far_unproj).normalize();
 
-        // - (state.camera_pos + vec3(0., -10., 0.))
+        // - (core.camera_pos + vec3(0., -10., 0.))
         //dir = mx_view.inverse().project_point3(dir);
         //     var d = Vector3.Dot(planeP, -planeN);
         // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
@@ -235,7 +235,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         } else {
             out_point = dir.mul(-16.); // + cam_center.xyz();
         }
-        state.global.cursor_projected_pos = out_point;
+        core.global.cursor_projected_pos = out_point;
 
         //screen_unproj.normalize().mul(10.);
         //result.div_assign(40.);
@@ -278,13 +278,13 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 */
         //transform(out, out, invProjectionView);
         // let v = vec4(
-        //     (state.mouse.0 * 2. - 1.),
-        //     (state.mouse.1 * 2. - 1.),
+        //     (core.mouse.0 * 2. - 1.),
+        //     (core.mouse.1 * 2. - 1.),
         //     10.,
         //     1.,
         // );
-        //state.size.width as f32 *
-        //state.size.height as f32 *
+        //core.size.width as f32 *
+        //core.size.height as f32 *
         //let p = inv.mul_vec4(v);
         // let p = v * inv;
 
@@ -296,9 +296,9 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         // let ent_guard=ent_master.lock();
         // ent_guard.get_mut(slice);
 
-        if state.global.get("value2".to_string()) >= 1. {
+        if core.global.get("value2".to_string()) >= 1. {
             let typeOf = ents.len() % 2 == 0;
-            state.global.set("value2".to_string(), 0.);
+            core.global.set("value2".to_string(), 0.);
 
             println!("  dir {} world space {}", dir, out_point);
 
@@ -317,7 +317,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 } else {
                     "package".to_string()
                 },
-                (ents.len() as u64 * state.uniform_alignment) as u32,
+                (ents.len() as u64 * core.uniform_alignment) as u32,
                 typeOf,
                 None, //Some("walker".to_string()),
             ))
@@ -328,28 +328,25 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
     // let rot = cgmath::Matrix4::from_angle_y(a);
     // //let mx_ref: = mx_total.as_ref();
-    // let mx_totals = rot * state.camera_matrix;
+    // let mx_totals = rot * core.camera_matrix;
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
     let time_ref: [f32; 4] = ([
-        state.global.get("value".to_string()),
+        core.global.get("value".to_string()),
         0.,
-        state.size.width as f32,
-        state.size.height as f32,
+        core.size.width as f32,
+        core.size.height as f32,
     ]);
 
-    state
-        .queue
-        .write_buffer(&state.uniform_buf, 0, bytemuck::cast_slice(mx_view_ref));
-    state
-        .queue
-        .write_buffer(&state.uniform_buf, 64, bytemuck::cast_slice(mx_persp_ref));
+    core.queue
+        .write_buffer(&core.uniform_buf, 0, bytemuck::cast_slice(mx_view_ref));
+    core.queue
+        .write_buffer(&core.uniform_buf, 64, bytemuck::cast_slice(mx_persp_ref));
 
     //TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
-    state
-        .queue
-        .write_buffer(&state.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
+    core.queue
+        .write_buffer(&core.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
     let m: Mat4 = Mat4::IDENTITY;
     let data = EntityUniforms {
@@ -359,8 +356,8 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         effects: [0, 0, 0, 0],
     };
     //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
-    state.queue.write_buffer(
-        &state.entity_uniform_buf,
+    core.queue.write_buffer(
+        &core.entity_uniform_buf,
         0 as wgpu::BufferAddress,
         bytemuck::bytes_of(&data),
     );
@@ -422,14 +419,14 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
             ],
         };
         //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
-        state.queue.write_buffer(
-            &state.entity_uniform_buf,
+        core.queue.write_buffer(
+            &core.entity_uniform_buf,
             entity.uniform_offset as wgpu::BufferAddress,
             bytemuck::bytes_of(&data),
         );
     }
 
-    let mut encoder = state
+    let mut encoder = core
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -444,7 +441,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: if state.switch_board.read().space {
+                        r: if core.switch_board.read().space {
                             0.
                         } else {
                             1.
@@ -457,7 +454,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
                 },
             }],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &state.depth_texture,
+                view: &core.depth_texture,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: true,
@@ -468,12 +465,12 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         //world space
         {
-            render_pass.set_pipeline(&state.render_pipeline);
-            render_pass.set_bind_group(0, &state.bind_group, &[]);
-            let c = state.world.get_chunk_mut(0, 0, 0);
+            render_pass.set_pipeline(&core.render_pipeline);
+            render_pass.set_bind_group(0, &core.bind_group, &[]);
+            let c = core.world.get_chunk_mut(0, 0, 0);
             if c.buffers.is_some() {
                 let b = c.buffers.as_ref().unwrap();
-                render_pass.set_bind_group(1, &state.entity_bind_group, &[0]);
+                render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
                 render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_vertex_buffer(0, b.0.slice(..));
                 render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
@@ -481,7 +478,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
             for entity in ents {
                 let model = entity.model.get().unwrap();
-                render_pass.set_bind_group(1, &state.entity_bind_group, &[entity.uniform_offset]);
+                render_pass.set_bind_group(1, &core.entity_bind_group, &[entity.uniform_offset]);
                 render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
                 render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
                 render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
@@ -490,11 +487,11 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
 
         //gui space
         {
-            // let res = state.gui.model.get();
+            // let res = core.gui.model.get();
             // if res.is_some() {
             //     let model = res.unwrap();
-            render_pass.set_pipeline(&state.gui.gui_pipeline);
-            render_pass.set_bind_group(0, &state.gui.gui_group, &[]);
+            render_pass.set_pipeline(&core.gui.gui_pipeline);
+            render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.draw(0..4, 0..4);
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
@@ -503,7 +500,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
         }
 
         //render_pass.draw(0..3, 0..1);
-        //render_pass.draw_indexed(0..state.index_count as u32, 0, 0..1);
+        //render_pass.draw_indexed(0..core.index_count as u32, 0, 0..1);
     }
     encoder.pop_debug_group();
 
@@ -513,7 +510,7 @@ pub fn render_loop(state: &mut State) -> Result<(), wgpu::SurfaceError> {
     //     bytemuck::bytes_of(&data),
     // );
 
-    state.queue.submit(iter::once(encoder.finish()));
+    core.queue.submit(iter::once(encoder.finish()));
     output.present();
 
     entity_manager.check_create();

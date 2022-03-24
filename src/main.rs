@@ -14,12 +14,12 @@ use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 
 use switch_board::SwitchBoard;
-use wgpu::{util::DeviceExt, BindGroup, Buffer, BufferUsages};
+use wgpu::{util::DeviceExt, BindGroup, Buffer, BufferUsages, Texture};
 use winit::{
     dpi::{LogicalPosition, LogicalSize, PhysicalPosition},
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    platform::macos::WindowExtMacOS,
+    // platform::macos::WindowExtMacOS,
     window::{Window, WindowBuilder},
 };
 
@@ -46,7 +46,7 @@ mod tile;
 
 const MAX_ENTS: u64 = 100;
 
-pub struct State {
+pub struct Core {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -69,6 +69,7 @@ pub struct State {
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     bind_group: BindGroup,
+    master_texture: Texture,
     gui: Gui,
 
     input_helper: winit_input_helper::WinitInputHelper,
@@ -129,8 +130,8 @@ lazy_static! {
     pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
 }
 
-impl State {
-    async fn new(window: &Window) -> State {
+impl Core {
+    async fn new(window: &Window) -> Core {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -509,6 +510,7 @@ impl State {
             stream: sound::init_sound(dupe_switch).unwrap(),
             world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
+            master_texture: diff_tex,
         }
     }
 
@@ -551,11 +553,11 @@ fn main() {
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
 
-    let mut state = pollster::block_on(State::new(&window));
+    let mut core = pollster::block_on(Core::new(&window));
 
     let ent_guard = ent_master.lock();
     let mut eman = EntManager::new();
-    eman.uniform_alignment = state.uniform_alignment as u32;
+    eman.uniform_alignment = core.uniform_alignment as u32;
 
     eman.entities.push(Ent::new(
         vec3(0.0, 1.0, 0.0),
@@ -564,7 +566,7 @@ fn main() {
         0.,
         "chicken".to_string(),
         "plane".to_string(),
-        state.uniform_alignment as u32,
+        core.uniform_alignment as u32,
         true,
         None,
     ));
@@ -612,39 +614,39 @@ fn main() {
         //     x: s.width,
         //     y: s.height,
         // });
-        state.input_helper.update(&event);
+        core.input_helper.update(&event);
         match event {
             Event::WindowEvent {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                if !state.input(event) {
-                    controls::controls_evaluate(event, &mut state, control_flow);
+                if !core.input(event) {
+                    controls::controls_evaluate(event, &mut core, control_flow);
                 }
             }
             Event::DeviceEvent { device_id, event } => match event {
                 DeviceEvent::MouseMotion { delta } => {
-                    state.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
-                    state.global.mouse_active_pos.x %= 1.;
-                    if state.global.mouse_active_pos.x < 0. {
-                        state.global.mouse_active_pos.x += 1.;
+                    core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
+                    core.global.mouse_active_pos.x %= 1.;
+                    if core.global.mouse_active_pos.x < 0. {
+                        core.global.mouse_active_pos.x += 1.;
                     }
-                    state.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
+                    core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
                     let pi = std::f32::consts::PI / 8.;
-                    if state.global.mouse_active_pos.y > 0.72 {
-                        state.global.mouse_active_pos.y = 0.72
-                    } else if state.global.mouse_active_pos.y < 0.4 {
-                        state.global.mouse_active_pos.y = 0.4;
+                    if core.global.mouse_active_pos.y > 0.72 {
+                        core.global.mouse_active_pos.y = 0.72
+                    } else if core.global.mouse_active_pos.y < 0.4 {
+                        core.global.mouse_active_pos.y = 0.4;
                     }
                 }
                 _ => {}
             },
             Event::RedrawRequested(_) => {
-                state.update();
-                match state.render() {
+                core.update();
+                match core.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                    Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
                     // The system is out of memory, we should probably quit
                     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
                     // All other errors (Outdated, Timeout) should be resolved by the next frame

@@ -30,6 +30,10 @@ pub struct Ent {
     pub model: Arc<OnceCell<Model>>,
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: Vec4,
+    /**hold the string name of texture for hot reloads*/
+    tex_name: String,
+    /**hold the string name of models for hot reloads*/
+    model_name: String,
     pub effects: UVec4,
     //pub brain: Option<Function<'lua>>,
     pub brain_name: Option<String>,
@@ -85,7 +89,9 @@ impl<'lua> Ent {
             model: crate::model::get_model(&model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
-            tex: crate::texture::get_tex(tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
+            tex: crate::texture::get_tex(&tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
+            tex_name,
+            model_name: model,
             uniform_offset,
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
             //brain: None,
@@ -106,6 +112,12 @@ impl<'lua> Ent {
             rot_y: self.rot.y,
             rot_z: self.rot.z,
         }
+    }
+
+    pub fn hot_reload(&mut self) {
+        self.tex = crate::texture::get_tex(&self.tex_name);
+        println!("hot reload {}", self.tex);
+        self.model = crate::model::get_model(&self.model_name)
     }
 
     fn from_lua(&mut self, ent: LuaEnt) {

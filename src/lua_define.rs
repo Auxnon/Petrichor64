@@ -1,4 +1,4 @@
-use crate::{ent::Ent, lua_ent::LuaEnt, State};
+use crate::{ent::Ent, lua_ent::LuaEnt};
 use lazy_static::lazy_static;
 use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
 use once_cell::sync::OnceCell;

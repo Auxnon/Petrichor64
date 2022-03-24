@@ -22,6 +22,16 @@ pub fn init() {
     d.y = 1024;
     let rgba = master.lock().get_or_init(|| img);
 }
+pub fn reset() {
+    let mut img: RgbaImage = ImageBuffer::new(1024, 1024);
+    let mut d = atlas_dim.lock();
+    d.x = 1024;
+    d.y = 1024;
+    match master.lock().get_mut() {
+        Some(im) => image::imageops::replace(im, &img, 0, 0),
+        None => error("Somehow missing our texture atlas?".to_string()),
+    }
+}
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
     image::save_buffer_with_format(
         "pic.png",
@@ -33,6 +43,10 @@ pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, 
     );
 
     make_tex(device, queue, master.lock().get().unwrap())
+}
+
+pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
+    crate::texture::write_tex(device, queue, texture, &master.lock().get().unwrap());
 }
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
 pub fn locate(source: RgbaImage) -> Vec4 {
@@ -270,8 +284,8 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
     dictionary.lock().insert(actual_name, pos);
 }
 
-pub fn get_tex(str: String) -> Vec4 {
-    match dictionary.lock().get(&str) {
+pub fn get_tex(str: &String) -> Vec4 {
+    match dictionary.lock().get(str) {
         Some(v) => v.clone(),
         None => Vec4::new(0., 0., 0., 0.),
     }
@@ -372,5 +386,5 @@ fn log(str: String) {
     crate::log::log(format!("🎨texture::{}", str));
 }
 fn error(str: String) {
-    crate::log::log(format!("‼︎ERROR::🎨texture::{}", str));
+    crate::log::error(format!("‼︎ERROR::🎨texture::{}", str));
 }

@@ -60,6 +60,10 @@ pub fn back() {
     };
 }
 
+pub fn error(str: String) {
+    _print(str, false);
+}
+
 pub fn log(str: String) {
     _print(str, false);
 }
