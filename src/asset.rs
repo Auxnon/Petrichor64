@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::read_dir,
     path::{Path, PathBuf},
 };
@@ -7,10 +8,30 @@ use wgpu::Device;
 
 use crate::lua_define::LuaCore;
 
+pub fn pack() {
+    let sources = walk_files(None);
+    crate::zip_pal::pack_zip(
+        sources,
+        &"gamecart.png".to_string(),
+        &"biggo.png".to_string(),
+    )
+}
+pub fn unpack(device: &Device, target: &String) {
+    let map =
+        crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scipts".to_string()]);
+}
+
 pub fn init(device: &Device) {
+    walk_files(Some(device));
+}
+pub fn walk_files(
+    device: Option<&Device>,
+    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
+) -> Vec<String> {
     let assets_path = Path::new(".").join("assets");
     let scripts_path = Path::new(".").join("scripts");
     log(format!("assets dir is {}", assets_path.display()));
+    let mut sources = vec![];
 
     match read_dir(&assets_path) {
         Ok(dir) => {
@@ -25,12 +46,23 @@ pub fn init(device: &Device) {
                     Some(e) => {
                         let s = e.to_ascii_lowercase();
                         let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
+                        let path = Path::new("assets")
+                            .join(file_name.to_owned())
+                            .to_str()
+                            .unwrap()
+                            .to_string();
                         if s == "glb" || s == "gltf" {
-                            log(format!("loading {} as glb/gltf model", file_name));
-                            crate::model::load(file_name, device);
+                            if device.is_some() {
+                                log(format!("loading {} as glb/gltf model", file_name));
+                                crate::model::load(file_name, device.unwrap());
+                            }
+                            sources.push(path)
                         } else if s == "png" {
-                            log(format!("loading {} as png image", file_name));
-                            crate::texture::load_tex(file_name.to_string());
+                            if device.is_some() {
+                                log(format!("loading {} as png image", file_name));
+                                crate::texture::load_tex(file_name.to_string());
+                            }
+                            sources.push(path)
                         } else {
                             log(format!("unknown file type {}", file_name));
                         }
@@ -56,7 +88,6 @@ pub fn init(device: &Device) {
     }
 
     log(format!("scripts dir is {}", scripts_path.display()));
-    return;
     match read_dir(&scripts_path) {
         Ok(dir) => {
             let scripts_dir: Vec<PathBuf> = dir
@@ -78,14 +109,17 @@ pub fn init(device: &Device) {
                                 .to_str()
                                 .unwrap()
                                 .to_string();
+                            if false {
+                                //device.is_some()
+                                let mutex = crate::lua_master.lock();
+                                //log(format!("hooked {}", path));
 
-                            let mutex = crate::lua_master.lock();
-                            //log(format!("hooked {}", path));
-
-                            match mutex.get() {
-                                Some(d) => d.load(path),
-                                None => log("Lua core not loaded!".to_string()),
+                                match mutex.get() {
+                                    Some(d) => d.load(&path),
+                                    None => log("Lua core not loaded!".to_string()),
+                                }
                             }
+                            sources.push(path);
 
                             //crate::model::load(file_name, device);
                         } else {
@@ -104,6 +138,7 @@ pub fn init(device: &Device) {
     }
 
     //.expect("Scripts directory failed to load")
+    sources
 }
 
 pub fn get_file_name(str: String) -> String {

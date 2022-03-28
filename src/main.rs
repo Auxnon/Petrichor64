@@ -43,6 +43,7 @@ mod switch_board;
 mod text;
 mod texture;
 mod tile;
+mod zip_pal;
 
 const MAX_ENTS: u64 = 100;
 

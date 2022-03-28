@@ -144,7 +144,7 @@ impl<'lua> Ent {
                     .lock()
                     .get()
                     .unwrap()
-                    .call(brain.clone(), self.to_lua());
+                    .call(&brain, self.to_lua());
                 self.from_lua(result);
             }
             None => {}

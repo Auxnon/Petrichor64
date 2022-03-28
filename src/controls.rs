@@ -166,15 +166,20 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
                     if command.is_some() {
                         if core.global.test {
                             // println!("command isss {}", command.unwrap());
-                            let guard = crate::lua_master.lock();
-                            let core = guard.get();
-                            if core.is_some() {
-                                let com = command.unwrap();
-                                let result = core.unwrap().func(com.to_owned());
-                                crate::log::log(result.clone());
+                            let com = command.unwrap();
+                            if !sys_command(&core, &com) {
+                                let guard = crate::lua_master.lock();
+                                let lua_core = guard.get();
+                                if lua_core.is_some() {
+                                    let result = lua_core.unwrap().func(&com);
+                                    crate::log::log(result.clone());
 
-                                crate::log::next_line();
-                                println!("command was {}, result was {}", com, result);
+                                    crate::log::next_line();
+                                    println!("command was {}, result was {}", com, result);
+                                } else {
+                                    crate::log::log("uwu".to_string());
+                                    crate::log::next_line();
+                                }
                             }
                         } else {
                             core.global.test = true;
@@ -226,4 +231,37 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
     //     } => println!("{}", key_out),
     //     _ => {}
     // }
+}
+
+/** Private commands not reachable by lua code, but also works without lua being loaded */
+pub fn sys_command(core: &Core, s: &String) -> bool {
+    match s.as_str() {
+        "$die" => {
+            // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
+            let guard = crate::lua_master.lock();
+            let lua_core = guard.get();
+            if lua_core.is_some() {
+                lua_core.unwrap().die();
+            }
+        }
+        "$pack" => {
+            //
+            crate::asset::pack();
+        }
+        "$unpack" => {
+            //
+            crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
+        }
+        "$load" => {
+            crate::asset::unpack(&"biggo.png".to_string());
+        }
+        "$print_atlas" => {
+            crate::texture::save_atlas();
+        }
+        "$ugh" => {
+            //
+        }
+        &_ => return false,
+    }
+    true
 }

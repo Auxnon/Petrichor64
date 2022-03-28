@@ -251,14 +251,31 @@ pub struct Model {
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
 }
 
-pub fn load(str: &String, device: &Device) {
-    let bits = str.split(".").collect::<Vec<_>>();
-    let name = bits.get(0).unwrap();
+pub fn load_from_slice(str: &String, slice: Vec<u8>, device: &Device) {
+    match gltf::import_slice(slice) {
+        Ok((nodes, buffers, image_data)) => {
+            load(str, nodes, buffers, image_data, device);
+        }
+        Err(err) => {}
+    }
+}
+pub fn load_from_string(str: &String, device: &Device) {
     let target = format!("assets/{}", str);
     log(target.to_string());
     let (nodes, buffers, image_data) = gltf::import(target).unwrap();
+    load(str, nodes, buffers, image_data, device);
+}
+fn load(
+    str: &String,
+    nodes: gltf::Document,
+    buffers: Vec<gltf::buffer::Data>,
+    image_data: Vec<gltf::image::Data>,
+    device: &Device,
+) {
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
+    let bits = str.split(".").collect::<Vec<_>>();
+    let name = bits.get(0).unwrap();
 
     crate::texture::load_tex_from_img(str.to_string(), &image_data);
 

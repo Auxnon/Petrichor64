@@ -1,0 +1,248 @@
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, BufWriter, Cursor, Read, SeekFrom, Write};
+use std::path::PathBuf;
+use std::{fs::File, path::Path};
+
+use zip::write::FileOptions;
+
+fn smash(thumbnail: &String, data: &String, out: &String) {
+    let mut file1 = get_file_buffer(thumbnail);
+    let mut file2 = get_file_buffer(data);
+    let new_file = File::create(&Path::new(out)).unwrap();
+
+    file1.append(&mut file2);
+    let mut writer = BufWriter::new(new_file);
+    writer.write(file1.as_slice());
+}
+
+fn stretch(source: &String, out_name: &String) {
+    let mut file1 = get_file_buffer(source);
+
+    let mut v = vec![];
+    let mut toggle = false;
+    file1 = file1[1..file1.len()].to_vec();
+    let mut iter = 0;
+    let test = [73, 69, 78, 68, 174, 66, 96, 130];
+
+    for chunk in file1.chunks(1) {
+        if !toggle {
+            // print!("{:?}_", chunk);
+            if chunk[0] == test[iter] {
+                if (iter < 7) {
+                    iter += 1;
+                } else {
+                    toggle = true;
+                }
+            } else {
+                iter = 0;
+            }
+        } else {
+            v.append(&mut chunk.to_vec());
+        }
+        //     vec_chunks.push(chunk.to_vec());
+    }
+    println!("stretch size {}", v.len());
+
+    let new_file = File::create(&Path::new(out_name)).unwrap();
+    let mut writer = BufWriter::new(new_file);
+    writer.write(v.as_slice());
+}
+
+fn get_file_buffer(path_str: &String) -> Vec<u8> {
+    let path = Path::new(path_str);
+    let mut v = vec![];
+    match File::open(&path) {
+        Ok(f) => {
+            let mut reader = BufReader::new(f);
+            // reader.re
+            match reader.read_to_end(&mut v) {
+                Ok(x) => println!("buffer size {} for {}", x, &path_str),
+                Err(_) => {}
+            };
+        }
+        Err(err) => {}
+    }
+    v
+}
+pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
+    // let zipfile = std::fs::File::open(name).unwrap();
+    let mut image = get_file_buffer(thumb);
+    let new_file = File::create(&Path::new("temp")).unwrap();
+    let mut v = Vec::new();
+    let mut c = Cursor::new(v);
+
+    let mut zip = zip::ZipWriter::new(c);
+    let options = FileOptions::default();
+
+    for source in sources {
+        //.to_string();
+        // zip.add_directory(s, options);
+        //zip::ZipWriter::start_file;
+        zip.start_file(
+            &source,
+            options.compression_method(zip::CompressionMethod::Stored),
+        ); //
+
+        let buff = get_file_buffer(&source);
+        let buffy = buff.as_slice();
+        println!("buffy size {}", buffy.len());
+        let re = zip.write(buffy);
+        if re.is_err() {
+            println!(" zipping error? {}", re.unwrap());
+        } else {
+            println!(" zip buffy size? {}", re.unwrap());
+        }
+    }
+
+    // zip.write_all(buf)
+    match zip.finish() {
+        Ok(mut f) => {
+            f.set_position(0);
+
+            // Read the "file's" contents into a vector
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf).unwrap();
+            println!("zip buffer size {}", buf.len());
+
+            image.append(&mut buf);
+            let new_file = File::create(&Path::new(out)).unwrap();
+            let mut writer = BufWriter::new(new_file);
+            match writer.write(image.as_slice()) {
+                Ok(_) => lg("cartridge zipped!"),
+                Err(err) => log(format!("failed zipping to cartridge: {}", err)),
+            }
+        }
+        Err(_) => todo!(),
+    }
+}
+
+pub fn unpack_and_save(target: &String, out: &String) {
+    let v = unpack(target);
+    if v.len() > 0 {
+        let new_file = File::create(&Path::new(out)).unwrap();
+        let mut writer = BufWriter::new(new_file);
+        writer.write(v.as_slice());
+    }
+}
+
+pub fn unpack_and_walk(target: &String, sort: Vec<String>) -> HashMap<String, Vec<Vec<u8>>> {
+    let v = unpack(target);
+    let mut reader = std::io::Cursor::new(v);
+
+    let mut archive = zip::ZipArchive::new(reader).unwrap();
+    let it = archive.file_names();
+    let main_dir = vec![];
+    let map: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
+    for d in sort {
+        map.insert(d, vec![]);
+    }
+    for file_name in it {
+        let part = file_name.splitn(2, "/");
+        if part.count() < 2 {
+            match archive.by_name(file_name) {
+                Ok(file) => main_dir.push(file),
+                Err(..) => {
+                    println!("?");
+                }
+            };
+        } else {
+            let dir = part.next().unwrap();
+
+            match archive.by_name(part.next().unwrap()) {
+                Ok(file) => {
+                    let ar = map.get(&dir.to_string()).unwrap();
+
+                    let mut contents = Vec::new();
+
+                    match file.read_to_end(&mut contents) {
+                        Ok(size) => {}
+                        _ => {}
+                    }
+
+                    ar.push(contents)
+                }
+                Err(..) => {
+                    println!("?");
+                }
+            };
+        }
+
+        println!("list: {}", file_name);
+    }
+    map
+}
+
+pub fn unpack(target: &String) -> Vec<u8> {
+    let mut gamefile = get_file_buffer(target);
+    if gamefile.len() <= 0 {
+        lg("thumbnail is 0 bytes!");
+        return vec![];
+    }
+    // println!("zip file found {}", gamefile.len());
+
+    let mut v = vec![];
+    let mut toggle = false;
+    gamefile = gamefile[1..gamefile.len()].to_vec();
+    let mut iter = 0;
+    let test = [73, 69, 78, 68, 174, 66, 96, 130];
+
+    for chunk in gamefile.chunks(1) {
+        if !toggle {
+            if chunk[0] == test[iter] {
+                if (iter < 7) {
+                    iter += 1;
+                } else {
+                    println!("got split");
+                    toggle = true;
+                }
+            } else {
+                iter = 0;
+            }
+        } else {
+            v.append(&mut chunk.to_vec());
+        }
+        //     vec_chunks.push(chunk.to_vec());
+    }
+    log(format!("stretch size {}", v.len()));
+
+    v
+}
+
+pub fn walk_zip(str: &String) {
+    let zipfile = std::fs::File::open(str).unwrap();
+
+    let mut archive = zip::ZipArchive::new(zipfile).unwrap();
+
+    let it = archive.file_names();
+
+    for file_name in it {
+
+        // println!("list: {}", n);
+    }
+
+    // let mut file = match archive.by_name("gamecart.png") {
+    //     Ok(file) => file,
+    //     Err(..) => {
+    //         println!("File test/lorem_ipsum.txt not found");
+    //         return 2;
+    //     }
+    // };
+
+    // let mut contents = Vec::new();
+    // match file.read_to_end(&mut contents) {
+    //     Ok(size) => {
+    //         for b in contents {
+    //             print!("{}_", b);
+    //         }
+    //     }
+    //     _ => {}
+    // }
+}
+
+fn lg(s: &str) {
+    crate::log::log(format!("zip::{}", s));
+}
+
+fn log(str: String) {
+    crate::log::log(format!("zip::{}", str));
+}

@@ -84,19 +84,24 @@ impl LuaCore {
 
                 //while let Ok((s1, s2, ent, channel)) = reciever.recv() {
                 //println!("➡️ lua_thread::recieved");
-                if s1 == "load" {
-                    lua_load(&lua_ctx, &s2);
+
+                // println!("we have a func! {:?}", res.clone().unwrap());
+                if ent.is_some() {
+                    let res = globals.get::<_, Function>(s1.to_owned());
+                    if res.is_ok() {
+                        match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
+                            Ok(o) => channel.send((None, Some(o))).unwrap(),
+                            Err(er) => channel.send((None, None)).unwrap(),
+                        }
+                    } else {
+                        channel.send((None, None));
+                    }
                 } else {
-                    // println!("we have a func! {:?}", res.clone().unwrap());
-                    if ent.is_some() {
-                        let res = globals.get::<_, Function>(s1.to_owned());
-                        if res.is_ok() {
-                            match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
-                                Ok(o) => channel.send((None, Some(o))).unwrap(),
-                                Err(er) => channel.send((None, None)).unwrap(),
-                            }
+                    if s1 == "load" {
+                        if s2 == "_self_destruct" {
+                            break;
                         } else {
-                            channel.send((None, None));
+                            lua_load(&lua_ctx, &s2);
                         }
                     } else {
                         match match lua_ctx.load(&s1).eval::<String>() {
@@ -111,6 +116,7 @@ impl LuaCore {
                         }
                     }
                 }
+
                 //thread::sleep(std::time::Duration::from_millis(10));
                 //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
                 //channel.send(res).unwrap()
@@ -127,8 +133,8 @@ impl LuaCore {
         }
     }
 
-    pub fn call(&self, func: String, ent: LuaEnt) -> LuaEnt {
-        match self.inject(func, "".to_string(), Some(ent.clone())).1 {
+    pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
+        match self.inject(func, &"".to_string(), Some(ent.clone())).1 {
             Some(ento) => {
                 // println!("ye");
                 ento
@@ -137,8 +143,8 @@ impl LuaCore {
         }
     }
 
-    pub fn func(&self, func: String) -> String {
-        match self.inject(func, "0".to_string(), None).0 {
+    pub fn func(&self, func: &String) -> String {
+        match self.inject(func, &"0".to_string(), None).0 {
             Some(str) => str,
             None => "".to_string(),
         }
@@ -146,14 +152,14 @@ impl LuaCore {
 
     fn inject(
         &self,
-        func: String,
-        path: String,
+        func: &String,
+        path: &String,
         ent: Option<LuaEnt>,
     ) -> (Option<String>, Option<LuaEnt>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
-        guard.send((func, path, ent, tx));
+        guard.send((func.clone(), path.clone(), ent, tx));
 
         //MutexGuard::unlock_fair(guard);
         match rx.recv() {
@@ -164,9 +170,13 @@ impl LuaCore {
             }
         }
     }
-    pub fn load(&self, file: String) {
+    pub fn load(&self, file: &String) {
         log("loading script".to_string());
-        self.inject("load".to_string(), file, None);
+        self.inject(&"load".to_string(), file, None);
+    }
+    pub fn die(&self) {
+        log("lua go bye bye".to_string());
+        self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
     }
 
     pub fn spawn(&self, str: &String) {

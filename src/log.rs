@@ -98,11 +98,13 @@ pub fn _print(str: String, skip_first: bool) {
 }
 
 pub fn get(height: usize) -> String {
-    let n = buffer.lock().len() - height;
-    // println!("get len {}, n{} height{}", buffer.lock().len(), n, height);
-    let s = buffer.lock()[n..].join("\n");
-    // println!(" lines {} ", s.split("\n").collect::<Vec<&str>>().len());
-    s
+    println!("get len {}, height{}", buffer.lock().len(), height);
+    let l = buffer.lock().len();
+    if l < height {
+        buffer.lock().join("\n")
+    } else {
+        buffer.lock()[(l - height)..].join("\n")
+    }
 }
 pub fn is_dirty() -> bool {
     *log_dirty.lock()

@@ -32,16 +32,17 @@ pub fn reset() {
         None => error("Somehow missing our texture atlas?".to_string()),
     }
 }
-pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
+pub fn save_atlas() {
     image::save_buffer_with_format(
-        "pic.png",
+        "atlas.png",
         &master.lock().get().unwrap(),
         512,
         512,
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
     );
-
+}
+pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
     make_tex(device, queue, master.lock().get().unwrap())
 }
 

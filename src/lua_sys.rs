@@ -33,6 +33,7 @@ pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
             })
             .unwrap(),
     ));
+
     res(globals.set(
         "_spawn",
         lua_ctx
@@ -41,6 +42,16 @@ pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
                 let manager = mutex.get_mut().unwrap();
                 let l = manager.add(x, y, z);
                 Ok(l)
+            })
+            .unwrap(),
+    ));
+
+    res(globals.set(
+        "_self_destruct",
+        lua_ctx
+            .create_function(|_, (): ()| {
+                Ok(())
+                //
             })
             .unwrap(),
     ));
