@@ -1,6 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 
-use glam::{vec2, vec3, Vec2, Vec3};
+use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 
 pub struct Global {
     pub space: bool,
@@ -11,6 +11,7 @@ pub struct Global {
     pub mouse_delta: Vec2,
     pub console: bool,
     pub camera_pos: Vec3,
+    pub background: Vec4,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
 }
@@ -26,6 +27,7 @@ impl Global {
             camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
             test: false,
+            background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
         }
     }
     pub fn set(&mut self, key: String, v: f32) {

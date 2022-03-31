@@ -1,24 +1,28 @@
+use std::sync::Arc;
+
+use glam::vec4;
 use mlua::{Error, Lua, Table};
+use parking_lot::RwLock;
 
-use crate::ent_master;
+use crate::{ent_master, global::Global, switch_board::SwitchBoard};
 
-pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
+pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock<SwitchBoard>>) {
     println!("init lua sys");
 
     let default_func = lua_ctx
         .create_function(|_, e: f32| Ok("placeholder func uwu"))
         .unwrap();
-    res(globals.set("_default_func", default_func));
+    res(lua_globals.set("_default_func", default_func));
 
     let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
-    globals.set("multi", multi.unwrap());
+    lua_globals.set("multi", multi.unwrap());
 
-    res(globals.set(
+    res(lua_globals.set(
         "_time",
         lua_ctx.create_function(|_, (): ()| Ok(17)).unwrap(),
     ));
 
-    res(globals.set(
+    res(lua_globals.set(
         "_point",
         lua_ctx
             .create_function(|_, (): ()| {
@@ -34,7 +38,19 @@ pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
             .unwrap(),
     ));
 
-    res(globals.set(
+    // res(lua_globals.set(
+    //     "_bg",
+    //     lua_ctx
+    //         .create_function(|_, (x, y, z, w): (f32, f32, f32, f32)| {
+    //             let mut mutex = &mut switch_board.write();
+    //             mutex.background = vec4(x, y, z, w);
+    //             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+    //             Ok(1)
+    //         })
+    //         .unwrap(),
+    // ));
+
+    res(lua_globals.set(
         "_spawn",
         lua_ctx
             .create_function(|_, (x, y, z): (f32, f32, f32)| {
@@ -46,7 +62,7 @@ pub fn init_lua_sys(lua_ctx: &Lua, globals: &Table) {
             .unwrap(),
     ));
 
-    res(globals.set(
+    res(lua_globals.set(
         "_self_destruct",
         lua_ctx
             .create_function(|_, (): ()| {

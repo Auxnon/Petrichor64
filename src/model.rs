@@ -251,7 +251,7 @@ pub struct Model {
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
 }
 
-pub fn load_from_slice(str: &String, slice: Vec<u8>, device: &Device) {
+pub fn load_from_buffer(str: &String, slice: &Vec<u8>, device: &Device) {
     match gltf::import_slice(slice) {
         Ok((nodes, buffers, image_data)) => {
             load(str, nodes, buffers, image_data, device);
@@ -260,10 +260,16 @@ pub fn load_from_slice(str: &String, slice: Vec<u8>, device: &Device) {
     }
 }
 pub fn load_from_string(str: &String, device: &Device) {
-    let target = format!("assets/{}", str);
-    log(target.to_string());
-    let (nodes, buffers, image_data) = gltf::import(target).unwrap();
-    load(str, nodes, buffers, image_data, device);
+    let target = str; //format!("assets/{}", str);
+
+    match gltf::import(&target) {
+        Ok((nodes, buffers, image_data)) => {
+            load(str, nodes, buffers, image_data, device);
+        }
+        Err(err) => {
+            log(format!("gltf err for {} -> {}", &target, err));
+        }
+    }
 }
 fn load(
     str: &String,

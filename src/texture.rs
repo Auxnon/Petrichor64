@@ -10,7 +10,9 @@ use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref master: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
+    /** Last position of a locatated section for a texture, x y, the last   */
     pub static ref atlas_pos:Mutex<UVec4> = Mutex::new(UVec4::new(0,0,0,0));
+    /** Current dimensuons of the atlas image, likely stays the same in most cases */
     pub static ref atlas_dim:Mutex<UVec2>= Mutex::new(UVec2::new(0,0));
     pub static ref dictionary:Mutex<HashMap<String,Vec4>> =Mutex::new(HashMap::new());
 }
@@ -33,21 +35,32 @@ pub fn reset() {
     }
 }
 pub fn save_atlas() {
-    image::save_buffer_with_format(
+    let mas = master.lock();
+    let buf = mas.get().unwrap();
+    let dim = buf.dimensions();
+    println!("atlas w {} h {}", dim.0, dim.1);
+    // let v = buf.to_vec();
+    // for b in v {
+    //     print!("_{}", b);
+    // }
+    match image::save_buffer_with_format(
         "atlas.png",
-        &master.lock().get().unwrap(),
-        512,
-        512,
+        &buf,
+        1024,
+        1024,
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
-    );
+    ) {
+        Ok(s) => {}
+        Err(err) => {}
+    }
 }
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
     make_tex(device, queue, master.lock().get().unwrap())
 }
 
 pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
-    crate::texture::write_tex(device, queue, texture, &master.lock().get().unwrap());
+    write_tex(device, queue, texture, &master.lock().get().unwrap());
 }
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
 pub fn locate(source: RgbaImage) -> Vec4 {
@@ -116,12 +129,13 @@ pub fn locate(source: RgbaImage) -> Vec4 {
     )
 }
 
-pub fn load_img(str: String) -> Result<DynamicImage, image::ImageError> {
+pub fn load_img(str: &String) -> Result<DynamicImage, image::ImageError> {
     let text = Path::new("assets").join(str).to_str().unwrap().to_string();
     //Path::new(".").join("entities");
     log(text.clone());
 
     let img = image::open(text);
+
     // The dimensions method returns the images width and height.
     //println!("dimensions height {:?}", img.height());
 
@@ -180,20 +194,18 @@ fn tile_locate(name: String, dim: (u32, u32), pos: Vec4) {
     }
     //dictionary.lock().insert(name, pos);
 }
-pub fn load_tex(str: String) {
+pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>) {
+    // println!("ol testure {} is {}", str, buffer.len());
+    match image::load_from_memory(buffer.as_slice()) {
+        Ok(img) => sort_image(str, img),
+        Err(err) => {}
+    }
+}
+pub fn load_tex(str: &String) {
     log(format!("apply texture {}", str));
-    let (name, is_tile) = get_name(str.clone());
+
     match load_img(str) {
-        Ok(img) => {
-            if is_tile {
-                let dim = (img.width(), img.height());
-                let pos = locate(img.into_rgba8());
-                tile_locate(name, dim, pos);
-            } else {
-                let pos = locate(img.into_rgba8());
-                dictionary.lock().insert(name, pos);
-            }
-        }
+        Ok(img) => sort_image(str, img),
         Err(err) => {
             // dictionary
             //     .lock()
@@ -201,8 +213,21 @@ pub fn load_tex(str: String) {
         }
     }
 }
+fn sort_image(str: &String, img: DynamicImage) {
+    let (name, is_tile) = get_name(str.clone());
+    if is_tile {
+        let dim = (img.width(), img.height());
+        let pos = locate(img.into_rgba8());
+        tile_locate(name, dim, pos);
+    } else {
+        let pos = locate(img.into_rgba8());
+        println!("sort_image name {} pos {}", name, pos);
+        dictionary.lock().insert(name, pos);
+    }
+}
 fn get_name(str: String) -> (String, bool) {
-    let bits = str.split(".").collect::<Vec<_>>();
+    let smol = str.split("/").collect::<Vec<_>>();
+    let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
     match bits.get(0) {
         Some(o) => {
             if bits.len() > 2 && bits.get(1).unwrap() == &"tile" {

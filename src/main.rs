@@ -74,6 +74,7 @@ pub struct Core {
     gui: Gui,
 
     input_helper: winit_input_helper::WinitInputHelper,
+    loop_helper: spin_sleep::LoopHelper,
 }
 
 #[repr(C)]
@@ -488,8 +489,12 @@ impl Core {
 
         let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
         gui.add_text("initialized".to_string());
-        gui.add_img("map.tile.png".to_string());
+        gui.add_img(&"map.tile.png".to_string());
         let world = World::new(&device);
+
+        let mut loop_helper = spin_sleep::LoopHelper::builder()
+            .report_interval_s(0.5) // report every half a second
+            .build_with_target_rate(60.0); // limit to 250 FPS if possible
         Self {
             surface,
             device,
@@ -512,6 +517,7 @@ impl Core {
             world,
             input_helper: winit_input_helper::WinitInputHelper::new(),
             master_texture: diff_tex,
+            loop_helper,
         }
     }
 
@@ -534,7 +540,16 @@ impl Core {
     fn update(&mut self) {}
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        render::render_loop(self)
+        let delta = self.loop_helper.loop_start();
+        // or .loop_start_s() for f64 seconds
+        if let Some(fps) = self.loop_helper.report_rate() {
+            //  let current_fps = Some(fps);
+            println!("fps {}", fps);
+        }
+
+        let s = render::render_loop(self);
+        self.loop_helper.loop_sleep();
+        s
     }
 }
 

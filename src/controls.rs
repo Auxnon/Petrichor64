@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use glam::{IVec2, IVec3};
 use once_cell::sync::OnceCell;
 use rand::Error;
@@ -63,30 +65,7 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
             let space_down = core.input_helper.key_held(VirtualKeyCode::Space);
             core.switch_board.write().space = space_down;
             if space_down {
-                let mutex = crate::lua_master.lock();
-                // crate::lua_define::LuaCore::new();
-                // mutex.get_or_init(|| crate::lua_define::LuaCore::new());
-                match mutex.get() {
-                    Some(d) => {}
-                    None => {
-                        mutex.get_or_init(|| crate::lua_define::LuaCore::new());
 
-                        crate::texture::reset();
-                        crate::asset::init(&core.device);
-                        let mut mutex = crate::ent_master.lock();
-                        let entity_manager = mutex.get_mut().unwrap();
-
-                        // let (diffuse_texture_view, diffuse_sampler, diff_tex) =
-                        // crate::texture::make_tex(&core.device, &core.queue));//finalize(&core.device, &core.queue);
-
-                        crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                        // crate::text
-
-                        for e in &mut entity_manager.entities {
-                            e.hot_reload();
-                        }
-                    }
-                }
                 // Some(d) => {}
                 // None => {
                 //     match lua_master.try_lock() {
@@ -253,7 +232,27 @@ pub fn sys_command(core: &Core, s: &String) -> bool {
             crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
         }
         "$load" => {
-            crate::asset::unpack(&"biggo.png".to_string());
+            crate::texture::reset();
+            crate::asset::unpack(&core.device, &"biggo.png".to_string());
+
+            let mutex = crate::lua_master.lock();
+            match mutex.get() {
+                Some(d) => {}
+                None => {
+                    mutex.get_or_init(|| {
+                        crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board))
+                    });
+                    // crate::texture::reset();
+                    // crate::asset::init(&core.device);
+                    let mut mutex = crate::ent_master.lock();
+                    let entity_manager = mutex.get_mut().unwrap();
+                    crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
+                    for e in &mut entity_manager.entities {
+                        e.hot_reload();
+                    }
+                    log("buldozed into this here code with a buncha stuff".to_string());
+                }
+            }
         }
         "$print_atlas" => {
             crate::texture::save_atlas();
@@ -264,4 +263,9 @@ pub fn sys_command(core: &Core, s: &String) -> bool {
         &_ => return false,
     }
     true
+}
+
+fn log(str: String) {
+    crate::log::log(format!("controls::{}", str));
+    println!("{}", str);
 }

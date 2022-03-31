@@ -115,7 +115,7 @@ impl<'lua> Ent {
     }
 
     pub fn hot_reload(&mut self) {
-        self.tex = crate::texture::get_tex(&self.tex_name);
+        self.tex = crate::texture::get_tex(&self.tex_name); //crate::texture::get_tex(&self.tex_name);
         println!("hot reload {}", self.tex);
         self.model = crate::model::get_model(&self.model_name)
     }

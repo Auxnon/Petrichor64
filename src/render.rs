@@ -434,6 +434,8 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
 
     encoder.push_debug_group("World Render");
     {
+        let switch = core.switch_board.read();
+        let bg = switch.background;
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[wgpu::RenderPassColorAttachment {
@@ -441,14 +443,10 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: if core.switch_board.read().space {
-                            0.
-                        } else {
-                            1.
-                        },
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
+                        r: bg.x as f64,
+                        g: bg.y as f64,
+                        b: bg.z as f64,
+                        a: bg.w as f64,
                     }),
                     store: true,
                 },

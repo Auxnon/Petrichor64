@@ -1,4 +1,4 @@
-use crate::{ent::Ent, lua_ent::LuaEnt};
+use crate::{ent::Ent, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard};
 use lazy_static::lazy_static;
 use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
 use once_cell::sync::OnceCell;
@@ -31,7 +31,7 @@ pub struct LuaCore {
 }
 
 impl LuaCore {
-    pub fn new() -> LuaCore {
+    pub fn new(switch_board: Arc<RwLock<SwitchBoard>>) -> LuaCore {
         let (sender, reciever) = channel::<(
             String,
             String,
@@ -48,7 +48,7 @@ impl LuaCore {
             // let lua_clone = Arc::clone(&crate::lua_master);
             let globals = lua_ctx.globals();
 
-            crate::lua_sys::init_lua_sys(&lua_ctx, &globals);
+            crate::lua_sys::init_lua_sys(&lua_ctx, &globals, switch_board);
 
             let closure = |_, (str, x, y): (String, f32, f32)| {
                 //let result = entity_factory.lock().unwrap().get_mut();

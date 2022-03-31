@@ -31,3 +31,4 @@ glam="0.20.2"
 nalgebra="0.30.1"
 uuid = {version="0.8.2",features = ["serde", "v4"]}
 zip="0.6.0"
+spin_sleep = "1.1.1"

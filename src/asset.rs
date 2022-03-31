@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::read_dir,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use wgpu::Device;
@@ -16,14 +17,67 @@ pub fn pack() {
         &"biggo.png".to_string(),
     )
 }
+
 pub fn unpack(device: &Device, target: &String) {
     let map =
-        crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scipts".to_string()]);
+        crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scripts".to_string()]);
+
+    match map.get("assets") {
+        Some(dir) => {
+            for item in dir {
+                match Path::new(&item.0).extension() {
+                    Some(e) => {
+                        let file_name = &item.0;
+                        if e == "glb" || e == "gltf" {
+                            log(format!("loading {} as glb/gltf model", file_name));
+                            crate::model::load_from_buffer(file_name, &item.1, device);
+                        } else if e == "png" {
+                            log(format!("loading {} as png image", file_name));
+                            crate::texture::load_tex_from_buffer(&file_name.to_string(), &item.1);
+                        } else {
+                            log(format!("unknown file type {}", file_name));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    //to_os_string().into_string()
+
+    match map.get("scripts") {
+        Some(dir) => {
+            for item in dir {
+                // log(format!("script item is {}", item.0));
+                match Path::new(&item.0).extension() {
+                    Some(e) => {
+                        let file_name = &item.0;
+                        if e == "lua" {
+                            log(format!("loading  script {}", file_name));
+
+                            let mutex = crate::lua_master.lock();
+                            match mutex.get() {
+                                Some(d) => d.load(file_name),
+                                None => log("Lua core not loaded!".to_string()),
+                            }
+                        } else {
+                            log(format!("skipping file type {}", file_name));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn init(device: &Device) {
     walk_files(Some(device));
 }
+
+fn asset_sort() {}
 pub fn walk_files(
     device: Option<&Device>,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
@@ -45,7 +99,7 @@ pub fn walk_files(
                 match entry.extension() {
                     Some(e) => {
                         let s = e.to_ascii_lowercase();
-                        let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
+                        let file_name = &entry.into_os_string().into_string().unwrap(); //.file_name().unwrap().to_str().unwrap().to_string();
                         let path = Path::new("assets")
                             .join(file_name.to_owned())
                             .to_str()
@@ -54,13 +108,13 @@ pub fn walk_files(
                         if s == "glb" || s == "gltf" {
                             if device.is_some() {
                                 log(format!("loading {} as glb/gltf model", file_name));
-                                crate::model::load(file_name, device.unwrap());
+                                crate::model::load_from_string(&path, device.unwrap());
                             }
                             sources.push(path)
                         } else if s == "png" {
                             if device.is_some() {
                                 log(format!("loading {} as png image", file_name));
-                                crate::texture::load_tex(file_name.to_string());
+                                crate::texture::load_tex(&path);
                             }
                             sources.push(path)
                         } else {
@@ -99,7 +153,7 @@ pub fn walk_files(
                 match entry.extension() {
                     Some(e) => {
                         let s = e.to_ascii_lowercase();
-                        let file_name = &entry.file_name().unwrap().to_str().unwrap().to_string();
+                        let file_name = &entry.into_os_string().into_string().unwrap();
                         if s == "lua" {
                             log(format!("loading  script {}", file_name));
 
@@ -168,4 +222,5 @@ pub fn get_file_name(str: String) -> String {
 
 fn log(str: String) {
     crate::log::log(format!("📦assets::{}", str));
+    println!("{}", str);
 }

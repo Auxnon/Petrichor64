@@ -29,7 +29,7 @@ impl Gui {
     ) -> Gui {
         let d = img.dimensions();
 
-        let letters = match crate::texture::load_img("4x4unicode.png".to_string()) {
+        let letters = match crate::texture::load_img(&"4x4unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
             Err(err) => {
                 #[cfg(not(windows))]
@@ -76,7 +76,7 @@ impl Gui {
     pub fn type_text(&mut self, str: String) {
         self.text = format!("{}\n{}", self.text, str);
     }
-    pub fn add_img(&self, str: String) {
+    pub fn add_img(&self, str: &String) {
         match crate::texture::load_img(str) {
             Ok(t) => {
                 let mut im = t.to_rgba8();

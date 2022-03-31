@@ -125,41 +125,52 @@ pub fn unpack_and_save(target: &String, out: &String) {
     }
 }
 
-pub fn unpack_and_walk(target: &String, sort: Vec<String>) -> HashMap<String, Vec<Vec<u8>>> {
+pub fn unpack_and_walk(
+    target: &String,
+    sort: Vec<String>,
+) -> HashMap<String, Vec<(String, Vec<u8>)>> {
     let v = unpack(target);
     let mut reader = std::io::Cursor::new(v);
 
     let mut archive = zip::ZipArchive::new(reader).unwrap();
-    let it = archive.file_names();
-    let main_dir = vec![];
-    let map: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
+    let it: Vec<String> = archive.file_names().map(|x| x.to_string()).collect();
+    // let main_dir = vec![];
+    let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
+
     for d in sort {
+        println!("make {}", d);
         map.insert(d, vec![]);
     }
+
     for file_name in it {
-        let part = file_name.splitn(2, "/");
-        if part.count() < 2 {
-            match archive.by_name(file_name) {
-                Ok(file) => main_dir.push(file),
-                Err(..) => {
-                    println!("?");
-                }
-            };
+        let mut part = file_name.splitn(2, "/");
+        let dir_o = part.next();
+        let name_o = part.next();
+        if dir_o.is_none() && name_o.is_none() {
+            // match archive.by_name(file_name.as_str()) {
+            //     Ok(file) => {main_dir.push(file)},
+            //     Err(..) => {
+            //         println!("?");
+            //     }
+            // };
         } else {
-            let dir = part.next().unwrap();
+            let dir = dir_o.unwrap();
+            let name = name_o.unwrap();
+            match archive.by_name(file_name.as_str()) {
+                Ok(mut file) => {
+                    println!("full {}, file {}, dir {}", file_name, name, dir);
+                    match map.get_mut(&dir.to_string()) {
+                        Some(ar) => {
+                            let mut contents = Vec::new();
 
-            match archive.by_name(part.next().unwrap()) {
-                Ok(file) => {
-                    let ar = map.get(&dir.to_string()).unwrap();
-
-                    let mut contents = Vec::new();
-
-                    match file.read_to_end(&mut contents) {
-                        Ok(size) => {}
+                            match file.read_to_end(&mut contents) {
+                                Ok(size) => {}
+                                _ => {}
+                            }
+                            ar.push((file.name().to_string(), contents));
+                        }
                         _ => {}
                     }
-
-                    ar.push(contents)
                 }
                 Err(..) => {
                     println!("?");
