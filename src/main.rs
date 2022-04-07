@@ -494,7 +494,7 @@ impl Core {
 
         let mut loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
-            .build_with_target_rate(60.0); // limit to 250 FPS if possible
+            .build_with_target_rate(60.0); // limit to X FPS if possible
         Self {
             surface,
             device,
@@ -544,7 +544,7 @@ impl Core {
         // or .loop_start_s() for f64 seconds
         if let Some(fps) = self.loop_helper.report_rate() {
             //  let current_fps = Some(fps);
-            println!("fps {}", fps);
+            self.global.fps = fps;
         }
 
         let s = render::render_loop(self);

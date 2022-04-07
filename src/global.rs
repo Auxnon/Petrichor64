@@ -12,6 +12,7 @@ pub struct Global {
     pub console: bool,
     pub camera_pos: Vec3,
     pub background: Vec4,
+    pub fps: f64,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
 }
@@ -27,6 +28,7 @@ impl Global {
             camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
             test: false,
+            fps: 0.,
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
         }
     }

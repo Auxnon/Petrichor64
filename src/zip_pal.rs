@@ -67,7 +67,7 @@ fn get_file_buffer(path_str: &String) -> Vec<u8> {
 pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer(thumb);
-    let new_file = File::create(&Path::new("temp")).unwrap();
+    // let new_file = File::create(&Path::new("temp")).unwrap();
     let mut v = Vec::new();
     let mut c = Cursor::new(v);
 
@@ -85,7 +85,7 @@ pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
 
         let buff = get_file_buffer(&source);
         let buffy = buff.as_slice();
-        println!("buffy size {}", buffy.len());
+        println!("buffy size {} and source {}", buffy.len(), source);
         let re = zip.write(buffy);
         if re.is_err() {
             println!(" zipping error? {}", re.unwrap());
@@ -143,7 +143,12 @@ pub fn unpack_and_walk(
     }
 
     for file_name in it {
-        let mut part = file_name.splitn(2, "/");
+        let shorter = if file_name.starts_with("./") {
+            file_name[2..file_name.len()].to_string()
+        } else {
+            file_name.clone()
+        };
+        let mut part = shorter.splitn(2, "/");
         let dir_o = part.next();
         let name_o = part.next();
         if dir_o.is_none() && name_o.is_none() {
@@ -156,22 +161,20 @@ pub fn unpack_and_walk(
         } else {
             let dir = dir_o.unwrap();
             let name = name_o.unwrap();
+            println!("full {}, file {}, dir {}", file_name, name, dir);
             match archive.by_name(file_name.as_str()) {
-                Ok(mut file) => {
-                    println!("full {}, file {}, dir {}", file_name, name, dir);
-                    match map.get_mut(&dir.to_string()) {
-                        Some(ar) => {
-                            let mut contents = Vec::new();
-
-                            match file.read_to_end(&mut contents) {
-                                Ok(size) => {}
-                                _ => {}
-                            }
-                            ar.push((file.name().to_string(), contents));
+                Ok(mut file) => match map.get_mut(&dir.to_string()) {
+                    Some(ar) => {
+                        let mut contents = Vec::new();
+                        println!("found file");
+                        match file.read_to_end(&mut contents) {
+                            Ok(size) => {}
+                            _ => {}
                         }
-                        _ => {}
+                        ar.push((file.name().to_string(), contents));
                     }
-                }
+                    _ => {}
+                },
                 Err(..) => {
                     println!("?");
                 }

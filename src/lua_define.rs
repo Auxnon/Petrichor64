@@ -44,7 +44,7 @@ impl LuaCore {
             let lua_ctx = Lua::new();
 
             // lua.context(move |lua_ctx| {
-            //lua_ctx.load("some_code").exec().unwrap();
+            // lua_ctx.load("some_code").exec().unwrap();
             // let lua_clone = Arc::clone(&crate::lua_master);
             let globals = lua_ctx.globals();
 
@@ -159,6 +159,7 @@ impl LuaCore {
         let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
+        println!("xxx {}", path);
         guard.send((func.clone(), path.clone(), ent, tx));
 
         //MutexGuard::unlock_fair(guard);
@@ -170,10 +171,16 @@ impl LuaCore {
             }
         }
     }
+
     pub fn load(&self, file: &String) {
         log("loading script".to_string());
         self.inject(&"load".to_string(), file, None);
     }
+
+    pub fn call_main(&self) {
+        self.func(&"_main()".to_string());
+    }
+
     pub fn die(&self) {
         log("lua go bye bye".to_string());
         self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
@@ -239,36 +246,53 @@ impl LuaCore {
     //     }
     // }
 }
-
-fn lua_load(lua: &Lua, input_path: &String) {
-    // let input_path = Path::new(".")
-    //     .join("scripts")
-    //     .join(str.to_owned())
-    //     .with_extension("lua");
-    log(format!("script in as {}", input_path));
-    let name = crate::asset::get_file_name(input_path.to_owned());
-    let st = fs::read_to_string(input_path).unwrap_or_default();
-    log(format!("got script {} :\n{}", input_path, st));
+fn lua_load(lua: &Lua, st: &String) {
+    log(format!("got script :\n{}", st));
     let chunk = lua.load(&st);
-    let globals = lua.globals();
-    //chunk.eval()
-    //let d= chunk.eval::<mlua::Chunk>();
-
-    match chunk.eval::<mlua::Function>() {
-        Ok(code) => {
-            log(format!("code loaded {} ♥", name));
-            globals.set(name, code);
-        }
-        Err(err) => {
-            println!(
-                "::lua::  bad lua code for 📜{} !! Assigning default \"{}\"",
-                name, err
-            );
-            // default needs to exist, otherwise... i don't know? crash the whole lua thread is probably best
-            globals.set(name, globals.get::<_, Function>("_default_func").unwrap());
-        }
+    // chunk.eval()
+    if let Err(s) = chunk.eval::<()>() {
+        println!("exec {}", s);
     }
+
+    //::<mlua::Function>
+    // chunk.call(1);
+    // match chunk.exec() {
+    //     Ok(f) => log(format!("code loaded  ♥")),
+    //     Err(err) => log(format!("yucky code {}", err)),
+    // }
+    // lua.load_from_function(modname, func)
 }
+
+// fn lua_load_classic(lua: &Lua, st: &String) {
+//     let name = st;
+//     // let input_path = Path::new(".")
+//     //     .join("scripts")
+//     //     .join(str.to_owned())
+//     //     .with_extension("lua");
+//     // log(format!("script in as {}", input_path));
+//     // let name = crate::asset::get_file_name(input_path.to_owned());
+//     // let st = fs::read_to_string(input_path).unwrap_or_default();
+//     log(format!("got script :\n{}", st));
+//     let chunk = lua.load(&st);
+//     let globals = lua.globals();
+//     //chunk.eval()
+//     //let d= chunk.eval::<mlua::Chunk>();
+
+//     match chunk.eval::<mlua::Function>() {
+//         Ok(code) => {
+//             log(format!("code loaded {} ♥", name));
+//             globals.set(name, code);
+//         }
+//         Err(err) => {
+//             println!(
+//                 "::lua::  bad lua code for 📜{} !! Assigning default \"{}\"",
+//                 name, err
+//             );
+//             // default needs to exist, otherwise... i don't know? crash the whole lua thread is probably best
+//             globals.set(name, globals.get::<_, Function>("_default_func").unwrap());
+//         }
+//     }
+// }
 
 // pub fn scope_test<'b, 'scope>(
 //     scope: &Scope<'scope, 'b>,
@@ -336,5 +360,6 @@ fn lua_load(lua: &Lua, input_path: &String) {
 // }
 
 fn log(str: String) {
+    println!("str {}", str);
     crate::log::log(format!("📜lua::{}", str));
 }

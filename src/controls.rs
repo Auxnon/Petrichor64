@@ -232,18 +232,24 @@ pub fn sys_command(core: &Core, s: &String) -> bool {
             crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
         }
         "$load" => {
-            crate::texture::reset();
-            crate::asset::unpack(&core.device, &"biggo.png".to_string());
-
             let mutex = crate::lua_master.lock();
             match mutex.get() {
                 Some(d) => {}
                 None => {
-                    mutex.get_or_init(|| {
+                    crate::texture::reset();
+                    let lua_ref = mutex.get_or_init(|| {
                         crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board))
+                        //pollster::block_on(
                     });
+                    std::mem::drop(mutex);
+                    // println!("thread sleep...");
+                    // std::thread::sleep(std::time::Duration::from_millis(1000));
+                    // println!("thread slept");
+                    crate::asset::unpack(&core.device, &"biggo.png".to_string());
+                    // lua_ref.call_main();
                     // crate::texture::reset();
                     // crate::asset::init(&core.device);
+
                     let mut mutex = crate::ent_master.lock();
                     let entity_manager = mutex.get_mut().unwrap();
                     crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);

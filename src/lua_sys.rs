@@ -38,17 +38,17 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
             .unwrap(),
     ));
 
-    // res(lua_globals.set(
-    //     "_bg",
-    //     lua_ctx
-    //         .create_function(|_, (x, y, z, w): (f32, f32, f32, f32)| {
-    //             let mut mutex = &mut switch_board.write();
-    //             mutex.background = vec4(x, y, z, w);
-    //             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
-    //             Ok(1)
-    //         })
-    //         .unwrap(),
-    // ));
+    res(lua_globals.set(
+        "_bg",
+        lua_ctx
+            .create_function(move |_, (x, y, z, w): (f32, f32, f32, f32)| {
+                let mut mutex = &mut switch_board.write();
+                mutex.background = vec4(x, y, z, w);
+                // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+                Ok(1)
+            })
+            .unwrap(),
+    ));
 
     res(lua_globals.set(
         "_spawn",

@@ -49,16 +49,25 @@ pub fn unpack(device: &Device, target: &String) {
     match map.get("scripts") {
         Some(dir) => {
             for item in dir {
-                // log(format!("script item is {}", item.0));
+                println!("script item is {}", item.0);
                 match Path::new(&item.0).extension() {
                     Some(e) => {
                         let file_name = &item.0;
+                        println!("yyy");
+                        for b in &item.1 {
+                            print!("{},", b);
+                        }
+                        println!("");
+                        let buffer = match std::str::from_utf8(&item.1.as_slice()) {
+                            Ok(v) => v,
+                            Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+                        };
                         if e == "lua" {
-                            log(format!("loading  script {}", file_name));
+                            log(format!("loading  script {}", buffer.to_string()));
 
                             let mutex = crate::lua_master.lock();
                             match mutex.get() {
-                                Some(d) => d.load(file_name),
+                                Some(d) => d.load(&buffer.to_string()),
                                 None => log("Lua core not loaded!".to_string()),
                             }
                         } else {
@@ -100,11 +109,12 @@ pub fn walk_files(
                     Some(e) => {
                         let s = e.to_ascii_lowercase();
                         let file_name = &entry.into_os_string().into_string().unwrap(); //.file_name().unwrap().to_str().unwrap().to_string();
-                        let path = Path::new("assets")
-                            .join(file_name.to_owned())
-                            .to_str()
-                            .unwrap()
-                            .to_string();
+                                                                                        // let path = Path::new("assets")
+                                                                                        //     .join(file_name.to_owned())
+                                                                                        //     .to_str()
+                                                                                        //     .unwrap()
+                                                                                        //     .to_string();
+                        let path = file_name.to_owned();
                         if s == "glb" || s == "gltf" {
                             if device.is_some() {
                                 log(format!("loading {} as glb/gltf model", file_name));
@@ -157,12 +167,13 @@ pub fn walk_files(
                         if s == "lua" {
                             log(format!("loading  script {}", file_name));
 
-                            let path = Path::new("scripts")
-                                .join(file_name.to_owned())
-                                .with_extension("lua")
-                                .to_str()
-                                .unwrap()
-                                .to_string();
+                            // let path = Path::new("scripts")
+                            //     .join(file_name.to_owned())
+                            //     .with_extension("lua")
+                            //     .to_str()
+                            //     .unwrap()
+                            //     .to_string();
+                            let path = file_name.to_owned();
                             if false {
                                 //device.is_some()
                                 let mutex = crate::lua_master.lock();
