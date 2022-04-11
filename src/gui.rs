@@ -12,7 +12,9 @@ pub struct Gui {
     pub model: Arc<OnceCell<Model>>,
     pub texture: Texture,
     text: String,
-    pub img: RgbaImage,
+    pub main: RgbaImage,
+    pub console: RgbaImage,
+
     time: f32,
     pub letters: RgbaImage,
     pub size: [u32; 2],
@@ -53,12 +55,15 @@ impl Gui {
             }
         };
 
+        let mut raster: RgbaImage = ImageBuffer::new(1024, 1024);
+
         Gui {
             gui_pipeline,
             gui_group,
             model: get_model(&"plane".to_string()),
             texture,
-            img,
+            console: img.clone(),
+            main: img,
             text: "".to_string(),
             letters,
             time: 0.,
@@ -121,7 +126,7 @@ impl Gui {
         //     &image::Rgba([0, 0, 0, 0]),
         // );
         // self.img = RgbaImage::new(self.size[0], self.size[1]);
-        image::imageops::replace(&mut self.img, &im, 0, 0);
+        image::imageops::replace(&mut self.console, &im, 0, 0);
         // struct col {};
         // impl image::imageops::colorops::ColorMap for col {
         //     type Color = image::Rgba<u8>;
@@ -166,12 +171,13 @@ impl Gui {
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
-                image::imageops::overlay(&mut self.img, &sub, x, y);
+                image::imageops::overlay(&mut self.console, &sub, x, y);
                 x += 5;
             }
         }
 
-        self.img = image::imageops::huerotate(&mut self.img, rand::thread_rng().gen_range(0..360));
+        self.console =
+            image::imageops::huerotate(&mut self.console, rand::thread_rng().gen_range(0..360));
         self.dirty = true;
     }
 
@@ -192,6 +198,7 @@ impl Gui {
             self.enable_output();
         }
     }
+    // fn draw_img();
     pub fn render(&mut self, device: &Device, queue: &Queue, time: f32) {
         //let mut rng = rand::thread_rng();
 
@@ -202,7 +209,12 @@ impl Gui {
             crate::log::clean();
         }
         if self.dirty {
-            crate::texture::write_tex(device, queue, &self.texture, &self.img);
+            let raster = if self.output {
+                &self.console
+            } else {
+                &self.main
+            };
+            crate::texture::write_tex(device, queue, &self.texture, raster);
             self.dirty = false;
         }
 
