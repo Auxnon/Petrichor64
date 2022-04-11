@@ -125,6 +125,18 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
     ));
 
     res(lua_globals.set(
+        "_tile",
+        lua_ctx
+            .create_function(move |_, (t, x, y, z): (u32, f32, f32, f32)| {
+                core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+                // let mut mutex = &mut switch_board.write();
+                // mutex.background = vec4(x, y, z, w);
+                // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+                Ok(1)
+            })
+            .unwrap(),
+    ));
+    res(lua_globals.set(
         "_spawn",
         lua_ctx
             .create_function(|_, (x, y, z): (f32, f32, f32)| {
