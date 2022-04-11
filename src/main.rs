@@ -27,6 +27,7 @@ use crate::ent::EntityUniforms;
 use crate::gui::Gui;
 
 mod asset;
+mod command;
 mod controls;
 mod ent;
 mod ent_manager;
@@ -35,7 +36,6 @@ mod gui;
 mod log;
 mod lua_define;
 mod lua_ent;
-mod lua_sys;
 mod model;
 mod render;
 mod sound;

@@ -130,12 +130,15 @@ pub fn unpack_and_walk(
     sort: Vec<String>,
 ) -> HashMap<String, Vec<(String, Vec<u8>)>> {
     let v = unpack(target);
+    let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
+    if v.len() <= 0 {
+        return map;
+    }
     let mut reader = std::io::Cursor::new(v);
 
     let mut archive = zip::ZipArchive::new(reader).unwrap();
     let it: Vec<String> = archive.file_names().map(|x| x.to_string()).collect();
     // let main_dir = vec![];
-    let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
 
     for d in sort {
         println!("make {}", d);

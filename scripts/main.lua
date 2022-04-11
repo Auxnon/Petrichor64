@@ -6,9 +6,9 @@
 
 -- rot=0.
 
--- function _main(){
---     _bg(1,0,1,1)
--- }
+function _main()
+    _bg(0,1,1,1)
+end
 
 -- function loop()
 --     cam({0,0,0},{20*math.cos(rot),20*math.sin(rot),16.})
@@ -18,5 +18,5 @@
 --     end
 -- end
 
-_bg(0,1,1,1)
+-- _bg(0,1,1,1)
 

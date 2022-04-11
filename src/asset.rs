@@ -9,16 +9,14 @@ use wgpu::Device;
 
 use crate::lua_define::LuaCore;
 
-pub fn pack() {
+pub fn pack(name: &String) {
     let sources = walk_files(None);
-    crate::zip_pal::pack_zip(
-        sources,
-        &"gamecart.png".to_string(),
-        &"biggo.png".to_string(),
-    )
+
+    crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
 }
 
 pub fn unpack(device: &Device, target: &String) {
+    println!("unpack {}", target);
     let map =
         crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scripts".to_string()]);
 

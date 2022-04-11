@@ -48,7 +48,7 @@ impl LuaCore {
             // let lua_clone = Arc::clone(&crate::lua_master);
             let globals = lua_ctx.globals();
 
-            crate::lua_sys::init_lua_sys(&lua_ctx, &globals, switch_board);
+            crate::command::init_lua_sys(&lua_ctx, &globals, switch_board);
 
             let closure = |_, (str, x, y): (String, f32, f32)| {
                 //let result = entity_factory.lock().unwrap().get_mut();

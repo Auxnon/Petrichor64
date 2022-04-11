@@ -146,7 +146,7 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
                         if core.global.test {
                             // println!("command isss {}", command.unwrap());
                             let com = command.unwrap();
-                            if !sys_command(&core, &com) {
+                            if !crate::command::init_con_sys(&core, &com) {
                                 let guard = crate::lua_master.lock();
                                 let lua_core = guard.get();
                                 if lua_core.is_some() {
@@ -210,65 +210,6 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
     //     } => println!("{}", key_out),
     //     _ => {}
     // }
-}
-
-/** Private commands not reachable by lua code, but also works without lua being loaded */
-pub fn sys_command(core: &Core, s: &String) -> bool {
-    match s.as_str() {
-        "$die" => {
-            // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
-            let guard = crate::lua_master.lock();
-            let lua_core = guard.get();
-            if lua_core.is_some() {
-                lua_core.unwrap().die();
-            }
-        }
-        "$pack" => {
-            //
-            crate::asset::pack();
-        }
-        "$unpack" => {
-            //
-            crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
-        }
-        "$load" => {
-            let mutex = crate::lua_master.lock();
-            match mutex.get() {
-                Some(d) => {}
-                None => {
-                    crate::texture::reset();
-                    let lua_ref = mutex.get_or_init(|| {
-                        crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board))
-                        //pollster::block_on(
-                    });
-                    std::mem::drop(mutex);
-                    // println!("thread sleep...");
-                    // std::thread::sleep(std::time::Duration::from_millis(1000));
-                    // println!("thread slept");
-                    crate::asset::unpack(&core.device, &"biggo.png".to_string());
-                    // lua_ref.call_main();
-                    // crate::texture::reset();
-                    // crate::asset::init(&core.device);
-
-                    let mut mutex = crate::ent_master.lock();
-                    let entity_manager = mutex.get_mut().unwrap();
-                    crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                    for e in &mut entity_manager.entities {
-                        e.hot_reload();
-                    }
-                    log("buldozed into this here code with a buncha stuff".to_string());
-                }
-            }
-        }
-        "$print_atlas" => {
-            crate::texture::save_atlas();
-        }
-        "$ugh" => {
-            //
-        }
-        &_ => return false,
-    }
-    true
 }
 
 fn log(str: String) {
