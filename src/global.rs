@@ -1,7 +1,7 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
-
+/** Global variable container intended for main thread only */
 pub struct Global {
     pub space: bool,
     pub values: HashMap<String, f32>,

@@ -1,6 +1,6 @@
 use std::collections::{hash_map::Entry, HashMap};
 
-use glam::{ivec3, vec3};
+use glam::{ivec3, vec3, DVec4, Vec4};
 use rand::Rng;
 use wgpu::{util::DeviceExt, Buffer, Device};
 
@@ -146,6 +146,11 @@ impl World {
             (iy / 16).rem_euclid(16),
             (iz / 16).rem_euclid(16)
         );
+    }
+    pub fn set_tile_from_buffer(&mut self, buffer: &Vec<Vec4>) {
+        for t in buffer {
+            self.set_tile("grid".to_string(), t.y as i32, t.z as i32, t.w as i32);
+        }
     }
     pub fn add_tile_model(&mut self, model: String, ix: i32, iy: i32, iz: i32) {
         let mut c = self.get_chunk_mut(ix, iy, iz);

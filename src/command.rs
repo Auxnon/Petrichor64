@@ -112,11 +112,12 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
             .unwrap(),
     ));
 
+    let switch = Arc::clone(&switch_board);
     res(lua_globals.set(
         "_bg",
         lua_ctx
             .create_function(move |_, (x, y, z, w): (f32, f32, f32, f32)| {
-                let mut mutex = &mut switch_board.write();
+                let mut mutex = &mut switch.write();
                 mutex.background = vec4(x, y, z, w);
                 // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
                 Ok(1)
@@ -124,11 +125,14 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
             .unwrap(),
     ));
 
+    let switch = Arc::clone(&switch_board);
     res(lua_globals.set(
         "_tile",
         lua_ctx
-            .create_function(move |_, (t, x, y, z): (u32, f32, f32, f32)| {
-                core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+            .create_function(move |_, (t, x, y, z): (f32, f32, f32, f32)| {
+                // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+                let mut mutex = &mut switch.write();
+                mutex.tile_queue.push(vec4(t, x, y, z));
                 // let mut mutex = &mut switch_board.write();
                 // mutex.background = vec4(x, y, z, w);
                 // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);

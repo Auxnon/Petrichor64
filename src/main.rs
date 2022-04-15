@@ -46,7 +46,7 @@ mod tile;
 mod zip_pal;
 
 const MAX_ENTS: u64 = 100;
-
+/** All centralized engines and factories to be passed around in the main thread */
 pub struct Core {
     surface: wgpu::Surface,
     device: wgpu::Device,
@@ -188,24 +188,6 @@ impl Core {
         let uniform_alignment =
             device.limits().min_uniform_buffer_offset_alignment as wgpu::BufferAddress;
         assert!(entity_uniform_size <= uniform_alignment);
-
-        // let mut offset = 4;
-        // for i in -3..3 {
-        //     for j in -3..3 {
-        //         entities.push(Ent::new(
-        //             cgmath::vec3(i as f32 * 8., j as f32 * 8., -0.0001),
-        //             0.,
-        //             4.,
-        //             0.,
-        //             "grass_down".to_string(),
-        //             "plane".to_string(),
-        //             (uniform_alignment * offset) as u32,
-        //             false,
-        //             None,
-        //         ));
-        //         offset += 1;
-        //     }
-        // }
 
         let entity_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -537,7 +519,21 @@ impl Core {
         false
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        match self.switch_board.try_read() {
+            Some(r) => {
+                if (r.tile_dirty) {
+                    drop(r);
+                    let mut mutex = self.switch_board.write();
+
+                    self.world.set_tile_from_buffer(&mutex.tile_queue);
+                    mutex.tile_queue.clear();
+                    mutex.tile_dirty = false
+                }
+            }
+            None => {}
+        }
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let delta = self.loop_helper.loop_start();
