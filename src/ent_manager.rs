@@ -17,14 +17,14 @@ use crate::{ent::Ent, lua_ent::LuaEnt};
 
 pub struct EntManager {
     pub entities: Vec<Ent>,
-    pub create: Vec<LuaEnt>,
+    // pub create: Vec<LuaEnt>,
     pub uniform_alignment: u32,
 }
 impl EntManager {
     pub fn new() -> EntManager {
         EntManager {
             entities: vec![],
-            create: vec![],
+            // create: vec![],
             uniform_alignment: 0,
         }
     }
@@ -33,36 +33,36 @@ impl EntManager {
         ent.x = x;
         ent.y = y;
         ent.z = z;
-        self.create.push(ent.clone());
+        // self.create.push(ent.clone());
         ent
     }
     pub fn check_create(&mut self) {
-        if self.create.len() > 0 {
-            println!("create an ent");
-            let typeOf = true;
-            for c in &self.create {
-                self.entities.push(Ent::new(
-                    vec3(c.x, c.y, c.z),
-                    0.,
-                    if typeOf { 1. } else { 1. },
-                    0.,
-                    if typeOf {
-                        "chicken".to_string()
-                    } else {
-                        "package".to_string()
-                    },
-                    if typeOf {
-                        "plane".to_string()
-                    } else {
-                        "package".to_string()
-                    },
-                    (self.entities.len() as u32 * self.uniform_alignment) as u32,
-                    typeOf,
-                    None, //Some("walker".to_string()),
-                ));
-            }
-            self.create.clear();
-        }
+        // if self.create.len() > 0 {
+        //     println!("create an ent");
+        //     let typeOf = true;
+        //     for c in &self.create {
+        //         self.entities.push(Ent::new(
+        //             vec3(c.x, c.y, c.z),
+        //             0.,
+        //             if typeOf { 1. } else { 1. },
+        //             0.,
+        //             if typeOf {
+        //                 "chicken".to_string()
+        //             } else {
+        //                 "package".to_string()
+        //             },
+        //             if typeOf {
+        //                 "plane".to_string()
+        //             } else {
+        //                 "package".to_string()
+        //             },
+        //             (self.entities.len() as u32 * self.uniform_alignment) as u32,
+        //             typeOf,
+        //             None, //Some("walker".to_string()),
+        //         ));
+        //     }
+        //     self.create.clear();
+        // }
     }
     pub fn get_uuid() -> String {
         uuid::Uuid::new_v4().to_simple().to_string()

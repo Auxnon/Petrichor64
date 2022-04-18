@@ -140,14 +140,61 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
             })
             .unwrap(),
     ));
+    let switch = Arc::clone(&switch_board);
+    res(lua_globals.set(
+        "_tile_done",
+        lua_ctx
+            .create_function(move |_, (): ()| {
+                let mut mutex = &mut switch.write();
+                mutex.dirty = true;
+                Ok(1)
+            })
+            .unwrap(),
+    ));
+    let switch = Arc::clone(&switch_board);
+    res(lua_globals.set(
+        "_prt",
+        lua_ctx
+            .create_function(
+                move |_,
+                      (tex, n, x, y, z, vx, vy, vz): (
+                    String,
+                    f32,
+                    f32,
+                    f32,
+                    f32,
+                    f32,
+                    f32,
+                    f32,
+                )| {
+                    let mut mutex = &mut switch.write();
+                    mutex.dirty = true;
+                    Ok(1)
+                },
+            )
+            .unwrap(),
+    ));
+    let switch = Arc::clone(&switch_board);
+
     res(lua_globals.set(
         "_spawn",
         lua_ctx
-            .create_function(|_, (x, y, z): (f32, f32, f32)| {
-                let mut mutex = crate::ent_master.lock();
-                let manager = mutex.get_mut().unwrap();
-                let l = manager.add(x, y, z);
-                Ok(l)
+            .create_function(move |_, (x, y, z): (f32, f32, f32)| {
+                // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
+                let mut ent = crate::lua_ent::LuaEnt::empty();
+                ent.x = x;
+                ent.y = y;
+                ent.z = z;
+                let mut mutex = &mut switch.write();
+                mutex.ent_queue.push(&ent);
+                // self.create.push(ent.clone());
+
+                // }
+
+                // let mut mutex = crate::ent_master.lock();
+                // let manager = mutex.get_mut().unwrap();
+                // let l = manager.add(x, y, z);
+                Ok(ent)
             })
             .unwrap(),
     ));

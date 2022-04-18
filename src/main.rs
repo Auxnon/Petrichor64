@@ -522,13 +522,13 @@ impl Core {
     fn update(&mut self) {
         match self.switch_board.try_read() {
             Some(r) => {
-                if (r.tile_dirty) {
+                if (r.dirty) {
                     drop(r);
                     let mut mutex = self.switch_board.write();
 
                     self.world.set_tile_from_buffer(&mutex.tile_queue);
                     mutex.tile_queue.clear();
-                    mutex.tile_dirty = false
+                    mutex.dirty = false
                 }
             }
             None => {}
