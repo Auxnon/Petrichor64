@@ -75,6 +75,7 @@ pub struct Core {
 
     input_helper: winit_input_helper::WinitInputHelper,
     loop_helper: spin_sleep::LoopHelper,
+    ent_manager: EntManager,
 }
 
 #[repr(C)]
@@ -129,7 +130,7 @@ lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
-    pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
+    // pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
 }
 
 impl Core {
@@ -474,6 +475,21 @@ impl Core {
         gui.add_img(&"map.tile.png".to_string());
         let world = World::new(&device);
 
+        let mut eman = EntManager::new();
+        eman.uniform_alignment = uniform_alignment as u32;
+
+        eman.entities.push(Ent::new(
+            vec3(0.0, 1.0, 0.0),
+            45.,
+            1.,
+            0.,
+            "chicken".to_string(),
+            "plane".to_string(),
+            uniform_alignment as u32,
+            true,
+            None,
+        ));
+
         let mut loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
@@ -500,6 +516,7 @@ impl Core {
             input_helper: winit_input_helper::WinitInputHelper::new(),
             master_texture: diff_tex,
             loop_helper,
+            ent_manager: eman,
         }
     }
 
@@ -567,21 +584,21 @@ fn main() {
 
     let mut core = pollster::block_on(Core::new(&window));
 
-    let ent_guard = ent_master.lock();
-    let mut eman = EntManager::new();
-    eman.uniform_alignment = core.uniform_alignment as u32;
+    // let ent_guard = ent_master.lock();
+    // let mut eman = EntManager::new();
+    // eman.uniform_alignment = core.uniform_alignment as u32;
 
-    eman.entities.push(Ent::new(
-        vec3(0.0, 1.0, 0.0),
-        45.,
-        1.,
-        0.,
-        "chicken".to_string(),
-        "plane".to_string(),
-        core.uniform_alignment as u32,
-        true,
-        None,
-    ));
+    // eman.entities.push(Ent::new(
+    //     vec3(0.0, 1.0, 0.0),
+    //     45.,
+    //     1.,
+    //     0.,
+    //     "chicken".to_string(),
+    //     "plane".to_string(),
+    //     core.uniform_alignment as u32,
+    //     true,
+    //     None,
+    // ));
 
     // eman.entities.push(Ent::new(
     //     vec3(1.0, 1.0, 0.0),
@@ -617,9 +634,9 @@ fn main() {
     //     Some("walker".to_string()),
     // ));
 
-    ent_guard.get_or_init(|| eman);
+    // ent_guard.get_or_init(|| eman);
 
-    std::mem::drop(ent_guard);
+    // std::mem::drop(ent_guard);
 
     event_loop.run(move |event, _, control_flow| {
         // window.set_cursor_position(PhysicalPosition {

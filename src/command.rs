@@ -4,7 +4,7 @@ use glam::vec4;
 use mlua::{Error, Lua, Table};
 use parking_lot::RwLock;
 
-use crate::{ent_master, global::Global, switch_board::SwitchBoard, Core};
+use crate::{global::Global, switch_board::SwitchBoard, Core};
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &Core, s: &String) -> bool {
@@ -57,12 +57,13 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
                     // crate::texture::reset();
                     // crate::asset::init(&core.device);
 
-                    let mut mutex = crate::ent_master.lock();
-                    let entity_manager = mutex.get_mut().unwrap();
+                    // TODO
+                    // let mut mutex = crate::ent_master.lock();
+                    // let entity_manager = mutex.get_mut().unwrap();
                     crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                    for e in &mut entity_manager.entities {
-                        e.hot_reload();
-                    }
+                    // for e in &mut entity_manager.entities {
+                    //     e.hot_reload();
+                    // }
                     let mutex = crate::lua_master.lock();
                     mutex.get().unwrap().call_main();
                     log("buldozed into this here code with a buncha stuff".to_string());
@@ -100,14 +101,15 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
         "_point",
         lua_ctx
             .create_function(|_, (): ()| {
-                let mut mutex = crate::ent_master.lock();
-                let entity_manager = mutex.get_mut().unwrap();
-                if entity_manager.entities.len() > 0 {
-                    let p = entity_manager.entities[0].pos;
-                    Ok((p.x, p.y, p.z))
-                } else {
-                    Ok((0., 0., 0.))
-                }
+                // TODO
+                // let mut mutex = crate::ent_master.lock();
+                // let entity_manager = mutex.get_mut().unwrap();
+                // if entity_manager.entities.len() > 0 {
+                //     let p = entity_manager.entities[0].pos;
+                //     Ok((p.x, p.y, p.z))
+                // } else {
+                Ok((0., 0., 0.))
+                // }
             })
             .unwrap(),
     ));

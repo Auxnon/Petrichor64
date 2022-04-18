@@ -7,7 +7,7 @@ use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCo
 use winit::event_loop::ControlFlow;
 
 use crate::lua_define::LuaCore;
-use crate::{ent_master, lua_master, Core};
+use crate::{lua_master, Core};
 
 pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mut ControlFlow) {
     match event {

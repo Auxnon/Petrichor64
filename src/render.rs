@@ -85,9 +85,9 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         core.global.get("value2".to_string()),
     );
 
-    let mut mutex = crate::ent_master.lock();
+    // let mut mutex = crate::ent_master.lock();
     //log(format!("hooked {}", path));
-    let entity_manager = mutex.get_mut().unwrap();
+    let entity_manager = core.ent_manager; //mutex.get_mut().unwrap();
     let ents = &mut entity_manager.entities;
 
     // let mut v = core.global.get("value".to_string());
