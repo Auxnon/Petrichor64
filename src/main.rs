@@ -129,6 +129,7 @@ lazy_static! {
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
     pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
+    pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
 }
 
 impl Core {

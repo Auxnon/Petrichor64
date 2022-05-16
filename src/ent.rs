@@ -60,7 +60,7 @@ impl<'lua> Ent {
         // };
         let quat = Quat::from_axis_angle(offset.normalize(), angle);
 
-        let mut brain_name = "".to_string();
+        let brain_name = "".to_string();
         // let brain_func = match brain {
         //     Some(o) => {
         //         brain_name = o;

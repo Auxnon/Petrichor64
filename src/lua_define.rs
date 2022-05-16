@@ -1,4 +1,4 @@
-use crate::{ent::Ent, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard};
+use crate::{ent::Ent, ent_table, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard};
 use lazy_static::lazy_static;
 use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
 use once_cell::sync::OnceCell;
@@ -50,30 +50,6 @@ impl LuaCore {
 
             crate::command::init_lua_sys(&lua_ctx, &globals, switch_board);
 
-            let closure = |_, (str, x, y): (String, f32, f32)| {
-                //let result = entity_factory.lock().unwrap().get_mut();
-                // if result.is_some() {
-                //     // let ent = result.unwrap().create_ent(&str, &self);
-                //     // ent.pos.x = x;
-                //     // ent.pos.y = y;
-                //     // let lua_ent = ent.to_lua();
-                //     // // let mut m = meshes.borrow_mut();
-                //     // // m.push(ent);
-                //     // // println!("added ent, now sized at {}", m.len());
-                //     // Ok(lua_ent)
-                //     Ok(LuaEnt::empty())
-                // } else {
-                //     Ok(LuaEnt::empty())
-                // }
-
-                //     //Ok(&ent.to_lua())
-                Ok(LuaEnt::empty())
-            };
-            globals.set("spawn", {
-                let m = lua_ctx.create_function(closure);
-                m.unwrap()
-            });
-
             // let temple: rlua::Table = globals.get("temple").unwrap();
             // let filters: rlua::Table = temple.get("_filters").unwrap();
             // let concat2: rlua::Function = filters.get("concat2").unwrap();
@@ -116,11 +92,27 @@ impl LuaCore {
                         }
                     }
                 }
+                match globals.get::<&str, mlua::Table>("_ents") {
+                    Ok(table) => {
+                        let ent_results = table.sequence_values::<LuaEnt>();
+                        let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
+                        // ent_guard
+                        let mut ent_guard = ent_table.lock();
+                        ent_guard.clear();
+                        ent_guard.append(&mut ent_array);
+
+                        // ent_table.lock().(ent_array);
+                    }
+                    Err(er) => {
+                        log("missing highest level entities table".to_string());
+                    }
+                }
 
                 //thread::sleep(std::time::Duration::from_millis(10));
                 //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
                 //channel.send(res).unwrap()
             }
+
             //})
         });
         //lua_thread.join();
@@ -144,8 +136,12 @@ impl LuaCore {
     }
 
     pub fn func(&self, func: &String) -> String {
+        //
         match self.inject(func, &"0".to_string(), None).0 {
-            Some(str) => str,
+            Some(str) => {
+                // println!("attempt {}", str);
+                str
+            }
             None => "".to_string(),
         }
     }

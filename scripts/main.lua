@@ -5,9 +5,10 @@
 -- a.brain("walker")
 
 -- rot=0.
-
+-- _spawn(0,0,0)
 function _main()
     _bg(0,1,1,1)
+    _spawn(9,0,0)
 end
 
 -- function loop()

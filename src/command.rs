@@ -80,7 +80,11 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
     true
 }
 
-pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock<SwitchBoard>>) {
+pub fn init_lua_sys(
+    lua_ctx: &Lua,
+    lua_globals: &Table,
+    switch_board: Arc<RwLock<SwitchBoard>>,
+) -> Result<(), Error> {
     println!("init lua sys");
 
     let default_func = lua_ctx
@@ -90,6 +94,8 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
 
     let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
     lua_globals.set("multi", multi.unwrap());
+
+    lua_globals.set("_ents", lua_ctx.create_table()?);
 
     res(lua_globals.set(
         "_time",
@@ -179,14 +185,22 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
     res(lua_globals.set(
         "_spawn",
         lua_ctx
-            .create_function(move |_, (x, y, z): (f32, f32, f32)| {
+            .create_function(move |lua, (x, y, z): (f32, f32, f32)| {
                 // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
                 let mut ent = crate::lua_ent::LuaEnt::empty();
                 ent.x = x;
                 ent.y = y;
                 ent.z = z;
-                let mut mutex = &mut switch.write();
-                mutex.ent_queue.push(&ent);
+
+                // let globl = lua_ctx.globals();
+                // lua_globals.set("f", lua_ctx.create_table()?);
+
+                let ents = lua.globals().get::<&str, Table>("_ents")?;
+                let index = ents.len()? + 1;
+                ents.set(index, ent);
+                // let mut mutex = &mut switch.write();`
+                // mutex.ent_queue.push(&ent);
+
                 // self.create.push(ent.clone());
 
                 // }
@@ -194,7 +208,9 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
                 // let mut mutex = crate::ent_master.lock();
                 // let manager = mutex.get_mut().unwrap();
                 // let l = manager.add(x, y, z);
-                Ok(ent)
+                println!("we made an ent");
+                // Ok((ents.get::<i64, LuaEnt>(index)))
+                Ok(index)
             })
             .unwrap(),
     ));
@@ -208,6 +224,8 @@ pub fn init_lua_sys(lua_ctx: &Lua, lua_globals: &Table, switch_board: Arc<RwLock
             })
             .unwrap(),
     ));
+
+    Ok(())
 }
 fn log(str: String) {
     crate::log::log(format!("com::{}", str));

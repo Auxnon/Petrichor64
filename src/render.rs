@@ -86,6 +86,18 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     );
 
     let mut mutex = crate::ent_master.lock();
+
+    let mut ent_tabler = crate::ent_table.lock();
+    println!(
+        "we have this many ents {} first is {}",
+        ent_tabler.len(),
+        if ent_tabler.len() > 0 {
+            ent_tabler[0].x
+        } else {
+            -1.
+        }
+    );
+
     //log(format!("hooked {}", path));
     let entity_manager = mutex.get_mut().unwrap();
     let ents = &mut entity_manager.entities;
@@ -175,7 +187,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             win_coord.z, //2. * win.z - 1.,
             1.,
         );
-        let mut far_coord = vec4(
+        let far_coord = vec4(
             2. * (win_coord.x) - 1.,
             -2. * (win_coord.y) + 1.,
             1., //2. * win.z - 1.,
@@ -191,14 +203,14 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         //far_coord.x *= FoV * FoV;
         //far_coord.y *= FoV * FoV;
         //inv.project_point3(other)
-        let mut near_unproj = inv.project_point3(near_coord.xyz());
+        let near_unproj = inv.project_point3(near_coord.xyz());
 
         // println!("{}", near_unproj);
 
-        let mut far_unproj = inv.project_point3(far_coord.xyz());
+        let far_unproj = inv.project_point3(far_coord.xyz());
         //let cam_unproj = inv.project_point3(core.camera_pos);
 
-        let mut dir = (near_unproj - far_unproj).normalize();
+        let dir = (near_unproj - far_unproj).normalize();
 
         // - (core.camera_pos + vec3(0., -10., 0.))
         //dir = mx_view.inverse().project_point3(dir);
@@ -206,7 +218,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
         // return rayP + t * rayD;
 
-        let mut out_point;
+        let out_point;
 
         let PLANE_COLLIDE = true;
 
