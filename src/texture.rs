@@ -18,14 +18,14 @@ lazy_static! {
 }
 
 pub fn init() {
-    let mut img: RgbaImage = ImageBuffer::new(1024, 1024);
+    let img: RgbaImage = ImageBuffer::new(1024, 1024);
     let mut d = atlas_dim.lock();
     d.x = 1024;
     d.y = 1024;
     let rgba = master.lock().get_or_init(|| img);
 }
 pub fn reset() {
-    let mut img: RgbaImage = ImageBuffer::new(1024, 1024);
+    let img: RgbaImage = ImageBuffer::new(1024, 1024);
     let mut d = atlas_dim.lock();
     d.x = 1024;
     d.y = 1024;

@@ -1,13 +1,9 @@
 use std::{
-    collections::HashMap,
     fs::read_dir,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use wgpu::Device;
-
-use crate::lua_define::LuaCore;
 
 pub fn pack(name: &String) {
     let sources = walk_files(None);

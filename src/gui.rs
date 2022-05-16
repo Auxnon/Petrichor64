@@ -55,7 +55,7 @@ impl Gui {
             }
         };
 
-        let mut raster: RgbaImage = ImageBuffer::new(1024, 1024);
+        // let raster: RgbaImage = ImageBuffer::new(1024, 1024);
 
         Gui {
             gui_pipeline,
@@ -119,7 +119,7 @@ impl Gui {
         }
     }
     pub fn apply_text(&mut self) {
-        let mut im = RgbaImage::new(self.size[0], self.size[1]);
+        let im = RgbaImage::new(self.size[0], self.size[1]);
         // image::imageops::horizontal_gradient(
         //     &mut im,
         //     &image::Rgba([255, 255, 0, 255]),

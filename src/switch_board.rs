@@ -9,7 +9,6 @@ pub struct SwitchBoard {
     pub h: f32,
     pub dirty: bool,
     pub tile_queue: Vec<Vec4>,
-
     pub ent_queue: Vec<&'static LuaEnt>,
 }
 impl SwitchBoard {

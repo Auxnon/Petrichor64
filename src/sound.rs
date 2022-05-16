@@ -126,7 +126,7 @@ where
         // println!("byte {}", b.len());
         //let f = [(sample_clock) as usize] as f32
 
-        let mut level = if switch_board.read().space { 6.0 } else { 12.0 };
+        let level = if switch_board.read().space { 6.0 } else { 12.0 };
         i += ((level - i) / sample_rate);
 
         let freq = i;

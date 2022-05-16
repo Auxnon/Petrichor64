@@ -16,6 +16,7 @@ use crate::{ent::Ent, lua_ent::LuaEnt};
 // };
 
 pub struct EntManager {
+    // pub ent_table: Mutex<mlua::Table<'static>>,
     pub entities: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
     pub uniform_alignment: u32,
@@ -23,6 +24,7 @@ pub struct EntManager {
 impl EntManager {
     pub fn new() -> EntManager {
         EntManager {
+            // ent_table: Mutex::new(),
             entities: vec![],
             // create: vec![],
             uniform_alignment: 0,

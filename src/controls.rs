@@ -1,13 +1,9 @@
-use std::sync::Arc;
+use winit::{
+    event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event_loop::ControlFlow,
+};
 
-use glam::{IVec2, IVec3};
-use once_cell::sync::OnceCell;
-use rand::Error;
-use winit::event::{DeviceEvent, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
-use winit::event_loop::ControlFlow;
-
-use crate::lua_define::LuaCore;
-use crate::{ent_master, lua_master, Core};
+use crate::Core;
 
 pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mut ControlFlow) {
     match event {
@@ -172,7 +168,7 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
                     let t = core.input_helper.text();
 
                     if t.len() > 0 {
-                        let mut neg = 0;
+                        let neg = 0;
                         let emp: char;
                         let mut st = vec![];
                         for tt in t.iter() {

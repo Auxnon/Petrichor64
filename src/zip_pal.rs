@@ -68,8 +68,8 @@ pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer(thumb);
     // let new_file = File::create(&Path::new("temp")).unwrap();
-    let mut v = Vec::new();
-    let mut c = Cursor::new(v);
+    let v = Vec::new();
+    let c = Cursor::new(v);
 
     let mut zip = zip::ZipWriter::new(c);
     let options = FileOptions::default();
@@ -134,7 +134,7 @@ pub fn unpack_and_walk(
     if v.len() <= 0 {
         return map;
     }
-    let mut reader = std::io::Cursor::new(v);
+    let reader = std::io::Cursor::new(v);
 
     let mut archive = zip::ZipArchive::new(reader).unwrap();
     let it: Vec<String> = archive.file_names().map(|x| x.to_string()).collect();
@@ -228,7 +228,7 @@ pub fn unpack(target: &String) -> Vec<u8> {
 pub fn walk_zip(str: &String) {
     let zipfile = std::fs::File::open(str).unwrap();
 
-    let mut archive = zip::ZipArchive::new(zipfile).unwrap();
+    let archive = zip::ZipArchive::new(zipfile).unwrap();
 
     let it = archive.file_names();
 

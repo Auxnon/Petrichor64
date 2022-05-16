@@ -4,7 +4,7 @@ use glam::vec4;
 use mlua::{Error, Lua, Table};
 use parking_lot::RwLock;
 
-use crate::{ent_master, global::Global, switch_board::SwitchBoard, Core};
+use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &Core, s: &String) -> bool {

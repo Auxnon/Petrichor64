@@ -5,18 +5,17 @@ use ent_manager::EntManager;
 use global::Global;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
-use std::{mem, rc::Rc, sync::Arc};
+use std::{cell::RefCell, mem, sync::Arc};
 use tile::World;
 
 use ent::Ent;
-use glam::{vec2, vec3, Mat4, Vec3};
+use glam::{vec2, vec3, Mat4};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock};
 
 use switch_board::SwitchBoard;
-use wgpu::{util::DeviceExt, BindGroup, Buffer, BufferUsages, Texture};
+use wgpu::{util::DeviceExt, BindGroup, Buffer, Texture};
 use winit::{
-    dpi::{LogicalPosition, LogicalSize, PhysicalPosition},
     event::*,
     event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,

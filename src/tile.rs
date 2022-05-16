@@ -153,7 +153,7 @@ impl World {
         }
     }
     pub fn add_tile_model(&mut self, model: String, ix: i32, iy: i32, iz: i32) {
-        let mut c = self.get_chunk_mut(ix, iy, iz);
+        let c = self.get_chunk_mut(ix, iy, iz);
         _add_tile_model(c, model, ix, iy, iz);
     }
 }
