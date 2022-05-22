@@ -57,13 +57,12 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
                     // crate::texture::reset();
                     // crate::asset::init(&core.device);
 
-                    // TODO
-                    // let mut mutex = crate::ent_master.lock();
-                    // let entity_manager = mutex.get_mut().unwrap();
+                    let mut mutex = crate::ent_master.lock();
+                    let entity_manager = mutex.get_mut().unwrap();
                     crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                    // for e in &mut entity_manager.entities {
-                    //     e.hot_reload();
-                    // }
+                    for e in &mut entity_manager.entities {
+                        e.hot_reload();
+                    }
                     let mutex = crate::lua_master.lock();
                     mutex.get().unwrap().call_main();
                     log("buldozed into this here code with a buncha stuff".to_string());
