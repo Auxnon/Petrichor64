@@ -88,7 +88,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     let mut mutex = crate::ent_master.lock();
 
     //log(format!("hooked {}", path));
-    let entity_manager = mutex.get_mut().unwrap();
+    let entity_manager = core.ent_manager; //mutex.get_mut().unwrap();
     let ents = &mut entity_manager.entities;
 
     let ent_tabler = &entity_manager.ent_table;
