@@ -139,26 +139,26 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
                 if core.input_helper.key_released(VirtualKeyCode::Return) {
                     let command = crate::log::carriage();
                     if command.is_some() {
-                        if core.global.test {
-                            // println!("command isss {}", command.unwrap());
-                            let com = command.unwrap();
-                            if !crate::command::init_con_sys(&core, &com) {
-                                let guard = crate::lua_master.lock();
-                                let lua_core = guard.get();
-                                if lua_core.is_some() {
-                                    let result = lua_core.unwrap().func(&com);
-                                    crate::log::log(result.clone());
+                        // if core.global.test {
+                        // println!("command isss {}", command.unwrap());
+                        let com = command.unwrap();
+                        if !crate::command::init_con_sys(&core, &com) {
+                            let guard = crate::lua_master.lock();
+                            let lua_core = guard.get();
+                            if lua_core.is_some() {
+                                let result = lua_core.unwrap().func(&com);
+                                crate::log::log(result.clone());
 
-                                    crate::log::next_line();
-                                    println!("command was {}, result was {}", com, result);
-                                } else {
-                                    crate::log::log("uwu".to_string());
-                                    crate::log::next_line();
-                                }
+                                // crate::log::next_line();
+                                println!("command was {}, result was {}", com, result);
+                            } else {
+                                crate::log::log("uwu".to_string());
+                                // crate::log::next_line();
                             }
-                        } else {
-                            core.global.test = true;
                         }
+                        // } else {
+                        //     core.global.test = true;
+                        // }
                     }
                 } else if core.input_helper.key_pressed(VirtualKeyCode::Up) {
                     crate::log::history()
@@ -166,27 +166,53 @@ pub fn controls_evaluate(event: &WindowEvent, core: &mut Core, control_flow: &mu
                 // crate::log::back();
                 } else {
                     let t = core.input_helper.text();
+                    // core.input_helper.
 
                     if t.len() > 0 {
                         let neg = 0;
                         let emp: char;
-                        let mut st = vec![];
-                        for tt in t.iter() {
-                            match tt {
-                                winit_input_helper::TextChar::Char(c) => match *c as u32 {
-                                    127 => {
-                                        crate::log::back();
+
+                        // let mut st = vec![];
+                        match t.last() {
+                            Some(s) => {
+                                match s {
+                                    winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                                        127 => {
+                                            crate::log::back();
+                                        }
+                                        _ => {
+                                            println!("char {}  {}", t.len(), c);
+                                            crate::log::add(String::from(*c))
+                                        } //st.push(*c),
+                                    },
+                                    winit_input_helper::TextChar::Back => {
+                                        // crate::log::back();
+                                        // neg += 1;
+                                        // st.remove(st.len() - 1);
                                     }
-                                    _ => st.push(*c),
-                                },
-                                winit_input_helper::TextChar::Back => {
-                                    crate::log::back();
-                                    // neg += 1;
-                                    // st.remove(st.len() - 1);
                                 }
                             }
+                            None => {}
                         }
-                        crate::log::add(String::from_iter(st.clone()));
+
+                        // for tt in t.iter() {
+                        //     match tt {
+                        //         // DEV just 127 is fine on mac, windows may have need 127 and :Back in order to work
+                        //         winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                        //             127 => {
+                        //                 crate::log::back();
+                        //             }
+                        //             _ => st.push(*c),
+                        //         },
+                        //         winit_input_helper::TextChar::Back => {
+                        //             // crate::log::back();
+                        //             // neg += 1;
+                        //             // st.remove(st.len() - 1);
+                        //         }
+                        //     }
+                        // }
+
+                        // crate::log::add(String::from_iter(st.clone()));
 
                         // println!(" char {}", String::from_iter(st));
                     }
