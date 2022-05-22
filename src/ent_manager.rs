@@ -19,25 +19,27 @@ pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
     pub entities: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
+    pub ent_table: Vec<crate::lua_ent::LuaEnt>,
     pub uniform_alignment: u32,
 }
 impl EntManager {
     pub fn new() -> EntManager {
         EntManager {
             // ent_table: Mutex::new(),
+            ent_table: vec![],
             entities: vec![],
             // create: vec![],
             uniform_alignment: 0,
         }
     }
-    pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
-        let mut ent = LuaEnt::empty();
-        ent.x = x;
-        ent.y = y;
-        ent.z = z;
-        // self.create.push(ent.clone());
-        ent
-    }
+    // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
+    //     let mut ent = LuaEnt::empty();
+    //     ent.x = x;
+    //     ent.y = y;
+    //     ent.z = z;
+    //     // self.create.push(ent.clone());
+    //     ent
+    // }
     pub fn check_create(&mut self) {
         // if self.create.len() > 0 {
         //     println!("create an ent");

@@ -1,4 +1,6 @@
-use crate::{ent::Ent, ent_table, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard};
+use crate::{
+    ent::Ent, ent_manager, ent_master, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard,
+};
 use lazy_static::lazy_static;
 use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
 use once_cell::sync::OnceCell;
@@ -97,9 +99,15 @@ impl LuaCore {
                         let ent_results = table.sequence_values::<LuaEnt>();
                         let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
                         // ent_guard
-                        let mut ent_guard = ent_table.lock();
-                        ent_guard.clear();
-                        ent_guard.append(&mut ent_array);
+                        let mut ent_guard = ent_master.lock();
+
+                        match ent_guard.get_mut() {
+                            Some(o) => {
+                                o.ent_table.clear();
+                                o.ent_table.append(&mut ent_array);
+                            }
+                            None => {}
+                        }
 
                         // ent_table.lock().(ent_array);
                     }

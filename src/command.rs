@@ -106,14 +106,14 @@ pub fn init_lua_sys(
         "_point",
         lua_ctx
             .create_function(|_, (): ()| {
-                let mut mutex = crate::ent_master.lock();
-                let entity_manager = mutex.get_mut().unwrap();
-                if entity_manager.entities.len() > 0 {
-                    let p = entity_manager.entities[0].pos;
-                    Ok((p.x, p.y, p.z))
-                } else {
-                    Ok((0., 0., 0.))
-                }
+                // let mut mutex = crate::ent_master.lock();
+                // let entity_manager = mutex.get_mut().unwrap();
+                // if entity_manager.entities.len() > 0 {
+                //     let p = entity_manager.entities[0].pos;
+                //     Ok((p.x, p.y, p.z))
+                // } else {
+                Ok((0., 0., 0.))
+                // }
             })
             .unwrap(),
     ));
@@ -185,18 +185,15 @@ pub fn init_lua_sys(
     res(lua_globals.set(
         "_spawn",
         lua_ctx
-            .create_function(move |lua, (x, y, z): (f32, f32, f32)| {
+            .create_function(move |lua, (x, y, z): (f64, f64, f64)| {
                 // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
-                let mut ent = crate::lua_ent::LuaEnt::empty();
-                ent.x = x;
-                ent.y = y;
-                ent.z = z;
+                let ents = lua.globals().get::<&str, Table>("_ents")?;
+                let index = ents.len()? + 1;
 
+                let mut ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
                 // let globl = lua_ctx.globals();
                 // lua_globals.set("f", lua_ctx.create_table()?);
 
-                let ents = lua.globals().get::<&str, Table>("_ents")?;
-                let index = ents.len()? + 1;
                 ents.set(index, ent);
                 // let mut mutex = &mut switch.write();`
                 // mutex.ent_queue.push(&ent);

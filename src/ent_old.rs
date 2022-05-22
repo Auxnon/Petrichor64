@@ -23,10 +23,10 @@ pub struct Ent {
     pub matrix: Mat4,
     pub rotation: f32,
     pub color: wgpu::Color,
-    // pub scale: f32,
-    // pub pos: Vec3,
-    // pub vel: Vec3,
-    // pub rot: Vec3,
+    pub scale: f32,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub rot: Vec3,
     pub model: Arc<OnceCell<Model>>,
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: Vec4,
@@ -81,11 +81,11 @@ impl<'lua> Ent {
                 offset,
             ),
             rotation,
-            // rot: Vec3::new(0., 0., 0.),
+            rot: Vec3::new(0., 0., 0.),
             color: wgpu::Color::GREEN,
-            // scale,
-            // pos: offset,
-            // vel: Vec3::new(0., 0., 0.),
+            scale,
+            pos: offset,
+            vel: Vec3::new(0., 0., 0.),
             model: crate::model::get_model(&model), //0.5, 1., 32. / 512., 32. / 512.
             //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
             // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
@@ -121,19 +121,19 @@ impl<'lua> Ent {
         self.model = crate::model::get_model(&self.model_name)
     }
 
-    // fn from_lua(&mut self, ent: LuaEnt) {
-    //     self.pos.x = ent.x;
-    //     self.pos.y = ent.y;
-    //     self.pos.z = ent.z;
+    fn from_lua(&mut self, ent: LuaEnt) {
+        self.pos.x = ent.x;
+        self.pos.y = ent.y;
+        self.pos.z = ent.z;
 
-    //     self.vel.x = ent.vel_x;
-    //     self.vel.y = ent.vel_y;
-    //     self.vel.z = ent.vel_z;
+        self.vel.x = ent.vel_x;
+        self.vel.y = ent.vel_y;
+        self.vel.z = ent.vel_z;
 
-    //     self.rot.x = ent.rot_x;
-    //     self.rot.y = ent.rot_y;
-    //     self.rot.z = ent.rot_z;
-    // }
+        self.rot.x = ent.rot_x;
+        self.rot.y = ent.rot_y;
+        self.rot.z = ent.rot_z;
+    }
 
     pub fn run(&mut self) {
         // let lua_ent = self.to_lua();

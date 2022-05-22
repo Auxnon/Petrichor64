@@ -129,7 +129,7 @@ lazy_static! {
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
     pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
-    pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
+    // pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
 }
 
 impl Core {
@@ -514,10 +514,10 @@ impl Core {
         }
     }
 
-    #[allow(unused_variables)]
-    fn input(&mut self, event: &WindowEvent) -> bool {
-        false
-    }
+    // #[allow(unused_variables)]
+    // fn input(&mut self, event: &WindowEvent) -> bool {
+    //     false
+    // }
 
     fn update(&mut self) {
         match self.switch_board.try_read() {
@@ -627,14 +627,15 @@ fn main() {
         //     y: s.height,
         // });
         core.input_helper.update(&event);
+        // if core.input_helper.update(&event) {
         match event {
             Event::WindowEvent {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                if !core.input(event) {
-                    controls::controls_evaluate(event, &mut core, control_flow);
-                }
+                println!("control entered");
+
+                controls::controls_evaluate(event, &mut core, control_flow);
             }
             Event::DeviceEvent { device_id, event } => match event {
                 DeviceEvent::MouseMotion { delta } => {
@@ -654,6 +655,7 @@ fn main() {
                 _ => {}
             },
             Event::RedrawRequested(_) => {
+                println!("redraw entered");
                 core.update();
                 match core.render() {
                     Ok(_) => {}
@@ -665,18 +667,13 @@ fn main() {
                     Err(e) => eprintln!("{:?}", e),
                 }
             }
-            // DeviceEvent::MouseMotion { delta } => {}
 
-            // DeviceEvent::MouseMotion { delta } => {
-            //     state.global.mouse_delta.x = delta.0 as f32;
-            //     state.global.mouse_delta.y = delta.1 as f32;
-            // }
             Event::MainEventsCleared => {
-                // RedrawRequested will only trigger once, unless we manually
-                // request it.
+                // RedrawRequested will only trigger once, unless we manually request it.
                 window.request_redraw();
             }
             _ => {}
         }
+        // }
     });
 }

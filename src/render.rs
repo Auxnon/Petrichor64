@@ -87,20 +87,21 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
 
     let mut mutex = crate::ent_master.lock();
 
-    let mut ent_tabler = crate::ent_table.lock();
-    println!(
-        "we have this many ents {} first is {}",
-        ent_tabler.len(),
-        if ent_tabler.len() > 0 {
-            ent_tabler[0].x
-        } else {
-            -1.
-        }
-    );
-
     //log(format!("hooked {}", path));
     let entity_manager = mutex.get_mut().unwrap();
     let ents = &mut entity_manager.entities;
+
+    let ent_tabler = &entity_manager.ent_table;
+
+    // println!(
+    //     "we have this many ents {} first is {}",
+    //     ent_tabler.len(),
+    //     if ent_tabler.len() > 0 {
+    //         ent_tabler[0].x
+    //     } else {
+    //         -1.
+    //     }
+    // );
 
     // let mut v = core.global.get("value".to_string());
     let v = core.global.get_mut("value".to_string());
@@ -335,7 +336,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             ))
         }
 
-        ents[0].pos = out_point;
+        // ents[0].pos = out_point; // DEV
     }
 
     // let rot = cgmath::Matrix4::from_angle_y(a);
@@ -387,10 +388,10 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
         //     scale: entity.scale * 16.,
         // };
-        let s = entity.scale;
 
-        entity.matrix =
-            Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, entity.pos.mul(16.));
+        let s = 1.; // DEV entity.scale;
+        let pos = vec3(0., 0., 0.); // DEV entity.pos
+        entity.matrix = Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos.mul(16.));
 
         // DEV i32
         /*
