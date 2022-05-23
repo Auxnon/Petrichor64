@@ -98,18 +98,23 @@ impl LuaCore {
                     Ok(table) => {
                         let ent_results = table.sequence_values::<LuaEnt>();
                         let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
-                        // ent_guard
-                        let mut ent_guard = ent_master.lock();
-
-                        match ent_guard.get_mut() {
-                            Some(o) => {
-                                o.ent_table.clear();
-                                o.ent_table.append(&mut ent_array);
+                        println!("cleary");
+                        match ent_master.try_write_for(std::time::Duration::from_millis(100)) {
+                            Some(mut ent_guard) => {
+                                match ent_guard.get_mut() {
+                                    Some(entman) => {
+                                        entman.ent_table.clear();
+                                        entman.ent_table.append(&mut ent_array);
+                                    }
+                                    None => {}
+                                }
+                                drop(ent_guard);
                             }
-                            None => {}
+                            _ => {}
                         }
 
                         // ent_table.lock().(ent_array);
+                        println!("cleary2");
                     }
                     Err(er) => {
                         log("missing highest level entities table".to_string());
@@ -163,7 +168,7 @@ impl LuaCore {
         let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
-        println!("xxx {}", path);
+        println!("xxx {} :: {}", func, path);
         guard.send((func.clone(), path.clone(), ent, tx));
 
         //MutexGuard::unlock_fair(guard);

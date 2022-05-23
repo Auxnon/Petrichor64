@@ -182,7 +182,10 @@ impl Gui {
     }
 
     pub fn enable_output(&mut self) {
-        self.text = crate::log::get((self.size[1] / 5 - 8) as usize);
+        self.text = crate::log::get(
+            (self.size[0] / 5 - 2) as usize,
+            (self.size[1] / 5 - 8) as usize,
+        );
         self.output = true;
         self.apply_text();
     }
@@ -204,7 +207,10 @@ impl Gui {
 
         self.time = time;
         if self.output && crate::log::is_dirty() {
-            self.text = crate::log::get((self.size[1] / 5 - 8) as usize);
+            self.text = crate::log::get(
+                (self.size[0] / 5 - 2) as usize,
+                (self.size[1] / 5 - 8) as usize,
+            );
             self.apply_text();
             crate::log::clean();
         }

@@ -11,7 +11,7 @@ use tile::World;
 use ent::Ent;
 use glam::{vec2, vec3, Mat4};
 use lazy_static::lazy_static;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{FairMutex, Mutex, RwLock};
 
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, Texture};
@@ -128,7 +128,7 @@ lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
-    pub static ref ent_master : Arc<Mutex<OnceCell<EntManager>>> = Arc::new((Mutex::new(OnceCell::new())));
+    pub static ref ent_master : Arc<RwLock<OnceCell<EntManager>>> = Arc::new((RwLock::new(OnceCell::new())));
     // pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
 }
 
@@ -561,60 +561,29 @@ fn main() {
     // )));
 
     // window.set_simple_fullscreen(true);
-    window.set_cursor_grab(true);
+    if false {
+        window.set_cursor_grab(true);
+    }
+
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
 
     let mut core = pollster::block_on(Core::new(&window));
 
-    let ent_guard = ent_master.lock();
+    let ent_guard = ent_master.read();
     let mut eman = EntManager::new();
     eman.uniform_alignment = core.uniform_alignment as u32;
 
-    eman.entities.push(Ent::new(
-        vec3(0.0, 1.0, 0.0),
-        45.,
-        1.,
-        0.,
-        "chicken".to_string(),
-        "plane".to_string(),
-        core.uniform_alignment as u32,
-        true,
-        None,
-    ));
-
     // eman.entities.push(Ent::new(
-    //     vec3(1.0, 1.0, 0.0),
-    //     0.,
+    //     vec3(0.0, 1.0, 0.0),
+    //     45.,
     //     1.,
     //     0.,
     //     "chicken".to_string(),
     //     "plane".to_string(),
-    //     (state.uniform_alignment * 2) as u32,
-    //     false,
-    //     None,
-    // ));
-    // eman.entities.push(Ent::new(
-    //     vec3(2.0, 1.0, 0.0),
-    //     0.,
-    //     1.,
-    //     0.,
-    //     "gameboy".to_string(),
-    //     "plane".to_string(),
-    //     (state.uniform_alignment * 3) as u32,
-    //     false,
-    //     None,
-    // ));
-    // eman.entities.push(Ent::new(
-    //     vec3(-1.0, 1.0, 0.0),
-    //     0.,
-    //     1.,
-    //     0.,
-    //     "guy3".to_string(),
-    //     "plane".to_string(),
-    //     (state.uniform_alignment * 4) as u32,
+    //     core.uniform_alignment as u32,
     //     true,
-    //     Some("walker".to_string()),
+    //     None,
     // ));
 
     ent_guard.get_or_init(|| eman);
@@ -622,58 +591,58 @@ fn main() {
     std::mem::drop(ent_guard);
 
     event_loop.run(move |event, _, control_flow| {
-        // window.set_cursor_position(PhysicalPosition {
-        //     x: s.width,
-        //     y: s.height,
-        // });
-        core.input_helper.update(&event);
-        // if core.input_helper.update(&event) {
-        match event {
-            Event::WindowEvent {
-                ref event,
-                window_id,
-            } if window_id == window.id() => {
-                println!("control entered");
+        if core.input_helper.update(&event) {
+            controls::controls_evaluate(&mut core, control_flow);
 
-                controls::controls_evaluate(event, &mut core, control_flow);
+            core.update();
+            match core.render() {
+                Ok(_) => {}
+                // Reconfigure the surface if lost
+                Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+                // The system is out of memory, we should probably quit
+                Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                // All other errors (Outdated, Timeout) should be resolved by the next frame
+                Err(e) => eprintln!("{:?}", e),
             }
-            Event::DeviceEvent { device_id, event } => match event {
-                DeviceEvent::MouseMotion { delta } => {
-                    core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
-                    core.global.mouse_active_pos.x %= 1.;
-                    if core.global.mouse_active_pos.x < 0. {
-                        core.global.mouse_active_pos.x += 1.;
-                    }
-                    core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
-                    let pi = std::f32::consts::PI / 8.;
-                    if core.global.mouse_active_pos.y > 0.72 {
-                        core.global.mouse_active_pos.y = 0.72
-                    } else if core.global.mouse_active_pos.y < 0.4 {
-                        core.global.mouse_active_pos.y = 0.4;
-                    }
-                }
-                _ => {}
-            },
-            Event::RedrawRequested(_) => {
-                println!("redraw entered");
-                core.update();
-                match core.render() {
-                    Ok(_) => {}
-                    // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e),
-                }
-            }
-
-            Event::MainEventsCleared => {
-                // RedrawRequested will only trigger once, unless we manually request it.
-                window.request_redraw();
-            }
-            _ => {}
         }
+        //     }
+        //     Event::DeviceEvent { device_id, event } => match event {
+        //         DeviceEvent::MouseMotion { delta } => {
+        //             core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
+        //             core.global.mouse_active_pos.x %= 1.;
+        //             if core.global.mouse_active_pos.x < 0. {
+        //                 core.global.mouse_active_pos.x += 1.;
+        //             }
+        //             core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
+        //             let pi = std::f32::consts::PI / 8.;
+        //             if core.global.mouse_active_pos.y > 0.72 {
+        //                 core.global.mouse_active_pos.y = 0.72
+        //             } else if core.global.mouse_active_pos.y < 0.4 {
+        //                 core.global.mouse_active_pos.y = 0.4;
+        //             }
+        //         }
+        //         _ => {}
+        //     },
+        //     Event::RedrawRequested(_) => {
+        //         println!("redraw entered");
+        //         core.update();
+        //         match core.render() {
+        //             Ok(_) => {}
+        //             // Reconfigure the surface if lost
+        //             Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+        //             // The system is out of memory, we should probably quit
+        //             Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+        //             // All other errors (Outdated, Timeout) should be resolved by the next frame
+        //             Err(e) => eprintln!("{:?}", e),
+        //         }
+        //     }
+
+        //     Event::MainEventsCleared => {
+        //         // RedrawRequested will only trigger once, unless we manually request it.
+        //         window.request_redraw();
+        //     }
+        //     _ => {}
+        // }
         // }
     });
 }

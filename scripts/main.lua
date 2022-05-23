@@ -9,6 +9,7 @@
 function _main()
     _bg(0,1,1,1)
     _spawn(9,0,0)
+    _spawn(19,12,6)
 end
 
 -- function loop()

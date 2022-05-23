@@ -5,10 +5,10 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 
-use glam::{IVec4, Mat4, Quat, UVec4, Vec3, Vec4};
+use glam::{vec3, IVec4, Mat4, Quat, UVec4, Vec3, Vec4};
 use mlua::Function;
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
+use std::{ops::Mul, sync::Arc};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -121,6 +121,69 @@ impl<'lua> Ent {
         self.model = crate::model::get_model(&self.model_name)
     }
 
+    pub fn reparse(lua: LuaEnt) {}
+
+    pub fn build_meta(&self, lua: &LuaEnt) -> Mat4 {
+        let rotation = Mat4::from_rotation_z(self.rotation);
+
+        let quat = Quat::from_axis_angle(vec3(0., 0., 1.), self.rotation);
+
+        // let transform = cgmath::Decomposed {
+        //     disp: entity.pos.mul(16.),
+        //     rot: ),
+        //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+        //     scale: entity.scale * 16.,
+        // };
+
+        let s = 1.; // DEV entity.scale;
+        let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32); // DEV entity.pos
+        Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos.mul(16.))
+        // DEV i32
+        /*
+                let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
+
+                let v = entity.pos.mul(16.).cast::<i32>().unwrap();
+                let rot = cgmath::Quaternion::<i32>::from_sv(
+                    entity.rotation as i32,
+                    cgmath::Vector3::<i32>::new(0, 0, 1),
+                );
+                let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
+                    disp: v,
+                    rot: rot,
+                    //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
+        <<<<<<< Updated upstream
+                    scale: (entity.scale * 16.) as i32,
+        =======
+                    scale: entity.scale,
+        >>>>>>> Stashed changes
+                };
+                let matrix = cgmath::Matrix4::<i32>::from(transform);
+                */
+    }
+
+    pub fn get_uniform(&self, lua: &LuaEnt) -> EntityUniforms {
+        let model = self.build_meta(lua);
+        // self.matrix = model;
+        let effects = [
+            self.effects.x,
+            self.effects.y,
+            self.effects.z,
+            self.effects.w,
+        ];
+        let uv_mod = [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
+        let color = [
+            self.color.r as f32,
+            self.color.g as f32,
+            self.color.b as f32,
+            self.color.a as f32,
+        ];
+        EntityUniforms {
+            model: model.to_cols_array_2d(),
+            color,
+            uv_mod,
+            effects,
+        }
+    }
     // fn from_lua(&mut self, ent: LuaEnt) {
     //     self.pos.x = ent.x;
     //     self.pos.y = ent.y;

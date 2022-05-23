@@ -57,12 +57,13 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
                     // crate::texture::reset();
                     // crate::asset::init(&core.device);
 
-                    let mut mutex = crate::ent_master.lock();
-                    let entity_manager = mutex.get_mut().unwrap();
+                    // let mut mutex = crate::ent_master.lock();
+                    // let entity_manager = mutex.get_mut().unwrap();
                     crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                    for e in &mut entity_manager.entities {
-                        e.hot_reload();
-                    }
+                    // DEV  TODO
+                    // for e in &mut entity_manager.entities {
+                    //     e.hot_reload();
+                    // }
                     let mutex = crate::lua_master.lock();
                     mutex.get().unwrap().call_main();
                     log("buldozed into this here code with a buncha stuff".to_string());
@@ -190,23 +191,26 @@ pub fn init_lua_sys(
                 let ents = lua.globals().get::<&str, Table>("_ents")?;
                 let index = ents.len()? + 1;
 
-                let mut ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
-                // let globl = lua_ctx.globals();
-                // lua_globals.set("f", lua_ctx.create_table()?);
+                let ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
+                println!(".1");
 
-                ents.set(index, ent);
-                // let mut mutex = &mut switch.write();`
-                // mutex.ent_queue.push(&ent);
-
-                // self.create.push(ent.clone());
-
+                // match crate::ent_master.write() {
+                //     Some(mut guard) => {
+                //
+                //     }
+                //     _ => {}
                 // }
 
-                // let mut mutex = crate::ent_master.lock();
-                // let manager = mutex.get_mut().unwrap();
-                // let l = manager.add(x, y, z);
+                let mut guard = crate::ent_master.write();
+                let eman = guard.get_mut().unwrap();
+
+                eman.create_from_lua(&ent);
+
+                ents.set(index, ent);
                 println!("we made an ent");
-                // Ok((ents.get::<i64, LuaEnt>(index)))
+
+                // let mut guard =
+
                 Ok(index)
             })
             .unwrap(),

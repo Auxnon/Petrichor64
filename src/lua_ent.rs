@@ -83,6 +83,10 @@ impl LuaEnt {
             vel_z: 0.,
         }
     }
+    pub fn get_id(&self) -> i64 {
+        // https://stackoverflow.com/questions/39638363/how-can-i-use-a-hashmap-with-f64-as-key-in-rust
+        self.id as i64
+    }
 }
 
 // pub fn new() -> LuaEnt {

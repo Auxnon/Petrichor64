@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use glam::vec3;
 use lazy_static::lazy_static;
 
+use nalgebra::LU;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
@@ -17,7 +18,7 @@ use crate::{ent::Ent, lua_ent::LuaEnt};
 
 pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
-    pub entities: Vec<Ent>,
+    pub entities: HashMap<i64, Ent>,
     // pub create: Vec<LuaEnt>,
     pub ent_table: Vec<crate::lua_ent::LuaEnt>,
     pub uniform_alignment: u32,
@@ -27,7 +28,7 @@ impl EntManager {
         EntManager {
             // ent_table: Mutex::new(),
             ent_table: vec![],
-            entities: vec![],
+            entities: HashMap::new(),
             // create: vec![],
             uniform_alignment: 0,
         }
@@ -68,8 +69,40 @@ impl EntManager {
         //     self.create.clear();
         // }
     }
+
     pub fn get_uuid() -> String {
         uuid::Uuid::new_v4().to_simple().to_string()
+    }
+
+    pub fn create_from_lua(&mut self, lua: &LuaEnt) {
+        let ent = Ent::new(
+            vec3(lua.x as f32, lua.y as f32, lua.z as f32),
+            0.,
+            1.,
+            0.,
+            "chicken".to_string(),
+            "plane".to_string(),
+            self.uniform_alignment,
+            true,
+            None,
+        );
+        self.entities.insert(lua.get_id(), ent);
+    }
+
+    pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Ent> {
+        let id = lua.get_id();
+        // match self.entities.get(&id) {
+        //     Some(e) => Some(e),
+        //     None => {
+        //         // self.create_from_lua(lua);
+        //         None
+        //     }
+        // }
+        self.entities.get(&id)
+    }
+
+    pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
+        self.entities.remove(&lua.get_id());
     }
 }
 // use crate::model::Model;

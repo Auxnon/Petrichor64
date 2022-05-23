@@ -3,7 +3,8 @@ use parking_lot::Mutex;
 lazy_static! {
     static ref buffer: Mutex<Vec<String>> = Mutex::new(vec![]);
     static ref log_dirty: Mutex<bool> = Mutex::new(false);
-    static ref history_buffer: Mutex<String> = Mutex::new(String::new());
+    static ref history_buffer: Mutex<Vec<String>> = Mutex::new(vec!["".to_string()]);
+    static ref history_it: Mutex<usize> = Mutex::new(0);
     static ref current_line: Mutex<String> = Mutex::new(String::new());
 }
 
@@ -31,34 +32,50 @@ pub fn next_line() {
 /** USER: hit return, push down buffer for an output as it's own line, if any, and then a new line for input. return is used to activate as a command */
 pub fn carriage() -> Option<String> {
     let s = current_line.lock().clone();
-    *history_buffer.lock() = s.clone();
+    history_buffer.lock().push(s.clone());
     buffer.lock().push(format!(">{}", s));
     *current_line.lock() = "".to_string();
 
     *log_dirty.lock() = true;
 
-    match buffer.lock().last() {
-        Some(s) => {
-            *log_dirty.lock() = true;
-            *history_buffer.lock() = s.to_string();
-            Some(s.to_string())
-        }
-        _ => None,
+    if s.len() > 0 {
+        return Some(s);
     }
+    None
     // buffer.lock().push("".to_string());
 }
 
+pub fn get_line() -> String {
+    current_line.lock().clone()
+}
+
 /** USER: popualtes current line with last issued command, if any*/
-pub fn history() {
-    match buffer.lock().last_mut() {
-        Some(o) => {
-            let s = history_buffer.lock();
-            // s.clone()
-            *o = s.clone();
-            *log_dirty.lock() = true;
-        }
-        None => {}
+
+pub fn history_up() {
+    let hist = history_buffer.lock();
+    let mut it = *history_it.lock();
+
+    it += 1;
+    if it > hist.len() - 1 {
+        it = hist.len() - 1;
     }
+    let s = hist[(hist.len() - it) - 1].clone();
+    *history_it.lock() = it;
+    *current_line.lock() = s.clone();
+    *log_dirty.lock() = true;
+}
+
+pub fn history_down() {
+    let hist = history_buffer.lock();
+    let mut it = *history_it.lock();
+
+    if it > 0 {
+        it -= 1;
+    }
+    let s = hist[(hist.len() - it) - 1].clone();
+    *history_it.lock() = it;
+    *current_line.lock() = s.clone();
+    *log_dirty.lock() = true;
 }
 
 /** USER: backspace, remove character from current line, if any */
@@ -114,7 +131,7 @@ pub fn _print(str: String, skip_first: bool) {
     *log_dirty.lock() = true;
 }
 
-pub fn get(height: usize) -> String {
+pub fn get(width: usize, height: usize) -> String {
     println!("get len {}, height{}", buffer.lock().len(), height);
     let l = buffer.lock().len();
 
@@ -124,7 +141,13 @@ pub fn get(height: usize) -> String {
         buffer.lock()[(l - (height - 1))..].join("\n")
     };
     buf.push_str("\n>");
-    buf.push_str(&current_line.lock().clone());
+    let cur = current_line.lock().clone();
+    if cur.len() > width {
+        let l = cur.len();
+        buf.push_str(&cur[l - width..l]);
+    } else {
+        buf.push_str(&cur);
+    }
     buf
 }
 pub fn is_dirty() -> bool {

@@ -85,25 +85,11 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         core.global.get("value2".to_string()),
     );
 
-    let mut mutex = crate::ent_master.lock();
+    let mut mutex = crate::ent_master.write();
 
-    //log(format!("hooked {}", path));
     let entity_manager = mutex.get_mut().unwrap();
-    let ents = &mut entity_manager.entities;
+    let ents = &entity_manager.ent_table;
 
-    let ent_tabler = &entity_manager.ent_table;
-
-    // println!(
-    //     "we have this many ents {} first is {}",
-    //     ent_tabler.len(),
-    //     if ent_tabler.len() > 0 {
-    //         ent_tabler[0].x
-    //     } else {
-    //         -1.
-    //     }
-    // );
-
-    // let mut v = core.global.get("value".to_string());
     let v = core.global.get_mut("value".to_string());
     *v += 0.002;
     if *v > 1. {
@@ -310,30 +296,30 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         // ent_guard.get_mut(slice);
 
         if core.global.get("value2".to_string()) >= 1. {
-            let typeOf = ents.len() % 2 == 0;
+            let typeOf = 0; // DEV ents.len() % 2 == 0;
             core.global.set("value2".to_string(), 0.);
 
             println!("  dir {} world space {}", dir, out_point);
-
-            ents.push(Ent::new(
-                out_point,
-                0.,
-                if typeOf { 1. } else { 1. },
-                0.,
-                if typeOf {
-                    "chicken".to_string()
-                } else {
-                    "package".to_string()
-                },
-                if typeOf {
-                    "plane".to_string()
-                } else {
-                    "package".to_string()
-                },
-                (ents.len() as u64 * core.uniform_alignment) as u32,
-                typeOf,
-                None, //Some("walker".to_string()),
-            ))
+            // DEV TODO
+            // ents.push(Ent::new(
+            //     out_point,
+            //     0.,
+            //     if typeOf { 1. } else { 1. },
+            //     0.,
+            //     if typeOf {
+            //         "chicken".to_string()
+            //     } else {
+            //         "package".to_string()
+            //     },
+            //     if typeOf {
+            //         "plane".to_string()
+            //     } else {
+            //         "package".to_string()
+            //     },
+            //     (ents.len() as u64 * core.uniform_alignment) as u32,
+            //     typeOf,
+            //     None, //Some("walker".to_string()),
+            // ))
         }
 
         // ents[0].pos = out_point; // DEV
@@ -368,6 +354,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         uv_mod: [0., 0., 1., 1.],
         effects: [0, 0, 0, 0],
     };
+
     //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
     core.queue.write_buffer(
         &core.entity_uniform_buf,
@@ -375,68 +362,20 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         bytemuck::bytes_of(&data),
     );
 
-    for (i, entity) in &mut ents.iter_mut().enumerate() {
-        entity.run();
-
-        let rotation = Mat4::from_rotation_z(entity.rotation);
-
-        let quat = Quat::from_axis_angle(vec3(0., 0., 1.), entity.rotation);
-
-        // let transform = cgmath::Decomposed {
-        //     disp: entity.pos.mul(16.),
-        //     rot: ),
-        //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-        //     scale: entity.scale * 16.,
-        // };
-
-        let s = 1.; // DEV entity.scale;
-        let pos = vec3(0., 0., 0.); // DEV entity.pos
-        entity.matrix = Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos.mul(16.));
-
-        // DEV i32
-        /*
-                let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
-
-                let v = entity.pos.mul(16.).cast::<i32>().unwrap();
-                let rot = cgmath::Quaternion::<i32>::from_sv(
-                    entity.rotation as i32,
-                    cgmath::Vector3::<i32>::new(0, 0, 1),
+    //DEV
+    for (i, entity) in &mut ents.iter().enumerate() {
+        match entity_manager.get_from_lua(entity) {
+            Some(meta) => {
+                let data = meta.get_uniform(entity);
+                core.queue.write_buffer(
+                    &core.entity_uniform_buf,
+                    meta.uniform_offset as wgpu::BufferAddress,
+                    bytemuck::bytes_of(&data),
                 );
-                let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
-                    disp: v,
-                    rot: rot,
-                    //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-        <<<<<<< Updated upstream
-                    scale: (entity.scale * 16.) as i32,
-        =======
-                    scale: entity.scale,
-        >>>>>>> Stashed changes
-                };
-                let matrix = cgmath::Matrix4::<i32>::from(transform);
-                */
-
-        let data = EntityUniforms {
-            model: entity.matrix.to_cols_array_2d(),
-            color: [
-                entity.color.r as f32,
-                entity.color.g as f32,
-                entity.color.b as f32,
-                entity.color.a as f32,
-            ],
-            uv_mod: [entity.tex.x, entity.tex.y, entity.tex.z, entity.tex.w],
-            effects: [
-                entity.effects.x,
-                entity.effects.y,
-                entity.effects.z,
-                entity.effects.w,
-            ],
-        };
-        //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
-        core.queue.write_buffer(
-            &core.entity_uniform_buf,
-            entity.uniform_offset as wgpu::BufferAddress,
-            bytemuck::bytes_of(&data),
-        );
+                //meta.run();
+            }
+            _ => {}
+        }
     }
 
     let mut encoder = core
@@ -487,12 +426,19 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
                 render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
             }
 
-            for entity in ents {
-                let model = entity.model.get().unwrap();
-                render_pass.set_bind_group(1, &core.entity_bind_group, &[entity.uniform_offset]);
-                render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-                render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            // DEV
+            for (i, entity) in ents.iter().enumerate() {
+                match entity_manager.get_from_lua(entity) {
+                    Some(e) => {
+                        let model = e.model.get().unwrap();
+                        println!("ents are working???? {} {}", i, e.matrix);
+                        render_pass.set_bind_group(1, &core.entity_bind_group, &[e.uniform_offset]);
+                        render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+                        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                        render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -524,7 +470,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     core.queue.submit(iter::once(encoder.finish()));
     output.present();
 
-    entity_manager.check_create();
+    // entity_manager.check_create();
 
     Ok(())
 }
