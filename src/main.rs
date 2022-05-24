@@ -124,6 +124,7 @@ fn create_depth_texture(
     (depth_texture, view, sampler)
 }
 
+//DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));

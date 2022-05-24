@@ -105,7 +105,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     if core.input_helper.key_released(VirtualKeyCode::Grave) {
         core.global.console = !core.global.console;
         if core.global.console {
-            crate::log::add("$load cinco".to_string());
+            crate::log::add("$load".to_string());
             core.gui.enable_output()
         } else {
             core.gui.disable_output()

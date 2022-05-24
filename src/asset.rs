@@ -1,5 +1,5 @@
 use std::{
-    fs::read_dir,
+    fs::{self, read_dir},
     path::{Path, PathBuf},
 };
 
@@ -43,27 +43,16 @@ pub fn unpack(device: &Device, target: &String) {
     match map.get("scripts") {
         Some(dir) => {
             for item in dir {
-                println!("script item is {}", item.0);
                 match Path::new(&item.0).extension() {
                     Some(e) => {
                         let file_name = &item.0;
-                        println!("yyy");
-                        for b in &item.1 {
-                            print!("{},", b);
-                        }
-                        println!("");
                         let buffer = match std::str::from_utf8(&item.1.as_slice()) {
                             Ok(v) => v,
                             Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
                         };
                         if e == "lua" {
+                            handle_script(buffer);
                             log(format!("loading  script {}", buffer.to_string()));
-
-                            let mutex = crate::lua_master.lock();
-                            match mutex.get() {
-                                Some(d) => d.load(&buffer.to_string()),
-                                None => log("Lua core not loaded!".to_string()),
-                            }
                         } else {
                             log(format!("skipping file type {}", file_name));
                         }
@@ -81,6 +70,15 @@ pub fn init(device: &Device) {
 }
 
 fn asset_sort() {}
+
+fn handle_script(buffer: &str) {
+    let mutex = crate::lua_master.lock();
+    match mutex.get() {
+        Some(d) => d.load(&buffer.to_string()),
+        None => log("Lua core not loaded!".to_string()),
+    }
+}
+
 pub fn walk_files(
     device: Option<&Device>,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
@@ -102,12 +100,8 @@ pub fn walk_files(
                 match entry.extension() {
                     Some(e) => {
                         let s = e.to_ascii_lowercase();
-                        let file_name = &entry.into_os_string().into_string().unwrap(); //.file_name().unwrap().to_str().unwrap().to_string();
-                                                                                        // let path = Path::new("assets")
-                                                                                        //     .join(file_name.to_owned())
-                                                                                        //     .to_str()
-                                                                                        //     .unwrap()
-                                                                                        //     .to_string();
+                        let file_name = &entry.into_os_string().into_string().unwrap();
+
                         let path = file_name.to_owned();
                         if s == "glb" || s == "gltf" {
                             if device.is_some() {
@@ -129,15 +123,6 @@ pub fn walk_files(
                         log(format!("invalid asset {:?}", entry));
                     }
                 }
-                // let f = File::open(&entry).expect("Failed opening an entity file");
-                // let schema: PreEntSchema = match from_reader(f) {
-                //     Ok(x) => x,
-                //     Err(e) => {
-                //         println!("Failed to apply entity RON schema, defaulting: {}", e);
-                //         //std::process::exit(1);
-                //         PreEntSchema::default()
-                //     }
-                // };
             }
         }
         Err(err) => {
@@ -161,26 +146,19 @@ pub fn walk_files(
                         if s == "lua" {
                             log(format!("loading  script {}", file_name));
 
-                            // let path = Path::new("scripts")
-                            //     .join(file_name.to_owned())
-                            //     .with_extension("lua")
-                            //     .to_str()
-                            //     .unwrap()
-                            //     .to_string();
-                            let path = file_name.to_owned();
-                            if false {
-                                //device.is_some()
-                                let mutex = crate::lua_master.lock();
-                                //log(format!("hooked {}", path));
+                            let input_path = Path::new("")
+                                .join(file_name.to_owned())
+                                .with_extension("lua");
 
-                                match mutex.get() {
-                                    Some(d) => d.load(&path),
-                                    None => log("Lua core not loaded!".to_string()),
-                                }
+                            // let name = crate::asset::get_file_name(input_path.to_owned());
+                            let st = fs::read_to_string(input_path).unwrap_or_default();
+
+                            println!("script item is {}", st);
+
+                            if device.is_some() {
+                                handle_script(st.as_str())
                             }
-                            sources.push(path);
-
-                            //crate::model::load(file_name, device);
+                            sources.push(file_name.to_owned());
                         } else {
                             log(format!("skipping file type {}", file_name));
                         }
@@ -203,11 +181,6 @@ pub fn walk_files(
 pub fn get_file_name(str: String) -> String {
     let path = Path::new(&str);
 
-    // let bits = str.split(".").collect::<Vec<_>>();
-    // match bits.get(0) {
-    //     Some(o) => o.to_string(),
-    //     None => str,
-    // }
     match path.file_stem() {
         Some(o) => match o.to_os_string().into_string() {
             Ok(n) => n,
@@ -216,14 +189,6 @@ pub fn get_file_name(str: String) -> String {
         None => str,
     }
 }
-// pub fn get_file_file_name(str: String) -> String {
-//     let s = get_file_name(str);
-//     let bits = s.split("/").collect::<Vec<_>>();
-//     match bits.get(1) {
-//         Some(o) => o.to_string(),
-//         None => s,
-//     }
-// }
 
 fn log(str: String) {
     crate::log::log(format!("📦assets::{}", str));
