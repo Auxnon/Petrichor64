@@ -562,9 +562,9 @@ fn main() {
     // )));
 
     // window.set_simple_fullscreen(true);
-    if false {
-        window.set_cursor_grab(true);
-    }
+    // if false {
+    // window.set_cursor_grab(true);
+    // }
 
     // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
@@ -606,24 +606,7 @@ fn main() {
                 Err(e) => eprintln!("{:?}", e),
             }
         }
-        //     }
-        //     Event::DeviceEvent { device_id, event } => match event {
-        //         DeviceEvent::MouseMotion { delta } => {
-        //             core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
-        //             core.global.mouse_active_pos.x %= 1.;
-        //             if core.global.mouse_active_pos.x < 0. {
-        //                 core.global.mouse_active_pos.x += 1.;
-        //             }
-        //             core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
-        //             let pi = std::f32::consts::PI / 8.;
-        //             if core.global.mouse_active_pos.y > 0.72 {
-        //                 core.global.mouse_active_pos.y = 0.72
-        //             } else if core.global.mouse_active_pos.y < 0.4 {
-        //                 core.global.mouse_active_pos.y = 0.4;
-        //             }
-        //         }
-        //         _ => {}
-        //     },
+
         //     Event::RedrawRequested(_) => {
         //         println!("redraw entered");
         //         core.update();
@@ -637,13 +620,5 @@ fn main() {
         //             Err(e) => eprintln!("{:?}", e),
         //         }
         //     }
-
-        //     Event::MainEventsCleared => {
-        //         // RedrawRequested will only trigger once, unless we manually request it.
-        //         window.request_redraw();
-        //     }
-        //     _ => {}
-        // }
-        // }
     });
 }

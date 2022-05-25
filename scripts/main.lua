@@ -8,8 +8,8 @@
 -- _spawn(0,0,0)
 function _main()
     _bg(0,1,1,1)
-    for i=0,2 do
-        _spawn(i,0,(i+1)/2.)
+    for i=0,10 do
+        _spawn(i+5,0,2)
     end
 end
 

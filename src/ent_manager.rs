@@ -75,6 +75,7 @@ impl EntManager {
     }
 
     pub fn create_from_lua(&mut self, lua: &LuaEnt) {
+        let id = lua.get_id();
         let ent = Ent::new(
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
             0.,
@@ -82,7 +83,7 @@ impl EntManager {
             0.,
             "chicken".to_string(),
             "plane".to_string(),
-            self.uniform_alignment,
+            self.uniform_alignment * (id + 1) as u32,
             true,
             None,
         );
@@ -98,6 +99,9 @@ impl EntManager {
         //         None
         //     }
         // }
+
+        // let e = self.entities.get(&id);
+        // println!("retrieved ent {} {}", id, e.unwrap().matrix);
         self.entities.get(&id)
     }
 
