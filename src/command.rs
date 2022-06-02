@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use glam::vec4;
 use mlua::{Error, Lua, Table};
 use parking_lot::RwLock;
+use std::sync::Mutex;
 
 use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
 
@@ -66,6 +67,7 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
                     // }
                     let mutex = crate::lua_master.lock();
                     mutex.get().unwrap().call_main();
+                    log("=================================================".to_string());
                     log("buldozed into this here code with a buncha stuff".to_string());
                 }
             }
@@ -74,7 +76,7 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
             crate::texture::save_atlas();
         }
         "$ugh" => {
-            //
+            // TODO ugh?
         }
         &_ => return false,
     }
@@ -98,133 +100,210 @@ pub fn init_lua_sys(
 
     lua_globals.set("_ents", lua_ctx.create_table()?);
 
-    res(lua_globals.set(
-        "_time",
-        lua_ctx.create_function(|_, (): ()| Ok(17)).unwrap(),
-    ));
+    #[macro_export]
+    macro_rules! lua {
+        ($name:expr,$closure:expr,$desc:expr) => {
+            // println!("hiya sailor, it's {}", $name);
+            res(lua_globals.set($name, lua_ctx.create_function($closure).unwrap()));
 
-    res(lua_globals.set(
+            // fn $func_name() {
+            //     // The `stringify!` macro converts an `ident` into a string.
+            //     println!("You called {:?}()",
+            //              stringify!($func_name));
+            // }
+        };
+    }
+
+    lua!("_time", |_, (): ()| Ok(17), "Get the time.");
+
+    lua!(
         "_point",
-        lua_ctx
-            .create_function(|_, (): ()| {
-                // let mut mutex = crate::ent_master.lock();
-                // let entity_manager = mutex.get_mut().unwrap();
-                // if entity_manager.entities.len() > 0 {
-                //     let p = entity_manager.entities[0].pos;
-                //     Ok((p.x, p.y, p.z))
-                // } else {
-                Ok((0., 0., 0.))
-                // }
-            })
-            .unwrap(),
-    ));
+        |_, (): ()| {
+            // let mut mutex = crate::ent_master.lock();
+            // let entity_manager = mutex.get_mut().unwrap();
+            // if entity_manager.entities.len() > 0 {
+            //     let p = entity_manager.entities[0].pos;
+            //     Ok((p.x, p.y, p.z))
+            // } else {
+            Ok((0., 0., 0.))
+            // }
+        },
+        "Get a point"
+    );
+
+    lua!(
+        "_print",
+        |_, (s): (String)| {
+            log(s.clone());
+            println!(">lua dump:: {}", s);
+            Ok(1)
+        },
+        "Prints string to console"
+    );
+
+    lua!(
+        "_push",
+        move |lua, (n): (f64)| {
+            // let ents = lua.globals().get::<&str, Table>("_ents")?;
+            // ents.macro_export
+
+            let mut guard = crate::ent_master.write();
+            let eman = guard.get_mut().unwrap();
+
+            let ents = &eman.ent_table;
+            for wrapped_ent in &mut ents.iter() {
+                let mut eg = wrapped_ent.lock().unwrap();
+                eg.x += n;
+            }
+
+            // match ents.get::<f64, LuaEnt>(n) {
+            //     Ok(mut e) => {
+            //         e.x += 10.;
+            //         ents.set(n, e);
+            //     }
+            //     _ => {}
+            // }
+
+            Ok(())
+        },
+        "Pushes entities"
+    );
 
     let switch = Arc::clone(&switch_board);
-    res(lua_globals.set(
+    lua!(
         "_bg",
-        lua_ctx
-            .create_function(move |_, (x, y, z, w): (f32, f32, f32, f32)| {
-                let mut mutex = &mut switch.write();
-                mutex.background = vec4(x, y, z, w);
-                // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
-                Ok(1)
-            })
-            .unwrap(),
-    ));
+        move |_, (x, y, z, w): (f32, f32, f32, f32)| {
+            let mut mutex = &mut switch.write();
+            mutex.background = vec4(x, y, z, w);
+            // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+            Ok(1)
+        },
+        "Get background color"
+    );
+
+    // let switch = Arc::clone(&switch_board);
+    // res(lua_globals.set(
+    //     "_bg",
+    //     lua_ctx
+    //         .create_function(move |_, (x, y, z, w): (f32, f32, f32, f32)| {
+    //             let mut mutex = &mut switch.write();
+    //             mutex.background = vec4(x, y, z, w);
+    //             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+    //             Ok(1)
+    //         })
+    //         .unwrap(),
+    // ));
 
     let switch = Arc::clone(&switch_board);
-    res(lua_globals.set(
+    lua!(
         "_tile",
-        lua_ctx
-            .create_function(move |_, (t, x, y, z): (f32, f32, f32, f32)| {
-                // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-                let mut mutex = &mut switch.write();
-                mutex.tile_queue.push(vec4(t, x, y, z));
-                // let mut mutex = &mut switch_board.write();
-                // mutex.background = vec4(x, y, z, w);
-                // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
-                Ok(1)
-            })
-            .unwrap(),
-    ));
-    let switch = Arc::clone(&switch_board);
-    res(lua_globals.set(
-        "_tile_done",
-        lua_ctx
-            .create_function(move |_, (): ()| {
-                let mut mutex = &mut switch.write();
-                mutex.dirty = true;
-                Ok(1)
-            })
-            .unwrap(),
-    ));
-    let switch = Arc::clone(&switch_board);
-    res(lua_globals.set(
-        "_prt",
-        lua_ctx
-            .create_function(
-                move |_,
-                      (tex, n, x, y, z, vx, vy, vz): (
-                    String,
-                    f32,
-                    f32,
-                    f32,
-                    f32,
-                    f32,
-                    f32,
-                    f32,
-                )| {
-                    let mut mutex = &mut switch.write();
-                    mutex.dirty = true;
-                    Ok(1)
-                },
-            )
-            .unwrap(),
-    ));
-    let switch = Arc::clone(&switch_board);
+        move |_, (t, x, y, z): (f32, f32, f32, f32)| {
+            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+            let mut mutex = &mut switch.write();
+            mutex.tile_queue.push(vec4(t, x, y, z));
+            // let mut mutex = &mut switch_board.write();
+            // mutex.background = vec4(x, y, z, w);
+            // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+            Ok(1)
+        },
+        "Set a tile within 3d space."
+    );
 
-    res(lua_globals.set(
+    // let switch = Arc::clone(&switch_board);
+    // res(lua_globals.set(
+    //     "_tile_done",
+    //     lua_ctx
+    //         .create_function(move |_, (): ()| {
+    //             let mut mutex = &mut switch.write();
+    //             mutex.dirty = true;
+    //             Ok(1)
+    //         })
+    //         .unwrap(),
+    // ));
+
+    // let switch = Arc::clone(&switch_board);
+    // res(lua_globals.set(
+    //     "_prt",
+    //     lua_ctx
+    //         .create_function(
+    //             move |_,
+    //                   (tex, n, x, y, z, vx, vy, vz): (
+    //                 String,
+    //                 f32,
+    //                 f32,
+    //                 f32,
+    //                 f32,
+    //                 f32,
+    //                 f32,
+    //                 f32,
+    //             )| {
+    //                 let mut mutex = &mut switch.write();
+    //                 mutex.dirty = true;
+    //                 Ok(1)
+    //             },
+    //         )
+    //         .unwrap(),
+    // ));
+    // let switch = Arc::clone(&switch_board);
+
+    // MARK
+    lua!(
         "_spawn",
-        lua_ctx
-            .create_function(move |lua, (x, y, z): (f64, f64, f64)| {
-                // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
-                let ents = lua.globals().get::<&str, Table>("_ents")?;
-                let index = ents.len()? + 1;
+        move |lua, (x, y, z): (f64, f64, f64)| {
+            // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
+            // let ents = lua.globals().get::<&str, Table>("_ents")?;
+            let mut guard = crate::ent_master.write();
+            let eman = guard.get_mut().unwrap();
+            let index = eman.ent_table.len();
 
-                let ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
-                println!(".1");
+            let ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
+            // println!(".1");
 
-                // match crate::ent_master.write() {
-                //     Some(mut guard) => {
-                //
-                //     }
-                //     _ => {}
-                // }
+            // Rc<RefCell
+            let wrapped = Arc::new(Mutex::new(ent));
 
-                let mut guard = crate::ent_master.write();
-                let eman = guard.get_mut().unwrap();
+            let outputEnt = Arc::clone(&wrapped);
 
-                eman.create_from_lua(&ent);
+            eman.create_from_lua(wrapped);
+            // ents.g
+            // ents.set(index, ent)?;
+            // lua.create_registry_value(t)
+            // println!("we made an ent");
+            // ents.get
+            // lua.
+            // let mut e2 = ents.get::<i64, LuaEnt>(index)?;
+            // e2.x += 10.;
+            // ents.set(index, e2);
+            // Ok(ents.get::<i64, LuaEnt>(index)?)
+            Ok(outputEnt)
+        },
+        "Spawn an entity"
+    );
 
-                ents.set(index, ent);
-                println!("we made an ent");
+    lua!(
+        "_add",
+        move |lua, (e): (LuaEnt)| {
+            let ents = lua.globals().get::<&str, Table>("_ents")?;
+            ents.set(e.get_id(), e);
+            Ok(())
+        },
+        "Add an entity to our global render table"
+    );
 
-                // let mut guard =
+    /**
+     * // YELLOW
+     *  use to store an entity between context, for moving entities between games maybe?
+     *  lua.create_registry_value(t)
+     */
 
-                Ok(index)
-            })
-            .unwrap(),
-    ));
-
-    res(lua_globals.set(
+    lua!(
         "_self_destruct",
-        lua_ctx
-            .create_function(|_, (): ()| {
-                Ok(())
-                //
-            })
-            .unwrap(),
-    ));
+        |_, (): ()| {
+            Ok(())
+            //
+        },
+        "I guess blow up the lua core?"
+    );
 
     Ok(())
 }
@@ -232,6 +311,7 @@ fn log(str: String) {
     crate::log::log(format!("com::{}", str));
     println!("{}", str);
 }
+
 fn res(r: Result<(), Error>) {
     let st = "🔴lua::problem setting default lua functions";
     println!("{}", st);

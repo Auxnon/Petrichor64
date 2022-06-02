@@ -153,7 +153,7 @@ pub fn walk_files(
                             // let name = crate::asset::get_file_name(input_path.to_owned());
                             let st = fs::read_to_string(input_path).unwrap_or_default();
 
-                            println!("script item is {}", st);
+                            // println!("script item is {}", st);
 
                             if device.is_some() {
                                 handle_script(st.as_str())

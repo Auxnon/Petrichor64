@@ -12,10 +12,12 @@ pub struct LuaEnt {
     pub vel_y: f64,
     pub vel_z: f64,
     id: f64, // pub uuid: String,
+    ent: Option<Ent>,
 }
 
 impl UserData for LuaEnt {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        // methods.add_method_mut(name, method)
         methods.add_method_mut("pos", |_, this, p: (f64, f64, f64)| {
             this.x = p.0;
             this.y = p.1;
@@ -23,6 +25,13 @@ impl UserData for LuaEnt {
 
             Ok(())
         });
+        methods.add_meta_method_mut("fix", |lua, this, ()| Ok(()));
+        // methods.add_method("add", |lu, this, ()| {
+        //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
+        //     ents.set(this.get_id(), this);
+        //     // this.get_id();
+        //     Ok(())
+        // });
         methods.add_method("get_y", |_, this, ()| Ok(this.y));
     }
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
@@ -53,6 +62,13 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("id", |_, this| Ok(this.id));
     }
 }
+// impl serde::Serialize for LuaEnt {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer {
+//         todo!()
+//     }
+// }
 impl LuaEnt {
     pub fn empty() -> LuaEnt {
         LuaEnt {
@@ -66,6 +82,7 @@ impl LuaEnt {
             vel_y: 0.,
             vel_z: 0.,
             id: -1.,
+            ent: None,
         }
     }
 
@@ -81,6 +98,7 @@ impl LuaEnt {
             vel_x: 0.,
             vel_y: 0.,
             vel_z: 0.,
+            ent: None,
         }
     }
     pub fn get_id(&self) -> i64 {
@@ -111,6 +129,7 @@ impl Clone for LuaEnt {
             rot_y: self.rot_y,
             rot_z: self.rot_z,
             id: self.id,
+            ent: None,
         }
     }
 }

@@ -132,9 +132,14 @@ pub fn locate(source: RgbaImage) -> Vec4 {
 pub fn load_img(str: &String) -> Result<DynamicImage, image::ImageError> {
     let text = Path::new("assets").join(str).to_str().unwrap().to_string();
     //Path::new(".").join("entities");
-    log(text.clone());
+    load_img_nopath(&text)
+}
+pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> {
+    log(str.clone());
 
-    let img = image::open(text);
+    println!("opening asset {}", str);
+
+    let img = image::open(str);
 
     // The dimensions method returns the images width and height.
     //println!("dimensions height {:?}", img.height());
@@ -204,7 +209,7 @@ pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>) {
 pub fn load_tex(str: &String) {
     log(format!("apply texture {}", str));
 
-    match load_img(str) {
+    match load_img_nopath(str) {
         Ok(img) => sort_image(str, img),
         Err(err) => {
             // dictionary

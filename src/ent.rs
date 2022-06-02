@@ -19,6 +19,7 @@ pub struct EntityUniforms {
     pub effects: [u32; 4],
 }
 
+#[derive(Clone)]
 pub struct Ent {
     pub matrix: Mat4,
     pub rotation: f32,

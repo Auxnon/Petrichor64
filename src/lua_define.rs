@@ -82,27 +82,40 @@ impl LuaCore {
                             lua_load(&lua_ctx, &s2);
                         }
                     } else {
-                        match match lua_ctx.load(&s1).eval::<String>() {
-                            //res.unwrap().call::<String, String>(s2.to_owned()) {
-                            Ok(o) => channel.send((Some(o), None)),
-                            Err(er) => channel.send((Some(er.to_string()), None)),
-                        } {
-                            Ok(s) => {}
-                            Err(e) => {
-                                log(format!("lua server communication error occured -> {}", e))
+                        if s1 == "_main()" {
+                            // println!("sup boss we have {}", s1);
+                            match lua_ctx.load(&s1).call::<(), ()>(()) {
+                                Ok(o) => channel.send((None, None)),
+                                Err(er) => channel.send((Some(er.to_string()), None)),
+                            };
+                        } else {
+                            // TODO load's chunk should call set_name to "main" etc, for better error handling
+                            match match lua_ctx.load(&s1).eval::<String>() {
+                                //res.unwrap().call::<String, String>(s2.to_owned()) {
+                                Ok(o) => channel.send((Some(o), None)),
+                                Err(er) => channel.send((Some(er.to_string()), None)),
+                            } {
+                                Ok(s) => {}
+                                Err(e) => {
+                                    log(format!("lua server communication error occured -> {}", e))
+                                }
                             }
                         }
                     }
                 }
+
+                /*  TODO is this still needed?
                 match globals.get::<&str, mlua::Table>("_ents") {
                     Ok(table) => {
                         let ent_results = table.sequence_values::<LuaEnt>();
+
                         let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
-                        println!("cleary");
+
                         match ent_master.try_write_for(std::time::Duration::from_millis(100)) {
                             Some(mut ent_guard) => {
                                 match ent_guard.get_mut() {
                                     Some(entman) => {
+                                        println!("ent_man adjusted {}", ent_array.len());
                                         entman.ent_table.clear();
                                         entman.ent_table.append(&mut ent_array);
                                     }
@@ -112,14 +125,12 @@ impl LuaCore {
                             }
                             _ => {}
                         }
-
-                        // ent_table.lock().(ent_array);
-                        println!("cleary2");
                     }
                     Err(er) => {
                         log("missing highest level entities table".to_string());
                     }
                 }
+                */
 
                 //thread::sleep(std::time::Duration::from_millis(10));
                 //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
@@ -139,7 +150,14 @@ impl LuaCore {
     }
 
     pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
-        match self.inject(func, &"".to_string(), Some(ent.clone())).1 {
+        let r = self.inject(func, &"".to_string(), Some(ent.clone()));
+        match r.0 {
+            Some(message) => {
+                println!("lua_call::{}", message);
+            }
+            _ => {}
+        }
+        match r.1 {
             Some(ento) => {
                 // println!("ye");
                 ento
@@ -168,14 +186,14 @@ impl LuaCore {
         let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
         let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
-        println!("xxx {} :: {}", func, path);
+        // println!("xxx {} :: {}", func, path);
         guard.send((func.clone(), path.clone(), ent, tx));
 
         //MutexGuard::unlock_fair(guard);
         match rx.recv() {
             Ok(lua_out) => lua_out,
             Err(e) => {
-                // println!("ye {}", e);
+                println!("lua_inject::{}", e);
                 (None, None)
             }
         }
@@ -256,7 +274,7 @@ impl LuaCore {
     // }
 }
 fn lua_load(lua: &Lua, st: &String) {
-    log(format!("got script :\n{}", st));
+    // log(format!("got script :\n{}", st));
     let chunk = lua.load(&st);
     // chunk.eval()
     if let Err(s) = chunk.eval::<()>() {

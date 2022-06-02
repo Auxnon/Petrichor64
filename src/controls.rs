@@ -52,19 +52,36 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         //     //
         // }
     }
+
+    // DeviceEvent::MouseMotion { delta } => {
+    //             core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
+    //             core.global.mouse_active_pos.x %= 1.;
+    //             if core.global.mouse_active_pos.x < 0. {
+    //                 core.global.mouse_active_pos.x += 1.;
+    //             }
+    //             core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
+    //             let pi = std::f32::consts::PI / 8.;
+    //             if core.global.mouse_active_pos.y > 0.72 {
+    //                 core.global.mouse_active_pos.y = 0.72
+    //             } else if core.global.mouse_active_pos.y < 0.4 {
+    //                 core.global.mouse_active_pos.y = 0.4;
+    //             }
+    //         }
+    //         _ => {}
     let diff = core.input_helper.mouse_diff();
     // core.global.mouse_delta.x = diff.0;
     // core.global.mouse_delta.y = diff.1;
-    // core.global.mouse_active_pos.x += diff.0 / 10000.;
-    // core.global.mouse_active_pos.y += diff.1 / 10000.;
+    // println!("mouse {} {}", diff.0, diff.1);
+    // core.global.mouse_active_pos.x += diff.0 / 100.;
+    // core.global.mouse_active_pos.y += diff.1 / 100.;
 
-    // match core.input_helper.mouse() {
-    //     Some((x, y)) => {
-    //         // core.global.mouse_active_pos.x = x / core.size.width as f32;
-    //         core.global.mouse_active_pos.y = y / core.size.height as f32;
-    //     }
-    //     _ => {}
-    // }
+    match core.input_helper.mouse() {
+        Some((x, y)) => {
+            core.global.mouse_active_pos.x = x / core.size.width as f32;
+            core.global.mouse_active_pos.y = y / core.size.height as f32;
+        }
+        _ => {}
+    }
 
     if core.input_helper.mouse_held(0) {}
     if core.input_helper.mouse_pressed(0) {

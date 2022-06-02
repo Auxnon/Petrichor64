@@ -44,7 +44,7 @@ mod texture;
 mod tile;
 mod zip_pal;
 
-const MAX_ENTS: u64 = 100;
+const MAX_ENTS: u64 = 10000;
 /** All centralized engines and factories to be passed around in the main thread */
 pub struct Core {
     surface: wgpu::Surface,

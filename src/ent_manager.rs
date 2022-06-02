@@ -1,11 +1,16 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use glam::vec3;
 use lazy_static::lazy_static;
 
+use mlua::{UserData, UserDataMethods};
 use nalgebra::LU;
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
 
 use crate::{ent::Ent, lua_ent::LuaEnt};
 // use serde::Deserialize;
@@ -20,7 +25,7 @@ pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
     pub entities: HashMap<i64, Ent>,
     // pub create: Vec<LuaEnt>,
-    pub ent_table: Vec<crate::lua_ent::LuaEnt>,
+    pub ent_table: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
 }
 impl EntManager {
@@ -73,8 +78,13 @@ impl EntManager {
     pub fn get_uuid() -> String {
         uuid::Uuid::new_v4().to_simple().to_string()
     }
+    // pub fn get_ents(self){
+    //     self.entities.update()
+    // }
 
-    pub fn create_from_lua(&mut self, lua: &LuaEnt) {
+    pub fn create_from_lua(&mut self, wrapped_lua: Arc<Mutex<LuaEnt>>) {
+        let lua = wrapped_lua.lock().unwrap();
+        // let lua=guard.
         let id = lua.get_id();
         let ent = Ent::new(
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
@@ -87,21 +97,18 @@ impl EntManager {
             true,
             None,
         );
+
         self.entities.insert(lua.get_id(), ent);
+        drop(lua);
+        self.ent_table.push(wrapped_lua);
     }
 
     pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Ent> {
         let id = lua.get_id();
-        // match self.entities.get(&id) {
-        //     Some(e) => Some(e),
-        //     None => {
-        //         // self.create_from_lua(lua);
-        //         None
-        //     }
-        // }
 
-        // let e = self.entities.get(&id);
-        // println!("retrieved ent {} {}", id, e.unwrap().matrix);
+        self.entities.get(&id)
+    }
+    pub fn get_from_id(&self, id: i64) -> Option<&Ent> {
         self.entities.get(&id)
     }
 
@@ -243,3 +250,19 @@ impl EntManager {
 // fn log(str: String) {
 //     crate::log(format!("ent_manager::", str));
 // }
+struct LuaEntMan {}
+impl UserData for LuaEntMan {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_meta_method_mut("__index", |lua, this, ()| {
+            //test
+            Ok(())
+        });
+        // methods.add_method("add", |lu, this, ()| {
+        //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
+        //     ents.set(this.get_id(), this);
+        //     // this.get_id();
+        //     Ok(())
+        // });
+        // methods.add_method("get_y", |_, this, ()| Ok(this.y));
+    }
+}

@@ -61,7 +61,7 @@ pub fn generate_matrix(
         Vec3::Z,
     );
 
-    //let mx_view = Mat4::from_rotation_z(r) * Mat4::from_rotation_y(azimuth);
+    // let mx_view = Mat4::from_rotation_z(r) * Mat4::from_rotation_y(azimuth);
 
     // let mx_view = Mat4::look_at_rh(
     //     //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -89,6 +89,28 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
 
     let entity_manager = mutex.get_mut().unwrap();
     let ents = &entity_manager.ent_table;
+
+    // MARK PRE
+    let lua_ent_array = ents
+        .iter()
+        .filter_map(|a| match a.lock() {
+            Ok(g) => Some(g.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let mut ent_hash = std::collections::HashMap::new();
+    for (i, entity) in &mut lua_ent_array.iter().enumerate() {
+        ent_hash.insert(
+            i,
+            match entity_manager.get_from_id(entity.get_id()).clone() {
+                Some(o) => Some(o.clone()),
+                None => None,
+            },
+        );
+    }
+    drop(ents);
+    drop(entity_manager);
 
     let v = core.global.get_mut("value".to_string());
     *v += 0.002;
@@ -362,11 +384,11 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         bytemuck::bytes_of(&data),
     );
 
-    //DEV
-    for (i, entity) in &mut ents.iter().enumerate() {
-        match entity_manager.get_from_lua(entity) {
+    // MARK 1
+    for entity in &mut lua_ent_array.iter() {
+        match ent_hash.get(&(entity.get_id() as usize)).unwrap() {
             Some(meta) => {
-                let data = meta.get_uniform(entity);
+                let data = meta.get_uniform(&entity.clone());
                 core.queue.write_buffer(
                     &core.entity_uniform_buf,
                     meta.uniform_offset as wgpu::BufferAddress,
@@ -377,6 +399,25 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             _ => {}
         }
     }
+
+    // RED
+
+    // for (i, wrapped) in &mut ents.iter().enumerate() {
+    //     let entity = wrapped.try_lock().unwrap();
+    //     match entity_manager.get_from_id(entity.get_id()) {
+    //         Some(meta) => {
+    //             println!("here");
+    //             let data = meta.get_uniform(&entity);
+    //             core.queue.write_buffer(
+    //                 &core.entity_uniform_buf,
+    //                 meta.uniform_offset as wgpu::BufferAddress,
+    //                 bytemuck::bytes_of(&data),
+    //             );
+    //             //meta.run();
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     let mut encoder = core
         .device
@@ -426,12 +467,13 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
                 render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
             }
 
-            // DEV
-            for (i, entity) in ents.iter().enumerate() {
-                match entity_manager.get_from_lua(entity) {
+            // MARK 2
+            for entity in &mut lua_ent_array.iter() {
+                match ent_hash.get(&(entity.get_id() as usize)).unwrap() {
                     Some(e) => {
                         let model = e.model.get().unwrap();
-                        println!("ents are working???? {} {}", i, e.matrix);
+
+                        // println!("ents are working???? {}", model.data.is_some());
                         render_pass.set_bind_group(1, &core.entity_bind_group, &[e.uniform_offset]);
                         render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
                         render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
@@ -440,6 +482,21 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
                     _ => {}
                 }
             }
+            // YELLOW
+            // for (i, wrapped) in ents.iter().enumerate() {
+            //     let entity = wrapped.try_lock().unwrap();
+            //     match entity_manager.get_from_id(entity.get_id()) {
+            //         Some(e) => {
+            //             let model = e.model.get().unwrap();
+            //             println!("ents are working???? {} {}", i, e.matrix);
+            //             render_pass.set_bind_group(1, &core.entity_bind_group, &[e.uniform_offset]);
+            //             render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+            //             render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+            //             render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            //         }
+            //         _ => {}
+            //     }
+            // }
         }
 
         //gui space
