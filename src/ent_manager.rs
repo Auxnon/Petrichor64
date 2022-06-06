@@ -86,12 +86,16 @@ impl EntManager {
         let lua = wrapped_lua.lock().unwrap();
         // let lua=guard.
         let id = lua.get_id();
+        let mut asset = lua.get_asset();
+        if asset.len() == 0 {
+            asset = "chicken".to_string();
+        }
         let ent = Ent::new(
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
             0.,
             1.,
             0.,
-            "chicken".to_string(),
+            asset,
             "plane".to_string(),
             self.uniform_alignment * (id + 1) as u32,
             true,

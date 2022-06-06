@@ -12,6 +12,7 @@ pub struct LuaEnt {
     pub vel_y: f64,
     pub vel_z: f64,
     id: f64, // pub uuid: String,
+    asset: String,
     ent: Option<Ent>,
 }
 
@@ -83,10 +84,11 @@ impl LuaEnt {
             vel_z: 0.,
             id: -1.,
             ent: None,
+            asset: String::new(),
         }
     }
 
-    pub fn new(id: f64, x: f64, y: f64, z: f64) -> LuaEnt {
+    pub fn new(id: f64, asset: String, x: f64, y: f64, z: f64) -> LuaEnt {
         LuaEnt {
             id,
             x,
@@ -99,11 +101,15 @@ impl LuaEnt {
             vel_y: 0.,
             vel_z: 0.,
             ent: None,
+            asset,
         }
     }
     pub fn get_id(&self) -> i64 {
         // https://stackoverflow.com/questions/39638363/how-can-i-use-a-hashmap-with-f64-as-key-in-rust
         self.id as i64
+    }
+    pub fn get_asset(&self) -> String {
+        self.asset.clone()
     }
 }
 
@@ -130,6 +136,7 @@ impl Clone for LuaEnt {
             rot_z: self.rot_z,
             id: self.id,
             ent: None,
+            asset: String::new(),
         }
     }
 }
