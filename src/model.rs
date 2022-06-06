@@ -33,6 +33,9 @@ impl Vertex {
         self._tex[0] = (self._tex[0] * uv.z) + uv.x;
         self._tex[1] = (self._tex[1] * uv.w) + uv.y;
     }
+    pub fn to_string(self) -> String {
+        format!("({},{},{})", self._pos[0], self._pos[1], self._pos[2])
+    }
 }
 
 fn vertex(pos: [i16; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
@@ -185,7 +188,7 @@ pub fn init(device: &Device) {
     };
     plane.get_or_init(|| planeModel);
 
-    let (cube_vertex_data, cube_index_data) = create_cube(8);
+    let (cube_vertex_data, cube_index_data) = create_cube(1); // TODO 16
     let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Cubes Vertex Buffer"),
         contents: bytemuck::cast_slice(&cube_vertex_data),
