@@ -591,10 +591,14 @@ fn main() {
 
     std::mem::drop(ent_guard);
 
+    unsafe {
+        tracy::startup_tracy();
+    }
+
     event_loop.run(move |event, _, control_flow| {
         if core.input_helper.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
-
+            frame!("START");
             core.update();
             match core.render() {
                 Ok(_) => {}
@@ -605,6 +609,8 @@ fn main() {
                 // All other errors (Outdated, Timeout) should be resolved by the next frame
                 Err(e) => eprintln!("{:?}", e),
             }
+            frame!("END");
+            frame!();
         }
 
         //     Event::RedrawRequested(_) => {
@@ -621,4 +627,7 @@ fn main() {
         //         }
         //     }
     });
+    unsafe {
+        tracy::shutdown_tracy();
+    }
 }

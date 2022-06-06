@@ -4,8 +4,7 @@ use std::{
     ops::{Div, DivAssign, Mul},
     slice::SliceIndex,
 };
-
-use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
+use tracy::frame;
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
@@ -74,23 +73,27 @@ pub fn generate_matrix(
 }
 
 pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
+    frame!("Render");
     let output = core.surface.get_current_texture()?;
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
+    // TODO is this expensive? only sometimes?
     core.gui.render(
         &core.device,
         &core.queue,
         core.global.get("value2".to_string()),
     );
+    frame!("rendered gui texture");
 
-    let mut mutex = crate::ent_master.write();
+    let mut mutex = crate::ent_master.read();
 
-    let entity_manager = mutex.get_mut().unwrap();
+    let entity_manager = mutex.get().unwrap();
     let ents = &entity_manager.ent_table;
 
     // MARK PRE
+    frame!("ent build::start");
     let lua_ent_array = ents
         .iter()
         .filter_map(|a| match a.lock() {
@@ -111,6 +114,8 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     }
     drop(ents);
     drop(entity_manager);
+
+    frame!("ent build::end");
 
     let v = core.global.get_mut("value".to_string());
     *v += 0.002;
@@ -365,7 +370,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     core.queue
         .write_buffer(&core.uniform_buf, 64, bytemuck::cast_slice(mx_persp_ref));
 
-    //TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
+    // TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
     core.queue
         .write_buffer(&core.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
 
@@ -377,7 +382,6 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         effects: [0, 0, 0, 0],
     };
 
-    //println!("model {} pos {} {}", i, entity.tex.x, entity.tex.y);
     core.queue.write_buffer(
         &core.entity_uniform_buf,
         0 as wgpu::BufferAddress,
@@ -507,27 +511,22 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.draw(0..4, 0..4);
+            frame!("render pass");
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
             //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
-            //}
         }
-
         //render_pass.draw(0..3, 0..1);
         //render_pass.draw_indexed(0..core.index_count as u32, 0, 0..1);
     }
     encoder.pop_debug_group();
-
-    // queue.write_buffer(
-    //     &self.entity_uniform_buf,
-    //     entity.uniform_offset as wgpu::BufferAddress,
-    //     bytemuck::bytes_of(&data),
-    // );
+    frame!("pop_debug_group");
 
     core.queue.submit(iter::once(encoder.finish()));
+    frame!("encoder.finish()");
     output.present();
 
-    // entity_manager.check_create();
+    frame!("END RENDER");
 
     Ok(())
 }

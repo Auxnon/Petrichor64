@@ -33,3 +33,9 @@ uuid = {version="0.8.2",features = ["serde", "v4"]}
 zip="0.6.0"
 spin_sleep = "1.1.1"
 clipboard = "0.5.0"
+
+[dependencies.tracy]
+package = "tracy_full"
+version = "1.1.2"
+default-features = false
+features = ["enable","system-tracing", "context-switch-tracing", "sampling", "code-transfer", "broadcast","wgpu"]
