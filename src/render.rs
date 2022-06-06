@@ -1,3 +1,7 @@
+use crate::Arc;
+use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
+use itertools::Itertools;
+use once_cell::sync::OnceCell;
 use std::{
     f32::consts::PI,
     iter,
@@ -8,6 +12,7 @@ use tracy::frame;
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
+    model::Model,
     Core,
 };
 
@@ -102,16 +107,19 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         })
         .collect::<Vec<_>>();
 
-    let mut ent_hash = std::collections::HashMap::new();
-    for (i, entity) in &mut lua_ent_array.iter().enumerate() {
-        ent_hash.insert(
-            i,
-            match entity_manager.get_from_id(entity.get_id()).clone() {
-                Some(o) => Some(o.clone()),
-                None => None,
-            },
-        );
+    let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>, EntityUniforms)> = vec![];
+    for entity in &mut lua_ent_array.iter() {
+        match entity_manager.get_from_id(entity.get_id()).clone() {
+            Some(o) => {
+                let model = o.model.clone();
+                let data = o.get_uniform(&entity.clone());
+                let e = o.clone();
+                ent_array.push((e, model, data));
+            }
+            _ => {}
+        }
     }
+
     drop(ents);
     drop(entity_manager);
 
@@ -130,231 +138,8 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         core.global.mouse_active_pos,
     );
 
-    if true {
-        //let trans = Mat4::from_translation(core.camera_pos);
-        //let mm = Mat4::from_translation(core.camera_pos) * Mat4::IDENTITY;
-        //mx_model
-        let tran = Mat4::from_translation(core.global.camera_pos);
-        // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
-        //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
-        //let inv = (mx_persp.inverse() * Mat4::IDENTITY) * mx_view.inverse();
+    crate::ray::trace(core, mx_persp, mx_view);
 
-        let inv = (mx_persp * mx_view).inverse();
-        //let viewport = vec4(0., 0., core.size.width as f32, core.size.height as f32);
-        //let screen = vec3(core.mouse.0, core.mouse.1, 20.);
-        // let mut pp = vec3(screen.x - viewport.x, viewport.w - screen.y - 1., screen.z);
-        // pp.y -= viewport.y;
-        // let out = vec3(
-        //     (2. * pp.x) / viewport.z - 1.,
-        //     (2. * pp.y) / viewport.w - 1.,
-        //     2. * pp.z - 1.,
-        // );
-
-        //         float pt_x = (point.x / screenSize.x) * 2.f - 1.f;
-        // float pt_y = -(point.y / screenSize.y) * 2.f + 1.f;
-
-        //                       z value from 0.f to 1.f for d3d
-        // vec4 origin = math::mul(vec4(pt_x, pt_y, -1.f, 1.f), VPinv);
-        // origin.w = 1.0f / origin.w;
-        // origin.x *= origin.w;
-        // origin.y *= origin.w;
-        // origin.z *= origin.w;
-
-        // let screen = vec4(core.mouse.0 * 2. - 1., -core.mouse.1 * 2. + 1., -1., 1.);
-        // let mut origin = inv.mul_vec4(screen);
-        // origin.w = 1. / origin.w;
-        // origin.x *= origin.w;
-        // origin.y *= origin.w;
-        // origin.z *= origin.w;
-
-        // let cam_eye = vec4(
-        //     92. * (core.value * 2. * std::f32::consts::PI).cos(),
-        //     -128.,
-        //     82.0,
-        //     1.,
-        // );
-        // let cam_proj = (mx_persp).project_point3(core.camera_pos);
-        // println!("cam pos proj {}", cam_proj);
-
-        let cam_eye = vec4(
-            core.global.camera_pos.x,
-            core.global.camera_pos.y,
-            core.global.camera_pos.z,
-            1.,
-        );
-
-        let aspect = core.size.width as f32 / core.size.height as f32;
-        // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
-
-        //let cam_center = vec4(0., 0., 0., 1.);
-        let cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
-
-        let win_coord = vec3(
-            core.global.mouse_active_pos.x,
-            core.global.mouse_active_pos.y,
-            0.,
-        );
-
-        let near_coord = vec4(
-            2. * (win_coord.x) - 1.,
-            -2. * (win_coord.y) + 1.,
-            win_coord.z, //2. * win.z - 1.,
-            1.,
-        );
-        let far_coord = vec4(
-            2. * (win_coord.x) - 1.,
-            -2. * (win_coord.y) + 1.,
-            1., //2. * win.z - 1.,
-            1.,
-        );
-
-        //let n2 = persp2.unproject_point(&nalgebra::Point3::new(n.x, n.y, n.z));
-        //let f2 = persp2.unproject_point(&nalgebra::Point3::new(f.x, f.y, f.z));
-        // let dir2 = n2 - f2;
-        //persp2.unproject_point(p)
-        let FoV = 1.27323980963;
-
-        //far_coord.x *= FoV * FoV;
-        //far_coord.y *= FoV * FoV;
-        //inv.project_point3(other)
-        let near_unproj = inv.project_point3(near_coord.xyz());
-
-        // println!("{}", near_unproj);
-
-        let far_unproj = inv.project_point3(far_coord.xyz());
-        //let cam_unproj = inv.project_point3(core.camera_pos);
-
-        let dir = (near_unproj - far_unproj).normalize();
-
-        // - (core.camera_pos + vec3(0., -10., 0.))
-        //dir = mx_view.inverse().project_point3(dir);
-        //     var d = Vector3.Dot(planeP, -planeN);
-        // var t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x) / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
-        // return rayP + t * rayD;
-
-        let out_point;
-
-        let PLANE_COLLIDE = true;
-
-        // Calculate distance of intersection point from r.origin.
-        // let denominator = planeP.dot(dir); // Vector3.Dot(p.Normal, ray.Direction);
-        // let numerator = planeN.dot(near_unproj) + 4.; //+ planeN//Vector3.Dot(p.Normal, ray.Position) + p.D;
-        // let t = -(numerator / denominator);
-
-        // Calculate the picked position on the y = 0 plane.
-        // out_point = near_unproj + dir * t;
-        // println!("near_unproj {}", near_unproj);
-        if PLANE_COLLIDE {
-            // let planeP = vec3(16., 0., 0.) - near_unproj;
-            let planeP = vec3(0., 0., -6.);
-            let planeN = vec3(0., 0., 1.);
-
-            let rayP = far_unproj; // + vec3(10., 0., 0.);
-            let rayD = dir;
-            let d = planeP.dot(-planeN);
-            let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)
-                / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
-
-            out_point = rayP + t * rayD;
-
-            // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
-        } else {
-            out_point = dir.mul(-16.); // + cam_center.xyz();
-        }
-        core.global.cursor_projected_pos = out_point;
-
-        //screen_unproj.normalize().mul(10.);
-        //result.div_assign(40.);
-
-        /*
-
-
-            let _2: N = na::convert(2.0);
-        let transform = (proj * model).try_inverse().unwrap_or_else(TMat4::zeros);
-        let pt = TVec4::new(
-            _2 * (win.x - viewport.x) / viewport.z - N::one(),
-            _2 * (win.y - viewport.y) / viewport.w - N::one(),
-            _2 * win.z - N::one(),
-            N::one(),
-        );
-
-        let result = transform * pt;
-        result.fixed_rows::<U3>(0) / result.w
-
-        */
-
-        /*
-
-
-                 var vector = new THREE.Vector3();
-                vector.set(( Control.screenX() / window.innerWidth ) * 2 - 1, - ( Control.screenY() / window.innerHeight ) * 2 + 1,0.05 );
-                vector.unproject(camera)
-                var dir = vector.sub( camera.position ).normalize();
-                var distance = - camera.position.z / dir.z;
-                var pos = camera.position.clone().add( dir.multiplyScalar( distance ) );
-
-                pointer.position.x =pos.x;
-                pointer.position.y =pos.y
-                Control.setVector(pointer.position);
-
-        multiply proj inverse by camera pos matrix?
-        unproject(camera) {
-                    return this.applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld);
-                }
-                */
-        //transform(out, out, invProjectionView);
-        // let v = vec4(
-        //     (core.mouse.0 * 2. - 1.),
-        //     (core.mouse.1 * 2. - 1.),
-        //     10.,
-        //     1.,
-        // );
-        //core.size.width as f32 *
-        //core.size.height as f32 *
-        //let p = inv.mul_vec4(v);
-        // let p = v * inv;
-
-        // let t = inv.mul_vec4(v);
-        // let t = (inv.transform_vector3(screen) - center).normalize();
-        // let distance = -center.z / t.z;
-
-        // let pos = center + (t.mul(distance));
-        // let ent_guard=ent_master.lock();
-        // ent_guard.get_mut(slice);
-
-        if core.global.get("value2".to_string()) >= 1. {
-            let typeOf = 0; // DEV ents.len() % 2 == 0;
-            core.global.set("value2".to_string(), 0.);
-
-            println!("  dir {} world space {}", dir, out_point);
-            // DEV TODO
-            // ents.push(Ent::new(
-            //     out_point,
-            //     0.,
-            //     if typeOf { 1. } else { 1. },
-            //     0.,
-            //     if typeOf {
-            //         "chicken".to_string()
-            //     } else {
-            //         "package".to_string()
-            //     },
-            //     if typeOf {
-            //         "plane".to_string()
-            //     } else {
-            //         "package".to_string()
-            //     },
-            //     (ents.len() as u64 * core.uniform_alignment) as u32,
-            //     typeOf,
-            //     None, //Some("walker".to_string()),
-            // ))
-        }
-
-        // ents[0].pos = out_point; // DEV
-    }
-
-    // let rot = cgmath::Matrix4::from_angle_y(a);
-    // //let mx_ref: = mx_total.as_ref();
-    // let mx_totals = rot * core.camera_matrix;
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
@@ -389,39 +174,46 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     );
 
     // MARK 1
-    for entity in &mut lua_ent_array.iter() {
-        match ent_hash.get(&(entity.get_id() as usize)).unwrap() {
-            Some(meta) => {
-                let data = meta.get_uniform(&entity.clone());
-                core.queue.write_buffer(
-                    &core.entity_uniform_buf,
-                    meta.uniform_offset as wgpu::BufferAddress,
-                    bytemuck::bytes_of(&data),
-                );
-                //meta.run();
-            }
-            _ => {}
+    // frame!("ent use1::start");
+    let neu = true;
+    if neu {
+        for (entity, _, data) in &mut ent_array.iter() {
+            core.queue.write_buffer(
+                &core.entity_uniform_buf,
+                entity.uniform_offset as wgpu::BufferAddress,
+                bytemuck::bytes_of(data),
+            );
         }
     }
 
-    // RED
+    // let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+    // let instance_data = ent_array
+    //     .iter()
+    //     .map(|(entity, _, data)| bytemuck::bytes_of(data))
+    //     .collect::<Vec<_>>();
+    if !neu {
+        let mut buf: Vec<u8> = vec![];
+        for (entity, _, data) in &mut ent_array.iter() {
+            // buf.extend_from_slice(bytemuck::bytes_of(data));
+            let int = entity.uniform_offset as usize;
+            // let d = bytemuck::bytes_of(data);
+            // let v: Vec<u8> = bytemuck::bytes_of(data).to_vec();
+            // if v.len() > 0 {
+            buf.append(&mut bytemuck::bytes_of(data).to_vec());
+            //int..int + v.len(),
+            // }
+            // core.queue.write_buffer(
+            //     &core.entity_uniform_buf,
+            //     entity.uniform_offset as wgpu::BufferAddress,
+            //     bytemuck::bytes_of(data),
+            // );
+        }
+        core.queue.write_buffer(&core.entity_uniform_buf, 0, &buf);
+    }
 
-    // for (i, wrapped) in &mut ents.iter().enumerate() {
-    //     let entity = wrapped.try_lock().unwrap();
-    //     match entity_manager.get_from_id(entity.get_id()) {
-    //         Some(meta) => {
-    //             println!("here");
-    //             let data = meta.get_uniform(&entity);
-    //             core.queue.write_buffer(
-    //                 &core.entity_uniform_buf,
-    //                 meta.uniform_offset as wgpu::BufferAddress,
-    //                 bytemuck::bytes_of(&data),
-    //             );
-    //             //meta.run();
-    //         }
-    //         _ => {}
-    //     }
-    // }
+    frame!("ent use1::end");
+
+    // RED
 
     let mut encoder = core
         .device
@@ -464,6 +256,11 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             render_pass.set_bind_group(0, &core.bind_group, &[]);
             let c = core.world.get_chunk_mut(0, 0, 0);
             if c.buffers.is_some() {
+                // println!(
+                //     "\nchunk drawing {:?} \n and {:?}",
+                //     c.ind_data,
+                //     c.vert_data.iter().map(|u| u.to_string()).join(", ")
+                // );
                 let b = c.buffers.as_ref().unwrap();
                 render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
                 render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
@@ -472,42 +269,20 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             }
 
             // MARK 2
-            for entity in &mut lua_ent_array.iter() {
-                match ent_hash.get(&(entity.get_id() as usize)).unwrap() {
-                    Some(e) => {
-                        let model = e.model.get().unwrap();
+            frame!("entity use2::start");
 
-                        // println!("ents are working???? {}", model.data.is_some());
-                        render_pass.set_bind_group(1, &core.entity_bind_group, &[e.uniform_offset]);
-                        render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-                        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                        render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
-                    }
-                    _ => {}
-                }
+            for (entity, model, _) in &mut ent_array.iter() {
+                let m = model.get().unwrap();
+                render_pass.set_bind_group(1, &core.entity_bind_group, &[entity.uniform_offset]);
+                render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
+                render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
+                render_pass.draw_indexed(0..m.index_count as u32, 0, 0..1);
             }
-            // YELLOW
-            // for (i, wrapped) in ents.iter().enumerate() {
-            //     let entity = wrapped.try_lock().unwrap();
-            //     match entity_manager.get_from_id(entity.get_id()) {
-            //         Some(e) => {
-            //             let model = e.model.get().unwrap();
-            //             println!("ents are working???? {} {}", i, e.matrix);
-            //             render_pass.set_bind_group(1, &core.entity_bind_group, &[e.uniform_offset]);
-            //             render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-            //             render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-            //             render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
-            //         }
-            //         _ => {}
-            //     }
-            // }
+            frame!("ent use2::end");
         }
 
         //gui space
         {
-            // let res = core.gui.model.get();
-            // if res.is_some() {
-            //     let model = res.unwrap();
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.draw(0..4, 0..4);
