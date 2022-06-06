@@ -37,6 +37,7 @@ mod log;
 mod lua_define;
 mod lua_ent;
 mod model;
+mod ray;
 mod render;
 mod sound;
 mod switch_board;
@@ -605,6 +606,15 @@ fn main() {
             controls::controls_evaluate(&mut core, control_flow);
             frame!("START");
             core.update();
+
+            match crate::lua_master.try_lock() {
+                Some(cell) => match cell.get() {
+                    Some(lu) => lu.call_loop(),
+                    _ => {}
+                },
+                _ => {}
+            }
+
             match core.render() {
                 Ok(_) => {}
                 // Reconfigure the surface if lost
@@ -632,6 +642,7 @@ fn main() {
         //         }
         //     }
     });
+
     unsafe {
         tracy::shutdown_tracy();
     }

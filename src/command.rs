@@ -217,7 +217,16 @@ pub fn init_lua_sys(
         "Set a tile within 3d space."
     );
 
+    let switch = Arc::clone(&switch_board);
+    lua!(
+        "_tile_done",
         move |_, (): ()| {
+            let mutex = &mut switch.write();
+            mutex.dirty = true;
+            Ok(1)
+        },
+        "Complete tile creation"
+    );
 
     // let switch = Arc::clone(&switch_board);
     // res(lua_globals.set(
@@ -247,14 +256,14 @@ pub fn init_lua_sys(
     // MARK
     lua!(
         "_spawn",
-        move |lua, (x, y, z): (f64, f64, f64)| {
+        move |lua, (asset, x, y, z): (String, f64, f64, f64)| {
             // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
             // let ents = lua.globals().get::<&str, Table>("_ents")?;
             let mut guard = crate::ent_master.write();
             let eman = guard.get_mut().unwrap();
             let index = eman.ent_table.len();
 
-            let ent = crate::lua_ent::LuaEnt::new(index as f64, x, y, z);
+            let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
             // println!(".1");
 
             // Rc<RefCell

@@ -82,25 +82,25 @@ impl LuaCore {
                             lua_load(&lua_ctx, &s2);
                         }
                     } else {
-                        if s1 == "_main()" {
-                            // println!("sup boss we have {}", s1);
-                            match lua_ctx.load(&s1).call::<(), ()>(()) {
-                                Ok(o) => channel.send((None, None)),
-                                Err(er) => channel.send((Some(er.to_string()), None)),
-                            };
-                        } else {
-                            // TODO load's chunk should call set_name to "main" etc, for better error handling
-                            match match lua_ctx.load(&s1).eval::<String>() {
-                                //res.unwrap().call::<String, String>(s2.to_owned()) {
-                                Ok(o) => channel.send((Some(o), None)),
-                                Err(er) => channel.send((Some(er.to_string()), None)),
-                            } {
-                                Ok(s) => {}
-                                Err(e) => {
-                                    log(format!("lua server communication error occured -> {}", e))
-                                }
+                        // if s1 == "_mmmain()" {
+                        //     // println!("sup boss we have {}", s1);
+                        //     match lua_ctx.load(&s1).call::<(), ()>(()) {
+                        //         Ok(o) => channel.send((None, None)),
+                        //         Err(er) => channel.send((Some(er.to_string()), None)),
+                        //     };
+                        // } else {
+                        // TODO load's chunk should call set_name to "main" etc, for better error handling
+                        match match lua_ctx.load(&s1).eval::<String>() {
+                            //res.unwrap().call::<String, String>(s2.to_owned()) {
+                            Ok(o) => channel.send((Some(o), None)),
+                            Err(er) => channel.send((Some(er.to_string()), None)),
+                        } {
+                            Ok(s) => {}
+                            Err(e) => {
+                                log(format!("lua server communication error occured -> {}", e))
                             }
                         }
+                        // }
                     }
                 }
 
@@ -206,6 +206,10 @@ impl LuaCore {
 
     pub fn call_main(&self) {
         self.func(&"_main()".to_string());
+    }
+
+    pub fn call_loop(&self) {
+        self.func(&"_loop()".to_string());
     }
 
     pub fn die(&self) {
