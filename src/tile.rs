@@ -92,23 +92,29 @@ impl World {
         world.get_chunk_mut(0, 0, 0).cook(device);
         world
     }
+
     pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
         self.layer.get_chunk_mut(x, y, z)
     }
+
     pub fn build_chunk(&mut self, ix: i32, iy: i32, iz: i32) {
         let mut c = self.get_chunk_mut(ix, iy, iz);
         c.vert_data = vec![];
         c.ind_data = vec![];
         c.buffers = None;
-        let model = "grid".to_string();
-        for (cell, i) in c.cells.clone().iter_mut().enumerate() {
-            if cell == 1 {
+        let texture = "grass_down".to_string();
+        let model = "cube".to_string();
+        println!("got cells {}", c.cells.len());
+
+        for (i, cell) in c.cells.clone().iter_mut().enumerate() {
+            if *cell > 0u32 {
                 _add_tile_model(
                     c,
-                    model.clone(),
-                    ((*i / 256) % 16) as i32,
-                    ((*i / 16) % 16) as i32,
-                    (*i % 16) as i32,
+                    &texture,
+                    &model,
+                    ((i / 256) % 16) as i32,
+                    ((i / 16) % 16) as i32,
+                    (i % 16) as i32,
                 );
             }
         }
@@ -132,29 +138,36 @@ impl World {
     pub fn set_tile(&mut self, tile: String, ix: i32, iy: i32, iz: i32) {
         let t = match tile.as_str() {
             "grid" => 1,
-            "fatty" => 2,
+            "grass" => 2,
             _ => 0,
         };
         let mut c = self.get_chunk_mut(ix, iy, iz);
-        let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
-            + ((iz / 16).rem_euclid(16))) as usize;
+        let index =
+            ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16) + iz.rem_euclid(16)) as usize;
+        // let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
+        //     + ((iz / 16).rem_euclid(16))) as usize;
         c.cells[index] = t;
         println!(
-            "cell {:?} {} {} {}",
+            "cell {:?} {} {} {} --- {} {} {}",
             index,
-            (ix / 16).rem_euclid(16),
-            (iy / 16).rem_euclid(16),
-            (iz / 16).rem_euclid(16)
+            ix.rem_euclid(16) * 256,
+            iy.rem_euclid(16) * 16,
+            iz.rem_euclid(16),
+            ix,
+            iy,
+            iz
         );
     }
+
     pub fn set_tile_from_buffer(&mut self, buffer: &Vec<Vec4>) {
         for t in buffer {
             self.set_tile("grid".to_string(), t.y as i32, t.z as i32, t.w as i32);
         }
     }
-    pub fn add_tile_model(&mut self, model: String, ix: i32, iy: i32, iz: i32) {
+
+    pub fn add_tile_model(&mut self, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
         let c = self.get_chunk_mut(ix, iy, iz);
-        _add_tile_model(c, model, ix, iy, iz);
+        _add_tile_model(c, texture, model, ix, iy, iz);
     }
 }
 pub struct Layer {
@@ -211,21 +224,24 @@ impl Chunk {
             contents: bytemuck::cast_slice(&self.ind_data),
             usage: wgpu::BufferUsages::INDEX,
         });
-        println!("cooked at {}", self.ind_data.len());
+        println!(
+            "tiles::cooked with tile indicie data: {}",
+            self.ind_data.len()
+        );
         self.buffers = Some((vertex_buf, index_buf));
     }
 }
 
-fn _add_tile_model(c: &mut Chunk, model: String, ix: i32, iy: i32, iz: i32) {
+fn _add_tile_model(c: &mut Chunk, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset = ivec3(ix as i32, iy as i32, iz as i32);
 
-    let uv = crate::texture::get_tex(&model);
+    let uv = crate::texture::get_tex(texture);
 
-    let (verts, inds) = match crate::model::get_adjustable_model(&"cube".to_string()) {
+    let (verts, inds) = match crate::model::get_adjustable_model(model) {
         Some(m) => {
-            //println!("🟢we got a cube model");
+            // println!("🟢we got a cube model");
             let data = m.get().unwrap().data.as_ref().unwrap().clone();
             (data.0, data.1)
         }
@@ -235,7 +251,7 @@ fn _add_tile_model(c: &mut Chunk, model: String, ix: i32, iy: i32, iz: i32) {
         }
     };
 
-    //println!("model is {} {} {} {}", uv.x, uv.y, uv.z, uv.w);
+    println!("model is {} {} {}", ix, iy, iz);
     let mut verts2 = verts
         .iter()
         .map(|v| {

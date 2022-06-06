@@ -6,11 +6,11 @@
 
 -- rot=0.
 -- _spawn(0,0,0)
-
+local fellas={}
 function _main()
-    _ents={[0]={x=43}}
+    -- _ents={[0]={x=43}}
     -- _testo={53}
-    _print('hi there')
+    -- _print('hi there')
     _bg(0,1,1,1)
     -- for i=0,10 do
     --     _spawn(i+5,0,2)
@@ -18,12 +18,21 @@ function _main()
 
     _print(69)
 
-    h=10
+    for i=0,16 do
+        for j=0,16 do
+            _tile(0,i,j,-8)
+        end
+    end
+    _tile_done()
+
+    h=8
     c=0
     for i=-h,h do
         for j=-h,h do
-            for k=-h,h do
-                t=_spawn(i,j,k)
+            -- for k=-h,h do
+            c=c+1
+            t=_spawn(c%2==0 and "dog1" or "chicken",i,j,0)
+            fellas[#fellas+1]=t
                 -- _print("inside lua "..t.x..","..t.y..","..t.z)
                 -- _add(t)
                 -- _ents[t.id]=t
@@ -35,7 +44,7 @@ function _main()
                 
                 -- t.y=t.y+5
                 -- t.z=t.z+5
-            end
+            -- end
         end
     end
     -- _print("count is"..c)
@@ -59,6 +68,13 @@ function _main()
         -- _push(n)
         --  _ents[n].x=_ents[n].x+20
     -- end
+end
+
+function _loop()
+    for i = 1, #fellas do
+        _walker(fellas[i])
+        -- fellas[i].x=fellas[i].x+0.1
+    end
 end
 
 -- function loop()

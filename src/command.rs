@@ -217,17 +217,7 @@ pub fn init_lua_sys(
         "Set a tile within 3d space."
     );
 
-    // let switch = Arc::clone(&switch_board);
-    // res(lua_globals.set(
-    //     "_tile_done",
-    //     lua_ctx
-    //         .create_function(move |_, (): ()| {
-    //             let mut mutex = &mut switch.write();
-    //             mutex.dirty = true;
-    //             Ok(1)
-    //         })
-    //         .unwrap(),
-    // ));
+        move |_, (): ()| {
 
     // let switch = Arc::clone(&switch_board);
     // res(lua_globals.set(

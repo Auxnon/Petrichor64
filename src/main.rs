@@ -7,6 +7,7 @@ use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{cell::RefCell, mem, sync::Arc};
 use tile::World;
+use tracy::frame;
 
 use ent::Ent;
 use glam::{vec2, vec3, Mat4};
@@ -523,13 +524,17 @@ impl Core {
     fn update(&mut self) {
         match self.switch_board.try_read() {
             Some(r) => {
-                if (r.dirty) {
+                if r.dirty {
                     drop(r);
                     let mut mutex = self.switch_board.write();
-
+                    let count = &mutex.tile_queue.len();
                     self.world.set_tile_from_buffer(&mutex.tile_queue);
+                    self.world.build_chunk(0, 0, 0);
+                    self.world.get_chunk_mut(0, 0, 0).cook(&self.device);
+
                     mutex.tile_queue.clear();
-                    mutex.dirty = false
+                    mutex.dirty = false;
+                    println!("cooked {} tiles", count);
                 }
             }
             None => {}
