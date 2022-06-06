@@ -5,6 +5,9 @@ use std::{fs::File, path::Path};
 
 use zip::write::FileOptions;
 
+/**
+ * Squish a data file on to the end of an image file. PoC.
+ */
 fn smash(thumbnail: &String, data: &String, out: &String) {
     let mut file1 = get_file_buffer(thumbnail);
     let mut file2 = get_file_buffer(data);
@@ -15,6 +18,7 @@ fn smash(thumbnail: &String, data: &String, out: &String) {
     writer.write(file1.as_slice());
 }
 
+/** Expand a packed image back into a seperate file, based on the end position of the image file. PoC */
 fn stretch(source: &String, out_name: &String) {
     let mut file1 = get_file_buffer(source);
 
@@ -47,7 +51,7 @@ fn stretch(source: &String, out_name: &String) {
     let mut writer = BufWriter::new(new_file);
     writer.write(v.as_slice());
 }
-
+/** load a file and return as a u8 vector buffer */
 fn get_file_buffer(path_str: &String) -> Vec<u8> {
     let path = Path::new(path_str);
     let mut v = vec![];
@@ -64,6 +68,8 @@ fn get_file_buffer(path_str: &String) -> Vec<u8> {
     }
     v
 }
+
+/** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
 pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer(thumb);
@@ -116,6 +122,7 @@ pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
     }
 }
 
+/** unpacked a packed game image-zip and save the zip contents as a useable file*/
 pub fn unpack_and_save(target: &String, out: &String) {
     let v = unpack(target);
     if v.len() > 0 {
@@ -125,6 +132,22 @@ pub fn unpack_and_save(target: &String, out: &String) {
     }
 }
 
+// MARK new pack
+pub fn pack_game_bin(out: &String) -> &str {
+    let mut game_buffer = get_file_buffer(&"Petrichor".to_string());
+    if game_buffer.len() <= 0 {
+        return "Can't find engine file";
+    }
+
+    let mut icon = get_file_buffer(&"icon.png".to_string());
+    let new_file = File::create(&Path::new(out)).unwrap();
+    game_buffer.append(&mut icon);
+    let mut writer = BufWriter::new(new_file);
+    writer.write(game_buffer.as_slice());
+    return "success";
+}
+
+/** unpack a packed game image-zip and load all assets into memory and return as asset-path keyed hashmap of u8 buffers  */
 pub fn unpack_and_walk(
     target: &String,
     sort: Vec<String>,
@@ -189,6 +212,7 @@ pub fn unpack_and_walk(
     map
 }
 
+/** Unpacked a packed game image-zip into just the zip as a u8 buffer, buffer will still need unzipping */
 pub fn unpack(target: &String) -> Vec<u8> {
     let mut gamefile = get_file_buffer(target);
     if gamefile.len() <= 0 {
@@ -225,6 +249,7 @@ pub fn unpack(target: &String) -> Vec<u8> {
     v
 }
 
+/** alternative unpack method? WIP */
 pub fn walk_zip(str: &String) {
     let zipfile = std::fs::File::open(str).unwrap();
 
@@ -255,11 +280,12 @@ pub fn walk_zip(str: &String) {
     //     _ => {}
     // }
 }
-
+/** log str */
 fn lg(s: &str) {
     crate::log::log(format!("zip::{}", s));
 }
 
+/** log String */
 fn log(str: String) {
     crate::log::log(format!("zip::{}", str));
 }

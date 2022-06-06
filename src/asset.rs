@@ -10,6 +10,12 @@ pub fn pack(name: &String) {
 
     crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
 }
+pub fn super_pack(name: &String) -> &str {
+    // let sources = walk_files(None);
+    // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
+    // create::
+    crate::zip_pal::pack_game_bin(name)
+}
 
 pub fn unpack(device: &Device, target: &String) {
     println!("unpack {}", target);

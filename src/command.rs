@@ -29,6 +29,14 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
                 "game.png".to_string()
             });
         }
+        "$superpack" => {
+            log(crate::asset::super_pack(&if segments.len() > 1 {
+                format!("{}", segments[1])
+            } else {
+                "game".to_string()
+            })
+            .to_string());
+        }
         "$unpack" => {
             //
             crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
