@@ -530,8 +530,7 @@ impl Core {
                     let mut mutex = self.switch_board.write();
                     let count = &mutex.tile_queue.len();
                     self.world.set_tile_from_buffer(&mutex.tile_queue);
-                    self.world.build_chunk(0, 0, 0);
-                    self.world.get_chunk_mut(0, 0, 0).cook(&self.device);
+                    self.world.build_dirty_chunks(&self.device);
 
                     mutex.tile_queue.clear();
                     mutex.dirty = false;

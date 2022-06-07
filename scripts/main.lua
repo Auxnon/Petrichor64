@@ -18,9 +18,14 @@ function _main()
 
     _print(69)
 
-    for i=0,16 do
-        for j=0,16 do
-            _tile(0,i,j,-8)
+    size=200
+    for i=0,size do
+        for j=0,size do
+            for k=0,size do
+                if (i+j+k)%3==0 then
+                    _tile(0,i+16,j-100,k-200)
+                end
+            end
         end
     end
     _tile_done()

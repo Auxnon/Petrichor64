@@ -1,6 +1,8 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::hash_map::Entry;
 
-use glam::{ivec3, vec3, DVec4, Vec4};
+use rustc_hash::FxHashMap;
+
+use glam::{ivec3, vec3, DVec4, IVec3, Vec4};
 use rand::Rng;
 use wgpu::{util::DeviceExt, Buffer, Device};
 
@@ -21,7 +23,7 @@ impl World {
         let path = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
         let h = path.len();
         let w = path[0].len();
-        let mut hash = HashMap::new();
+        let mut hash = FxHashMap::default();
         hash.insert(4, 3);
         hash.insert(2, 33);
         hash.insert(13, 52);
@@ -94,45 +96,34 @@ impl World {
     }
 
     pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
-        self.layer.get_chunk_mut(x, y, z)
+        self.layer.get_chunk_mut_from_pos(x, y, z)
+    }
+    pub fn get_all_chunks(&self) -> std::collections::hash_map::Values<String, Chunk> {
+        self.layer.get_all_chunks()
     }
 
-    pub fn build_chunk(&mut self, ix: i32, iy: i32, iz: i32) {
-        let mut c = self.get_chunk_mut(ix, iy, iz);
-        c.vert_data = vec![];
-        c.ind_data = vec![];
-        c.buffers = None;
-        let texture = "grass_down".to_string();
-        let model = "cube".to_string();
-        println!("got cells {}", c.cells.len());
+    // pub fn build_chunk_from_pos(&mut self, ix: i32, iy: i32, iz: i32) {
+    //     let c = self.get_chunk_mut(ix, iy, iz);
+    //     self.build_chunk2(c);
+    // }
 
-        for (i, cell) in c.cells.clone().iter_mut().enumerate() {
-            if *cell > 0u32 {
-                _add_tile_model(
-                    c,
-                    &texture,
-                    &model,
-                    ((i / 256) % 16) as i32,
-                    ((i / 16) % 16) as i32,
-                    (i % 16) as i32,
-                );
+    pub fn build_dirty_chunks(&mut self, device: &Device) {
+        let mut d = vec![];
+        for c in self.layer.get_all_chunks() {
+            if c.dirty {
+                d.push(c.key.clone());
             }
         }
-        // for (ii, i) in c.cells.iter().enumerate() {
-        //     for (ij, j) in i.iter().enumerate() {
-        //         for (ik, k) in j.iter().enumerate() {
-        //             if *k == 1 {
-        //                 _add_tile_model(
-        //                     c,
-        //                     model,
-        //                     (ii * 16) as i32,
-        //                     (ij * 16) as i32,
-        //                     (ik * 16) as i32,
-        //                 );
-        //             }
-        //         }
-        //     }
-        // }
+        println!("we found {} dirty chunk(s)", d.len());
+        for k in d {
+            match self.layer.get_chunk_mut(k) {
+                Some(c) => {
+                    c.build_chunk();
+                    c.cook(device);
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn set_tile(&mut self, tile: String, ix: i32, iy: i32, iz: i32) {
@@ -147,16 +138,17 @@ impl World {
         // let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
         //     + ((iz / 16).rem_euclid(16))) as usize;
         c.cells[index] = t;
-        println!(
-            "cell {:?} {} {} {} --- {} {} {}",
-            index,
-            ix.rem_euclid(16) * 256,
-            iy.rem_euclid(16) * 16,
-            iz.rem_euclid(16),
-            ix,
-            iy,
-            iz
-        );
+        // println!(
+        //     "cell {:?} {} {} {} --- {} {} {}",
+        //     index,
+        //     ix.rem_euclid(16) * 256,
+        //     iy.rem_euclid(16) * 16,
+        //     iz.rem_euclid(16),
+        //     ix,
+        //     iy,
+        //     iz
+        // );
+        c.dirty = true;
     }
 
     pub fn set_tile_from_buffer(&mut self, buffer: &Vec<Vec4>) {
@@ -165,27 +157,38 @@ impl World {
         }
     }
 
-    pub fn add_tile_model(&mut self, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
-        let c = self.get_chunk_mut(ix, iy, iz);
-        _add_tile_model(c, texture, model, ix, iy, iz);
-    }
+    // pub fn add_tile_model(&mut self, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
+    //     let c = self.get_chunk_mut(ix, iy, iz);
+    //     _add_tile_model(c, texture, model, ix, iy, iz);
+    // }
 }
 pub struct Layer {
-    chunks: HashMap<String, Chunk>,
+    chunks: FxHashMap<String, Chunk>,
 }
 impl Layer {
     pub fn new() -> Layer {
         Layer {
-            chunks: HashMap::new(), // ![Chunk::new()],
+            chunks: FxHashMap::default(), // ![Chunk::new()],
         }
     }
-
-    pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
-        let key = format!("{}-{}-{}", x / 16, y / 16, z / 16);
-        match self.chunks.entry(key) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => v.insert(Chunk::new()),
+    pub fn get_chunk_mut(&mut self, key: String) -> Option<&mut Chunk> {
+        match self.chunks.entry(key.clone()) {
+            Entry::Occupied(o) => Some(o.into_mut()),
+            Entry::Vacant(v) => None,
         }
+    }
+    pub fn get_chunk_mut_from_pos(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
+        let key = format!("{}-{}-{}", x / 16, y / 16, z / 16);
+        match self.chunks.entry(key.clone()) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => v.insert(Chunk::new(key, x, y, z)),
+        }
+    }
+    pub fn get_all_chunks(&self) -> std::collections::hash_map::Values<String, Chunk> {
+        self.chunks.values()
+    }
+    pub fn get_all_chunks_mut(&mut self) -> std::collections::hash_map::ValuesMut<String, Chunk> {
+        self.chunks.values_mut()
     }
 }
 pub struct Chunk {
@@ -194,15 +197,21 @@ pub struct Chunk {
     pub ind_data: Vec<u32>,
     pub buffers: Option<(Buffer, Buffer)>,
     pub cells: [u32; 16 * 16 * 16],
+    /** Unmodified position within world space, index postion would be position divided by 16 */
+    pub pos: IVec3,
+    pub key: String,
+    // DEV `pub ind_pos` it might be worth storing the index position rather then dividing by 16 all the time?
 }
 impl Chunk {
-    pub fn new() -> Chunk {
+    pub fn new(key: String, x: i32, y: i32, z: i32) -> Chunk {
         Chunk {
-            dirty: true,
+            dirty: false,
             vert_data: vec![],
             ind_data: vec![],
             buffers: None,
             cells: [0; 16 * 16 * 16],
+            pos: ivec3(x, y, z),
+            key,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -210,6 +219,28 @@ impl Chunk {
     }
     fn zero_cells(&mut self) {
         self.cells = [0; 16 * 16 * 16];
+    }
+    pub fn build_chunk(&mut self) {
+        self.vert_data = vec![];
+        self.ind_data = vec![];
+        self.buffers = None;
+        let texture = "grid".to_string(); // grass_down
+        let model = "cube".to_string();
+        // println!("got cells {}", self.cells.len());
+
+        // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
+        for (i, cell) in self.cells.clone().iter().enumerate() {
+            if *cell > 0u32 {
+                _add_tile_model(
+                    self,
+                    &texture,
+                    &model,
+                    ((i / 256) % 16) as i32,
+                    ((i / 16) % 16) as i32,
+                    (i % 16) as i32,
+                );
+            }
+        }
     }
 
     pub fn cook(&mut self, device: &Device) {
@@ -224,18 +255,19 @@ impl Chunk {
             contents: bytemuck::cast_slice(&self.ind_data),
             usage: wgpu::BufferUsages::INDEX,
         });
-        println!(
-            "tiles::cooked with tile indicie data: {}",
-            self.ind_data.len()
-        );
+        // println!(
+        //     "tiles::cooked with tile indicie data: {}",
+        //     self.ind_data.len()
+        // );
         self.buffers = Some((vertex_buf, index_buf));
+        self.dirty = false;
     }
 }
 
 fn _add_tile_model(c: &mut Chunk, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
-    let offset = ivec3(ix as i32, iy as i32, iz as i32);
+    let offset = ivec3(ix as i32, iy as i32, iz as i32) + c.pos;
 
     let uv = crate::texture::get_tex(texture);
 
@@ -251,7 +283,7 @@ fn _add_tile_model(c: &mut Chunk, texture: &String, model: &String, ix: i32, iy:
         }
     };
 
-    println!("model is {} {} {}", ix, iy, iz);
+    // println!("model is {} {} {}", ix, iy, iz);
     let mut verts2 = verts
         .iter()
         .map(|v| {
