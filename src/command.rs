@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
-pub fn init_con_sys(core: &Core, s: &String) -> bool {
+pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     if s.len() <= 0 {
         return false;
     }
@@ -43,48 +43,63 @@ pub fn init_con_sys(core: &Core, s: &String) -> bool {
         }
         "$load" => {
             let mutex = crate::lua_master.lock();
-            match mutex.get() {
-                Some(d) => {}
+            let lua_ref = match mutex.get() {
+                Some(lua_in) => {
+                    lua_in.start(Arc::clone(&core.switch_board));
+                    lua_in
+                }
                 None => {
                     crate::texture::reset();
-                    let lua_ref = mutex.get_or_init(|| {
+                    mutex.get_or_init(|| {
                         crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board))
-                        //pollster::block_on(
-                    });
-                    std::mem::drop(mutex);
-                    // println!("thread sleep...");
-                    // std::thread::sleep(std::time::Duration::from_millis(1000));
-                    // println!("thread slept")
-
-                    if segments.len() > 1 {
-                        crate::asset::unpack(&core.device, &format!("{}.game.png", segments[1]));
-                    } else {
-                        crate::asset::walk_files(Some(&core.device));
-                    }
-
-                    // lua_ref.call_main();
-                    // crate::texture::reset();
-                    // crate::asset::init(&core.device);
-
-                    // let mut mutex = crate::ent_master.lock();
-                    // let entity_manager = mutex.get_mut().unwrap();
-                    crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-                    // DEV  TODO
-                    // for e in &mut entity_manager.entities {
-                    //     e.hot_reload();
-                    // }
-                    let mutex = crate::lua_master.lock();
-                    mutex.get().unwrap().call_main();
-                    log("=================================================".to_string());
-                    log("buldozed into this here code with a buncha stuff".to_string());
+                    })
                 }
+            };
+
+            std::mem::drop(mutex);
+
+            if segments.len() > 1 {
+                crate::asset::unpack(&core.device, &format!("{}.game.png", segments[1]));
+            } else {
+                crate::asset::walk_files(Some(&core.device));
             }
+
+            crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
+            // DEV  TODO
+            // for e in &mut entity_manager.entities {
+            //     e.hot_reload();
+            // }
+            let mutex = crate::lua_master.lock();
+            mutex.get().unwrap().call_main();
+            log("=================================================".to_string());
+            log("buldozed into this here code with a buncha stuff".to_string());
         }
-        "$print_atlas" => {
+        "$reset" => {
+            crate::texture::reset();
+            crate::model::reset();
+
+            let mutex = crate::lua_master.lock();
+            match mutex.get() {
+                Some(lua_instance) => {
+                    lua_instance.die();
+                }
+                _ => {}
+            }
+            core.world.destroy_it_all();
+
+            // TODO why doe sent reset panic?
+            // let mut guard = crate::ent_master.write();
+            // guard.get_mut().unwrap().reset();
+        }
+
+        "$atlas" => {
             crate::texture::save_atlas();
         }
         "$ugh" => {
             // TODO ugh?
+        }
+        "$test" => {
+            log("that test worked, yipee".to_string());
         }
         &_ => return false,
     }
@@ -189,7 +204,6 @@ pub fn init_lua_sys(
         "Get background color"
     );
 
-    // let switch = Arc::clone(&switch_board);
     // res(lua_globals.set(
     //     "_bg",
     //     lua_ctx
@@ -201,17 +215,37 @@ pub fn init_lua_sys(
     //         })
     //         .unwrap(),
     // ));
+    let switch = Arc::clone(&switch_board);
+    lua!(
+        "_cube",
+        move |_,
+              (name, t, w, n, e, s, b): (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String
+        )| {
+            let mut mutex = &mut switch.write();
+            mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
+
+            // crate::model::edit_cube(name, [t, e, n, w, s, b]);
+            // let mut mutex = &mut switch.write();
+            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            Ok(1)
+        },
+        "Create a new cube model based on 6 textures"
+    );
 
     let switch = Arc::clone(&switch_board);
     lua!(
         "_tile",
-        move |_, (t, x, y, z): (f32, f32, f32, f32)| {
+        move |_, (t, x, y, z): (String, f32, f32, f32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             let mut mutex = &mut switch.write();
-            mutex.tile_queue.push(vec4(t, x, y, z));
-            // let mut mutex = &mut switch_board.write();
-            // mutex.background = vec4(x, y, z, w);
-            // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+            mutex.tile_queue.push((t, vec4(0., x, y, z)));
             Ok(1)
         },
         "Set a tile within 3d space."
@@ -225,7 +259,27 @@ pub fn init_lua_sys(
             mutex.dirty = true;
             Ok(1)
         },
-        "Complete tile creation"
+        "Complete tile creation by triggering a redraw."
+    );
+
+    let switch = Arc::clone(&switch_board);
+    lua!(
+        "_tile_quick",
+        move |_, (t, x, y, z): (String, f32, f32, f32)| {
+            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+            let mut mutex = &mut switch.write();
+            mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            mutex.dirty = true;
+            Ok(1)
+        },
+        "Set a tile within 3d space and immediately trigger a redraw."
+    );
+
+    let switch = Arc::clone(&switch_board);
+    lua!(
+        "_space",
+        move |_, (): ()| { Ok(switch.read().space) },
+        "Space is down"
     );
 
     // let switch = Arc::clone(&switch_board);
@@ -253,7 +307,6 @@ pub fn init_lua_sys(
     // ));
     // let switch = Arc::clone(&switch_board);
 
-    // MARK
     lua!(
         "_spawn",
         move |lua, (asset, x, y, z): (String, f64, f64, f64)| {
@@ -264,7 +317,6 @@ pub fn init_lua_sys(
             let index = eman.ent_table.len();
 
             let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
-            // println!(".1");
 
             // Rc<RefCell
             let wrapped = Arc::new(Mutex::new(ent));

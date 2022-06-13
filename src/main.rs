@@ -3,6 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 use ent_manager::EntManager;
 use global::Global;
+use itertools::Itertools;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{cell::RefCell, mem, sync::Arc};
@@ -528,13 +529,47 @@ impl Core {
                 if r.dirty {
                     drop(r);
                     let mut mutex = self.switch_board.write();
-                    let count = &mutex.tile_queue.len();
-                    self.world.set_tile_from_buffer(&mutex.tile_queue);
-                    self.world.build_dirty_chunks(&self.device);
 
-                    mutex.tile_queue.clear();
+                    let make_count = mutex.make_queue.len();
+                    if make_count > 0 {
+                        for m in mutex.make_queue.drain(0..) {
+                            if m.len() == 7 {
+                                let m2 = vec![
+                                    m[1].clone(),
+                                    m[2].clone(),
+                                    m[3].clone(),
+                                    m[4].clone(),
+                                    m[5].clone(),
+                                    m[6].clone(),
+                                ];
+                                crate::model::edit_cube(m[0].clone(), m2, &self.device)
+
+                                // let name = m[0].clone();
+                                // println!("🧲 eyup1");
+
+                                // match m[..].try_into() {
+                                //     Ok(textures) => {
+                                //         println!("🧲 eyup");
+
+                                //         crate::model::edit_cube(name, textures, &self.device)
+                                //     }
+                                //     _ => {
+                                //         log("cube creation missing variables, ignoring".to_string())
+                                //     }
+                                // }
+                            }
+                        }
+                        mutex.make_queue.clear();
+                    }
+
+                    let tile_count = mutex.tile_queue.len();
+                    if tile_count > 0 {
+                        self.world.set_tile_from_buffer(&mutex.tile_queue);
+                        self.world.build_dirty_chunks(&self.device);
+                        mutex.tile_queue.clear();
+                        println!("cooked {} tiles", tile_count);
+                    }
                     mutex.dirty = false;
-                    println!("cooked {} tiles", count);
                 }
             }
             None => {}
@@ -645,4 +680,8 @@ fn main() {
     unsafe {
         tracy::shutdown_tracy();
     }
+}
+
+fn log(str: String) {
+    crate::log::log(format!("main::{}", str));
 }

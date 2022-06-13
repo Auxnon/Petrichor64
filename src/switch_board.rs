@@ -8,7 +8,8 @@ pub struct SwitchBoard {
     pub space: bool,
     pub h: f32,
     pub dirty: bool,
-    pub tile_queue: Vec<Vec4>,
+    pub tile_queue: Vec<(String, Vec4)>,
+    pub make_queue: Vec<Vec<String>>,
     pub ent_queue: Vec<&'static LuaEnt>,
 }
 impl SwitchBoard {
@@ -20,6 +21,7 @@ impl SwitchBoard {
             dirty: false,
             tile_queue: vec![],
             ent_queue: vec![],
+            make_queue: vec![],
         }
     }
 }

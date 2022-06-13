@@ -4,7 +4,8 @@ use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
+use rustc_hash::FxHashMap;
 use std::{collections::HashMap, path::Path, sync::Arc};
 use wgpu::{util::DeviceExt, Device};
 
@@ -13,7 +14,10 @@ lazy_static! {
     pub static ref cube: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
     pub static ref plane: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
     pub static ref custom: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref dictionary:Mutex<HashMap<String,Arc<OnceCell<Model>> >> =Mutex::new(HashMap::new());
+    pub static ref dictionary:RwLock<HashMap<String,Arc<OnceCell<Model>> >> =RwLock::new(HashMap::new());
+    /** map our */
+    pub static ref int_dictionary:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
+    pub static ref int_map:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
 }
 
 #[repr(C)]
@@ -23,6 +27,7 @@ pub struct Vertex {
     _normal: [i8; 4],
     _tex: [f32; 2],
 }
+
 impl Vertex {
     pub fn trans(&mut self, pos: IVec3) {
         self._pos[0] += pos.x as i16;
@@ -105,26 +110,26 @@ pub fn create_cube(i: i16) -> (Vec<Vertex>, Vec<u32>) {
         vertex([i, i, 0], [0, 0, -1], [1., 0.]),
         vertex([i, 0, 0], [0, 0, -1], [1., 1.]),
         vertex([0, 0, 0], [0, 0, -1], [0., 1.]),
-        // right (1, 0, 0)
-        vertex([i, 0, 0], [1, 0, 0], [0., 0.]),
-        vertex([i, i, 0], [1, 0, 0], [1., 0.]),
-        vertex([i, i, i], [1, 0, 0], [1., 1.]),
-        vertex([i, 0, i], [1, 0, 0], [0., 1.]),
-        // left (-1, 0, 0)
+        // right east (1, 0, 0)
+        vertex([i, 0, 0], [1, 0, 0], [0., 1.]),
+        vertex([i, i, 0], [1, 0, 0], [1., 1.]),
+        vertex([i, i, i], [1, 0, 0], [1., 0.]),
+        vertex([i, 0, i], [1, 0, 0], [0., 0.]),
+        // left west (-1, 0, 0)
         vertex([0, 0, i], [-1, 0, 0], [0., 0.]),
         vertex([0, i, i], [-1, 0, 0], [1., 0.]),
         vertex([0, i, 0], [-1, 0, 0], [1., 1.]),
         vertex([0, 0, 0], [-1, 0, 0], [0., 1.]),
-        // front (0, 1, 0)
-        vertex([i, i, 0], [0, 1, 0], [0., 0.]),
-        vertex([0, i, 0], [0, 1, 0], [1., 0.]),
-        vertex([0, i, i], [0, 1, 0], [1., 1.]),
-        vertex([i, i, i], [0, 1, 0], [0., 1.]),
-        // back (0, -1, 0)
-        vertex([i, 0, i], [0, -1, 0], [0., 0.]),
-        vertex([0, 0, i], [0, -1, 0], [1., 0.]),
-        vertex([0, 0, 0], [0, -1, 0], [1., 1.]),
-        vertex([i, 0, 0], [0, -1, 0], [0., 1.]),
+        // front south (0, 1, 0)
+        vertex([i, i, 0], [0, 1, 0], [0., 1.]),
+        vertex([0, i, 0], [0, 1, 0], [1., 1.]),
+        vertex([0, i, i], [0, 1, 0], [1., 0.]),
+        vertex([i, i, i], [0, 1, 0], [0., 0.]),
+        // back north (0, -1, 0)
+        vertex([i, 0, i], [0, -1, 0], [1., 0.]),
+        vertex([0, 0, i], [0, -1, 0], [0., 0.]),
+        vertex([0, 0, 0], [0, -1, 0], [0., 1.]),
+        vertex([i, 0, 0], [0, -1, 0], [1., 1.]),
     ];
 
     let index_data: &[u32] = &[
@@ -242,12 +247,14 @@ pub fn init(device: &Device) {
     };
     cube.get_or_init(|| cubeModel);
     let d = dictionary
-        .lock()
+        .write()
         .insert("cube".to_string(), Arc::clone(&cube));
 }
+
 pub fn cube_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&cube)
 }
+
 pub fn plane_model() -> Arc<OnceCell<Model>> {
     Arc::clone(&plane)
 }
@@ -257,26 +264,44 @@ pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
         return plane_model();
     }
 
-    match dictionary.lock().get(str) {
+    match dictionary.read().get(str) {
         Some(model) => Arc::clone(model),
         None => cube_model(),
     }
     //Arc::clone(&custom)
 }
-pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
-    match dictionary.lock().get(str) {
-        Some(model) => {
-            let m = model.get();
 
-            if m.is_some() {
-                if m.unwrap().data.is_some() {
-                    return Some(Arc::clone(model));
-                } else {
-                    log(format!("missing model data field for {}", str));
-                }
+/** Returns a model by verts that are able to be adjusted through translation of the actual verts */
+pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
+    match dictionary.read().get(str) {
+        Some(model) => match model.get() {
+            Some(_) => Some(Arc::clone(model)),
+            _ => {
+                log(format!("missing model data field for {}", str));
+                None
             }
-            return None;
-        }
+        },
+        None => None,
+    }
+}
+
+/** return model numerical index from a given model name */
+pub fn get_model_index(str: &String) -> Option<u32> {
+    match int_dictionary.read().get(str) {
+        Some(u) => Some(u.clone()),
+        None => None,
+    }
+}
+
+pub fn get_model_from_index(index: u32) -> Option<Arc<OnceCell<Model>>> {
+    match int_map.read().get(&index) {
+        Some(model) => match model.get() {
+            Some(_) => Some(Arc::clone(model)),
+            _ => {
+                // log(format!("missing model data field by index {}", index));
+                None
+            }
+        },
         None => None,
     }
 }
@@ -288,6 +313,7 @@ pub struct Model {
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
 }
 
+/** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */
 pub fn load_from_buffer(str: &String, slice: &Vec<u8>, device: &Device) {
     match gltf::import_slice(slice) {
         Ok((nodes, buffers, image_data)) => {
@@ -296,6 +322,8 @@ pub fn load_from_buffer(str: &String, slice: &Vec<u8>, device: &Device) {
         Err(err) => {}
     }
 }
+
+/** entry model loader that first loads from disk and then sends to central load fn */
 pub fn load_from_string(str: &String, device: &Device) {
     let target = str; //format!("assets/{}", str);
 
@@ -308,6 +336,8 @@ pub fn load_from_string(str: &String, device: &Device) {
         }
     }
 }
+
+/** big honking central gltf/glb loader function that inserts the new model into our dictionary lookup */
 fn load(
     str: &String,
     nodes: gltf::Document,
@@ -317,8 +347,8 @@ fn load(
 ) {
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
-    let bits = str.split(".").collect::<Vec<_>>();
-    let name = bits.get(0).unwrap();
+    // let bits = str.split(".").collect::<Vec<_>>();
+    let name = str; //bits.get(0).unwrap();
 
     crate::texture::load_tex_from_img(str.to_string(), &image_data);
 
@@ -371,11 +401,7 @@ fn load(
                     contents: bytemuck::cast_slice(&indices),
                     usage: wgpu::BufferUsages::INDEX,
                 });
-                println!(
-                    "Load mesh {} with {} verts",
-                    str.to_string(),
-                    vertices.len()
-                );
+                println!("Load mesh {} with {} verts", name, vertices.len());
                 println!("ind #{} verts #{}", indices.len(), vertices.len());
 
                 let model = Model {
@@ -390,8 +416,10 @@ fn load(
                     first_instance = false;
                     let once = OnceCell::new();
                     once.get_or_init(|| model);
-                    let i = Arc::new(once);
-                    dictionary.lock().insert(name.to_string(), i);
+                    let model_cell = Arc::new(once);
+
+                    index_model(name.clone(), Arc::clone(&model_cell));
+                    dictionary.write().insert(name.to_string(), model_cell);
                     log(format!("populated mesh {}", name));
                     //custom.get_or_init(|| customModel);
                 }
@@ -408,6 +436,87 @@ fn load(
     //     None => {}
     // }
     //return meshes;
+}
+
+/** Create a simple numerical key for our model and map it, returning that numerical key*/
+fn index_model(key: String, model: Arc<OnceCell<Model>>) -> u32 {
+    let mut guard = crate::texture::counter.lock();
+    let ind = *guard;
+    int_map.write().insert(ind, model);
+    int_dictionary.write().insert(key, ind);
+    *guard += 1;
+    ind
+}
+
+// TODO make this a cleaner function
+pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
+    let m = (cube.get().unwrap().clone());
+    let (verts, inds) = (m).data.as_ref().unwrap().clone();
+    // let (verts, inds) =  {
+    //     Some(m) => {
+    //         // println!("🟢we got a cube model");
+    //         let data = cube.get().unwrap().data.as_ref().unwrap().clone();
+    //         (data.0, data.1)
+    //     }
+    //     None => {
+    //         //println!("🔴failed to locate cube model");
+    //         crate::model::create_plane(16, None, None)
+    //     }
+    // };
+    let mut uv = vec![];
+    for t in textures {
+        println!("❓ {} ", t);
+        uv.push(crate::texture::get_tex(&t));
+    }
+    // let t2 = textures.map(|t| t.clone());
+    // let uvs = t2.map(|t| crate::texture::get_tex((&t.clone())));
+    let verts2 = verts
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let mut v2 = v.clone();
+            // v2.trans(offset.clone());
+
+            v2.texture(uv[(i / 4 as usize)]);
+            v2
+        })
+        .collect::<Vec<Vertex>>();
+
+    let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("{}{}", name, " Mesh Vertex Buffer")),
+        contents: bytemuck::cast_slice(&verts2),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(&format!("{}{}", name, " Mesh Index Buffer")),
+        contents: bytemuck::cast_slice(&inds),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let model = Model {
+        vertex_buf: mesh_vertex_buf,
+        index_buf: mesh_index_buf,
+        index_format: wgpu::IndexFormat::Uint32,
+        index_count: inds.len(),
+        data: Some((verts2, inds)),
+    };
+
+    let cell = OnceCell::new();
+    cell.get_or_init(|| model);
+
+    let arced_model = Arc::new(cell);
+    index_model(name.clone(), Arc::clone(&arced_model));
+    dictionary.write().insert(name.clone(), arced_model);
+    log(format!("created new model cube {}", name));
+}
+
+pub fn reset() {
+    int_dictionary.write().clear();
+    int_map.write().clear();
+    let mut wr = dictionary.write();
+    wr.clear();
+    wr.insert("cube".to_string(), Arc::clone(&cube));
 }
 
 fn log(str: String) {

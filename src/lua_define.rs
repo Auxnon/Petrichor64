@@ -34,119 +34,16 @@ pub struct LuaCore {
 
 impl LuaCore {
     pub fn new(switch_board: Arc<RwLock<SwitchBoard>>) -> LuaCore {
-        let (sender, reciever) = channel::<(
-            String,
-            String,
-            Option<LuaEnt>,
-            SyncSender<(Option<String>, Option<LuaEnt>)>,
-        )>();
-        println!("init lua core");
-
-        let lua_thread = thread::spawn(move || {
-            let lua_ctx = Lua::new();
-
-            // lua.context(move |lua_ctx| {
-            // lua_ctx.load("some_code").exec().unwrap();
-            // let lua_clone = Arc::clone(&crate::lua_master);
-            let globals = lua_ctx.globals();
-
-            crate::command::init_lua_sys(&lua_ctx, &globals, switch_board);
-
-            // let temple: rlua::Table = globals.get("temple").unwrap();
-            // let filters: rlua::Table = temple.get("_filters").unwrap();
-            // let concat2: rlua::Function = filters.get("concat2").unwrap();
-            log("💫 lua_thread::orbiting".to_string());
-            for m in reciever {
-                //}
-                let (s1, s2, ent, channel) = m;
-
-                //while let Ok((s1, s2, ent, channel)) = reciever.recv() {
-                //println!("➡️ lua_thread::recieved");
-
-                // println!("we have a func! {:?}", res.clone().unwrap());
-                if ent.is_some() {
-                    let res = globals.get::<_, Function>(s1.to_owned());
-                    if res.is_ok() {
-                        match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
-                            Ok(o) => channel.send((None, Some(o))).unwrap(),
-                            Err(er) => channel.send((None, None)).unwrap(),
-                        }
-                    } else {
-                        channel.send((None, None));
-                    }
-                } else {
-                    if s1 == "load" {
-                        if s2 == "_self_destruct" {
-                            break;
-                        } else {
-                            lua_load(&lua_ctx, &s2);
-                        }
-                    } else {
-                        // if s1 == "_mmmain()" {
-                        //     // println!("sup boss we have {}", s1);
-                        //     match lua_ctx.load(&s1).call::<(), ()>(()) {
-                        //         Ok(o) => channel.send((None, None)),
-                        //         Err(er) => channel.send((Some(er.to_string()), None)),
-                        //     };
-                        // } else {
-                        // TODO load's chunk should call set_name to "main" etc, for better error handling
-                        match match lua_ctx.load(&s1).eval::<String>() {
-                            //res.unwrap().call::<String, String>(s2.to_owned()) {
-                            Ok(o) => channel.send((Some(o), None)),
-                            Err(er) => channel.send((Some(er.to_string()), None)),
-                        } {
-                            Ok(s) => {}
-                            Err(e) => {
-                                log(format!("lua server communication error occured -> {}", e))
-                            }
-                        }
-                        // }
-                    }
-                }
-
-                /*  TODO is this still needed?
-                match globals.get::<&str, mlua::Table>("_ents") {
-                    Ok(table) => {
-                        let ent_results = table.sequence_values::<LuaEnt>();
-
-                        let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
-
-                        match ent_master.try_write_for(std::time::Duration::from_millis(100)) {
-                            Some(mut ent_guard) => {
-                                match ent_guard.get_mut() {
-                                    Some(entman) => {
-                                        println!("ent_man adjusted {}", ent_array.len());
-                                        entman.ent_table.clear();
-                                        entman.ent_table.append(&mut ent_array);
-                                    }
-                                    None => {}
-                                }
-                                drop(ent_guard);
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(er) => {
-                        log("missing highest level entities table".to_string());
-                    }
-                }
-                */
-
-                //thread::sleep(std::time::Duration::from_millis(10));
-                //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
-                //channel.send(res).unwrap()
-            }
-
-            //})
-        });
-        //lua_thread.join();
         log("lua core thread started".to_string());
 
         LuaCore {
-            // lua:Mutex::new(lua)
-            to_lua_tx: Mutex::new(sender),
-            // to_lua_rx: Mutex::new(to_lua_rx),
+            to_lua_tx: Mutex::new(start(switch_board)),
         }
+    }
+
+    pub fn start(&self, switch_board: Arc<RwLock<SwitchBoard>>) {
+        *self.to_lua_tx.lock() = start(switch_board);
+        // reset()
     }
 
     pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
@@ -389,6 +286,107 @@ fn lua_load(lua: &Lua, st: &String) {
 //         },
 //     );
 // }
+
+fn start(
+    switch_board: Arc<RwLock<SwitchBoard>>,
+) -> Sender<(
+    String,
+    String,
+    Option<LuaEnt>,
+    SyncSender<(Option<String>, Option<LuaEnt>)>,
+)> {
+    let (sender, reciever) = channel::<(
+        String,
+        String,
+        Option<LuaEnt>,
+        SyncSender<(Option<String>, Option<LuaEnt>)>,
+    )>();
+
+    log("init lua core".to_string());
+    let lua_thread = thread::spawn(move || {
+        let lua_ctx = Lua::new();
+
+        let globals = lua_ctx.globals();
+
+        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board);
+
+        log("💫 lua_thread::orbiting".to_string());
+        for m in reciever {
+            //}
+            let (s1, s2, ent, channel) = m;
+
+            //while let Ok((s1, s2, ent, channel)) = reciever.recv() {
+            //println!("➡️ lua_thread::recieved");
+
+            // println!("we have a func! {:?}", res.clone().unwrap());
+            if ent.is_some() {
+                let res = globals.get::<_, Function>(s1.to_owned());
+                if res.is_ok() {
+                    match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
+                        Ok(o) => channel.send((None, Some(o))).unwrap(),
+                        Err(er) => channel.send((None, None)).unwrap(),
+                    }
+                } else {
+                    channel.send((None, None));
+                }
+            } else {
+                if s1 == "load" {
+                    if s2 == "_self_destruct" {
+                        break;
+                    } else {
+                        lua_load(&lua_ctx, &s2);
+                    }
+                } else {
+                    // TODO load's chunk should call set_name to "main" etc, for better error handling
+                    match match lua_ctx.load(&s1).eval::<String>() {
+                        //res.unwrap().call::<String, String>(s2.to_owned()) {
+                        Ok(o) => channel.send((Some(o), None)),
+                        Err(er) => channel.send((Some(er.to_string()), None)),
+                    } {
+                        Ok(s) => {}
+                        Err(e) => log(format!("lua server communication error occured -> {}", e)),
+                    }
+                    // }
+                }
+            }
+
+            /*  TODO is this still needed?
+            match globals.get::<&str, mlua::Table>("_ents") {
+                Ok(table) => {
+                    let ent_results = table.sequence_values::<LuaEnt>();
+
+                    let mut ent_array = ent_results.filter_map(|g| g.ok()).collect::<Vec<_>>();
+
+                    match ent_master.try_write_for(std::time::Duration::from_millis(100)) {
+                        Some(mut ent_guard) => {
+                            match ent_guard.get_mut() {
+                                Some(entman) => {
+                                    println!("ent_man adjusted {}", ent_array.len());
+                                    entman.ent_table.clear();
+                                    entman.ent_table.append(&mut ent_array);
+                                }
+                                None => {}
+                            }
+                            drop(ent_guard);
+                        }
+                        _ => {}
+                    }
+                }
+                Err(er) => {
+                    log("missing highest level entities table".to_string());
+                }
+            }
+            */
+
+            //thread::sleep(std::time::Duration::from_millis(10));
+            //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
+            //channel.send(res).unwrap()
+        }
+
+        //})
+    });
+    sender
+}
 
 fn log(str: String) {
     println!("str {}", str);

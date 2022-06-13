@@ -1,10 +1,12 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use glam::{UVec2, UVec4, Vec4};
+use crate::tile::TileTemplate;
+use glam::{vec4, UVec2, UVec4, Vec4};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
+use rustc_hash::FxHashMap;
 use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
 
 lazy_static! {
@@ -12,9 +14,15 @@ lazy_static! {
     pub static ref master: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
     /** Last position of a locatated section for a texture, x y, the last   */
     pub static ref atlas_pos:Mutex<UVec4> = Mutex::new(UVec4::new(0,0,0,0));
-    /** Current dimensuons of the atlas image, likely stays the same in most cases */
+    /** Current dimensions of the atlas image, likely stays the same in most cases */
     pub static ref atlas_dim:Mutex<UVec2>= Mutex::new(UVec2::new(0,0));
-    pub static ref dictionary:Mutex<HashMap<String,Vec4>> =Mutex::new(HashMap::new());
+    /** Our wonderful string to uv coordinate map, give us a texture name and we'll give you a position on the atlas of that texture! */
+    pub static ref dictionary:RwLock<HashMap<String,Vec4>> =RwLock::new(HashMap::new());
+    /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
+    pub static ref counter:Mutex<u32> =Mutex::new(2);
+    /** map our */
+    pub static ref int_dictionary:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
+    pub static ref int_map:RwLock<FxHashMap<u32,Vec4>> = RwLock::new(FxHashMap::default());
 }
 
 pub fn init() {
@@ -24,16 +32,28 @@ pub fn init() {
     d.y = 1024;
     let rgba = master.lock().get_or_init(|| img);
 }
+
 pub fn reset() {
     let img: RgbaImage = ImageBuffer::new(1024, 1024);
     let mut d = atlas_dim.lock();
     d.x = 1024;
     d.y = 1024;
+    let mut p = atlas_pos.lock();
+    p.x = 0;
+    p.y = 0;
+    p.z = 0;
+    p.w = 0;
+    dictionary.write().clear();
+    *counter.lock() = 2;
+    int_dictionary.write().clear();
+    int_map.write().clear();
+
     match master.lock().get_mut() {
         Some(im) => image::imageops::replace(im, &img, 0, 0),
         None => error("Somehow missing our texture atlas?".to_string()),
     }
 }
+
 pub fn save_atlas() {
     let mas = master.lock();
     let buf = mas.get().unwrap();
@@ -55,6 +75,7 @@ pub fn save_atlas() {
         Err(err) => {}
     }
 }
+
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
     make_tex(device, queue, master.lock().get().unwrap())
 }
@@ -62,6 +83,7 @@ pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, 
 pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
     write_tex(device, queue, texture, &master.lock().get().unwrap());
 }
+
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
 pub fn locate(source: RgbaImage) -> Vec4 {
     let mut m_guard = master.lock();
@@ -160,9 +182,18 @@ pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageE
     //println!("{:?}", img.color());
     img
 }
-fn tile_locate(name: String, dim: (u32, u32), pos: Vec4) {
-    let dw = dim.0 / 16;
-    let dh = dim.1 / 16;
+fn tile_locate(
+    name: String,
+    dim: (u32, u32),
+    pos: Vec4,
+    mut tile_dim: u32,
+    rename: Option<HashMap<u32, String>>,
+) {
+    if tile_dim == 0 {
+        tile_dim = 16;
+    }
+    let dw = dim.0 / tile_dim;
+    let dh = dim.1 / tile_dim;
     let iw = 1. / dw as f32;
     let ih = 1. / dh as f32;
 
@@ -180,8 +211,9 @@ fn tile_locate(name: String, dim: (u32, u32), pos: Vec4) {
     //     "d {} {} {} {} and seed pos {} {} {} {}",
     //     dw, dh, iw, ih, pos.x, pos.y, pos.z, pos.w
     // );
-    for x in 0..dw {
-        for y in 0..dh {
+    let can_rename = if rename.is_some() { true } else { false };
+    for y in 0..dh {
+        for x in 0..dw {
             let n = x + (y * dw);
             let mut p = pos.clone();
 
@@ -189,28 +221,64 @@ fn tile_locate(name: String, dim: (u32, u32), pos: Vec4) {
             p.w *= (ih as f32);
             p.x += p.z * x as f32;
             p.y += p.w * y as f32;
-            let str = format!("{}{}", name, n);
+            let key = format!("{}{}", name, n);
+            println!("made texture {} at {}", key, p);
+            // Key to our texture
+            let index_key = index_texture(key.clone(), p);
+
             // log(format!(
             //     "made tile tex {} at {} {} {} {}",
-            //     str, p.x, p.y, p.z, p.w
+            //     key, p.x, p.y, p.z, p.w
             // ));
-            dictionary.lock().insert(str, p);
+            let mut dict = dictionary.write();
+            dict.insert(key, p);
+            if can_rename {
+                match rename {
+                    Some(ref r) => {
+                        match r.get(&n) {
+                            Some(name) => {
+                                dict.insert(name.clone(), p);
+                                index_texture_direct(name.clone(), index_key);
+                            }
+                            _ => {}
+                        };
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     //dictionary.lock().insert(name, pos);
 }
-pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>) {
+
+/** Create a simple numerical key for our texture and uv and map it, returning that numerical key*/
+fn index_texture(key: String, p: Vec4) -> u32 {
+    let mut guard = counter.lock();
+    let ind = *guard;
+    int_map.write().insert(ind, p);
+    int_dictionary.write().insert(key, ind);
+    *guard += 1;
+    ind
+}
+
+/** We already had a numerical key created in a previous index_texture call and want to add another String->u32 translation*/
+fn index_texture_direct(key: String, index: u32) {
+    int_dictionary.write().insert(key, index);
+}
+
+pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<TileTemplate>) {
     // println!("ol testure {} is {}", str, buffer.len());
     match image::load_from_memory(buffer.as_slice()) {
-        Ok(img) => sort_image(str, img),
+        Ok(img) => sort_image(str, img, template),
         Err(err) => {}
     }
 }
-pub fn load_tex(str: &String) {
+
+pub fn load_tex(str: &String, template: Option<TileTemplate>) {
     log(format!("apply texture {}", str));
 
     match load_img_nopath(str) {
-        Ok(img) => sort_image(str, img),
+        Ok(img) => sort_image(str, img, template),
         Err(err) => {
             // dictionary
             //     .lock()
@@ -218,18 +286,33 @@ pub fn load_tex(str: &String) {
         }
     }
 }
-fn sort_image(str: &String, img: DynamicImage) {
-    let (name, is_tile) = get_name(str.clone());
+
+fn sort_image(str: &String, img: DynamicImage, template: Option<TileTemplate>) {
+    let (name, mut is_tile) = get_name(str.clone());
+    let mut rename = None;
+    let mut tile_dim = 16u32;
+    match template {
+        Some(t) => {
+            if t.tiles.len() > 0 || t.size > 0 {
+                is_tile = true;
+            }
+            rename = Some(t.tiles);
+            tile_dim = t.size;
+        }
+        _ => {}
+    }
     if is_tile {
         let dim = (img.width(), img.height());
         let pos = locate(img.into_rgba8());
-        tile_locate(name, dim, pos);
+        tile_locate(name, dim, pos, tile_dim, rename);
     } else {
         let pos = locate(img.into_rgba8());
         println!("sort_image name {} pos {}", name, pos);
-        dictionary.lock().insert(name, pos);
+        dictionary.write().insert(name.clone(), pos);
+        index_texture(name, pos);
     }
 }
+
 fn get_name(str: String) -> (String, bool) {
     let smol = str.split("/").collect::<Vec<_>>();
     let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
@@ -258,7 +341,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
         Some(o) => o,
         None => {
             error("Failed to load texture from mesh".to_string());
-            dictionary.lock().insert(actual_name, pos);
+            dictionary.write().insert(actual_name, pos);
             return;
         }
     };
@@ -312,19 +395,38 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
 
     pos = locate(image_buffer);
 
-    dictionary.lock().insert(actual_name, pos);
+    dictionary.write().insert(actual_name, pos);
 }
 
+/** return texture uv coordinates from a given texture name */
 pub fn get_tex(str: &String) -> Vec4 {
-    match dictionary.lock().get(str) {
+    match dictionary.read().get(str) {
         Some(v) => v.clone(),
         None => Vec4::new(0., 0., 0., 0.),
+    }
+}
+/** return texture numerical index from a given texture name */
+pub fn get_tex_index(str: &String) -> u32 {
+    match int_dictionary.read().get(str) {
+        Some(n) => n.clone(),
+        _ => 1,
+    }
+}
+/** return texture uv coordinates and numerical index from a given texture name */
+pub fn get_tex_and_index(str: &String) {}
+
+/** return texture uv coordinates from a given texture numerical index */
+pub fn get_tex_from_index(ind: u32) -> Vec4 {
+    match int_map.read().get(&ind) {
+        Some(uv) => uv.clone(),
+        _ => vec4(1., 1., 0., 0.),
     }
 }
 
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x, y);
 }
+
 pub fn write_tex(device: &wgpu::Device, queue: &Queue, texture: &Texture, img: &RgbaImage) {
     let dimensions = img.dimensions();
 
@@ -353,6 +455,7 @@ pub fn write_tex(device: &wgpu::Device, queue: &Queue, texture: &Texture, img: &
         texture_size,
     );
 }
+
 pub fn make_tex(
     device: &wgpu::Device,
     queue: &Queue,
@@ -416,6 +519,7 @@ pub fn make_tex(
 fn log(str: String) {
     crate::log::log(format!("🎨texture::{}", str));
 }
+
 fn error(str: String) {
     crate::log::error(format!("‼︎ERROR::🎨texture::{}", str));
 }
