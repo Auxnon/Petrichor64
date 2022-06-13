@@ -9,6 +9,11 @@ use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
 use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
 
+#[cfg(target_os = "windows")]
+const SLASH: char = '\\';
+#[cfg(not(target_os = "windows"))]
+const SLASH: char = '/';
+
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub static ref master: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
@@ -314,7 +319,7 @@ fn sort_image(str: &String, img: DynamicImage, template: Option<TileTemplate>) {
 }
 
 fn get_name(str: String) -> (String, bool) {
-    let smol = str.split("/").collect::<Vec<_>>();
+    let smol = str.split(SLASH).collect::<Vec<_>>();
     let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
     match bits.get(0) {
         Some(o) => {
@@ -405,6 +410,16 @@ pub fn get_tex(str: &String) -> Vec4 {
         None => Vec4::new(0., 0., 0., 0.),
     }
 }
+
+pub fn list_keys() -> String {
+    dictionary
+        .read()
+        .keys()
+        .map(|k| k.clone())
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
 /** return texture numerical index from a given texture name */
 pub fn get_tex_index(str: &String) -> u32 {
     match int_dictionary.read().get(str) {
