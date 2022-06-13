@@ -79,7 +79,10 @@ pub fn init_lua_sys(
     let default_func = lua_ctx
         .create_function(|_, e: f32| Ok("placeholder func uwu"))
         .unwrap();
-    res(lua_globals.set("_default_func", default_func));
+    res(
+        "_default_func",
+        lua_globals.set("_default_func", default_func),
+    );
 
     let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
     lua_globals.set("multi", multi.unwrap());
@@ -90,7 +93,10 @@ pub fn init_lua_sys(
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr) => {
             // println!("hiya sailor, it's {}", $name);
-            res(lua_globals.set($name, lua_ctx.create_function($closure).unwrap()));
+            res(
+                $name,
+                lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
+            );
 
             // fn $func_name() {
             //     // The `stringify!` macro converts an `ident` into a string.
@@ -334,10 +340,14 @@ fn log(str: String) {
     println!("{}", str);
 }
 
-fn res(r: Result<(), Error>) {
-    let st = "🔴lua::problem setting default lua functions";
-    println!("{}", st);
-    crate::log::log(st.to_string());
+fn res(target: &str, r: Result<(), Error>) {
+    match r {
+        Err(err) => {
+            let st = format!("🔴lua::problem setting default lua function {}", target);
+            crate::log::log(st.to_string());
+        }
+        _ => {}
+    }
 }
 
 pub fn reset(core: &mut Core) {

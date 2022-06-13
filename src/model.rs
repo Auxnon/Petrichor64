@@ -465,7 +465,7 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
     // };
     let mut uv = vec![];
     for t in textures {
-        println!("❓ {} ", t);
+        // println!("❓ {} ", t);
         uv.push(crate::texture::get_tex(&t));
     }
     // let t2 = textures.map(|t| t.clone());
