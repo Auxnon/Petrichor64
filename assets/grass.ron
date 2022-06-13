@@ -1,0 +1,6 @@
+( // class name is optional
+    tiles:{ // providing tile renaming or tile size will consider this a tile map
+        8:"good"
+    },
+    size:16 // providing tile renaming or tile size will consider this a tile map
+)

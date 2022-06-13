@@ -119,6 +119,9 @@ impl EntManager {
     pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
         self.entities.remove(&lua.get_id());
     }
+    pub fn reset(&mut self) {
+        self.entities.clear();
+    }
 }
 // use crate::model::Model;
 

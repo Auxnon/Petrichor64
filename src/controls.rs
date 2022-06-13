@@ -90,7 +90,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         let i = (core.global.cursor_projected_pos / 1.).floor() * 16.;
         // println!("i pos {}", i);
         core.world
-            .set_tile("grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
+            .set_tile(&"grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
         core.world
             .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
             .cook(&core.device);
@@ -135,7 +135,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 let com = command.unwrap();
                 println!("command isss {}", com);
 
-                if !crate::command::init_con_sys(&core, &com) {
+                if !crate::command::init_con_sys(core, &com) {
                     let guard = crate::lua_master.lock();
                     let lua_core = guard.get();
                     if lua_core.is_some() {

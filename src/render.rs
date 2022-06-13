@@ -256,14 +256,17 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             render_pass.set_bind_group(0, &core.bind_group, &[]);
 
             // let c = core.world.get_chunk_mut(0, 0, 0);
-            for c in core.world.get_all_chunks() {
+
+            // let go = match core.switch_board.try_read() {
+            //     Some(sw) => !sw.space,
+            //     _ => true,
+            // };
+
+            let chunks = core.world.get_all_chunks();
+            // println!("------chunks {} ------", chunks.len());
+            for c in chunks {
                 if c.buffers.is_some() {
-                    // println!(
-                    //     "\nchunk drawing {:?} \n and {:?}",
-                    //     c.ind_data,
-                    //     c.vert_data.iter().map(|u| u.to_string()).join(", ")
-                    // );
-                    // println!("chunk {}", c.pos);
+                    // println!("chunk {} {}", c.key, c.pos);
                     let b = c.buffers.as_ref().unwrap();
                     render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
                     render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
@@ -271,6 +274,21 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
                     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
                 }
             }
+
+            // {
+            //     let c = core.world.get_chunk_mut(0, 0, -2);
+            //     // println!(
+            //     //     "\nchunk drawing {:?} \n and {:?}",
+            //     //     c.ind_data,
+            //     //     c.vert_data.iter().map(|u| u.to_string()).join(", ")
+            //     // );
+            //     // println!("chunk {}", c.pos);
+            //     let b = c.buffers.as_ref().unwrap();
+            //     render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
+            //     render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
+            //     render_pass.set_vertex_buffer(0, b.0.slice(..));
+            //     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+            // }
 
             // MARK 2
             frame!("entity use2::start");
