@@ -506,9 +506,12 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
     cell.get_or_init(|| model);
 
     let arced_model = Arc::new(cell);
-    index_model(name.clone(), Arc::clone(&arced_model));
+    let model_index = index_model(name.clone(), Arc::clone(&arced_model));
     dictionary.write().insert(name.clone(), arced_model);
-    log(format!("created new model cube {}", name));
+    log(format!(
+        "created new model cube {} with index {}",
+        name, model_index
+    ));
 }
 
 pub fn reset() {
@@ -520,5 +523,7 @@ pub fn reset() {
 }
 
 fn log(str: String) {
-    crate::log::log(format!("🎦model::{}", str));
+    let m = format!("🎦model::{}", str);
+    crate::log::log(m.clone());
+    println!("{}", m);
 }

@@ -1,11 +1,6 @@
--- local a=ent("chicken",0,0)
--- a.scale(2)
--- a.brain("walker")
--- rot=0.
--- _spawn(0,0,0)
 math.randomseed(os.time())
 local fellas = {}
--- _cube("test", "ground0", "ground14", "ground7", "ground7", "ground7", "ground7")
+
 -- top west north east south bottom
 _cube("block1", "ground9", "ground7", "ground7", "ground7", "ground7", "ground15")
 _cube("block2", "ground10", "ground7", "ground7", "ground7", "ground7", "ground15")
@@ -21,7 +16,7 @@ _cube("south", "ground9", "ground7", "ground7", "ground7", "compass3", "ground14
 
 function _main()
     _bg(0, .6, .9, 1)
-    size = 200
+    size = 20
     half = 0
     t = 0
     for i = -size, size do
@@ -38,12 +33,11 @@ function _main()
             else
                 block = "block" .. r
             end
-            -- if t % 2 == 0 then
+
             _tile(block, (i - half), (j - half), h + mx - 12)
             for k = 0, h do
                 _tile("dirt", (i - half), (j - half), k + mx - 13)
             end
-            -- end
         end
     end
     _tile("east", -4, 0, 0)
@@ -63,23 +57,8 @@ function _main()
         end
     end
     -- _print("count is"..c)
-    -- _push(10.)
-    -- _ents[0]={x=44}
-    -- _print(70)
-    -- _print(#_ents)
-    -- _print("testo "..#_testo)
-    -- _print("test index ".._testo[1])
-
-    -- _print("we got ".._ents[1].x)
-
-    -- _ents[1].x=_ents[1].x+1.
-    -- _print("now we have ".._ents[1].x)
-
-    -- for n=0,#_ents do
-    -- _push(n)
-    --  _ents[n].x=_ents[n].x+20
-    -- end
 end
+
 bg = 1
 dir = 0.01
 incr = -60

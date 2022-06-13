@@ -15,7 +15,7 @@ pub struct SwitchBoard {
 impl SwitchBoard {
     pub fn new() -> SwitchBoard {
         SwitchBoard {
-            background: vec4(0., 0., 0., 0.),
+            background: vec4(1., 1., 1., 1.),
             space: false,
             h: 0f32,
             dirty: false,

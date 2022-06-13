@@ -283,7 +283,7 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
     //     "model offset {} {} {} c.pos:{} offset:{} key:{}",
     //     ix, iy, iz, c.pos, offset, c.key
     // );
-
+    print!("c{}", model_index);
     let (mut verts, mut inds) = match crate::model::get_model_from_index(model_index) {
         Some(m) => {
             let data = m.get().unwrap().data.as_ref().unwrap().clone();
@@ -309,7 +309,7 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
             let uv = crate::texture::get_tex_from_index(model_index);
             let cube = crate::model::cube_model();
             let data = cube.get().unwrap().data.as_ref().unwrap().clone();
-            // println!("🟢 loaded cube with text {}", uv);
+            print!("🟢 loaded cube with text {}", uv);
             // crate::model::create_plane(16, None, None)
             let verts = data
                 .0
