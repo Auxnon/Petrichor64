@@ -195,6 +195,7 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
         usage: wgpu::BufferUsages::INDEX,
     });
     Model {
+        name: str,
         vertex_buf,
         index_buf,
         index_format: wgpu::IndexFormat::Uint32,
@@ -219,6 +220,7 @@ pub fn init(device: &Device) {
     });
 
     let planeModel = Model {
+        name: "plane".to_string(),
         vertex_buf: plane_vertex_buf,
         index_buf: plane_index_buf,
         index_format: wgpu::IndexFormat::Uint32,
@@ -239,6 +241,7 @@ pub fn init(device: &Device) {
         usage: wgpu::BufferUsages::INDEX,
     });
     let cubeModel = Model {
+        name: "cube".to_string(),
         vertex_buf: cube_vertex_buf,
         index_buf: cube_index_buf,
         index_format: wgpu::IndexFormat::Uint32,
@@ -306,6 +309,7 @@ pub fn get_model_from_index(index: u32) -> Option<Arc<OnceCell<Model>>> {
     }
 }
 pub struct Model {
+    pub name: String,
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,
     pub index_format: wgpu::IndexFormat,
@@ -405,6 +409,7 @@ fn load(
                 println!("ind #{} verts #{}", indices.len(), vertices.len());
 
                 let model = Model {
+                    name: name.to_string(),
                     vertex_buf: mesh_vertex_buf,
                     index_buf: mesh_index_buf,
                     index_format: wgpu::IndexFormat::Uint32,
@@ -495,6 +500,7 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
     });
 
     let model = Model {
+        name: name.clone(),
         vertex_buf: mesh_vertex_buf,
         index_buf: mesh_index_buf,
         index_format: wgpu::IndexFormat::Uint32,

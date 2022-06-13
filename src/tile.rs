@@ -283,11 +283,12 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
     //     "model offset {} {} {} c.pos:{} offset:{} key:{}",
     //     ix, iy, iz, c.pos, offset, c.key
     // );
-    print!("c{}", model_index);
+
     let (mut verts, mut inds) = match crate::model::get_model_from_index(model_index) {
         Some(m) => {
-            let data = m.get().unwrap().data.as_ref().unwrap().clone();
-
+            let modl = m.get().unwrap();
+            let data = modl.data.as_ref().unwrap().clone();
+            print!("c{} {}", model_index, modl.name);
             let verts = data
                 .0
                 .iter()
