@@ -122,7 +122,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     if core.input_helper.key_released(VirtualKeyCode::Grave) {
         core.global.console = !core.global.console;
         if core.global.console {
-            crate::log::add("$load".to_string());
+            // crate::log::add("$load".to_string());
             core.gui.enable_output()
         } else {
             core.gui.disable_output()
@@ -132,7 +132,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             let command = crate::log::carriage();
             if command.is_some() {
                 // if core.global.test {
-                let com = command.unwrap();
+                let com = command.unwrap().to_lowercase();
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
@@ -169,11 +169,11 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                     Ok(s) => crate::log::add(s),
                     _ => {}
                 }
+            } else if core.input_helper.key_pressed(VirtualKeyCode::R) {
+                crate::command::reload(core);
             }
         } else {
             let t = core.input_helper.text();
-            // core.input_helper.
-
             if t.len() > 0 {
                 let neg = 0;
                 let emp: char;
@@ -183,11 +183,12 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                     Some(s) => {
                         match s {
                             winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                                96 => {}
                                 127 => {
                                     crate::log::back();
                                 }
                                 _ => {
-                                    println!("char {}  {}", t.len(), c);
+                                    println!("char {}  {}", *c as u32, c);
                                     crate::log::add(String::from(*c))
                                 } //st.push(*c),
                             },

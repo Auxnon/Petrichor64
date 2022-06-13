@@ -29,6 +29,12 @@ pub fn next_line() {
     *log_dirty.lock() = true;
 }
 
+/** USER: clear terminal */
+pub fn clear() {
+    buffer.lock().clear();
+    *log_dirty.lock() = true;
+}
+
 /** USER: hit return, push down buffer for an output as it's own line, if any, and then a new line for input. return is used to activate as a command */
 pub fn carriage() -> Option<String> {
     let s = current_line.lock().clone();

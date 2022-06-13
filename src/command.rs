@@ -13,6 +13,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         return false;
     }
     let segments = s.split(" ").collect::<Vec<&str>>();
+
     match segments[0] {
         "$die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
@@ -42,62 +43,24 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
         }
         "$load" => {
-            let mutex = crate::lua_master.lock();
-            let lua_ref = match mutex.get() {
-                Some(lua_in) => {
-                    lua_in.start(Arc::clone(&core.switch_board));
-                    lua_in
-                }
-                None => {
-                    crate::texture::reset();
-                    mutex.get_or_init(|| {
-                        crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board))
-                    })
-                }
-            };
-
-            std::mem::drop(mutex);
-
-            if segments.len() > 1 {
-                crate::asset::unpack(&core.device, &format!("{}.game.png", segments[1]));
-            } else {
-                crate::asset::walk_files(Some(&core.device));
-            }
-
-            crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
-            // DEV  TODO
-            // for e in &mut entity_manager.entities {
-            //     e.hot_reload();
-            // }
-            let mutex = crate::lua_master.lock();
-            mutex.get().unwrap().call_main();
-            log("=================================================".to_string());
-            log("buldozed into this here code with a buncha stuff".to_string());
+            load(
+                core,
+                if segments.len() > 1 {
+                    Some(segments[1].to_string())
+                } else {
+                    None
+                },
+            );
         }
-        "$reset" => {
-            crate::texture::reset();
-            crate::model::reset();
-
-            let mutex = crate::lua_master.lock();
-            match mutex.get() {
-                Some(lua_instance) => {
-                    lua_instance.die();
-                }
-                _ => {}
-            }
-            core.world.destroy_it_all();
-
-            // TODO why doe sent reset panic?
-            // let mut guard = crate::ent_master.write();
-            // guard.get_mut().unwrap().reset();
-        }
-
+        "$reset" => reset(core),
+        "$reload" => reload(core),
         "$atlas" => {
             crate::texture::save_atlas();
         }
         "$ugh" => {
             // TODO ugh?
         }
+        "$clear" => crate::log::clear(),
         "$test" => {
             log("that test worked, yipee".to_string());
         }
@@ -375,4 +338,62 @@ fn res(r: Result<(), Error>) {
     let st = "🔴lua::problem setting default lua functions";
     println!("{}", st);
     crate::log::log(st.to_string());
+}
+
+pub fn reset(core: &mut Core) {
+    crate::texture::reset();
+    crate::model::reset();
+
+    let mutex = crate::lua_master.lock();
+    match mutex.get() {
+        Some(lua_instance) => {
+            lua_instance.die();
+        }
+        _ => {}
+    }
+    core.world.destroy_it_all();
+
+    // TODO why doe sent reset panic?
+    // let mut guard = crate::ent_master.write();
+    // guard.get_mut().unwrap().reset();
+}
+
+pub fn load(core: &mut Core, sub_command: Option<String>) {
+    let mutex = crate::lua_master.lock();
+    let lua_ref = match mutex.get() {
+        Some(lua_in) => {
+            lua_in.start(Arc::clone(&core.switch_board));
+            lua_in
+        }
+        None => {
+            crate::texture::reset();
+            mutex.get_or_init(|| crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board)))
+        }
+    };
+
+    std::mem::drop(mutex);
+
+    match sub_command {
+        Some(s) => {
+            crate::asset::unpack(&core.device, &format!("{}.game.png", s));
+        }
+        None => {
+            crate::asset::walk_files(Some(&core.device));
+        }
+    };
+
+    crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
+    // DEV  TODO
+    // for e in &mut entity_manager.entities {
+    //     e.hot_reload();
+    // }
+    let mutex = crate::lua_master.lock();
+    mutex.get().unwrap().call_main();
+    log("=================================================".to_string());
+    log("loaded into game".to_string());
+}
+
+pub fn reload(core: &mut Core) {
+    reset(core);
+    load(core, None);
 }
