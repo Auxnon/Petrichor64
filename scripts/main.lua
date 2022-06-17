@@ -13,6 +13,7 @@ _cube("east", "ground9", "ground7", "ground7", "compass2", "ground7", "ground14"
 _cube("west", "ground9", "compass0", "ground7", "ground7", "ground7", "ground14")
 _cube("north", "ground9", "ground7", "compass1", "ground7", "ground7", "ground14")
 _cube("south", "ground9", "ground7", "ground7", "ground7", "compass3", "ground14")
+-- _cube("test", "grass0", "ground7", "ground7", "ground7", "compass3", "ground14")
 
 function _main()
     _bg(0, .6, .9, 1)
@@ -33,10 +34,13 @@ function _main()
             else
                 block = "block" .. r
             end
-
-            _tile(block, (i - half), (j - half), h + mx - 12)
-            for k = 0, h do
-                _tile("dirt", (i - half), (j - half), k + mx - 13)
+            if math.abs(i) > 4 or math.abs(j) > 4 then
+                _tile(block, (i - half), (j - half), h + mx - 12)
+                for k = 0, h do
+                    _tile("dirt", (i - half), (j - half), k + mx - 13)
+                end
+            else
+                _tile("grass0", (i - half), (j - half), -8)
             end
         end
     end
@@ -51,7 +55,7 @@ function _main()
     for i = -h, h do
         for j = -h, h do
             c = c + 1
-            t = _spawn(c % 2 == 0 and "dog1" or "chicken", i, j, 0)
+            t = _spawn(c % 2 == 0 and "dog1" or "chicken", i, j, -7)
             fellas[#fellas + 1] = t
 
         end
@@ -66,7 +70,6 @@ delay = 0
 function _loop()
     for i = 1, #fellas do
         _walker(fellas[i])
-        -- fellas[i].x=fellas[i].x+0.1
     end
     -- bg = bg - dir
     -- if bg > 1 then

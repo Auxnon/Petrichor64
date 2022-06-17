@@ -136,9 +136,9 @@ impl<'lua> Ent {
         //     scale: entity.scale * 16.,
         // };
 
-        let s = 1.; // DEV entity.scale;
-        let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32); // DEV entity.pos
-        Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos.mul(16.))
+        let s = 16.; // DEV entity.scale;
+        let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
+        Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos)
         // DEV i32
         /*
                 let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));

@@ -229,7 +229,7 @@ pub fn init(device: &Device) {
     };
     plane.get_or_init(|| planeModel);
 
-    let (cube_vertex_data, cube_index_data) = create_cube(1); // TODO 16
+    let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
     let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Cubes Vertex Buffer"),
         contents: bytemuck::cast_slice(&cube_vertex_data),
@@ -469,6 +469,7 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
     //     }
     // };
     let mut uv = vec![];
+    // println!("keys {}", crate::texture::list_keys());
     for t in textures {
         // println!("❓ {} ", t);
         uv.push(crate::texture::get_tex(&t));

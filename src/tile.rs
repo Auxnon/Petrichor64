@@ -2,7 +2,7 @@ use ron::de::from_reader;
 use ron::Map;
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
-use std::collections::hash_map::Entry;
+use std::{collections::hash_map::Entry, ops::Mul};
 
 use glam::{ivec3, vec3, DVec4, IVec3, Vec4};
 use rand::Rng;
@@ -278,7 +278,8 @@ impl Chunk {
 fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
-    let offset = ivec3(ix as i32, iy as i32, iz as i32) + c.pos.clone();
+    let offset =
+        (ivec3(ix as i32, iy as i32, iz as i32) + c.pos.clone()).mul(16) + ivec3(-8, -8, -8);
     // println!(
     //     "model offset {} {} {} c.pos:{} offset:{} key:{}",
     //     ix, iy, iz, c.pos, offset, c.key
@@ -288,13 +289,13 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
         Some(m) => {
             let modl = m.get().unwrap();
             let data = modl.data.as_ref().unwrap().clone();
-            print!("c{} {}", model_index, modl.name);
+            // print!("c{} {}", model_index, modl.name);
             let verts = data
                 .0
                 .iter()
                 .map(|v| {
                     let mut v2 = v.clone();
-                    v2.trans(offset.clone());
+                    v2.trans(offset);
                     v2
                 })
                 .collect::<Vec<Vertex>>();
@@ -310,14 +311,14 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
             let uv = crate::texture::get_tex_from_index(model_index);
             let cube = crate::model::cube_model();
             let data = cube.get().unwrap().data.as_ref().unwrap().clone();
-            print!("🟢 loaded cube with text {}", uv);
+            // print!("🟢 loaded cube with text {}", uv);
             // crate::model::create_plane(16, None, None)
             let verts = data
                 .0
                 .iter()
                 .map(|v| {
                     let mut v2 = v.clone();
-                    v2.trans(offset.clone());
+                    v2.trans(offset);
                     v2.texture(uv);
                     v2
                 })

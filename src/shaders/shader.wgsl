@@ -63,10 +63,7 @@ fn vs_main(
 
     out.tex_coords=(tex_coords*vec2<f32>(ent.uv_mod.z,ent.uv_mod.w))+vec2<f32>(ent.uv_mod.x,ent.uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
-    //let vpos2=vec4<f32>(vpos.x,vpos.y,vpos.z+globals.time,vpos.w);
-    //vpos.xyz=(vpos.y%0.1)*10.;
-    //let vpos2=(vpos%1.0);
-    //let vpos3=vec4<f32>(1.,0.,0.,0.);//vpos*100.;
+  
     out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.time.x,world_pos.w);
     return out;
 }
