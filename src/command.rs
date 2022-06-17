@@ -1,6 +1,12 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
 use glam::vec4;
+use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::RwLock;
 use std::sync::Mutex;
@@ -56,6 +62,27 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         "$reload" => reload(core),
         "$atlas" => {
             crate::texture::save_atlas();
+        }
+        "$ls" => {
+            let s = if segments.len() > 1 {
+                segments[1].to_string().clone()
+            } else {
+                ".".to_string()
+            };
+            let path = Path::new(&s);
+
+            match path.read_dir() {
+                Ok(read) => {
+                    let dir = read
+                        .filter(Result::is_ok)
+                        .map(|e| format!("{:?}", e.unwrap().path()))
+                        .join(",");
+                    log(dir);
+                }
+                Err(er) => {
+                    log(format!("returned {}", er));
+                }
+            }
         }
         "$ugh" => {
             // TODO ugh?

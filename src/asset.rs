@@ -102,8 +102,24 @@ pub fn walk_files(
     device: Option<&Device>,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
 ) -> Vec<String> {
-    let assets_path = Path::new(".").join("assets");
-    let scripts_path = Path::new(".").join("scripts");
+    //MARK
+
+    #[cfg(not(debug_assertions))]
+    let current = match std::env::current_exe() {
+        Ok(mut cur) => {
+            cur.pop();
+            cur
+        }
+        Err(er) => PathBuf::from("."),
+    };
+
+    #[cfg(debug_assertions)]
+    let current = PathBuf::from(".");
+
+    log(format!("current dir is {}", current.display()));
+    let assets_path = current.join(Path::new("assets"));
+    let scripts_path = current.join(Path::new("scripts"));
+
     log(format!("assets dir is {}", assets_path.display()));
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
     let mut configs = vec![];
