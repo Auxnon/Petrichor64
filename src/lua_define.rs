@@ -21,14 +21,13 @@ use std::{
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
-    to_lua_tx: Mutex<
-        Sender<(
-            String,
-            String,
-            Option<LuaEnt>,
-            SyncSender<(Option<String>, Option<LuaEnt>)>,
-        )>,
-    >,
+    to_lua_tx: Sender<(
+        String,
+        String,
+        Option<LuaEnt>,
+        SyncSender<(Option<String>, Option<LuaEnt>)>,
+    )>,
+
     catcher: Receiver<(i32, String, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
 
@@ -38,14 +37,14 @@ impl LuaCore {
 
         let (rec, catcher) = start(switch_board);
         LuaCore {
-            to_lua_tx: Mutex::new(rec),
+            to_lua_tx: rec,
             catcher,
         }
     }
 
     pub fn start(&mut self, switch_board: Arc<RwLock<SwitchBoard>>) {
         let (rec, catcher) = start(switch_board);
-        *self.to_lua_tx.lock() = rec;
+        self.to_lua_tx = rec;
         self.catcher = catcher;
         // reset()
     }
@@ -85,10 +84,9 @@ impl LuaCore {
         ent: Option<LuaEnt>,
     ) -> (Option<String>, Option<LuaEnt>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
-        let guard = self.to_lua_tx.lock();
         let bool = ent.is_some();
         // println!("xxx {} :: {}", func, path);
-        guard.send((func.clone(), path.clone(), ent, tx));
+        self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
 
         //MutexGuard::unlock_fair(guard);
         match rx.recv() {
