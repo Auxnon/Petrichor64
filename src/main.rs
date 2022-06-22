@@ -74,8 +74,6 @@ pub struct Core {
     bind_group: BindGroup,
     master_texture: Texture,
     gui: Gui,
-
-    input_helper: winit_input_helper::WinitInputHelper,
     loop_helper: spin_sleep::LoopHelper,
 }
 
@@ -501,7 +499,6 @@ impl Core {
             entity_uniform_buf,
             stream: sound::init_sound(dupe_switch).unwrap(),
             world,
-            input_helper: winit_input_helper::WinitInputHelper::new(),
             master_texture: diff_tex,
             loop_helper,
         }
@@ -583,6 +580,11 @@ impl Core {
             //  let current_fps = Some(fps);
             self.global.fps = fps;
         }
+        self.global.delayed += 1;
+        if self.global.delayed >= 32 {
+            self.global.delayed = 0;
+            println!("fps::{}", self.global.fps);
+        }
 
         let s = render::render_loop(self);
         self.loop_helper.loop_sleep();
@@ -636,7 +638,9 @@ fn main() {
     }
 
     event_loop.run(move |event, _, control_flow| {
-        if core.input_helper.update(&event) {
+        let mut locker = crate::controls::input_manager.write();
+        if locker.update(&event) {
+            drop(locker);
             controls::controls_evaluate(&mut core, control_flow);
             frame!("START");
             core.update();
@@ -648,6 +652,11 @@ fn main() {
                 },
                 _ => {}
             }
+            // match event {
+
+            //     Event::WindowEvent { window_id: (), event: Event::WindowEvent::Dev }
+            //     } => {}
+            // }
 
             match core.render() {
                 Ok(_) => {}

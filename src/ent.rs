@@ -24,10 +24,6 @@ pub struct Ent {
     pub matrix: Mat4,
     pub rotation: f32,
     pub color: wgpu::Color,
-    // pub scale: f32,
-    // pub pos: Vec3,
-    // pub vel: Vec3,
-    // pub rot: Vec3,
     pub model: Arc<OnceCell<Model>>,
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: Vec4,
@@ -129,7 +125,7 @@ impl<'lua> Ent {
 
         let quat = Quat::from_axis_angle(vec3(0., 0., 1.), self.rotation);
 
-        // let transform = cgmath::Decomposed {
+        // let transform = cgmath::De composed {
         //     disp: entity.pos.mul(16.),
         //     rot: ),
         //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),

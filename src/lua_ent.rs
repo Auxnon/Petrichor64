@@ -1,4 +1,4 @@
-use crate::Ent;
+use crate::{ent_master, Ent};
 
 use mlua::{MetaMethod, UserData, UserDataFields, UserDataMethods};
 pub struct LuaEnt {
@@ -26,7 +26,23 @@ impl UserData for LuaEnt {
 
             Ok(())
         });
-        methods.add_meta_method_mut("fix", |lua, this, ()| Ok(()));
+        // methods.add_method_mut("fix", |lua, this, ()| Ok(()));
+
+        methods.add_method("tex", |_, this, tex: String| {
+            ent_master
+                .write()
+                .get_mut()
+                .unwrap()
+                .swap_tex(&tex.clone(), this.get_id());
+
+            Ok(true)
+        });
+
+        // methods.add_method_mut("add", |_, this, value: f64| {
+        //     this.x += value;
+        //     Ok(())
+        // });
+
         // methods.add_method("add", |lu, this, ()| {
         //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
         //     ents.set(this.get_id(), this);
@@ -35,6 +51,7 @@ impl UserData for LuaEnt {
         // });
         methods.add_method("get_y", |_, this, ()| Ok(this.y));
     }
+
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
         fields.add_field_method_get("x", |_, this| Ok(this.x));
         fields.add_field_method_set("x", |_, this, x: f64| Ok(this.x = x));

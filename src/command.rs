@@ -2,7 +2,10 @@ use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        mpsc::{Sender, SyncSender},
+        Arc,
+    },
 };
 
 use glam::vec4;
@@ -10,6 +13,7 @@ use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::RwLock;
 use std::sync::Mutex;
+use winit::event::VirtualKeyCode;
 
 use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
 
@@ -100,6 +104,7 @@ pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
     switch_board: Arc<RwLock<SwitchBoard>>,
+    pitcher: &Sender<(i32, String, SyncSender<i32>)>,
 ) -> Result<(), Error> {
     println!("init lua sys");
 
@@ -133,10 +138,10 @@ pub fn init_lua_sys(
         };
     }
 
-    lua!("_time", |_, (): ()| Ok(17), "Get the time.");
+    lua!("time", |_, (): ()| Ok(17), "Get the time.");
 
     lua!(
-        "_point",
+        "point",
         |_, (): ()| {
             // let mut mutex = crate::ent_master.lock();
             // let entity_manager = mutex.get_mut().unwrap();
@@ -151,17 +156,16 @@ pub fn init_lua_sys(
     );
 
     lua!(
-        "_print",
-        |_, (s): (String)| {
-            log(s.clone());
-            println!(">lua dump:: {}", s);
-            Ok(1)
+        "log",
+        |_, s: String| {
+            log(format!("log::{}", s));
+            Ok(())
         },
         "Prints string to console"
     );
 
     lua!(
-        "_push",
+        "push",
         move |lua, (n): (f64)| {
             // let ents = lua.globals().get::<&str, Table>("_ents")?;
             // ents.macro_export
@@ -175,14 +179,6 @@ pub fn init_lua_sys(
                 eg.x += n;
             }
 
-            // match ents.get::<f64, LuaEnt>(n) {
-            //     Ok(mut e) => {
-            //         e.x += 10.;
-            //         ents.set(n, e);
-            //     }
-            //     _ => {}
-            // }
-
             Ok(())
         },
         "Pushes entities"
@@ -190,7 +186,7 @@ pub fn init_lua_sys(
 
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_bg",
+        "bg",
         move |_, (x, y, z, w): (f32, f32, f32, f32)| {
             let mut mutex = &mut switch.write();
             mutex.background = vec4(x, y, z, w);
@@ -213,7 +209,7 @@ pub fn init_lua_sys(
     // ));
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_cube",
+        "cube",
         move |_,
               (name, t, w, n, e, s, b): (
             String,
@@ -237,7 +233,7 @@ pub fn init_lua_sys(
 
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_tile",
+        "tile",
         move |_, (t, x, y, z): (String, f32, f32, f32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             let mut mutex = &mut switch.write();
@@ -249,7 +245,7 @@ pub fn init_lua_sys(
 
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_tile_done",
+        "tile_done",
         move |_, (): ()| {
             let mutex = &mut switch.write();
             mutex.dirty = true;
@@ -260,7 +256,7 @@ pub fn init_lua_sys(
 
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_tile_quick",
+        "tile_quick",
         move |_, (t, x, y, z): (String, f32, f32, f32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             let mut mutex = &mut switch.write();
@@ -271,11 +267,57 @@ pub fn init_lua_sys(
         "Set a tile within 3d space and immediately trigger a redraw."
     );
 
+    // MARK
+    // lua!(
+    //     "is_tile",
+    //     move |_, (x, y, z): (f32, f32, f32)| {
+    //         // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+    //         let mut mutex = &mut switch.read();
+    //         mutex.tile_queue.push((t, vec4(0., x, y, z)));
+    //         mutex.dirty = true;
+    //         Ok(1)
+    //     },
+    //     "Set a tile within 3d space and immediately trigger a redraw."
+    // );
+
     let switch = Arc::clone(&switch_board);
     lua!(
-        "_space",
+        "space",
         move |_, (): ()| { Ok(switch.read().space) },
         "Space is down"
+    );
+
+    lua!(
+        "key",
+        |_, (key): (String)| {
+            match key_match(key) {
+                Some(k) => Ok(crate::controls::input_manager.read().key_held(k)),
+                None => Ok(false),
+            }
+        },
+        "Check if key is held down"
+    );
+
+    lua!(
+        "key_pressed",
+        |_, (key): (String)| {
+            match key_match(key) {
+                Some(k) => Ok(crate::controls::input_manager.read().key_pressed(k)),
+                None => Ok(false),
+            }
+        },
+        "Check if key is pressed breifly"
+    );
+
+    lua!(
+        "key_released",
+        |_, (key): (String)| {
+            match key_match(key) {
+                Some(k) => Ok(crate::controls::input_manager.read().key_released(k)),
+                None => Ok(false),
+            }
+        },
+        "Check if key is released"
     );
 
     // let switch = Arc::clone(&switch_board);
@@ -304,8 +346,8 @@ pub fn init_lua_sys(
     // let switch = Arc::clone(&switch_board);
 
     lua!(
-        "_spawn",
-        move |lua, (asset, x, y, z): (String, f64, f64, f64)| {
+        "spawn",
+        move |_, (asset, x, y, z): (String, f64, f64, f64)| {
             // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
             // let ents = lua.globals().get::<&str, Table>("_ents")?;
             let mut guard = crate::ent_master.write();
@@ -336,7 +378,7 @@ pub fn init_lua_sys(
     );
 
     lua!(
-        "_add",
+        "add",
         move |lua, (e): (LuaEnt)| {
             let ents = lua.globals().get::<&str, Table>("_ents")?;
             ents.set(e.get_id(), e);
@@ -362,15 +404,17 @@ pub fn init_lua_sys(
 
     Ok(())
 }
+
 fn log(str: String) {
+    println!("com::{}", str);
     crate::log::log(format!("com::{}", str));
-    println!("{}", str);
 }
 
 fn res(target: &str, r: Result<(), Error>) {
     match r {
         Err(err) => {
             let st = format!("🔴lua::problem setting default lua function {}", target);
+            println!("{}", st);
             crate::log::log(st.to_string());
         }
         _ => {}
@@ -396,8 +440,8 @@ pub fn reset(core: &mut Core) {
 }
 
 pub fn load(core: &mut Core, sub_command: Option<String>) {
-    let mutex = crate::lua_master.lock();
-    let lua_ref = match mutex.get() {
+    let mut mutex = crate::lua_master.lock();
+    let lua_ref = match mutex.get_mut() {
         Some(lua_in) => {
             lua_in.start(Arc::clone(&core.switch_board));
             lua_in
@@ -433,4 +477,39 @@ pub fn load(core: &mut Core, sub_command: Option<String>) {
 pub fn reload(core: &mut Core) {
     reset(core);
     load(core, None);
+}
+
+fn key_match(key: String) -> Option<VirtualKeyCode> {
+    Some(match key.to_lowercase().as_str() {
+        "a" => VirtualKeyCode::A,
+        "b" => VirtualKeyCode::B,
+        "c" => VirtualKeyCode::C,
+        "d" => VirtualKeyCode::D,
+        "e" => VirtualKeyCode::E,
+        "f" => VirtualKeyCode::F,
+        "g" => VirtualKeyCode::G,
+        "h" => VirtualKeyCode::H,
+        "i" => VirtualKeyCode::I,
+        "j" => VirtualKeyCode::J,
+        "k" => VirtualKeyCode::K,
+        "l" => VirtualKeyCode::L,
+        "m" => VirtualKeyCode::M,
+        "n" => VirtualKeyCode::N,
+        "o" => VirtualKeyCode::O,
+        "p" => VirtualKeyCode::P,
+        "q" => VirtualKeyCode::Q,
+        "r" => VirtualKeyCode::R,
+        "s" => VirtualKeyCode::S,
+        "t" => VirtualKeyCode::T,
+        "u" => VirtualKeyCode::U,
+        "v" => VirtualKeyCode::V,
+        "w" => VirtualKeyCode::W,
+        "x" => VirtualKeyCode::X,
+        "y" => VirtualKeyCode::Y,
+        "z" => VirtualKeyCode::Z,
+        "space" => VirtualKeyCode::Space,
+        "lctrl" => VirtualKeyCode::LControl,
+        "rctrl" => VirtualKeyCode::RControl,
+        _ => return None,
+    })
 }

@@ -1,5 +1,26 @@
-function _walker(entity)
-    entity.z = -7 + math.cos(os.clock() * 4. + entity.x + entity.y) * 0.6
+function walker(entity)
+    if key("A") then
+        -- entity.z = -7 + math.cos(os.clock() * 2. + entity.x + entity.y) * 0.6
+
+        entity.data.z = -7 + math.cos(os.clock() * 2. + entity.data.x + entity.data.y) * 0.6
+
+        -- entity.pos(0, 0, -7 + math.cos(os.clock() * 2. + entity.x + entity.y) * 0.6)
+    end
+
+    if key("D") then
+        entity.delay = entity.delay + 1
+        if entity.delay > 10 then
+            entity.delay = 0
+            entity.frame = entity.frame + 1
+            if entity.frame > 2 then
+                entity.frame = 0
+            end
+            entity.data:tex("dog" .. entity.frame)
+        end
+    elseif key("C") then
+        entity.data:tex("chicken")
+    end
+
     -- entity.y=entity.y+math.sin(os.clock()*4.)*0.1
     -- entity.x=entity.x+0.2
     return entity -- make_ent(p.x+1.,p:get_y())

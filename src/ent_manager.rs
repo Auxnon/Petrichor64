@@ -115,6 +115,14 @@ impl EntManager {
     pub fn get_from_id(&self, id: i64) -> Option<&Ent> {
         self.entities.get(&id)
     }
+    pub fn swap_tex(&mut self, tex: &String, ent_id: i64) {
+        match self.entities.get_mut(&ent_id) {
+            Some(e) => {
+                e.tex = crate::texture::get_tex(tex);
+            }
+            _ => {}
+        }
+    }
 
     pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
         self.entities.remove(&lua.get_id());

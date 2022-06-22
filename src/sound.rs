@@ -157,7 +157,8 @@ where
         let t = sample_clock * 2.0 * std::f32::consts::PI / sample_rate; //*440.
                                                                          //println!("t {}", t);
 
-        switch_board.write().h = t;
+        // switch_board.write().h = t;
+
         //sine
         //(t).sin()
 

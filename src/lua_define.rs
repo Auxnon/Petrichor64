@@ -29,20 +29,24 @@ pub struct LuaCore {
             SyncSender<(Option<String>, Option<LuaEnt>)>,
         )>,
     >,
-    //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
+    catcher: Receiver<(i32, String, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
 
 impl LuaCore {
     pub fn new(switch_board: Arc<RwLock<SwitchBoard>>) -> LuaCore {
         log("lua core thread started".to_string());
 
+        let (rec, catcher) = start(switch_board);
         LuaCore {
-            to_lua_tx: Mutex::new(start(switch_board)),
+            to_lua_tx: Mutex::new(rec),
+            catcher,
         }
     }
 
-    pub fn start(&self, switch_board: Arc<RwLock<SwitchBoard>>) {
-        *self.to_lua_tx.lock() = start(switch_board);
+    pub fn start(&mut self, switch_board: Arc<RwLock<SwitchBoard>>) {
+        let (rec, catcher) = start(switch_board);
+        *self.to_lua_tx.lock() = rec;
+        self.catcher = catcher;
         // reset()
     }
 
@@ -90,7 +94,7 @@ impl LuaCore {
         match rx.recv() {
             Ok(lua_out) => lua_out,
             Err(e) => {
-                println!("lua_inject::{}", e);
+                err(e.to_string());
                 (None, None)
             }
         }
@@ -102,11 +106,11 @@ impl LuaCore {
     }
 
     pub fn call_main(&self) {
-        self.func(&"_main()".to_string());
+        self.func(&"main()".to_string());
     }
 
     pub fn call_loop(&self) {
-        self.func(&"_loop()".to_string());
+        self.func(&"loop()".to_string());
     }
 
     pub fn die(&self) {
@@ -289,12 +293,15 @@ fn lua_load(lua: &Lua, st: &String) {
 
 fn start(
     switch_board: Arc<RwLock<SwitchBoard>>,
-) -> Sender<(
-    String,
-    String,
-    Option<LuaEnt>,
-    SyncSender<(Option<String>, Option<LuaEnt>)>,
-)> {
+) -> (
+    Sender<(
+        String,
+        String,
+        Option<LuaEnt>,
+        SyncSender<(Option<String>, Option<LuaEnt>)>,
+    )>,
+    Receiver<(i32, String, SyncSender<i32>)>,
+) {
     let (sender, reciever) = channel::<(
         String,
         String,
@@ -302,13 +309,15 @@ fn start(
         SyncSender<(Option<String>, Option<LuaEnt>)>,
     )>();
 
+    let (pitcher, catcher) = channel::<(i32, String, SyncSender<i32>)>();
+
     log("init lua core".to_string());
     let lua_thread = thread::spawn(move || {
         let lua_ctx = Lua::new();
 
         let globals = lua_ctx.globals();
 
-        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board);
+        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board, &pitcher);
 
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
@@ -385,10 +394,15 @@ fn start(
 
         //})
     });
-    sender
+    (sender, catcher)
 }
 
 fn log(str: String) {
-    println!("str {}", str);
+    println!("📜lua::{}", str);
     crate::log::log(format!("📜lua::{}", str));
+}
+
+fn err(str: String) {
+    println!("📜lua_err::{}", str);
+    crate::log::log(format!("📜lua_err::{}", str));
 }

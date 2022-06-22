@@ -3,7 +3,6 @@ use std::collections::{hash_map::Entry, HashMap};
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 /** Global variable container intended for main thread only */
 pub struct Global {
-    pub space: bool,
     pub values: HashMap<String, f32>,
     pub test: bool,
     pub mouse_click_pos: Vec2,
@@ -13,13 +12,13 @@ pub struct Global {
     pub camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
+    pub delayed: i32,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
 }
 impl Global {
     pub fn new() -> Global {
         Global {
-            space: false,
             values: HashMap::new(),
             console: false,
             mouse_active_pos: vec2(0., 0.),
@@ -30,6 +29,7 @@ impl Global {
             test: false,
             fps: 0.,
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
+            delayed: 0,
         }
     }
     pub fn set(&mut self, key: String, v: f32) {
