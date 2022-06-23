@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        mpsc::{Sender, SyncSender},
+        mpsc::{sync_channel, Sender, SyncSender},
         Arc,
     },
 };
@@ -27,18 +27,17 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     match segments[0] {
         "$die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
-            let guard = crate::lua_master.lock();
-            let lua_core = guard.get();
-            if lua_core.is_some() {
-                lua_core.unwrap().die();
-            }
+            core.lua_master.die();
         }
         "$pack" => {
-            crate::asset::pack(&if segments.len() > 1 {
-                format!("{}.game.png", segments[1])
-            } else {
-                "game.png".to_string()
-            });
+            crate::asset::pack(
+                &if segments.len() > 1 {
+                    format!("{}.game.png", segments[1])
+                } else {
+                    "game.png".to_string()
+                },
+                &core.lua_master,
+            );
         }
         "$superpack" => {
             log(crate::asset::super_pack(&if segments.len() > 1 {
@@ -104,7 +103,7 @@ pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
     switch_board: Arc<RwLock<SwitchBoard>>,
-    pitcher: &Sender<(i32, String, SyncSender<i32>)>,
+    pitcher: Sender<(i32, String, i32, i32, i32, SyncSender<i32>)>,
 ) -> Result<(), Error> {
     println!("init lua sys");
 
@@ -268,17 +267,25 @@ pub fn init_lua_sys(
     );
 
     // MARK
-    // lua!(
-    //     "is_tile",
-    //     move |_, (x, y, z): (f32, f32, f32)| {
-    //         // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-    //         let mut mutex = &mut switch.read();
-    //         mutex.tile_queue.push((t, vec4(0., x, y, z)));
-    //         mutex.dirty = true;
-    //         Ok(1)
-    //     },
-    //     "Set a tile within 3d space and immediately trigger a redraw."
-    // );
+    lua!(
+        "is_tile",
+        move |_, (x, y, z): (f32, f32, f32)| {
+            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+            // let mut mutex = &mut switch.read();
+            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            // mutex.dirty = true;
+            let (tx, rx) = sync_channel::<i32>(0);
+            pitcher.send((1, String::new(), x as i32, y as i32, z as i32, tx));
+            Ok(match rx.recv() {
+                Ok(n) => n == 1,
+                Err(e) => {
+                    // err(e.to_string());
+                    false
+                }
+            })
+        },
+        "Set a tile within 3d space and immediately trigger a redraw."
+    );
 
     let switch = Arc::clone(&switch_board);
     lua!(
@@ -287,13 +294,24 @@ pub fn init_lua_sys(
         "Space is down"
     );
 
+    // let pitchy = Arc::new(pitcher);
     lua!(
         "key",
-        |_, (key): (String)| {
-            match key_match(key) {
-                Some(k) => Ok(crate::controls::input_manager.read().key_held(k)),
-                None => Ok(false),
-            }
+        move |_, (key): (String)| {
+            // match key_match(key) {
+            //     Some(k) => Ok(crate::controls::input_manager.read().key_held(k)),
+            //     None => Ok(false),
+            // }
+            // let (tx, rx) = sync_channel::<i32>(0);
+            // pitcher.send((0, key, tx));
+            // Ok(match rx.recv() {
+            //     Ok(n) => n == 1,
+            //     Err(e) => {
+            //         // err(e.to_string());
+            //         false
+            //     }
+            // })
+            Ok(false)
         },
         "Check if key is held down"
     );
@@ -405,11 +423,6 @@ pub fn init_lua_sys(
     Ok(())
 }
 
-fn log(str: String) {
-    println!("com::{}", str);
-    crate::log::log(format!("com::{}", str));
-}
-
 fn res(target: &str, r: Result<(), Error>) {
     match r {
         Err(err) => {
@@ -425,13 +438,7 @@ pub fn reset(core: &mut Core) {
     crate::texture::reset();
     crate::model::reset();
 
-    let mutex = crate::lua_master.lock();
-    match mutex.get() {
-        Some(lua_instance) => {
-            lua_instance.die();
-        }
-        _ => {}
-    }
+    core.lua_master.die();
     core.world.destroy_it_all();
 
     // TODO why doe sent reset panic?
@@ -440,26 +447,18 @@ pub fn reset(core: &mut Core) {
 }
 
 pub fn load(core: &mut Core, sub_command: Option<String>) {
-    let mut mutex = crate::lua_master.lock();
-    let lua_ref = match mutex.get_mut() {
-        Some(lua_in) => {
-            lua_in.start(Arc::clone(&core.switch_board));
-            lua_in
-        }
-        None => {
-            crate::texture::reset();
-            mutex.get_or_init(|| crate::lua_define::LuaCore::new(Arc::clone(&core.switch_board)))
-        }
-    };
+    // let mut mutex = crate::lua_master.lock();
 
-    std::mem::drop(mutex);
+    core.lua_master.start(Arc::clone(&core.switch_board));
+
+    crate::texture::reset();
 
     match sub_command {
         Some(s) => {
-            crate::asset::unpack(&core.device, &format!("{}.game.png", s));
+            crate::asset::unpack(&core.device, &format!("{}.game.png", s), &core.lua_master);
         }
         None => {
-            crate::asset::walk_files(Some(&core.device));
+            crate::asset::walk_files(Some(&core.device), &core.lua_master);
         }
     };
 
@@ -468,8 +467,7 @@ pub fn load(core: &mut Core, sub_command: Option<String>) {
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
     // }
-    let mutex = crate::lua_master.lock();
-    mutex.get().unwrap().call_main();
+    core.lua_master.call_main();
     log("=================================================".to_string());
     log("loaded into game".to_string());
 }
@@ -512,4 +510,14 @@ fn key_match(key: String) -> Option<VirtualKeyCode> {
         "rctrl" => VirtualKeyCode::RControl,
         _ => return None,
     })
+}
+
+fn log(str: String) {
+    println!("com::{}", str);
+    crate::log::log(format!("com::{}", str));
+}
+
+fn err(str: String) {
+    println!("com_err::{}", str);
+    crate::log::log(format!("com_err::{}", str));
 }

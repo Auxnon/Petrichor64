@@ -7,8 +7,10 @@ use std::{
 
 use wgpu::Device;
 
-pub fn pack(name: &String) {
-    let sources = walk_files(None);
+use crate::lua_define::LuaCore;
+
+pub fn pack(name: &String, lua_master: &LuaCore) {
+    let sources = walk_files(None, lua_master);
 
     crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
 }
@@ -19,7 +21,7 @@ pub fn super_pack(name: &String) -> &str {
     crate::zip_pal::pack_game_bin(name)
 }
 
-pub fn unpack(device: &Device, target: &String) {
+pub fn unpack(device: &Device, target: &String, lua_master: &LuaCore) {
     println!("unpack {}", target);
     let map =
         crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scripts".to_string()]);
@@ -61,7 +63,7 @@ pub fn unpack(device: &Device, target: &String) {
                             Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
                         };
                         if e == "lua" {
-                            handle_script(buffer);
+                            handle_script(buffer, lua_master);
                             log(format!("loading  script {}", buffer.to_string()));
                         } else {
                             log(format!("skipping file type {}", file_name));
@@ -80,18 +82,14 @@ pub fn unpack(device: &Device, target: &String) {
 //     let mut sources = vec![];
 // }
 
-pub fn init(device: &Device) {
-    walk_files(Some(device));
+pub fn init(device: &Device, lua_master: &LuaCore) {
+    walk_files(Some(device), lua_master);
 }
 
 fn asset_sort() {}
 
-fn handle_script(buffer: &str) {
-    let mutex = crate::lua_master.lock();
-    match mutex.get() {
-        Some(d) => d.load(&buffer.to_string()),
-        None => log("Lua core not loaded!".to_string()),
-    }
+fn handle_script(buffer: &str, lua_master: &LuaCore) {
+    lua_master.load(&buffer.to_string());
 }
 
 pub fn is_valid_type(s: &String) -> bool {
@@ -101,6 +99,7 @@ pub fn is_valid_type(s: &String) -> bool {
 pub fn walk_files(
     device: Option<&Device>,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
+    lua_master: &LuaCore,
 ) -> Vec<String> {
     //MARK
 
@@ -196,7 +195,7 @@ pub fn walk_files(
                             // println!("script item is {}", st);
 
                             if device.is_some() {
-                                handle_script(st.as_str())
+                                handle_script(st.as_str(), lua_master)
                             }
                             paths.push(file_name.to_owned());
                         } else {

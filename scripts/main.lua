@@ -73,20 +73,20 @@ function main()
     h = 8
     c = 0
 
-    -- for i = -h, h do
-    --     for j = -h, h do
-    --         c = c + 1
-    --         t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
-    --         e = {
-    --             frame = 0,
-    --             delay = 0,
-    --             data = t
-    --         }
-    --         fellas[#fellas + 1] = e
-    --         -- fellas[#fellas + 1] = t
+    for i = -h, h do
+        for j = -h, h do
+            c = c + 1
+            t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
+            e = {
+                frame = 0,
+                delay = 0,
+                data = t
+            }
+            fellas[#fellas + 1] = e
+            -- fellas[#fellas + 1] = t
 
-    --     end
-    -- end
+        end
+    end
 end
 
 dir = 0.01
@@ -117,8 +117,10 @@ function loop()
         vel = 0.1
     end
 
-    vel = vel - 0.001
-    player.z = player.z + vel
+    if not is_tile(player.x, player.y, player.z - 2) then
+        vel = vel - 0.001
+        player.z = player.z + vel
+    end
 
 end
 

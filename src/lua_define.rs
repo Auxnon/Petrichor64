@@ -18,6 +18,7 @@ use std::{
     },
     thread,
 };
+use winit_input_helper::TextChar;
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -27,8 +28,7 @@ pub struct LuaCore {
         Option<LuaEnt>,
         SyncSender<(Option<String>, Option<LuaEnt>)>,
     )>,
-
-    catcher: Receiver<(i32, String, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
+    pub catcher: Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
 
 impl LuaCore {
@@ -67,14 +67,14 @@ impl LuaCore {
     }
 
     pub fn func(&self, func: &String) -> String {
-        //
         match self.inject(func, &"0".to_string(), None).0 {
-            Some(str) => {
-                // println!("attempt {}", str);
-                str
-            }
+            Some(str) => str,
             None => "".to_string(),
         }
+    }
+
+    pub fn async_func(&self, func: &String, extra: &String) {
+        self.async_inject(func, extra, None);
     }
 
     fn inject(
@@ -98,6 +98,16 @@ impl LuaCore {
         }
     }
 
+    fn async_inject(&self, func: &String, path: &String, ent: Option<LuaEnt>) {
+        let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(100);
+        self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
+
+        match rx.try_recv() {
+            Ok(lua_out) => (),
+            Err(e) => (),
+        }
+    }
+
     pub fn load(&self, file: &String) {
         log("loading script".to_string());
         self.inject(&"load".to_string(), file, None);
@@ -107,8 +117,15 @@ impl LuaCore {
         self.func(&"main()".to_string());
     }
 
-    pub fn call_loop(&self) {
-        self.func(&"loop()".to_string());
+    pub fn call_loop(&self, pass: Vec<winit_input_helper::TextChar>) {
+        let text = pass
+            .iter()
+            .filter_map(|t| match t {
+                winit_input_helper::TextChar::Char(c) => Some(*c),
+                _ => None,
+            })
+            .collect::<String>();
+        self.async_func(&"loop()".to_string(), &text);
     }
 
     pub fn die(&self) {
@@ -298,7 +315,7 @@ fn start(
         Option<LuaEnt>,
         SyncSender<(Option<String>, Option<LuaEnt>)>,
     )>,
-    Receiver<(i32, String, SyncSender<i32>)>,
+    Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>,
 ) {
     let (sender, reciever) = channel::<(
         String,
@@ -307,7 +324,10 @@ fn start(
         SyncSender<(Option<String>, Option<LuaEnt>)>,
     )>();
 
-    let (pitcher, catcher) = channel::<(i32, String, SyncSender<i32>)>();
+    let (pitcher, catcher) = channel::<(i32, String, i32, i32, i32, SyncSender<i32>)>();
+
+    // let pitchers = Arc::new(pitcher);
+    // let pitch_lusa = Arc::clone(&pitchers);
 
     log("init lua core".to_string());
     let lua_thread = thread::spawn(move || {
@@ -315,7 +335,7 @@ fn start(
 
         let globals = lua_ctx.globals();
 
-        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board, &pitcher);
+        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board, pitcher);
 
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
@@ -344,6 +364,7 @@ fn start(
                         lua_load(&lua_ctx, &s2);
                     }
                 } else {
+                    //MARK if loop() then path string is the keyboard keys
                     // TODO load's chunk should call set_name to "main" etc, for better error handling
                     match match lua_ctx.load(&s1).eval::<String>() {
                         //res.unwrap().call::<String, String>(s2.to_owned()) {
@@ -351,7 +372,11 @@ fn start(
                         Err(er) => channel.send((Some(er.to_string()), None)),
                     } {
                         Ok(s) => {}
-                        Err(e) => log(format!("lua server communication error occured -> {}", e)),
+                        Err(e) => {
+                            if !s1.starts_with("loop") {
+                                err(format!("lua server communication error occured -> {}", e))
+                            }
+                        }
                     }
                     // }
                 }

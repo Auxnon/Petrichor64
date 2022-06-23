@@ -75,9 +75,17 @@ impl World {
         world
     }
 
+    /** get a mutatable chunk, and create a new one if does not exist */
     pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
         self.layer.get_chunk_mut_from_pos(x, y, z)
     }
+
+    /** read-only chunk, may not exist, will not create a new one if so */
+    pub fn get_chunk(&self, x: i32, y: i32, z: i32) -> Option<&Chunk> {
+        self.layer.get_chunk_from_pos(x, y, z)
+    }
+
+    /** get all chunks, big! Used by renderer, ideally it will only show visible chunks */
     pub fn get_all_chunks(&self) -> std::collections::hash_map::Values<String, Chunk> {
         self.layer.get_all_chunks()
     }
@@ -106,6 +114,7 @@ impl World {
         }
     }
 
+    /** Set 1 tile in a chunk, if chunk doesn't exist it will create it and set the new tile */
     pub fn set_tile(&mut self, tile: &String, ix: i32, iy: i32, iz: i32) {
         let cell_type = match crate::model::get_model_index(&tile) {
             Some(model_index) => model_index,
@@ -133,11 +142,25 @@ impl World {
         c.dirty = true;
     }
 
+    /** Set multiple tiles from a large array */
     pub fn set_tile_from_buffer(&mut self, buffer: &Vec<(String, Vec4)>) {
         for (s, t) in buffer {
             self.set_tile(s, t.y as i32, t.z as i32, t.w as i32);
         }
     }
+
+    /** Check if tile exists, if chunk is empty then default to false, do not create a new chunk */
+    pub fn is_tile(&self, ix: i32, iy: i32, iz: i32) -> bool {
+        match self.get_chunk(ix, iy, iz) {
+            Some(c) => {
+                let index = ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16)
+                    + iz.rem_euclid(16)) as usize;
+                c.cells[index] > 0
+            }
+            _ => false,
+        }
+    }
+
     pub fn destroy_it_all(&mut self) {
         self.layer.destroy_it_all();
     }
@@ -184,6 +207,15 @@ impl Layer {
                 v.insert(Chunk::new(key, ix, iy, iz))
             }
         }
+    }
+    pub fn get_chunk_from_pos(&self, x: i32, y: i32, z: i32) -> Option<&Chunk> {
+        let key = format!(
+            "{}:{}:{}",
+            x.div_euclid(16),
+            y.div_euclid(16),
+            z.div_euclid(16)
+        );
+        self.chunks.get(&key)
     }
 
     pub fn get_all_chunks(&self) -> std::collections::hash_map::Values<String, Chunk> {

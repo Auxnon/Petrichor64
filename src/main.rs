@@ -75,6 +75,7 @@ pub struct Core {
     master_texture: Texture,
     gui: Gui,
     loop_helper: spin_sleep::LoopHelper,
+    lua_master: LuaCore,
 }
 
 #[repr(C)]
@@ -129,7 +130,7 @@ fn create_depth_texture(
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
-    pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
+    // pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
     pub static ref ent_master : Arc<RwLock<OnceCell<EntManager>>> = Arc::new((RwLock::new(OnceCell::new())));
     // pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
 }
@@ -492,7 +493,7 @@ impl Core {
             perspective_matrix: mx_persp,
             render_pipeline,
             global: Global::new(),
-            switch_board,
+            switch_board: Arc::clone(&switch_board),
             gui,
             bind_group,
             entity_bind_group,
@@ -501,6 +502,7 @@ impl Core {
             world,
             master_texture: diff_tex,
             loop_helper,
+            lua_master: LuaCore::new(switch_board),
         }
     }
 
@@ -641,17 +643,18 @@ fn main() {
         let mut locker = crate::controls::input_manager.write();
         if locker.update(&event) {
             drop(locker);
-            controls::controls_evaluate(&mut core, control_flow);
+            let loop_pass = controls::controls_evaluate(&mut core, control_flow);
             frame!("START");
             core.update();
 
-            match crate::lua_master.try_lock() {
-                Some(cell) => match cell.get() {
-                    Some(lu) => lu.call_loop(),
-                    _ => {}
-                },
-                _ => {}
-            }
+            // match crate::lua_master.try_lock() {
+            //     Some(cell) => match cell.get() {
+            //         Some(lu) => lu.call_loop(),
+            //         _ => {}
+            //     },
+            //     _ => {}
+            // }
+            core.lua_master.call_loop(loop_pass);
             // match event {
 
             //     Event::WindowEvent { window_id: (), event: Event::WindowEvent::Dev }

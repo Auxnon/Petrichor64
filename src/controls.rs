@@ -8,6 +8,7 @@ use winit::{
     event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
 };
+use winit_input_helper::TextChar;
 
 #[cfg(target_os = "macos")]
 const COMMAND_KEY_L: VirtualKeyCode = VirtualKeyCode::LWin;
@@ -25,7 +26,7 @@ lazy_static! {
     pub static ref input_manager : Arc<RwLock<winit_input_helper::WinitInputHelper>>=Arc::new(RwLock::new(winit_input_helper::WinitInputHelper::new()));
 }
 
-pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
+pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) -> Vec<TextChar> {
     // WindowEvent::Resized(physical_size) => {
     //     core.resize(*physical_size);
     // }
@@ -35,7 +36,37 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // }
     // _ => {
 
+    // MARk
+    for m in core.lua_master.catcher.try_recv() {
+        // match m {
+        //     Ok(it) => {
+        let (ind, val, a, b, c, channel) = m;
+        match ind {
+            // println!("we got val {}", val);
+            0 => {
+                channel.send(match key_match(val) {
+                    Some(k) => {
+                        if input_manager.read().key_held(k) {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    None => 0,
+                });
+            }
+            1 => {
+                channel.send(if core.world.is_tile(a, b, c) { 1 } else { 0 });
+            }
+            _ => {}
+        }
+        //     }
+        //     _ => {}
+        // }
+    }
+
     let input_helper = &input_manager.read();
+
     if input_helper.key_pressed(VirtualKeyCode::Escape) || input_helper.quit() {
         *control_flow = ControlFlow::Exit;
     }
@@ -147,18 +178,11 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
-                    let guard = crate::lua_master.lock();
-                    let lua_core = guard.get();
-                    if lua_core.is_some() {
-                        let result = lua_core.unwrap().func(&com);
-                        crate::log::log(result.clone());
+                    let result = core.lua_master.func(&com);
+                    crate::log::log(result.clone());
 
-                        // crate::log::next_line();
-                        println!("command was {}, result was {}", com, result);
-                    } else {
-                        crate::log::log("uwu".to_string());
-                        // crate::log::next_line();
-                    }
+                    // crate::log::next_line();
+                    println!("command was {}, result was {}", com, result);
                 }
                 // } else {
                 //     core.global.test = true;
@@ -234,6 +258,42 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             }
         }
     }
+    input_helper.text()
+}
+
+fn key_match(key: String) -> Option<VirtualKeyCode> {
+    Some(match key.to_lowercase().as_str() {
+        "a" => VirtualKeyCode::A,
+        "b" => VirtualKeyCode::B,
+        "c" => VirtualKeyCode::C,
+        "d" => VirtualKeyCode::D,
+        "e" => VirtualKeyCode::E,
+        "f" => VirtualKeyCode::F,
+        "g" => VirtualKeyCode::G,
+        "h" => VirtualKeyCode::H,
+        "i" => VirtualKeyCode::I,
+        "j" => VirtualKeyCode::J,
+        "k" => VirtualKeyCode::K,
+        "l" => VirtualKeyCode::L,
+        "m" => VirtualKeyCode::M,
+        "n" => VirtualKeyCode::N,
+        "o" => VirtualKeyCode::O,
+        "p" => VirtualKeyCode::P,
+        "q" => VirtualKeyCode::Q,
+        "r" => VirtualKeyCode::R,
+        "s" => VirtualKeyCode::S,
+        "t" => VirtualKeyCode::T,
+        "u" => VirtualKeyCode::U,
+        "v" => VirtualKeyCode::V,
+        "w" => VirtualKeyCode::W,
+        "x" => VirtualKeyCode::X,
+        "y" => VirtualKeyCode::Y,
+        "z" => VirtualKeyCode::Z,
+        "space" => VirtualKeyCode::Space,
+        "lctrl" => VirtualKeyCode::LControl,
+        "rctrl" => VirtualKeyCode::RControl,
+        _ => return None,
+    })
 }
 
 fn log(str: String) {
