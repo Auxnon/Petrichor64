@@ -11,8 +11,7 @@ use std::{
 use glam::vec4;
 use itertools::Itertools;
 use mlua::{Error, Lua, Table};
-use parking_lot::RwLock;
-use std::sync::Mutex;
+use parking_lot::{Mutex, RwLock};
 use winit::event::VirtualKeyCode;
 
 use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
@@ -104,6 +103,7 @@ pub fn init_lua_sys(
     lua_globals: &Table,
     switch_board: Arc<RwLock<SwitchBoard>>,
     pitcher: Sender<(i32, String, i32, i32, i32, SyncSender<i32>)>,
+    bits: Rc<Mutex<[bool; 256]>>,
 ) -> Result<(), Error> {
     println!("init lua sys");
 
@@ -311,32 +311,44 @@ pub fn init_lua_sys(
             //         false
             //     }
             // })
-            Ok(false)
+            // let c = key.to_lowercase().chars().collect::<Vec<char>>()[0] as usize;
+
+            // if bits.lock()[key_match(key.clone())] {
+            //     println!("lookin for key {}", c);
+            // }
+            Ok(bits.lock()[key_match(key)])
+            // match bits.lock() {
+            //     Ok(b) => {
+            //         let z = b;
+            //         Ok(b[c])
+            //     }
+            //     _ => Ok(false),
+            // }
         },
         "Check if key is held down"
     );
 
-    lua!(
-        "key_pressed",
-        |_, (key): (String)| {
-            match key_match(key) {
-                Some(k) => Ok(crate::controls::input_manager.read().key_pressed(k)),
-                None => Ok(false),
-            }
-        },
-        "Check if key is pressed breifly"
-    );
+    // lua!(
+    //     "key_pressed",
+    //     |_, (key): (String)| {
+    //         match key_match(key) {
+    //             Some(k) => Ok(crate::controls::input_manager.read().key_pressed(k)),
+    //             None => Ok(false),
+    //         }
+    //     },
+    //     "Check if key is pressed breifly"
+    // );
 
-    lua!(
-        "key_released",
-        |_, (key): (String)| {
-            match key_match(key) {
-                Some(k) => Ok(crate::controls::input_manager.read().key_released(k)),
-                None => Ok(false),
-            }
-        },
-        "Check if key is released"
-    );
+    // lua!(
+    //     "key_released",
+    //     |_, (key): (String)| {
+    //         match key_match(key) {
+    //             Some(k) => Ok(crate::controls::input_manager.read().key_released(k)),
+    //             None => Ok(false),
+    //         }
+    //     },
+    //     "Check if key is released"
+    // );
 
     // let switch = Arc::clone(&switch_board);
     // res(lua_globals.set(
@@ -366,8 +378,6 @@ pub fn init_lua_sys(
     lua!(
         "spawn",
         move |_, (asset, x, y, z): (String, f64, f64, f64)| {
-            // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
-            // let ents = lua.globals().get::<&str, Table>("_ents")?;
             let mut guard = crate::ent_master.write();
             let eman = guard.get_mut().unwrap();
             let index = eman.ent_table.len();
@@ -375,22 +385,13 @@ pub fn init_lua_sys(
             let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
 
             // Rc<RefCell
-            let wrapped = Arc::new(Mutex::new(ent));
+            let wrapped = Arc::new(std::sync::Mutex::new(ent));
 
-            let outputEnt = Arc::clone(&wrapped);
+            let output_ent = Arc::clone(&wrapped);
 
             eman.create_from_lua(wrapped);
-            // ents.g
-            // ents.set(index, ent)?;
-            // lua.create_registry_value(t)
-            // println!("we made an ent");
-            // ents.get
-            // lua.
-            // let mut e2 = ents.get::<i64, LuaEnt>(index)?;
-            // e2.x += 10.;
-            // ents.set(index, e2);
-            // Ok(ents.get::<i64, LuaEnt>(index)?)
-            Ok(outputEnt)
+
+            Ok(output_ent)
         },
         "Spawn an entity"
     );
@@ -477,39 +478,75 @@ pub fn reload(core: &mut Core) {
     load(core, None);
 }
 
-fn key_match(key: String) -> Option<VirtualKeyCode> {
-    Some(match key.to_lowercase().as_str() {
-        "a" => VirtualKeyCode::A,
-        "b" => VirtualKeyCode::B,
-        "c" => VirtualKeyCode::C,
-        "d" => VirtualKeyCode::D,
-        "e" => VirtualKeyCode::E,
-        "f" => VirtualKeyCode::F,
-        "g" => VirtualKeyCode::G,
-        "h" => VirtualKeyCode::H,
-        "i" => VirtualKeyCode::I,
-        "j" => VirtualKeyCode::J,
-        "k" => VirtualKeyCode::K,
-        "l" => VirtualKeyCode::L,
-        "m" => VirtualKeyCode::M,
-        "n" => VirtualKeyCode::N,
-        "o" => VirtualKeyCode::O,
-        "p" => VirtualKeyCode::P,
-        "q" => VirtualKeyCode::Q,
-        "r" => VirtualKeyCode::R,
-        "s" => VirtualKeyCode::S,
-        "t" => VirtualKeyCode::T,
-        "u" => VirtualKeyCode::U,
-        "v" => VirtualKeyCode::V,
-        "w" => VirtualKeyCode::W,
-        "x" => VirtualKeyCode::X,
-        "y" => VirtualKeyCode::Y,
-        "z" => VirtualKeyCode::Z,
-        "space" => VirtualKeyCode::Space,
-        "lctrl" => VirtualKeyCode::LControl,
-        "rctrl" => VirtualKeyCode::RControl,
-        _ => return None,
-    })
+fn key_match(key: String) -> usize {
+    match key.to_lowercase().as_str() {
+        "1" => 0,
+        "2" => 1,
+        "3" => 2,
+        "4" => 3,
+        "5" => 4,
+        "6" => 5,
+        "7" => 6,
+        "8" => 7,
+        "9" => 8,
+        "0" => 9,
+        "a" => 10,
+        "b" => 11,
+        "c" => 12,
+        "d" => 13,
+        "e" => 14,
+        "f" => 15,
+        "g" => 16,
+        "h" => 17,
+        "i" => 18,
+        "j" => 19,
+        "k" => 20,
+        "l" => 21,
+        "m" => 22,
+        "n" => 23,
+        "o" => 24,
+        "p" => 25,
+        "q" => 26,
+        "r" => 27,
+        "s" => 28,
+        "t" => 29,
+        "u" => 30,
+        "v" => 31,
+        "w" => 32,
+        "x" => 33,
+        "y" => 34,
+        "z" => 35,
+        "escape" => 35,
+        "f1" => 36,
+        "f2" => 37,
+        "f3" => 38,
+        "f4" => 39,
+        "f5" => 40,
+        "f6" => 41,
+        "f7" => 42,
+        "f8" => 43,
+        "f9" => 44,
+        "f10" => 45,
+        "f11" => 46,
+        "f12" => 47,
+        "f13" => 48,
+        "f14" => 49,
+        "f15" => 50,
+        "snapshot" => 51,
+        "delete" => 56,
+        "left" => 60,
+        "up" => 61,
+        "right" => 62,
+        "down" => 63,
+        "back" => 64,
+        "return" => 65,
+        "space" => 66,
+
+        // "space" => VirtualKeyCode::Space,
+        // "lctrl" => VirtualKeyCode::LControl,
+        // "rctrl" => VirtualKeyCode::RControl,
+        _ => 255,
+    }
 }
 
 fn log(str: String) {

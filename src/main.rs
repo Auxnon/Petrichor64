@@ -638,13 +638,17 @@ fn main() {
     unsafe {
         tracy::startup_tracy();
     }
+    let mut bits = [false; 256];
 
     event_loop.run(move |event, _, control_flow| {
         let mut locker = crate::controls::input_manager.write();
+        controls::bit_check(&event, &mut bits);
+
         if locker.update(&event) {
             drop(locker);
             let loop_pass = controls::controls_evaluate(&mut core, control_flow);
             frame!("START");
+            // println!("newbits {:?}", bits);
             core.update();
 
             // match crate::lua_master.try_lock() {
@@ -654,7 +658,7 @@ fn main() {
             //     },
             //     _ => {}
             // }
-            core.lua_master.call_loop(loop_pass);
+            core.lua_master.call_loop(bits);
             // match event {
 
             //     Event::WindowEvent { window_id: (), event: Event::WindowEvent::Dev }

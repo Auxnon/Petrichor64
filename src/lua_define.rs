@@ -1,9 +1,7 @@
 use crate::{
     ent::Ent, ent_manager, ent_master, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard,
 };
-use lazy_static::lazy_static;
-use mlua::{Function, Lua, Scope, UserData, UserDataMethods};
-use once_cell::sync::OnceCell;
+use mlua::Lua;
 use parking_lot::{lock_api::RawMutexFair, Mutex, MutexGuard, RwLock};
 use std::{
     cell::RefCell,
@@ -18,15 +16,14 @@ use std::{
     },
     thread,
 };
-use winit_input_helper::TextChar;
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
     to_lua_tx: Sender<(
         String,
         String,
-        Option<LuaEnt>,
-        SyncSender<(Option<String>, Option<LuaEnt>)>,
+        Option<[bool; 256]>,
+        SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>,
     pub catcher: Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
@@ -49,22 +46,22 @@ impl LuaCore {
         // reset()
     }
 
-    pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
-        let r = self.inject(func, &"".to_string(), Some(ent.clone()));
-        match r.0 {
-            Some(message) => {
-                println!("lua_call::{}", message);
-            }
-            _ => {}
-        }
-        match r.1 {
-            Some(ento) => {
-                // println!("ye");
-                ento
-            }
-            None => ent,
-        }
-    }
+    // pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
+    //     let r = self.inject(func, &"".to_string(), Some(ent.clone()));
+    //     match r.0 {
+    //         Some(message) => {
+    //             println!("lua_call::{}", message);
+    //         }
+    //         _ => {}
+    //     }
+    //     match r.1 {
+    //         Some(ento) => {
+    //             // println!("ye");
+    //             ento
+    //         }
+    //         None => ent,
+    //     }
+    // }
 
     pub fn func(&self, func: &String) -> String {
         match self.inject(func, &"0".to_string(), None).0 {
@@ -73,17 +70,17 @@ impl LuaCore {
         }
     }
 
-    pub fn async_func(&self, func: &String, extra: &String) {
-        self.async_inject(func, extra, None);
+    pub fn async_func(&self, func: &String, extra: &String, bits: [bool; 256]) {
+        self.async_inject(func, extra, Some(bits));
     }
 
     fn inject(
         &self,
         func: &String,
         path: &String,
-        ent: Option<LuaEnt>,
-    ) -> (Option<String>, Option<LuaEnt>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(0);
+        ent: Option<[bool; 256]>,
+    ) -> (Option<String>, Option<[bool; 256]>) {
+        let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(0);
         let bool = ent.is_some();
         // println!("xxx {} :: {}", func, path);
         self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
@@ -98,9 +95,9 @@ impl LuaCore {
         }
     }
 
-    fn async_inject(&self, func: &String, path: &String, ent: Option<LuaEnt>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<LuaEnt>)>(100);
-        self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
+    fn async_inject(&self, func: &String, path: &String, bits: Option<[bool; 256]>) {
+        let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(100);
+        self.to_lua_tx.send((func.clone(), path.clone(), bits, tx));
 
         match rx.try_recv() {
             Ok(lua_out) => (),
@@ -117,15 +114,27 @@ impl LuaCore {
         self.func(&"main()".to_string());
     }
 
-    pub fn call_loop(&self, pass: Vec<winit_input_helper::TextChar>) {
-        let text = pass
-            .iter()
-            .filter_map(|t| match t {
-                winit_input_helper::TextChar::Char(c) => Some(*c),
-                _ => None,
-            })
-            .collect::<String>();
-        self.async_func(&"loop()".to_string(), &text);
+    pub fn call_loop(&self, bits: [bool; 256]) {
+        // let mut bits = [false; 256];
+        // for t in pass.iter() {
+        //     match t {
+        //         winit_input_helper::TextChar::Char(c) => {
+        //             let b = *c as usize;
+        //             // println!("key {} is {}", *c, b);
+        //             bits[b] = true
+        //         }
+        //         _ => {}
+        //     }
+        // }
+        // let text = pass
+        //     .iter()
+        //     .filter_map(|t| match t {
+        //         winit_input_helper::TextChar::Char(c) => Some(*c),
+        //         _ => None,
+        //     })
+        //     .collect::<String>();
+
+        self.async_func(&"loop()".to_string(), &"".to_string(), bits);
     }
 
     pub fn die(&self) {
@@ -312,16 +321,16 @@ fn start(
     Sender<(
         String,
         String,
-        Option<LuaEnt>,
-        SyncSender<(Option<String>, Option<LuaEnt>)>,
+        Option<[bool; 256]>,
+        SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>,
     Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>,
 ) {
     let (sender, reciever) = channel::<(
         String,
         String,
-        Option<LuaEnt>,
-        SyncSender<(Option<String>, Option<LuaEnt>)>,
+        Option<[bool; 256]>,
+        SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>();
 
     let (pitcher, catcher) = channel::<(i32, String, i32, i32, i32, SyncSender<i32>)>();
@@ -331,56 +340,70 @@ fn start(
 
     log("init lua core".to_string());
     let lua_thread = thread::spawn(move || {
+        let mut bits = [false; 256];
+
+        let bit_mutex = Rc::new(Mutex::new(bits));
+
         let lua_ctx = Lua::new();
 
         let globals = lua_ctx.globals();
 
-        crate::command::init_lua_sys(&lua_ctx, &globals, switch_board, pitcher);
+        crate::command::init_lua_sys(
+            &lua_ctx,
+            &globals,
+            switch_board,
+            pitcher,
+            Rc::clone(&bit_mutex),
+        );
 
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
             //}
-            let (s1, s2, ent, channel) = m;
+            let (s1, s2, bit_in, channel) = m;
 
             //while let Ok((s1, s2, ent, channel)) = reciever.recv() {
             //println!("➡️ lua_thread::recieved");
 
             // println!("we have a func! {:?}", res.clone().unwrap());
-            if ent.is_some() {
-                let res = globals.get::<_, Function>(s1.to_owned());
-                if res.is_ok() {
-                    match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
-                        Ok(o) => channel.send((None, Some(o))).unwrap(),
-                        Err(er) => channel.send((None, None)).unwrap(),
-                    }
+            // if ent.is_some() {
+            // let res = globals.get::<_, Function>(s1.to_owned());
+            // if res.is_ok() {
+            //     match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
+            //         Ok(o) => channel.send((None, Some(o))).unwrap(),
+            //         Err(er) => channel.send((None, None)).unwrap(),
+            //     }
+            // } else {
+            //     channel.send((None, None));
+            // }
+            // } else {
+            if s1 == "load" {
+                if s2 == "_self_destruct" {
+                    break;
                 } else {
-                    channel.send((None, None));
+                    lua_load(&lua_ctx, &s2);
                 }
             } else {
-                if s1 == "load" {
-                    if s2 == "_self_destruct" {
-                        break;
-                    } else {
-                        lua_load(&lua_ctx, &s2);
-                    }
-                } else {
-                    //MARK if loop() then path string is the keyboard keys
-                    // TODO load's chunk should call set_name to "main" etc, for better error handling
-                    match match lua_ctx.load(&s1).eval::<String>() {
-                        //res.unwrap().call::<String, String>(s2.to_owned()) {
-                        Ok(o) => channel.send((Some(o), None)),
-                        Err(er) => channel.send((Some(er.to_string()), None)),
-                    } {
-                        Ok(s) => {}
-                        Err(e) => {
-                            if !s1.starts_with("loop") {
-                                err(format!("lua server communication error occured -> {}", e))
-                            }
+                //MARK if loop() then path string is the keyboard keys
+                // TODO load's chunk should call set_name to "main" etc, for better error handling
+                match match lua_ctx.load(&s1).eval::<String>() {
+                    //res.unwrap().call::<String, String>(s2.to_owned()) {
+                    Ok(o) => channel.send((Some(o), None)),
+                    Err(er) => channel.send((Some(er.to_string()), None)),
+                } {
+                    Ok(s) => {}
+                    Err(e) => {
+                        if !s1.starts_with("loop") {
+                            err(format!("lua server communication error occured -> {}", e))
                         }
                     }
-                    // }
                 }
+                match bit_in {
+                    Some(b) => *bit_mutex.lock() = b,
+                    _ => {}
+                }
+                // }
             }
+            // }
 
             /*  TODO is this still needed?
             match globals.get::<&str, mlua::Table>("_ents") {

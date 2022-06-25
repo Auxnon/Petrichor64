@@ -96,6 +96,12 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
 
     let entity_manager = mutex.get().unwrap();
     let ents = &entity_manager.ent_table;
+    // let (entity_manager,ents)=match crate::ent_master.try_read(){
+    //     Some(guar)=>{
+    //         let entity_manager = mutex.get().unwrap();
+    //         entity_manager,
+    //     }
+    // }
 
     // MARK PRE
     frame!("ent build::start");

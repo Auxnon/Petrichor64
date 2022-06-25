@@ -29,11 +29,20 @@ impl UserData for LuaEnt {
         // methods.add_method_mut("fix", |lua, this, ()| Ok(()));
 
         methods.add_method("tex", |_, this, tex: String| {
-            ent_master
-                .write()
-                .get_mut()
-                .unwrap()
-                .swap_tex(&tex.clone(), this.get_id());
+            // println!("A");
+            match ent_master.try_write_for(std::time::Duration::from_millis(45)) {
+                Some(mut guar) => {
+                    // println!("B");
+
+                    guar.get_mut()
+                        .unwrap()
+                        .swap_tex(&tex.clone(), this.get_id());
+                }
+                _ => {}
+            }
+            // guar.get_mut()
+            //     .unwrap()
+            //     .swap_tex(&tex.clone(), this.get_id());
 
             Ok(true)
         });

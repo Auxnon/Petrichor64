@@ -101,7 +101,6 @@ function loop()
     if key("W") then
         player.y = player.y + 0.1
     end
-
     if key("S") then
         player.y = player.y - 0.1
     end
@@ -113,7 +112,7 @@ function loop()
     if key("D") then
         player.x = player.x + .1
     end
-    if key("Space") then
+    if key("G") then
         vel = 0.1
     end
 

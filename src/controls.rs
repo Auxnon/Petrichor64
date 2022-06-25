@@ -5,7 +5,7 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use winit::{
-    event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
 };
 use winit_input_helper::TextChar;
@@ -26,7 +26,7 @@ lazy_static! {
     pub static ref input_manager : Arc<RwLock<winit_input_helper::WinitInputHelper>>=Arc::new(RwLock::new(winit_input_helper::WinitInputHelper::new()));
 }
 
-pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) -> Vec<TextChar> {
+pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {
     //     core.resize(*physical_size);
     // }
@@ -38,31 +38,26 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) -> Vec
 
     // MARk
     for m in core.lua_master.catcher.try_recv() {
-        // match m {
-        //     Ok(it) => {
         let (ind, val, a, b, c, channel) = m;
         match ind {
             // println!("we got val {}", val);
             0 => {
-                channel.send(match key_match(val) {
-                    Some(k) => {
-                        if input_manager.read().key_held(k) {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    None => 0,
-                });
+                // channel.send(match key_match(val) {
+                //     Some(k) => {
+                //         if input_manager.read().key_held(k) {
+                //             1
+                //         } else {
+                //             0
+                //         }
+                //     }
+                //     None => 0,
+                // });
             }
             1 => {
                 channel.send(if core.world.is_tile(a, b, c) { 1 } else { 0 });
             }
             _ => {}
         }
-        //     }
-        //     _ => {}
-        // }
     }
 
     let input_helper = &input_manager.read();
@@ -258,7 +253,46 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) -> Vec
             }
         }
     }
-    input_helper.text()
+}
+
+pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
+    // match events{
+    // winit::event::WindowEvent::KeyboardInput { device_id: (), input: (), is_synthetic: () },
+    // _=>{}
+    // }
+
+    match events {
+        Event::WindowEvent {
+            // Note this deeply nested pattern match
+            event:
+                WindowEvent::KeyboardInput {
+                    input:
+                        winit::event::KeyboardInput {
+                            // Which serves to filter out only events we actually want
+                            virtual_keycode: Some(keycode),
+                            state,
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } => {
+            // It also binds these handy variable names!
+            match state {
+                winit::event::ElementState::Pressed => {
+                    // VirtualKeycode is an enum with a defined representation
+                    let i = *keycode as usize;
+                    // println!("newkey is {}", i);
+                    bits[*keycode as usize] = true;
+                }
+                winit::event::ElementState::Released => {
+                    bits[*keycode as usize] = false;
+                }
+            }
+        }
+        _ => {}
+    }
+    drop(bits);
 }
 
 fn key_match(key: String) -> Option<VirtualKeyCode> {

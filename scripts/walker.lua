@@ -20,7 +20,3 @@ function walker(entity)
     return entity
 end
 
-function testum(e)
-    return "hello"
-end
-
