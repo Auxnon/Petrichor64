@@ -1,14 +1,10 @@
-use ron::de::from_reader;
-use ron::Map;
 use rustc_hash::FxHashMap;
-use serde::Deserialize;
 use std::{collections::hash_map::Entry, ops::Mul};
 
-use glam::{ivec3, vec3, DVec4, IVec3, Vec4};
-use rand::Rng;
+use glam::{ivec3, vec3, IVec3, Vec4};
 use wgpu::{util::DeviceExt, Buffer, Device};
 
-use crate::model::Vertex;
+use crate::{model::Vertex, template::AssetTemplate};
 
 /*
 texture index of 0 is air and not rendered
@@ -414,50 +410,6 @@ fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
 
     // let ind2 = i
     c.ind_data.append(&mut inds);
-}
-
-/** load file as a ron template for tile */
-pub fn load_ron(path: &String) -> Option<TileTemplate> {
-    match std::fs::File::open(path) {
-        Ok(f) => match from_reader(f) {
-            Ok(x) => Some(x),
-            Err(e) => {
-                log(format!("problem with template {}", e));
-                None
-            }
-        },
-        _ => None,
-    }
-}
-
-/** interpret string as a ron template for tile */
-pub fn interpret_ron(s: &String) -> Option<TileTemplate> {
-    match ron::from_str(s) {
-        Ok(x) => Some(x),
-        Err(e) => {
-            log(format!("problem with template {}", e));
-            //std::process::exit(1);
-            None
-        }
-    }
-}
-
-#[derive(Default, Debug, Deserialize)]
-pub struct TileTemplate {
-    #[serde(default = "default_tile_name")]
-    pub name: String,
-    #[serde(default)]
-    pub tiles: std::collections::HashMap<u32, String>,
-    #[serde(default = "default_tile_size")]
-    pub size: u32,
-}
-
-fn default_tile_name() -> String {
-    "".to_string()
-}
-
-fn default_tile_size() -> u32 {
-    0 as u32
 }
 
 // fn default_tile_size() -> u16 {}

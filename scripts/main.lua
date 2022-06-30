@@ -13,6 +13,7 @@ cube("east", "ground9", "ground7", "ground7", "compass2", "ground7", "ground14")
 cube("west", "ground9", "compass0", "ground7", "ground7", "ground7", "ground14")
 cube("north", "ground9", "ground7", "compass1", "ground7", "ground7", "ground14")
 cube("south", "ground9", "ground7", "ground7", "ground7", "compass3", "ground14")
+anim("dog idle", {"dog0", "dog1", "dog2"}, 2)
 
 e2 = {
     frame = 0,
@@ -70,13 +71,14 @@ function main()
     tile("south", 0, -4, -2)
     tile_done()
 
-    h = 8
+    h = 10
     c = 0
 
     for i = -h, h do
         for j = -h, h do
             c = c + 1
             t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
+            t:anim("Idle")
             e = {
                 frame = 0,
                 delay = 0,

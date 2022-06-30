@@ -13,6 +13,7 @@ pub struct Global {
     pub background: Vec4,
     pub fps: f64,
     pub delayed: i32,
+    pub iteration: u64,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
 }
@@ -30,6 +31,7 @@ impl Global {
             fps: 0.,
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,
+            iteration: 0,
         }
     }
     pub fn set(&mut self, key: String, v: f32) {

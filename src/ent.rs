@@ -34,6 +34,8 @@ pub struct Ent {
     pub effects: UVec4,
     //pub brain: Option<Function<'lua>>,
     pub brain_name: Option<String>,
+    pub anim: Vec<Vec4>,
+    pub anim_speed: u32,
 }
 
 impl<'lua> Ent {
@@ -93,6 +95,8 @@ impl<'lua> Ent {
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
             //brain: None,
             brain_name: brain,
+            anim: vec![],
+            anim_speed: 16,
         }
     }
 
@@ -158,7 +162,10 @@ impl<'lua> Ent {
                 */
     }
 
-    pub fn get_uniform(&self, lua: &LuaEnt) -> EntityUniforms {
+    /**
+     * provide iteration to determine how to animate if applicable
+     */
+    pub fn get_uniform(&self, lua: &LuaEnt, iteration: u64) -> EntityUniforms {
         let model = self.build_meta(lua);
         // self.matrix = model;
         let effects = [
@@ -167,7 +174,15 @@ impl<'lua> Ent {
             self.effects.z,
             self.effects.w,
         ];
-        let uv_mod = [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
+        let uv_mod = if self.anim.len() > 0 {
+            let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
+                / self.anim_speed as u64) as usize];
+
+            // println!("animating {} {}", self.anim.len(), a);
+            [a.x, a.y, a.z, a.w]
+        } else {
+            [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
+        };
         let color = [
             self.color.r as f32,
             self.color.g as f32,

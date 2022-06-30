@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use crate::tile::TileTemplate;
+use crate::template::AssetTemplate;
 use glam::{vec4, UVec2, UVec4, Vec4};
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
 use lazy_static::lazy_static;
@@ -28,6 +28,7 @@ lazy_static! {
     /** map our */
     pub static ref int_dictionary:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
     pub static ref int_map:RwLock<FxHashMap<u32,Vec4>> = RwLock::new(FxHashMap::default());
+    pub static ref animations:RwLock<HashMap<String,(Vec<Vec4>,u32)>> = RwLock::new(HashMap::default());
 }
 
 pub fn init() {
@@ -271,7 +272,7 @@ fn index_texture_direct(key: String, index: u32) {
     int_dictionary.write().insert(key, index);
 }
 
-pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<TileTemplate>) {
+pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<&AssetTemplate>) {
     // println!("ol testure {} is {}", str, buffer.len());
     match image::load_from_memory(buffer.as_slice()) {
         Ok(img) => sort_image(str, img, template),
@@ -279,7 +280,7 @@ pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<Til
     }
 }
 
-pub fn load_tex(str: &String, template: Option<TileTemplate>) {
+pub fn load_tex(str: &String, template: Option<&AssetTemplate>) {
     log(format!("apply texture {}", str));
 
     match load_img_nopath(str) {
@@ -292,7 +293,7 @@ pub fn load_tex(str: &String, template: Option<TileTemplate>) {
     }
 }
 
-fn sort_image(str: &String, img: DynamicImage, template: Option<TileTemplate>) {
+fn sort_image(str: &String, img: DynamicImage, template: Option<&AssetTemplate>) {
     let (name, mut is_tile) = get_name(str.clone());
     let mut rename = None;
     let mut tile_dim = 16u32;
@@ -301,7 +302,7 @@ fn sort_image(str: &String, img: DynamicImage, template: Option<TileTemplate>) {
             if t.tiles.len() > 0 || t.size > 0 {
                 is_tile = true;
             }
-            rename = Some(t.tiles);
+            rename = Some(t.tiles.clone());
             tile_dim = t.size;
         }
         _ => {}
@@ -529,6 +530,12 @@ pub fn make_tex(
         ..Default::default()
     });
     (diffuse_texture_view, diffuse_sampler, tex)
+}
+pub fn set_anims(name: &String, frames: Vec<Vec4>, animation_speed: u32) {
+    println!("set anims {} {:?}", name, frames);
+    animations
+        .write()
+        .insert(name.clone(), (frames, animation_speed));
 }
 
 fn log(str: String) {

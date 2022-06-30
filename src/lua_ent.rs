@@ -14,6 +14,9 @@ pub struct LuaEnt {
     id: f64, // pub uuid: String,
     asset: String,
     ent: Option<Ent>,
+    tex: String,
+    anim: bool,
+    dirty: bool,
 }
 
 impl UserData for LuaEnt {
@@ -28,22 +31,27 @@ impl UserData for LuaEnt {
         });
         // methods.add_method_mut("fix", |lua, this, ()| Ok(()));
 
-        methods.add_method("tex", |_, this, tex: String| {
-            // println!("A");
-            match ent_master.try_write_for(std::time::Duration::from_millis(45)) {
-                Some(mut guar) => {
-                    // println!("B");
+        methods.add_method_mut("tex", |_, this, tex: String| {
+            // match ent_master.try_write_for(std::time::Duration::from_millis(45)) {
+            //     Some(mut guar) => {
+            //         guar.get_mut()
+            //             .unwrap()
+            //             .swap_tex(&tex.clone(), this.get_id());
+            //     }
+            //     _ => {}
+            // }
+            this.tex = tex;
+            this.anim = false;
+            this.dirty = true;
 
-                    guar.get_mut()
-                        .unwrap()
-                        .swap_tex(&tex.clone(), this.get_id());
-                }
-                _ => {}
+            Ok(true)
+        });
+        methods.add_method_mut("anim", |_, this, tex: String| {
+            if this.tex != tex {
+                this.dirty = true;
             }
-            // guar.get_mut()
-            //     .unwrap()
-            //     .swap_tex(&tex.clone(), this.get_id());
-
+            this.tex = tex;
+            this.anim = true;
             Ok(true)
         });
 
@@ -111,6 +119,9 @@ impl LuaEnt {
             id: -1.,
             ent: None,
             asset: String::new(),
+            tex: String::new(),
+            dirty: false,
+            anim: false,
         }
     }
 
@@ -128,6 +139,9 @@ impl LuaEnt {
             vel_z: 0.,
             ent: None,
             asset,
+            tex: String::new(),
+            dirty: false,
+            anim: false,
         }
     }
     pub fn get_id(&self) -> i64 {
@@ -136,6 +150,18 @@ impl LuaEnt {
     }
     pub fn get_asset(&self) -> String {
         self.asset.clone()
+    }
+    pub fn get_tex(&self) -> &String {
+        &self.tex
+    }
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+    pub fn is_anim(&self) -> bool {
+        self.anim
+    }
+    pub fn clear_dirt(&mut self) {
+        self.dirty = false;
     }
 }
 
@@ -163,6 +189,9 @@ impl Clone for LuaEnt {
             id: self.id,
             ent: None,
             asset: String::new(),
+            tex: String::new(),
+            dirty: false,
+            anim: false,
         }
     }
 }

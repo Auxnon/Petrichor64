@@ -42,6 +42,7 @@ mod ray;
 mod render;
 mod sound;
 mod switch_board;
+mod template;
 mod text;
 mod texture;
 mod tile;
@@ -573,6 +574,11 @@ impl Core {
             }
             None => {}
         }
+
+        let mut ent_guard = ent_master.write();
+        let mut eman = ent_guard.get_mut().unwrap();
+        eman.check_ents();
+        self.global.iteration += 1;
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -588,7 +594,7 @@ impl Core {
             println!("fps::{}", self.global.fps);
         }
 
-        let s = render::render_loop(self);
+        let s = render::render_loop(self, self.global.iteration);
         self.loop_helper.loop_sleep();
         s
     }

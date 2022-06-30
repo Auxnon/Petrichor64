@@ -287,11 +287,27 @@ pub fn init_lua_sys(
         "Set a tile within 3d space and immediately trigger a redraw."
     );
 
-    let switch = Arc::clone(&switch_board);
     lua!(
-        "space",
-        move |_, (): ()| { Ok(switch.read().space) },
-        "Space is down"
+        "anim",
+        move |_, (name, items, speed): (String, Vec<String>, Option<f64>)| {
+            // println!("we have anims {:?}", items);
+            let anim_speed = match speed {
+                Some(s) => s as u32,
+                None => 16,
+            };
+            crate::texture::animations.write().insert(
+                name,
+                (
+                    items
+                        .iter()
+                        .map(|i| crate::texture::get_tex(i))
+                        .collect_vec(),
+                    anim_speed,
+                ),
+            );
+            Ok(true)
+        },
+        "Set an animation"
     );
 
     // let pitchy = Arc::new(pitcher);

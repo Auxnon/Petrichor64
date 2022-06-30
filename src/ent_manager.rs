@@ -115,6 +115,9 @@ impl EntManager {
     pub fn get_from_id(&self, id: i64) -> Option<&Ent> {
         self.entities.get(&id)
     }
+    pub fn get_from_id_mut(&mut self, id: i64) -> Option<&mut Ent> {
+        self.entities.get_mut(&id)
+    }
     pub fn swap_tex(&mut self, tex: &String, ent_id: i64) {
         match self.entities.get_mut(&ent_id) {
             Some(e) => {
@@ -129,6 +132,49 @@ impl EntManager {
     }
     pub fn reset(&mut self) {
         self.entities.clear();
+    }
+
+    pub fn check_ents(&mut self) {
+        let mut v: Vec<Arc<Mutex<LuaEnt>>> = vec![];
+        for lua_ent in self.ent_table.iter_mut() {
+            match lua_ent.lock() {
+                Ok(mut l) => {
+                    if l.is_dirty() {
+                        v.push(Arc::clone(lua_ent));
+
+                        l.clear_dirt();
+                    }
+                }
+                _ => {}
+            }
+        }
+        if v.len() > 0 {
+            for lu in v {
+                match lu.lock() {
+                    Ok(l) => match self.get_from_id_mut(l.get_id()) {
+                        Some(e) => {
+                            if l.is_anim() {
+                                match crate::texture::animations.read().get(l.get_tex()) {
+                                    Some(t) => {
+                                        // println!("we found {:?}", t);
+                                        e.anim = t.0.clone();
+                                        e.anim_speed = t.1;
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                e.tex = crate::texture::get_tex(l.get_tex());
+                                if e.anim.len() > 0 {
+                                    e.anim = vec![];
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
     }
 }
 // use crate::model::Model;

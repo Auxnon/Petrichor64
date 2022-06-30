@@ -37,7 +37,7 @@ pub fn unpack(device: &Device, target: &String, lua_master: &LuaCore) {
                         let ext = e.to_os_string().into_string().unwrap();
                         if is_valid_type(&ext) {
                             let chonk = (item.0.clone(), ext.clone(), String::new(), Some(&item.1));
-                            if ext == "ron" {
+                            if ext == "ron" || ext == "json" {
                                 configs.push(chonk);
                             } else {
                                 sources.insert(item.0.clone(), chonk);
@@ -93,7 +93,7 @@ fn handle_script(buffer: &str, lua_master: &LuaCore) {
 }
 
 pub fn is_valid_type(s: &String) -> bool {
-    s == "gltf" || s == "glb" || s == "png" || s == "ron"
+    s == "gltf" || s == "glb" || s == "png" || s == "ron" || s == "json"
 }
 
 pub fn walk_files(
@@ -146,7 +146,7 @@ pub fn walk_files(
                                 if is_valid_type(&ext) {
                                     let chonk =
                                         (file_name.clone(), ext.clone(), path.clone(), None);
-                                    if ext == "ron" {
+                                    if ext == "ron" || ext == "json" {
                                         configs.push(chonk);
                                     } else {
                                         sources.insert(file_name, chonk);
@@ -229,11 +229,25 @@ fn parse_assets(
         match match con.3 {
             Some(buffer) => {
                 // TODO handle utf8 error somehow?
-                crate::tile::interpret_ron(&String::from_utf8(buffer.to_vec()).unwrap())
+                if con.1 == "ron" {
+                    crate::template::interpret_ron(&String::from_utf8(buffer.to_vec()).unwrap())
+                } else if con.1 == "json" {
+                    crate::template::interpret_json(
+                        &con.0,
+                        &String::from_utf8(buffer.to_vec()).unwrap(),
+                    )
+                } else {
+                    None
+                }
             }
-            _ => {
-                println!("load the ron file");
-                crate::tile::load_ron(&con.2)
+            None => {
+                if con.1 == "ron" {
+                    crate::template::load_ron(&con.2)
+                } else if con.1 == "json" {
+                    crate::template::load_json(&con.0, &con.2)
+                } else {
+                    None
+                }
             }
         } {
             Some(template) => {
@@ -244,7 +258,7 @@ fn parse_assets(
                     con.0
                 };
 
-                println!("🟢template {}", name);
+                // println!("🟢template {}", name);
                 // now locate a resource that matches the name and take ownership, if none then there's nothing to do
                 match sources.entry(name) {
                     Entry::Occupied(o) => {
@@ -272,19 +286,36 @@ fn parse_assets(
                                 crate::texture::load_tex_from_buffer(
                                     &resource.0,
                                     &resource.3.unwrap(),
-                                    Some(template),
+                                    Some(&template),
                                 );
                             } else if device.is_some() {
-                                crate::texture::load_tex(&resource.2, Some(template));
+                                crate::texture::load_tex(&resource.2, Some(&template));
+                            }
+
+                            if template.anims.len() > 0 {
+                                // println!(
+                                //     "🟣we found {} and it has {} animations",
+                                //     resource.0,
+                                //     template.anims.len()
+                                // );
+                                for a in template.anims {
+                                    // println!("🟢{:?}", a.1);
+                                    let v =
+                                        a.1.iter()
+                                            .map(|t| crate::texture::get_tex(&t))
+                                            .collect::<Vec<glam::Vec4>>();
+                                    crate::texture::set_anims(&a.0, v, 8);
+                                }
                             }
                         }
                     }
                     Entry::Vacant(v) => {}
                 };
             }
-            _ => {}
+            None => {}
         }
     }
+
     for source in sources.values() {
         let (file_name, ext, path, buffer) = source;
 
