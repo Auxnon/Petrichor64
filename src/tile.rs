@@ -1,113 +1,46 @@
 use rustc_hash::FxHashMap;
-use std::{collections::hash_map::Entry, ops::Mul};
+use std::{
+    collections::hash_map::Entry,
+    ops::Mul,
+    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
+    thread,
+};
 
 use glam::{ivec3, vec3, IVec3, Vec4};
 use wgpu::{util::DeviceExt, Buffer, Device};
 
 use crate::{model::Vertex, template::AssetTemplate};
 
-/*
-texture index of 0 is air and not rendered
-texture index of 1 is "plain" and unmodifies texture
-2..N is any texture index in the atlas
-*/
-pub struct World {
-    layer: Layer,
+pub struct Layer {
+    chunks: FxHashMap<String, Chunk>,
 }
 
-impl World {
-    pub fn new(device: &Device) -> World {
-        let mut world = World {
-            layer: Layer::new(),
-        };
+impl Layer {
+    pub fn new() -> Layer {
+        Layer {
+            chunks: FxHashMap::default(), // ![Chunk::new()],
+        }
+    }
 
-        // let path = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-        // let h = path.len();
-        // let w = path[0].len();
-        // let mut hash = FxHashMap::default();
-        // hash.insert(4, 3);
-        // hash.insert(2, 33);
-        // hash.insert(13, 52);
-        // hash.insert(1, 25);
-
-        // for yi in 0..path.len() {
-        //     let row = path[yi];
-        //     for xi in 0..row.len() {
-        //         let c = row[xi];
-        //         let x = xi as i32 * 16;
-        //         let y = yi as i32 * -16;
-        //         if c == 1 {
-        //             let u = if yi > 0 { path[yi - 1][xi] } else { 0 };
-        //             let d = if yi < h - 1 { path[yi + 1][xi] } else { 0 };
-        //             let l = if xi > 0 { path[yi][xi - 1] } else { 0 };
-        //             let r = if xi < w - 1 { path[yi][xi + 1] } else { 0 };
-        //             let bit = u | r << 1 | d << 2 | l << 3;
-        //             let h = match hash.get(&bit) {
-        //                 Some(n) => n.clone(),
-        //                 _ => 34,
-        //             };
-        //             println!("x{} y{} b{}", xi, yi, bit);
-        //             world.set_tile(&format!("map{}", h), x, y, 0);
-        //         } else {
-        //             world.set_tile(&format!("map{}", 44), x, y, 0); //36
-        //         }
-        //     }
-        // }
-
-        // for i in 0..16 {
-        //     for j in 0..16 {
-        //         world.set_tile(&format!("fatty"), (i - 8) * 16, (j - 8) * 16, -32 * 3)
-        //     }
-        // }
-        // for i in 0..16 {
-        //     for j in 0..16 {
-        //         world.set_tile(&format!("grid"), 16 * 16, (i - 8) * 16, (j - 8) * 16)
-        //     }
-        // }
-
-        // world.set_tile(&format!("grid"), 0, 0, 16 * 0);
-
-        world.get_chunk_mut(100, 100, 100).cook(device);
-        world
+    pub fn get_dirty(&mut self) -> Vec<Chunk> {
+        let mut v: Vec<Chunk> = vec![];
+        for c in self.get_all_chunks_mut() {
+            if c.dirty {
+                v.push(c.clone());
+                c.dirty = false;
+            }
+        }
+        v
     }
 
     /** get a mutatable chunk, and create a new one if does not exist */
     pub fn get_chunk_mut(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
-        self.layer.get_chunk_mut_from_pos(x, y, z)
+        self.get_chunk_mut_from_pos(x, y, z)
     }
 
     /** read-only chunk, may not exist, will not create a new one if so */
     pub fn get_chunk(&self, x: i32, y: i32, z: i32) -> Option<&Chunk> {
-        self.layer.get_chunk_from_pos(x, y, z)
-    }
-
-    /** get all chunks, big! Used by renderer, ideally it will only show visible chunks */
-    pub fn get_all_chunks(&self) -> std::collections::hash_map::Values<String, Chunk> {
-        self.layer.get_all_chunks()
-    }
-
-    // pub fn build_chunk_from_pos(&mut self, ix: i32, iy: i32, iz: i32) {
-    //     let c = self.get_chunk_mut(ix, iy, iz);
-    //     self.build_chunk2(c);
-    // }
-
-    pub fn build_dirty_chunks(&mut self, device: &Device) {
-        let mut d = vec![];
-        for c in self.layer.get_all_chunks() {
-            if c.dirty {
-                d.push(c.key.clone());
-            }
-        }
-        println!("we found {} dirty chunk(s)", d.len());
-        for k in d {
-            match self.layer.get_chunk_mut(k) {
-                Some(c) => {
-                    c.build_chunk();
-                    c.cook(device);
-                }
-                _ => {}
-            }
-        }
+        self.get_chunk_from_pos(x, y, z)
     }
 
     /** Set 1 tile in a chunk, if chunk doesn't exist it will create it and set the new tile */
@@ -157,28 +90,7 @@ impl World {
         }
     }
 
-    pub fn destroy_it_all(&mut self) {
-        self.layer.destroy_it_all();
-    }
-
-    // pub fn add_tile_model(&mut self, texture: &String, model: &String, ix: i32, iy: i32, iz: i32) {
-    //     let c = self.get_chunk_mut(ix, iy, iz);
-    //     _add_tile_model(c, texture, model, ix, iy, iz);
-    // }
-}
-
-pub struct Layer {
-    chunks: FxHashMap<String, Chunk>,
-}
-
-impl Layer {
-    pub fn new() -> Layer {
-        Layer {
-            chunks: FxHashMap::default(), // ![Chunk::new()],
-        }
-    }
-
-    pub fn get_chunk_mut(&mut self, key: String) -> Option<&mut Chunk> {
+    pub fn _get_chunk_mut(&mut self, key: String) -> Option<&mut Chunk> {
         match self.chunks.entry(key.clone()) {
             Entry::Occupied(o) => Some(o.into_mut()),
             Entry::Vacant(v) => None,
@@ -218,6 +130,7 @@ impl Layer {
         self.chunks.values()
     }
 
+    /** get all chunks, big! Used by renderer, ideally it will only show visible chunks */
     pub fn get_all_chunks_mut(&mut self) -> std::collections::hash_map::ValuesMut<String, Chunk> {
         self.chunks.values_mut()
     }
@@ -228,9 +141,6 @@ impl Layer {
 }
 pub struct Chunk {
     pub dirty: bool,
-    pub vert_data: Vec<Vertex>,
-    pub ind_data: Vec<u32>,
-    pub buffers: Option<(Buffer, Buffer)>,
     pub cells: [u32; 16 * 16 * 16],
     /** Unmodified position within world space, index postion would be position divided by 16 */
     pub pos: IVec3,
@@ -242,24 +152,76 @@ impl Chunk {
     pub fn new(key: String, x: i32, y: i32, z: i32) -> Chunk {
         Chunk {
             dirty: false,
-            vert_data: vec![],
-            ind_data: vec![],
-            buffers: None,
             cells: [0; 16 * 16 * 16],
             pos: ivec3(x, y, z),
             key,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.vert_data.len() < 3
+    pub fn clone(&self) -> Chunk {
+        Chunk {
+            dirty: true,
+            cells: self.cells.clone(),
+            pos: self.pos.clone(),
+            key: self.key.clone(),
+        }
     }
 
-    fn zero_cells(&mut self) {
+    pub fn zero_cells(&mut self) {
         self.cells = [0; 16 * 16 * 16];
     }
+}
 
-    pub fn build_chunk(&mut self) {
+pub struct LayerModel {
+    pub chunks: FxHashMap<String, ChunkModel>,
+}
+
+impl LayerModel {
+    pub fn new() -> LayerModel {
+        let mut l = LayerModel {
+            chunks: FxHashMap::default(),
+        };
+        // let x: i32 = 100;
+        // let y: i32 = 100;
+        // let z: i32 = 100;
+        // let key = format!(
+        //     "{}:{}:{}",
+        //     x.div_euclid(16),
+        //     y.div_euclid(16),
+        //     z.div_euclid(16)
+        // );
+        // let mut c = ChunkModel::new(key.clone(), x, y, z);
+        // c.cook(device);
+        // l.chunks.insert(key.clone(), c);
+        l
+        // world.get_chunk_mut(100, 100, 100).cook(device);
+    }
+
+    pub fn destroy_it_all(&mut self) {
+        self.chunks.clear();
+    }
+}
+
+pub struct ChunkModel {
+    pub vert_data: Vec<Vertex>,
+    pub ind_data: Vec<u32>,
+    pub buffers: Option<(Buffer, Buffer)>,
+    pub pos: IVec3,
+    pub key: String,
+}
+
+impl ChunkModel {
+    pub fn new(key: String, x: i32, y: i32, z: i32) -> ChunkModel {
+        ChunkModel {
+            vert_data: vec![],
+            ind_data: vec![],
+            buffers: None,
+            pos: ivec3(x, y, z),
+            key,
+        }
+    }
+
+    pub fn build_chunk(&mut self, chunk: Chunk) {
         self.vert_data = vec![];
         self.ind_data = vec![];
         self.buffers = None;
@@ -269,7 +231,7 @@ impl Chunk {
         // println!("got cells {}", self.cells.len());
 
         // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
-        for (i, cell) in self.cells.clone().iter().enumerate() {
+        for (i, cell) in chunk.cells.clone().iter().enumerate() {
             if *cell > 0u32 {
                 _add_tile_model(
                     self,
@@ -294,16 +256,20 @@ impl Chunk {
             contents: bytemuck::cast_slice(&self.ind_data),
             usage: wgpu::BufferUsages::INDEX,
         });
-        // println!(
-        //     "tiles::cooked with tile indicie data: {}",
-        //     self.ind_data.len()
-        // );
+        log(format!(
+            "cooked with tile indicie data: {}",
+            self.ind_data.len()
+        ));
         self.buffers = Some((vertex_buf, index_buf));
-        self.dirty = false;
+        // self.dirty = false;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vert_data.len() < 3
     }
 }
 
-fn _add_tile_model(c: &mut Chunk, model_index: u32, ix: i32, iy: i32, iz: i32) {
+fn _add_tile_model(c: &mut ChunkModel, model_index: u32, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset =

@@ -20,7 +20,7 @@ e2 = {
     delay = 0
 }
 
-player = spawn("dog5", 0, 0, 0)
+player = spawn("midnightman0", 0, 0, 0)
 
 function copy(o)
     local c
@@ -55,40 +55,43 @@ function main()
             else
                 block = "block" .. r
             end
+            -- tile("grid", i, j, -8)
             if math.abs(i) > 4 or math.abs(j) > 4 then
-                tile(block, (i - half), (j - half), h + mx - 12)
+                tile("grass0", (i - half), (j - half), h + mx - 12)
                 for k = 0, h do
-                    tile("dirt", (i - half), (j - half), k + mx - 13)
+                    tile("grass0", (i - half), (j - half), k + mx - 13)
                 end
             else
                 tile("grass0", (i - half), (j - half), -8)
             end
         end
     end
+
     tile("east", -4, 0, -2)
     tile("west", 4, 0, -2)
     tile("north", 0, 4, -2)
     tile("south", 0, -4, -2)
-    tile_done()
 
-    h = 10
-    c = 0
+    -- tile_done()
 
-    for i = -h, h do
-        for j = -h, h do
-            c = c + 1
-            t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
-            t:anim("Idle")
-            e = {
-                frame = 0,
-                delay = 0,
-                data = t
-            }
-            fellas[#fellas + 1] = e
-            -- fellas[#fellas + 1] = t
+    -- h = 15
+    -- c = 0
 
-        end
-    end
+    -- for i = -h, h do
+    --     for j = -h, h do
+    --         c = c + 1
+    --         t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
+    --         t:anim("Idle")
+    --         e = {
+    --             frame = 0,
+    --             delay = 0,
+    --             data = t
+    --         }
+    --         fellas[#fellas + 1] = e
+    --         -- fellas[#fellas + 1] = t
+
+    --     end
+    -- end
 end
 
 dir = 0.01
@@ -100,27 +103,49 @@ function loop()
         walker(fellas[i])
     end
 
+    local moving = false
     if key("W") then
         player.y = player.y + 0.1
+        moving = true
     end
     if key("S") then
         player.y = player.y - 0.1
+        moving = true
     end
 
     if key("A") then
         player.x = player.x - .1
+        moving = true
     end
 
     if key("D") then
         player.x = player.x + .1
+        moving = true
     end
+    -- log("1" .. tostring(player:is_dirty()))
+
+    if moving then
+        player:anim("Walk")
+    else
+        player:anim("Idle")
+    end
+    -- log("2" .. tostring(player:is_dirty()) .. "with" .. tostring(player:get_tex()))
+
     if key("G") then
-        vel = 0.1
+        vel = .1
+        player.z = player.z + 0.002
     end
 
+    -- log("z" .. player.z)
+
     if not is_tile(player.x, player.y, player.z - 2) then
-        vel = vel - 0.001
+        vel = vel - 0.005
+        -- z = player.z
         player.z = player.z + vel
+        -- if is_tile(player.x, player.y, player.z - 2) then
+        --     player.z = z
+        -- vel = 0
+        -- end
     end
 
 end

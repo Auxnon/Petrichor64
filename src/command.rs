@@ -14,7 +14,12 @@ use mlua::{Error, Lua, Table};
 use parking_lot::{Mutex, RwLock};
 use winit::event::VirtualKeyCode;
 
-use crate::{lua_ent::LuaEnt, switch_board::SwitchBoard, Core};
+use crate::{
+    lua_ent::LuaEnt,
+    switch_board::SwitchBoard,
+    world::{self, TileCommand, TileResponse, World},
+    Core,
+};
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
@@ -103,6 +108,7 @@ pub fn init_lua_sys(
     lua_globals: &Table,
     switch_board: Arc<RwLock<SwitchBoard>>,
     pitcher: Sender<(i32, String, i32, i32, i32, SyncSender<i32>)>,
+    world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     bits: Rc<Mutex<[bool; 256]>>,
 ) -> Result<(), Error> {
     println!("init lua sys");
@@ -207,6 +213,7 @@ pub fn init_lua_sys(
     //         .unwrap(),
     // ));
     let switch = Arc::clone(&switch_board);
+    // let sender = world_sender.clone();
     lua!(
         "cube",
         move |_,
@@ -220,8 +227,19 @@ pub fn init_lua_sys(
             String
         )| {
             let mut mutex = &mut switch.write();
+            // World::make(&sender, name, t, b, e, w, s, n);
             mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
+            mutex.dirty = true;
+            drop(mutex);
 
+            // while (match switch.try_read() {
+            //     Some(r) => r.dirty,
+            //     None => true,
+            // }) {
+            //     // println!("waiting for make_queue to empty");
+            //     // std::thread::sleep(std::time::Duration::from_millis(10));
+            // }
+            // println!("MAKE {:?}", mutex.make_queue);
             // crate::model::edit_cube(name, [t, e, n, w, s, b]);
             // let mut mutex = &mut switch.write();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));
@@ -230,13 +248,15 @@ pub fn init_lua_sys(
         "Create a new cube model based on 6 textures"
     );
 
-    let switch = Arc::clone(&switch_board);
+    let sender = world_sender.clone();
+
     lua!(
         "tile",
         move |_, (t, x, y, z): (String, f32, f32, f32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-            let mut mutex = &mut switch.write();
-            mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            // let mut mutex = &mut switch.write();
+            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            World::set_tile(&sender, t, x, y, z);
             Ok(1)
         },
         "Set a tile within 3d space."
@@ -246,27 +266,29 @@ pub fn init_lua_sys(
     lua!(
         "tile_done",
         move |_, (): ()| {
-            let mutex = &mut switch.write();
-            mutex.dirty = true;
+            // let mutex = &mut switch.write();
+            // mutex.dirty = true;
             Ok(1)
         },
         "Complete tile creation by triggering a redraw."
     );
 
-    let switch = Arc::clone(&switch_board);
-    lua!(
-        "tile_quick",
-        move |_, (t, x, y, z): (String, f32, f32, f32)| {
-            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-            let mut mutex = &mut switch.write();
-            mutex.tile_queue.push((t, vec4(0., x, y, z)));
-            mutex.dirty = true;
-            Ok(1)
-        },
-        "Set a tile within 3d space and immediately trigger a redraw."
-    );
+    // let switch = Arc::clone(&switch_board);
+    // lua!(
+    //     "tile_quick",
+    //     move |_, (t, x, y, z): (String, f32, f32, f32)| {
+    //         // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
+    //         let mut mutex = &mut switch.write();
+    //         mutex.tile_queue.push((t, vec4(0., x, y, z)));
+    //         mutex.dirty = true;
+    //         Ok(1)
+    //     },
+    //     "Set a tile within 3d space and immediately trigger a redraw."
+    // );
 
     // MARK
+    // RED TODO this function is expensive? if called twice in one cycle it ruins key press checks??
+    let sender = world_sender.clone();
     lua!(
         "is_tile",
         move |_, (x, y, z): (f32, f32, f32)| {
@@ -274,15 +296,16 @@ pub fn init_lua_sys(
             // let mut mutex = &mut switch.read();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));
             // mutex.dirty = true;
-            let (tx, rx) = sync_channel::<i32>(0);
-            pitcher.send((1, String::new(), x as i32, y as i32, z as i32, tx));
-            Ok(match rx.recv() {
-                Ok(n) => n == 1,
-                Err(e) => {
-                    // err(e.to_string());
-                    false
-                }
-            })
+
+            // let (tx, rx) = sync_channel::<i32>(0);
+            // pitcher.send((1, String::new(), x as i32, y as i32, z as i32, tx));
+            // Ok(match rx.recv() {
+            //     Ok(n) => n == 1,
+            //     Err(e) => {
+            //         false
+            //     }
+            // })
+            Ok(World::is_tile(&sender, x, y, z))
         },
         "Set a tile within 3d space and immediately trigger a redraw."
     );
@@ -459,14 +482,15 @@ pub fn reset(core: &mut Core) {
     core.world.destroy_it_all();
 
     // TODO why doe sent reset panic?
-    // let mut guard = crate::ent_master.write();
-    // guard.get_mut().unwrap().reset();
+    let mut guard = crate::ent_master.write();
+    guard.get_mut().unwrap().reset();
 }
 
 pub fn load(core: &mut Core, sub_command: Option<String>) {
     // let mut mutex = crate::lua_master.lock();
 
-    core.lua_master.start(Arc::clone(&core.switch_board));
+    core.lua_master
+        .start(Arc::clone(&core.switch_board), core.world.sender.clone());
 
     crate::texture::reset();
 
@@ -484,6 +508,7 @@ pub fn load(core: &mut Core, sub_command: Option<String>) {
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
     // }
+    core.update();
     core.lua_master.call_main();
     log("=================================================".to_string());
     log("loaded into game".to_string());

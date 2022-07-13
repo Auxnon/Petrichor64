@@ -77,9 +77,12 @@ pub fn generate_matrix(
     (mx_view, mx_projection, model_mat)
 }
 
-pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
+pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceError> {
     frame!("Render");
     let output = core.surface.get_current_texture()?;
+
+    // output.texture.
+    // output.texture.
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -92,7 +95,7 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
     );
     frame!("rendered gui texture");
 
-    let mut mutex = crate::ent_master.read();
+    let mutex = crate::ent_master.read();
 
     let entity_manager = mutex.get().unwrap();
     let ents = &entity_manager.ent_table;
@@ -115,10 +118,10 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
 
     let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>, EntityUniforms)> = vec![];
     for entity in &mut lua_ent_array.iter() {
-        match entity_manager.get_from_id(entity.get_id()).clone() {
+        match entity_manager.get_from_id(entity.get_id()) {
             Some(o) => {
                 let model = o.model.clone();
-                let data = o.get_uniform(&entity.clone());
+                let data = o.get_uniform(&entity.clone(), iteration);
                 let e = o.clone();
                 ent_array.push((e, model, data));
             }
@@ -234,7 +237,8 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[wgpu::RenderPassColorAttachment {
-                view: &view,
+                //MARK view
+                view: &core.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -268,13 +272,13 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             //     _ => true,
             // };
 
-            let chunks = core.world.get_all_chunks();
+            let chunks = core.world.get_chunk_models(&core.device);
             // println!("------chunks {} ------", chunks.len());
+            render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
             for c in chunks {
                 if c.buffers.is_some() {
-                    // println!("chunk {} {}", c.key, c.pos);
+                    // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
                     let b = c.buffers.as_ref().unwrap();
-                    render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
                     render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_vertex_buffer(0, b.0.slice(..));
                     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
@@ -319,11 +323,50 @@ pub fn render_loop(core: &mut Core) -> Result<(), wgpu::SurfaceError> {
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
             //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
         }
+        // BLUE
+        //post process
+
         //render_pass.draw(0..3, 0..1);
         //render_pass.draw_indexed(0..core.index_count as u32, 0, 0..1);
     }
+    // drop(render_pass);
     encoder.pop_debug_group();
     frame!("pop_debug_group");
+
+    // let texture_extent = wgpu::Extent3d {
+    //     width: core.config.width as u32,
+    //     height: core.config.height as u32,
+    //     depth_or_array_layers: 1,
+    // };
+
+    // encoder.copy_texture_to_texture(
+    //     output.texture.as_image_copy(),
+    //     core.post.post_texture.as_image_copy(),
+    //     texture_extent,
+    // );
+
+    encoder.push_debug_group("Post Render");
+    {
+        let mut post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Post Pass"),
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: &view, //&core.post.post_texture_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: true,
+                },
+            }],
+            depth_stencil_attachment: None,
+        });
+
+        {
+            post_pass.set_pipeline(&core.post.post_pipeline);
+            post_pass.set_bind_group(0, &core.post.post_bind_group, &[]);
+            post_pass.draw(0..4, 0..4);
+            frame!("post pass");
+        }
+    }
 
     core.queue.submit(iter::once(encoder.finish()));
     frame!("encoder.finish()");

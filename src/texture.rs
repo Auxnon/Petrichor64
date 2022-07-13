@@ -90,6 +90,12 @@ pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
     write_tex(device, queue, texture, &master.lock().get().unwrap());
 }
 
+pub fn render_sampler(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
+    let img: RgbaImage = ImageBuffer::new(1600, 1200);
+
+    make_render_tex(device, queue, &img)
+}
+
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
 pub fn locate(source: RgbaImage) -> Vec4 {
     let mut m_guard = master.lock();
@@ -531,6 +537,70 @@ pub fn make_tex(
     });
     (diffuse_texture_view, diffuse_sampler, tex)
 }
+
+pub fn make_render_tex(
+    device: &wgpu::Device,
+    queue: &Queue,
+    img: &RgbaImage,
+) -> (TextureView, Sampler, Texture) {
+    log("make master texture".to_string());
+    let rgba = img; //img.as_rgba8().unwrap();
+    let dimensions = img.dimensions();
+    let texture_size = wgpu::Extent3d {
+        width: dimensions.0,
+        height: dimensions.1,
+        depth_or_array_layers: 1,
+    };
+
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        // All textures are stored as 3D, we represent our 2D texture
+        // by setting depth to 1.
+        size: texture_size,
+        mip_level_count: 1, // We'll talk about this a little later
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // Most images are stored using sRGB so we need to reflect that here.
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
+        // COPY_DST means that we want to copy data to this texture
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // | wgpu::TextureUsages::COPY_SRC,
+        label: Some("post_texture"),
+    });
+
+    // queue.write_texture(
+    //     // Tells wgpu where to copy the pixel data
+    //     wgpu::ImageCopyTexture {
+    //         texture: &tex,
+    //         mip_level: 0,
+    //         origin: wgpu::Origin3d::ZERO,
+    //         aspect: wgpu::TextureAspect::All,
+    //     },
+    //     // The actual pixel data
+    //     rgba,
+    //     // The layout of the texture
+    //     wgpu::ImageDataLayout {
+    //         offset: 0,
+    //         bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
+    //         rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+    //     },
+    //     texture_size,
+    // );
+    let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        address_mode_w: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+    (diffuse_texture_view, diffuse_sampler, tex)
+}
+
 pub fn set_anims(name: &String, frames: Vec<Vec4>, animation_speed: u32) {
     println!("set anims {} {:?}", name, frames);
     animations

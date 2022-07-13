@@ -36,29 +36,17 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // }
     // _ => {
 
-    // MARk
-    for m in core.lua_master.catcher.try_recv() {
-        let (ind, val, a, b, c, channel) = m;
-        match ind {
-            // println!("we got val {}", val);
-            0 => {
-                // channel.send(match key_match(val) {
-                //     Some(k) => {
-                //         if input_manager.read().key_held(k) {
-                //             1
-                //         } else {
-                //             0
-                //         }
-                //     }
-                //     None => 0,
-                // });
-            }
-            1 => {
-                channel.send(if core.world.is_tile(a, b, c) { 1 } else { 0 });
-            }
-            _ => {}
-        }
-    }
+    // for m in core.lua_master.catcher.try_recv() {
+    //     let (ind, val, a, b, c, channel) = m;
+    //     match ind {
+    //         0 => {
+
+    //         1 => {
+    //             channel.send(if core.world.is_tile(a, b, c) { 1 } else { 0 });
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     let input_helper = &input_manager.read();
 
@@ -121,17 +109,15 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
     // core.input_helper.key_pressed(check_key_code)
     if input_helper.mouse_held(0) {}
-    if input_helper.mouse_pressed(0) {
-        core.global.mouse_click_pos = core.global.mouse_active_pos.clone();
-        // core.global.set("value2".to_string(), 1.);
-        let i = (core.global.cursor_projected_pos / 1.).floor() * 16.;
-        // println!("i pos {}", i);
-        core.world
-            .set_tile(&"grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
-        core.world
-            .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
-            .cook(&core.device);
-    }
+    // if input_helper.mouse_pressed(0) {
+    //     core.global.mouse_click_pos = core.global.mouse_active_pos.clone();
+    //     let i = (core.global.cursor_projected_pos / 1.).floor() * 16.;
+    //     core.world
+    //         .set_tile(&"grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
+    //     core.world
+    //         .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
+    //         .cook(&core.device);
+    // }
     if input_helper.key_pressed(VirtualKeyCode::Left) {
         core.global.camera_pos.x += 10.;
         println!("x {}", core.global.camera_pos.x)
@@ -252,6 +238,12 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 // println!(" char {}", String::from_iter(st));
             }
         }
+    } else {
+        if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
+            if input_helper.key_pressed(VirtualKeyCode::R) {
+                crate::command::reload(core);
+            }
+        }
     }
 }
 
@@ -292,7 +284,7 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
         }
         _ => {}
     }
-    drop(bits);
+    // drop(bits);
 }
 
 fn key_match(key: String) -> Option<VirtualKeyCode> {

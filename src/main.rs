@@ -7,8 +7,8 @@ use itertools::Itertools;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{cell::RefCell, mem, sync::Arc};
-use tile::World;
 use tracy::frame;
+use world::World;
 
 use ent::Ent;
 use glam::{vec2, vec3, Mat4};
@@ -24,8 +24,8 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::ent::EntityUniforms;
 use crate::gui::Gui;
+use crate::{ent::EntityUniforms, post::Post};
 
 mod asset;
 mod command;
@@ -38,6 +38,7 @@ mod log;
 mod lua_define;
 mod lua_ent;
 mod model;
+mod post;
 mod ray;
 mod render;
 mod sound;
@@ -46,6 +47,7 @@ mod template;
 mod text;
 mod texture;
 mod tile;
+mod world;
 mod zip_pal;
 
 const MAX_ENTS: u64 = 10000;
@@ -75,6 +77,7 @@ pub struct Core {
     bind_group: BindGroup,
     master_texture: Texture,
     gui: Gui,
+    post: Post,
     loop_helper: spin_sleep::LoopHelper,
     lua_master: LuaCore,
 }
@@ -179,7 +182,7 @@ impl Core {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -304,6 +307,10 @@ impl Core {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
                 },
+                // wgpu::BindGroupEntry {
+                //     binding: 3,
+                //     resource: wgpu::BindingResource::Sampler(&post_sampler),
+                // },
             ],
             label: None,
         });
@@ -409,6 +416,25 @@ impl Core {
             label: None,
         });
 
+        // let post_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     layout: &bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: uniform_buf.as_entire_binding(),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 1,
+        //             resource: wgpu::BindingResource::TextureView(&post_texture_view),
+        //         },
+        //         wgpu::BindGroupEntry {
+        //             binding: 2,
+        //             resource: wgpu::BindingResource::Sampler(&post_sampler),
+        //         },
+        //     ],
+        //     label: None,
+        // });
+
         let gui_vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
         let gui_desc = wgpu::VertexBufferLayout {
             array_stride: vertex_size as wgpu::BufferAddress,
@@ -473,10 +499,70 @@ impl Core {
             multiview: None,
         });
 
+        /*let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Gui Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "post_vs_main",
+                buffers: &[],
+            },
+
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "post_fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLAMPING
+                //clamp_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+                unclipped_depth: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less, // 1.
+                stencil: wgpu::StencilState::default(),     // 2.
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });*/
+
         let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
         gui.add_text("initialized".to_string());
         gui.add_img(&"map.tile.png".to_string());
-        let world = World::new(&device);
+
+        let post = Post::new(
+            &config,
+            &queue,
+            &device,
+            &shader,
+            size,
+            &uniform_buf,
+            uniform_size,
+        );
+
+        // let mut post = Gui::new(post_pipeline, post_group, post_texture, post_image);
+        // let a_device = Arc::new(RwLock::new(&device));
+        let world = World::new();
+        let world_sender = world.sender.clone();
 
         let mut loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
@@ -495,6 +581,7 @@ impl Core {
             render_pipeline,
             global: Global::new(),
             switch_board: Arc::clone(&switch_board),
+            post,
             gui,
             bind_group,
             entity_bind_group,
@@ -503,7 +590,7 @@ impl Core {
             world,
             master_texture: diff_tex,
             loop_helper,
-            lua_master: LuaCore::new(switch_board),
+            lua_master: LuaCore::new(switch_board, world_sender),
         }
     }
 
@@ -542,7 +629,7 @@ impl Core {
                                     m[5].clone(),
                                     m[6].clone(),
                                 ];
-                                crate::model::edit_cube(m[0].clone(), m2, &self.device)
+                                // crate::model::edit_cube(m[0].clone(), m2, &self.device);
 
                                 // let name = m[0].clone();
                                 // println!("🧲 eyup1");
@@ -562,14 +649,15 @@ impl Core {
                         mutex.make_queue.clear();
                     }
 
-                    let tile_count = mutex.tile_queue.len();
-                    if tile_count > 0 {
-                        self.world.set_tile_from_buffer(&mutex.tile_queue);
-                        self.world.build_dirty_chunks(&self.device);
-                        mutex.tile_queue.clear();
-                        println!("cooked {} tiles", tile_count);
-                    }
+                    // let tile_count = mutex.tile_queue.len();
+                    // if tile_count > 0 {
+                    //     self.world.set_tile_from_buffer(&mutex.tile_queue);
+                    //     self.world.build_dirty_chunks(&self.device);
+                    //     mutex.tile_queue.clear();
+                    //     println!("cooked {} tiles", tile_count);
+                    // }
                     mutex.dirty = false;
+                    // r.dirty = false;
                 }
             }
             None => {}

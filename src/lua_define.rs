@@ -1,5 +1,10 @@
 use crate::{
-    ent::Ent, ent_manager, ent_master, global::Global, lua_ent::LuaEnt, switch_board::SwitchBoard,
+    ent::Ent,
+    ent_manager, ent_master,
+    global::Global,
+    lua_ent::LuaEnt,
+    switch_board::SwitchBoard,
+    world::{TileCommand, TileResponse},
 };
 use mlua::Lua;
 use parking_lot::{lock_api::RawMutexFair, Mutex, MutexGuard, RwLock};
@@ -29,18 +34,25 @@ pub struct LuaCore {
 }
 
 impl LuaCore {
-    pub fn new(switch_board: Arc<RwLock<SwitchBoard>>) -> LuaCore {
+    pub fn new(
+        switch_board: Arc<RwLock<SwitchBoard>>,
+        world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    ) -> LuaCore {
         log("lua core thread started".to_string());
 
-        let (rec, catcher) = start(switch_board);
+        let (rec, catcher) = start(switch_board, world_sender);
         LuaCore {
             to_lua_tx: rec,
             catcher,
         }
     }
 
-    pub fn start(&mut self, switch_board: Arc<RwLock<SwitchBoard>>) {
-        let (rec, catcher) = start(switch_board);
+    pub fn start(
+        &mut self,
+        switch_board: Arc<RwLock<SwitchBoard>>,
+        world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    ) {
+        let (rec, catcher) = start(switch_board, world_sender);
         self.to_lua_tx = rec;
         self.catcher = catcher;
         // reset()
@@ -317,6 +329,7 @@ fn lua_load(lua: &Lua, st: &String) {
 
 fn start(
     switch_board: Arc<RwLock<SwitchBoard>>,
+    world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
 ) -> (
     Sender<(
         String,
@@ -353,6 +366,7 @@ fn start(
             &globals,
             switch_board,
             pitcher,
+            world_sender,
             Rc::clone(&bit_mutex),
         );
 

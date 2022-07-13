@@ -1,6 +1,7 @@
 use crate::{ent_master, Ent};
 
 use mlua::{MetaMethod, UserData, UserDataFields, UserDataMethods};
+//REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
     pub x: f64,
     pub y: f64,
@@ -47,18 +48,20 @@ impl UserData for LuaEnt {
             Ok(true)
         });
         methods.add_method_mut("anim", |_, this, tex: String| {
-            if this.tex != tex {
-                this.dirty = true;
-            }
+            let t = this.tex.clone();
             this.tex = tex;
             this.anim = true;
+
+            if t != this.tex {
+                this.dirty = true;
+                // println!("lua current anim {} and is now {}", this.tex, this.dirty);
+            }
+
             Ok(true)
         });
 
-        // methods.add_method_mut("add", |_, this, value: f64| {
-        //     this.x += value;
-        //     Ok(())
-        // });
+        methods.add_method("is_dirty", |_, this, ()| Ok(this.dirty));
+        methods.add_method("get_tex", |_, this, ()| Ok(this.tex.clone()));
 
         // methods.add_method("add", |lu, this, ()| {
         //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
@@ -188,10 +191,10 @@ impl Clone for LuaEnt {
             rot_z: self.rot_z,
             id: self.id,
             ent: None,
-            asset: String::new(),
-            tex: String::new(),
+            asset: self.asset.clone(),
+            tex: self.tex.clone(),
             dirty: false,
-            anim: false,
+            anim: self.anim,
         }
     }
 }

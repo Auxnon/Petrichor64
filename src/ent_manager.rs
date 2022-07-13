@@ -132,45 +132,48 @@ impl EntManager {
     }
     pub fn reset(&mut self) {
         self.entities.clear();
+        self.ent_table.clear();
+        // self.uniform_alignment = 0;
     }
 
     pub fn check_ents(&mut self) {
-        let mut v: Vec<Arc<Mutex<LuaEnt>>> = vec![];
+        let mut v: Vec<LuaEnt> = vec![];
         for lua_ent in self.ent_table.iter_mut() {
-            match lua_ent.lock() {
+            match lua_ent.try_lock() {
                 Ok(mut l) => {
                     if l.is_dirty() {
-                        v.push(Arc::clone(lua_ent));
-
                         l.clear_dirt();
+                        // println!("pre dirty in array {}", l.get_tex());
+                        v.push(l.clone());
+                    } else {
+                        // println!("not dirty");
                     }
                 }
                 _ => {}
             }
         }
         if v.len() > 0 {
-            for lu in v {
-                match lu.lock() {
-                    Ok(l) => match self.get_from_id_mut(l.get_id()) {
-                        Some(e) => {
-                            if l.is_anim() {
-                                match crate::texture::animations.read().get(l.get_tex()) {
-                                    Some(t) => {
-                                        // println!("we found {:?}", t);
-                                        e.anim = t.0.clone();
-                                        e.anim_speed = t.1;
-                                    }
-                                    _ => {}
+            for l in v {
+                // println!("we have in array ");
+                match self.get_from_id_mut(l.get_id()) {
+                    Some(e) => {
+                        if l.is_anim() {
+                            // println!("anim {}", l.get_tex());
+                            match crate::texture::animations.read().get(l.get_tex()) {
+                                Some(t) => {
+                                    // println!("we found {} with {:?}", l.get_tex(), t);
+                                    e.anim = t.0.clone();
+                                    e.anim_speed = t.1;
                                 }
-                            } else {
-                                e.tex = crate::texture::get_tex(l.get_tex());
-                                if e.anim.len() > 0 {
-                                    e.anim = vec![];
-                                }
+                                _ => {}
+                            }
+                        } else {
+                            e.tex = crate::texture::get_tex(l.get_tex());
+                            if e.anim.len() > 0 {
+                                e.anim = vec![];
                             }
                         }
-                        _ => {}
-                    },
+                    }
                     _ => {}
                 }
             }
