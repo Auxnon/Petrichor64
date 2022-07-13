@@ -1,6 +1,6 @@
 use rand::Rng;
 use std::{collections::HashMap, path::Path, sync::Arc};
-use tracy::frame;
+// use tracy::frame;
 
 use crate::model::{get_model, Model};
 use image::{ImageBuffer, RgbaImage};
@@ -205,7 +205,7 @@ impl Gui {
     // fn draw_img();
     pub fn render(&mut self, device: &Device, queue: &Queue, time: f32) {
         //let mut rng = rand::thread_rng();
-        frame!("gui start");
+        // frame!("gui start");
         self.time = time;
         if self.output && crate::log::is_dirty() {
             self.text = crate::log::get(
@@ -231,7 +231,7 @@ impl Gui {
             //crate::texture::write_tex(device, queue, &self.texture, &self.img);
         }
 
-        frame!("gui end");
+        // frame!("gui end");
 
         // let mut x: u32 = (rng.gen_range(0..self.size[0]) / 4) * 4;
         // let y: u32 = (rng.gen_range(0..self.size[1]) / 4) * 4;

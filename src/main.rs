@@ -7,7 +7,7 @@ use itertools::Itertools;
 use lua_define::LuaCore;
 use once_cell::sync::OnceCell;
 use std::{cell::RefCell, mem, sync::Arc};
-use tracy::frame;
+// use tracy::frame;
 use world::World;
 
 use ent::Ent;
@@ -729,9 +729,9 @@ fn main() {
 
     std::mem::drop(ent_guard);
 
-    unsafe {
-        tracy::startup_tracy();
-    }
+    // unsafe {
+    //     tracy::startup_tracy();
+    // }
     let mut bits = [false; 256];
 
     event_loop.run(move |event, _, control_flow| {
@@ -741,7 +741,7 @@ fn main() {
         if locker.update(&event) {
             drop(locker);
             let loop_pass = controls::controls_evaluate(&mut core, control_flow);
-            frame!("START");
+            // frame!("START");
             // println!("newbits {:?}", bits);
             core.update();
 
@@ -768,8 +768,8 @@ fn main() {
                 // All other errors (Outdated, Timeout) should be resolved by the next frame
                 Err(e) => eprintln!("{:?}", e),
             }
-            frame!("END");
-            frame!();
+            // frame!("END");
+            // frame!();
         }
 
         //     Event::RedrawRequested(_) => {
@@ -787,9 +787,9 @@ fn main() {
         //     }
     });
 
-    unsafe {
-        tracy::shutdown_tracy();
-    }
+    // unsafe {
+    //     tracy::shutdown_tracy();
+    // }
 }
 
 fn log(str: String) {

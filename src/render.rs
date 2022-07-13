@@ -8,7 +8,7 @@ use std::{
     ops::{Div, DivAssign, Mul},
     slice::SliceIndex,
 };
-use tracy::frame;
+// use tracy::frame;
 
 use crate::{
     ent::{self, Ent, EntityUniforms},
@@ -78,7 +78,7 @@ pub fn generate_matrix(
 }
 
 pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceError> {
-    frame!("Render");
+    // frame!("Render");
     let output = core.surface.get_current_texture()?;
 
     // output.texture.
@@ -93,7 +93,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         &core.queue,
         core.global.get("value2".to_string()),
     );
-    frame!("rendered gui texture");
+    // frame!("rendered gui texture");
 
     let mutex = crate::ent_master.read();
 
@@ -107,7 +107,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // }
 
     // MARK PRE
-    frame!("ent build::start");
+    // frame!("ent build::start");
     let lua_ent_array = ents
         .iter()
         .filter_map(|a| match a.lock() {
@@ -132,7 +132,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     drop(ents);
     drop(entity_manager);
 
-    frame!("ent build::end");
+    // frame!("ent build::end");
 
     let v = core.global.get_mut("value".to_string());
     *v += 0.002;
@@ -220,7 +220,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         core.queue.write_buffer(&core.entity_uniform_buf, 0, &buf);
     }
 
-    frame!("ent use1::end");
+    // frame!("ent use1::end");
 
     // RED
 
@@ -301,7 +301,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             // }
 
             // MARK 2
-            frame!("entity use2::start");
+            // frame!("entity use2::start");
 
             for (entity, model, _) in &mut ent_array.iter() {
                 let m = model.get().unwrap();
@@ -310,7 +310,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
                 render_pass.draw_indexed(0..m.index_count as u32, 0, 0..1);
             }
-            frame!("ent use2::end");
+            // frame!("ent use2::end");
         }
 
         //gui space
@@ -318,7 +318,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.draw(0..4, 0..4);
-            frame!("render pass");
+            // frame!("render pass");
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
             //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
@@ -331,7 +331,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     }
     // drop(render_pass);
     encoder.pop_debug_group();
-    frame!("pop_debug_group");
+    // frame!("pop_debug_group");
 
     // let texture_extent = wgpu::Extent3d {
     //     width: core.config.width as u32,
@@ -364,15 +364,15 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             post_pass.set_pipeline(&core.post.post_pipeline);
             post_pass.set_bind_group(0, &core.post.post_bind_group, &[]);
             post_pass.draw(0..4, 0..4);
-            frame!("post pass");
+            // frame!("post pass");
         }
     }
 
     core.queue.submit(iter::once(encoder.finish()));
-    frame!("encoder.finish()");
+    // frame!("encoder.finish()");
     output.present();
 
-    frame!("END RENDER");
+    // frame!("END RENDER");
 
     Ok(())
 }
