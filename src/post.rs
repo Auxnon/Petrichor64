@@ -29,7 +29,7 @@ impl Post {
         //     gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
 
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(&device, &queue);
+            crate::texture::render_sampler(&device, &queue, (config.width, config.height));
 
         let (post_pipeline, post_bind_group_layout) = {
             let bind_group_layout =

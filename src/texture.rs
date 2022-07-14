@@ -90,8 +90,12 @@ pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
     write_tex(device, queue, texture, &master.lock().get().unwrap());
 }
 
-pub fn render_sampler(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
-    let img: RgbaImage = ImageBuffer::new(1600, 1200);
+pub fn render_sampler(
+    device: &wgpu::Device,
+    queue: &Queue,
+    size: (u32, u32),
+) -> (TextureView, Sampler, Texture) {
+    let img: RgbaImage = ImageBuffer::new(size.0, size.1);
 
     make_render_tex(device, queue, &img)
 }
