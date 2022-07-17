@@ -10,7 +10,7 @@ struct VertexOutput {
 struct Globals {
     view_mat: mat4x4<f32>;
     proj_mat: mat4x4<f32>;
-    time: vec4<f32>;
+    adjustments: array<f32,12>;
     //num_lights: vec4<u32>;
 };
 
@@ -64,14 +64,23 @@ fn vs_main(
     out.tex_coords=(tex_coords*vec2<f32>(ent.uv_mod.z,ent.uv_mod.w))+vec2<f32>(ent.uv_mod.x,ent.uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
   
-    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.time.x,world_pos.w);
+    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0],world_pos.w);
     return out;
 }
 
 struct GuiFrag {
-     [[builtin(position)]] pos: vec4<f32>; 
+    [[builtin(position)]] pos: vec4<f32>; 
     [[location(1)]] screen: vec2<f32>;
+    // [[location(2)]] eh: array<f32>;
+    // [[location(2)]] adjustments: array<f32,12>;
 };
+
+struct PostFrag {
+    [[builtin(position)]] pos: vec4<f32>; 
+    [[location(1)]] screen: vec2<f32>;
+    // [[location(2)]] adjustments: array<f32,12>;
+};
+
 
 [[stage(vertex)]]
 fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
@@ -97,7 +106,9 @@ fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
     
-    out.screen=vec2<f32>(globals.time.z,globals.time.w);
+    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
+    // out.eh=vec2<f32>(globals.adjustments[3],globals.adjustments[4]);
+    //out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);
     return out;
 }
 
@@ -153,8 +164,14 @@ fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
     }else{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
+
+    //out.adjustments=array<f32,12>(globals.adjustments[0],globals.adjustments[1],globals.adjustments[2],globals.adjustments[3],globals.adjustments[4],globals.adjustments[5],globals.adjustments[6],globals.adjustments[7],globals.adjustments[8],globals.adjustments[9],globals.adjustments[10],globals.adjustments[11]);
+     //globals.adjustments;
+    //  out.adjustments=globals.adjustments;
+    //  out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);//globals.adjustments;
+    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
     
-    out.screen=vec2<f32>(globals.time.z,globals.time.w);
+
     return out;
 }
 
@@ -168,13 +185,24 @@ fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
 //     return result;
 // }
 
+// 0:iTime, 1:native_res.0,2:native_res.1, 3:res,4:corner_harshness,5:corner_ease,6:glitchy,7:lumen_threshold,8:dark,9:low,10:high
+// native_res, res,corner_harshness,corner_ease, glitchy,lumen_threshold,dark,low,high
+fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f32,12>)-> vec4<f32>  {
+    let iTime=adj[0]; 
+    let dark_factor:f32=adj[8]; //0.4
+    let low_range:f32=adj[9]; //.05
+    let high_range:f32=adj[10]; //0.6
+    let resolution=vec2<f32>(adj[1],adj[2]);
+    let corner_harshness: f32 =adj[4]; // 1.2
+    let corner_ease: f32 = adj[5]; // 4.0
+    let res: f32 =adj[3]; //  320.0
+    let glitchy: f32 =adj[6]; // 3.0  
+    let lumen_threshold:f32=adj[7]; //0.2
 
-fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2<f32>)-> vec4<f32>  {
     var AR: f32;
     var uv: vec2<f32>;
     var output: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    var corner_harshness: f32 = 1.2000000476837158;
-    var corner_ease: f32 = 4.0;
+    
     var vv: f32;
     var fade: f32;
     var xx: f32;
@@ -182,7 +210,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2
     var rr: f32;
     var tuv: vec2<f32>;
     var limit: vec2<f32>;
-    var res: f32 = 180.0;
+    
     var res2_: vec2<f32>;
     var res3_: vec2<f32>;
     var res4_: vec2<f32>;
@@ -215,9 +243,6 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2
     var col: vec3<f32>;
     var backup: vec3<f32>;
 
-    let iTime=globals.x;
-
-    var resolution=vec2<f32>(1600.,1200.);
 
     AR=resolution.x/resolution.y;
 
@@ -295,7 +320,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2
             tex= textureSample(t_diffuse,s_diffuse, i);
             lum = (((0.2125999927520752 * tex.x) + (0.7152000069618225 * tex.y)) + (0.0722000002861023 * tex.z));
          
-            value = smoothStep(0.05, 0.6, (1.0 - lum));
+            value = smoothStep(low_range,high_range, (1.0 - lum));
             v = min(value, 1.0);
             let _e273 = uv;
             let _e282 = uv;
@@ -307,36 +332,16 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2
             L = (0.0 + (0.01 * cos(((_e330.x * 1.200) + (iTime * 20.0)))));
 
 
-            let _e364 = i;
-            let _e366 = L;
-            let _e367 = L;
-            wave = (cos((6.28000020980835 * smoothStep(_e364.y, _e366, (_e367 + 0.05000000074505806)))) / 5.0);
-            let _e379 = wave;
-            let _e382 = tiny;
-            let _e388 = wave;
-            let _e391 = tiny;
-            scan = cos((1.5700000524520874 + ((3.140000104904175 * (0.20000000298023224 - _e388)) * _e391)));
-            let _e399 = v;
-            split = max(0.33000001311302185, _e399);
-            let _e402 = uv;
-            let _e403 = split;
-            let _e407 = res;
-            uv2_ = (_e402 + vec2<f32>(((-(_e403) * 0.20000000298023224) / _e407), 0.0));
-            let _e413 = uv;
-            let _e414 = split;
-            let _e418 = res;
-            uv3_ = (_e413 + vec2<f32>(((-(_e414) * 0.4000000059604645) / _e418), 0.0));
-            let _e425 = uv2_;
-            let _e428 = scan;
-            uv2_.x = (_e425.x + ((3.0 * _e428) / 240.0));
-            let _e434 = uv3_;
-            let _e437 = scan;
-            uv3_.y = (_e434.y - ((3.0 * _e437) / 240.0));
-            let _e444 = res2_;
-            let _e447 = uv;
-            let _e449 = res2_;
-            let _e453 = res2_;
-            cr = ((_e447 % (vec2<f32>(1.0) / _e449)) * _e453);
+    
+            wave = (cos((6.28000020980835 * smoothStep(i.y, L, (L + 0.05000000074505806)))) / 5.0);
+            scan = cos((1.5700000524520874 + ((3.140000104904175 * (0.20000000298023224 - wave)) * tiny)));
+
+            split = max(0.33000001311302185, v);
+            uv2_ = (uv + vec2<f32>(((-(split) * 0.2) / res), 0.0));
+            uv3_ = (uv + vec2<f32>(((-(split) * 0.4)/ res), 0.0));
+            uv2_.x = (uv2_.x + ((glitchy * scan) / res));
+            uv3_.y = (uv3_.y - ((glitchy * scan) / res));
+            cr = ((uv % (vec2<f32>(1.0) / res2_)) * res2_);
             let _e458 = res3_;
             let _e461 = uv2_;
             let _e463 = res3_;
@@ -363,11 +368,11 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,globals:vec2
             tex2_ = textureSample(texture,samp, i2_);
             tex3_ = textureSample(texture,samp, i3_);
 
-            pixel_size = (((0.4000000059604645 + 1.0) - split) * 2.0);
+            pixel_size = (((dark_factor + 1.0) - split) * 2.0);
             cr.x = (cr.x * (0.6600000262260437 + split));
             cg.x = (cg.x * (0.6600000262260437 + split));
             cb.x = (cb.x * (0.6600000262260437 + split));
-            if ((split > 0.2)) {
+            if ((split > lumen_threshold)) {
                 {
                     ar = (((0.5 - abs((cr.x - 0.5))) * (0.5 - abs((cr.y - 0.5)))) * pixel_size);
                     ag = (((0.5 - abs((cg.x - 0.5))) * (0.5 - abs((cg.y - 0.5)))) * pixel_size);
@@ -397,8 +402,8 @@ fn post_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
 
 
-    //f_color=textureSample(t_diffuse, s_diffuse, p);
-
-    f_color=monitor(t_diffuse, s_diffuse,p,vec2<f32>(in.pos.x,in.pos.y));
+    //f_color=textureSample(t_dif,fuse, s_diffuse, p);
+// globals.adjustments
+    f_color=monitor(t_diffuse, s_diffuse,p,globals.adjustments);//array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.0));
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }

@@ -87,7 +87,7 @@ pub struct Core {
 struct GlobalUniforms {
     view: [[f32; 4]; 4],
     persp: [[f32; 4]; 4],
-    time: [f32; 4],
+    adjustments: [f32; 12],
 }
 
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
@@ -238,7 +238,10 @@ impl Core {
         });
 
         let uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
-        //println!("struct size is {}", uniform_size);
+        // println!(
+        //     "struct size is {}",
+        //     mem::size_of::<[f32; 11]>() as wgpu::BufferAddress
+        // );
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[
@@ -281,7 +284,7 @@ impl Core {
         let render_uniforms = GlobalUniforms {
             view: mx_view.to_cols_array_2d(),
             persp: mx_persp.to_cols_array_2d(),
-            time: [0f32, 0f32, 0f32, 0f32],
+            adjustments: [0f32; 12],
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };
 
@@ -617,8 +620,7 @@ impl Core {
                     drop(r);
                     let mut mutex = self.switch_board.write();
 
-                    let make_count = mutex.make_queue.len();
-                    if make_count > 0 {
+                    if mutex.make_queue.len() > 0 {
                         for m in mutex.make_queue.drain(0..) {
                             if m.len() == 7 {
                                 let m2 = vec![
@@ -647,6 +649,29 @@ impl Core {
                             }
                         }
                         mutex.make_queue.clear();
+                    }
+
+                    if mutex.remaps.len() > 0 {
+                        for item in mutex.remaps.drain(0..) {
+                            if (item.0 == "globals") {
+                                match item.1.as_str() {
+                                    "resolution" => {
+                                        self.global.screen_effects.crt_resolution = item.2
+                                    }
+                                    "curvature" => {
+                                        self.global.screen_effects.corner_harshness = item.2
+                                    }
+                                    "flatness" => self.global.screen_effects.corner_ease = item.2,
+                                    "dark" => self.global.screen_effects.dark_factor = item.2,
+                                    "bleed" => self.global.screen_effects.lumen_threshold = item.2,
+                                    "glitch" => self.global.screen_effects.glitchiness = item.2,
+                                    "high" => self.global.screen_effects.high_range = item.2,
+                                    "low" => self.global.screen_effects.low_range = item.2,
+                                    _ => {}
+                                }
+                            }
+                        }
+                        mutex.remaps.clear();
                     }
 
                     // let tile_count = mutex.tile_queue.len();

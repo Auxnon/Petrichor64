@@ -15,6 +15,32 @@ pub struct Post {
     pub post_texture: wgpu::Texture,
 }
 
+pub struct ScreenBinds {
+    pub dark_factor: f32,
+    pub low_range: f32,
+    pub high_range: f32,
+    pub corner_harshness: f32,
+    pub corner_ease: f32,
+    pub crt_resolution: f32,
+    pub glitchiness: f32,
+    pub lumen_threshold: f32,
+}
+
+impl ScreenBinds {
+    pub fn new() -> ScreenBinds {
+        ScreenBinds {
+            dark_factor: 0.4,
+            low_range: 0.05,
+            high_range: 0.6,
+            corner_harshness: 1.2,
+            corner_ease: 4.0,
+            crt_resolution: 320.0,
+            glitchiness: 3.0,
+            lumen_threshold: 0.2,
+        }
+    }
+}
+
 impl Post {
     pub fn new(
         config: &wgpu::SurfaceConfiguration,
@@ -39,7 +65,7 @@ impl Post {
                         // TODO remove this
                         wgpu::BindGroupLayoutEntry {
                             binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
+                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,

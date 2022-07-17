@@ -11,6 +11,7 @@ pub struct SwitchBoard {
     // pub tile_queue: Vec<(String, Vec4)>,
     pub make_queue: Vec<Vec<String>>,
     pub ent_queue: Vec<&'static LuaEnt>,
+    pub remaps: Vec<(String, String, f32)>,
 }
 impl SwitchBoard {
     pub fn new() -> SwitchBoard {
@@ -22,6 +23,7 @@ impl SwitchBoard {
             // tile_queue: vec![],
             ent_queue: vec![],
             make_queue: vec![],
+            remaps: vec![],
         }
     }
 }

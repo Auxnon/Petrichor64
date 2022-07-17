@@ -1,6 +1,8 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
+
+use crate::post::ScreenBinds;
 /** Global variable container intended for main thread only */
 pub struct Global {
     pub values: HashMap<String, f32>,
@@ -14,6 +16,7 @@ pub struct Global {
     pub fps: f64,
     pub delayed: i32,
     pub iteration: u64,
+    pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
 }
@@ -32,6 +35,7 @@ impl Global {
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,
             iteration: 0,
+            screen_effects: ScreenBinds::new(),
         }
     }
     pub fn set(&mut self, key: String, v: f32) {

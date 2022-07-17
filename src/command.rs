@@ -262,7 +262,6 @@ pub fn init_lua_sys(
         "Set a tile within 3d space."
     );
 
-    let switch = Arc::clone(&switch_board);
     lua!(
         "tile_done",
         move |_, (): ()| {
@@ -450,6 +449,26 @@ pub fn init_lua_sys(
      *  use to store an entity between context, for moving entities between games maybe?
      *  lua.create_registry_value(t)
      */
+    let switch = Arc::clone(&switch_board);
+    lua!(
+        "crt",
+        move |_, (table): (Table)| {
+            for it in table.pairs() {
+                match it {
+                    Ok(pair) => {
+                        switch
+                            .write()
+                            .remaps
+                            .push(("globals".to_string(), pair.0, pair.1));
+                    }
+                    _ => {}
+                }
+            }
+            switch.write().dirty = true;
+            Ok(())
+        },
+        "Set the CRT parameters"
+    );
 
     lua!(
         "_self_destruct",

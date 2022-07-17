@@ -1,5 +1,12 @@
 math.randomseed(os.time())
 local fellas = {}
+crt({
+    resolution = 720,
+    curvature = 0.5,
+    flatness = 99.,
+    glitch = .0,
+    dark = 100.
+})
 
 -- top west north east south bottom
 cube("block1", "ground9", "ground7", "ground7", "ground7", "ground7", "ground15")

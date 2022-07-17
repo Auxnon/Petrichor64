@@ -152,21 +152,41 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
-    let time_ref: [f32; 4] = ([
+    let time_ref: [f32; 12] = [
         core.global.get("value".to_string()),
-        0.,
         core.size.width as f32,
         core.size.height as f32,
-    ]);
+        core.global.screen_effects.crt_resolution,
+        core.global.screen_effects.corner_harshness,
+        core.global.screen_effects.corner_ease,
+        core.global.screen_effects.glitchiness,
+        core.global.screen_effects.lumen_threshold,
+        core.global.screen_effects.dark_factor,
+        core.global.screen_effects.low_range,
+        core.global.screen_effects.high_range,
+        0.,
+    ];
 
-    core.queue
-        .write_buffer(&core.uniform_buf, 0, bytemuck::cast_slice(mx_view_ref));
-    core.queue
-        .write_buffer(&core.uniform_buf, 64, bytemuck::cast_slice(mx_persp_ref));
+    // let iTime=adj[0];
+    // let dark_factor:f32=adj[8]; //0.4
+    // let low_range:f32=adj[9]; //.05
+    // let high_range:f32=adj[10]; //0.6
+    // let resolution=vec2<f32>(adj[1],adj[2]);
+    // let corner_harshness: f32 =adj[4]; // 1.2
+    // let corner_ease: f32 = adj[5]; // 4.0
+    // let res: f32 =adj[3]; //  320.0
+    // let glitchy: f32 =adj[6]; // 3.0
+    // let lumen_threshold:f32=adj[7]; //0.2
+
+    let size1 = bytemuck::cast_slice(mx_view_ref);
+    let size2 = bytemuck::cast_slice(mx_persp_ref);
+    let size3 = bytemuck::cast_slice(&time_ref);
+
+    core.queue.write_buffer(&core.uniform_buf, 0, size1);
+    core.queue.write_buffer(&core.uniform_buf, 64, size2);
 
     // TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
-    core.queue
-        .write_buffer(&core.uniform_buf, 128, bytemuck::cast_slice(&time_ref));
+    core.queue.write_buffer(&core.uniform_buf, 128, size3);
 
     let m: Mat4 = Mat4::IDENTITY;
     let data = EntityUniforms {
