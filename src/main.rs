@@ -4,9 +4,13 @@ use bytemuck::{Pod, Zeroable};
 use ent_manager::EntManager;
 use global::Global;
 use itertools::Itertools;
-use lua_define::LuaCore;
+use lua_define::{LuaCore, MainPacket};
 use once_cell::sync::OnceCell;
-use std::{cell::RefCell, mem, sync::Arc};
+use std::{
+    cell::RefCell,
+    mem,
+    sync::{mpsc::Receiver, Arc},
+};
 // use tracy::frame;
 use world::World;
 
@@ -68,6 +72,7 @@ pub struct Core {
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
     world: World,
+    catcher: Option<Receiver<MainPacket>>,
     // ent_manager: EntManager,
     // vertex_buf: Rc<wgpu::Buffer>,
     // index_buf: Rc<wgpu::Buffer>,
@@ -557,7 +562,6 @@ impl Core {
             &queue,
             &device,
             &shader,
-            size,
             &uniform_buf,
             uniform_size,
         );
@@ -594,6 +598,7 @@ impl Core {
             master_texture: diff_tex,
             loop_helper,
             lua_master: LuaCore::new(switch_board, world_sender),
+            catcher: None,
         }
     }
 
@@ -688,6 +693,20 @@ impl Core {
                     // r.dirty = false;
                 }
             }
+            None => {}
+        }
+
+        match self.catcher {
+            Some(ref mut c) => match c.try_recv() {
+                Ok(p) => match p.0.as_str() {
+                    "campos" => {
+                        self.global.camera_pos = vec3(p.1, p.2, p.3);
+                        // println!("🧲 eyup {} {} {}", p.1, p.2, p.3);
+                    }
+                    _ => {}
+                },
+                Err(_) => {}
+            },
             None => {}
         }
 

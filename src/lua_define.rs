@@ -9,10 +9,6 @@ use crate::{
 use mlua::Lua;
 use parking_lot::{lock_api::RawMutexFair, Mutex, MutexGuard, RwLock};
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fs,
-    path::Path,
     process::exit,
     rc::Rc,
     sync::{
@@ -21,6 +17,7 @@ use std::{
     },
     thread,
 };
+pub type MainPacket = (String, f32, f32, f32, f32);
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -30,7 +27,7 @@ pub struct LuaCore {
         Option<[bool; 256]>,
         SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>,
-    pub catcher: Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
+    // pub catcher: Receiver<MainPacket>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
 
 impl LuaCore {
@@ -43,7 +40,7 @@ impl LuaCore {
         let (rec, catcher) = start(switch_board, world_sender);
         LuaCore {
             to_lua_tx: rec,
-            catcher,
+            // catcher,
         }
     }
 
@@ -51,11 +48,12 @@ impl LuaCore {
         &mut self,
         switch_board: Arc<RwLock<SwitchBoard>>,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    ) {
+    ) -> Receiver<MainPacket> {
         let (rec, catcher) = start(switch_board, world_sender);
         self.to_lua_tx = rec;
-        self.catcher = catcher;
+        // self.catcher = catcher;
         // reset()
+        catcher
     }
 
     // pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
@@ -93,7 +91,6 @@ impl LuaCore {
         ent: Option<[bool; 256]>,
     ) -> (Option<String>, Option<[bool; 256]>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(0);
-        let bool = ent.is_some();
         // println!("xxx {} :: {}", func, path);
         self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
 
@@ -337,7 +334,7 @@ fn start(
         Option<[bool; 256]>,
         SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>,
-    Receiver<(i32, String, i32, i32, i32, SyncSender<i32>)>,
+    Receiver<MainPacket>,
 ) {
     let (sender, reciever) = channel::<(
         String,
@@ -346,7 +343,7 @@ fn start(
         SyncSender<(Option<String>, Option<[bool; 256]>)>,
     )>();
 
-    let (pitcher, catcher) = channel::<(i32, String, i32, i32, i32, SyncSender<i32>)>();
+    let (pitcher, catcher) = channel::<MainPacket>();
 
     // let pitchers = Arc::new(pitcher);
     // let pitch_lusa = Arc::clone(&pitchers);
@@ -399,9 +396,12 @@ fn start(
             } else {
                 //MARK if loop() then path string is the keyboard keys
                 // TODO load's chunk should call set_name to "main" etc, for better error handling
-                match match lua_ctx.load(&s1).eval::<String>() {
+                match match lua_ctx.load(&s1).eval::<mlua::Value>() {
                     //res.unwrap().call::<String, String>(s2.to_owned()) {
-                    Ok(o) => channel.send((Some(o), None)),
+                    Ok(o) => {
+                        let output = format!("{:?}", o);
+                        channel.send((Some(output), None))
+                    }
                     Err(er) => channel.send((Some(er.to_string()), None)),
                 } {
                     Ok(s) => {}

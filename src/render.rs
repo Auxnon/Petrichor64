@@ -41,6 +41,7 @@ pub fn generate_matrix(
     let az = azimuth.cos() * 100.;
     let c = vec3(r.cos() * az, r.sin() * az, azimuth.sin() * 100.);
 
+    // println!("camera_pos: {:?}", camera_pos);
     // let quat = Quat::from_axis_angle(vec3(0., 1., 0.), r);
     // let model_mat =
     //     Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(camera_pos.z, 0., 0.));

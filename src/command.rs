@@ -1,3 +1,14 @@
+use crate::{
+    lua_define::MainPacket,
+    lua_ent::LuaEnt,
+    switch_board::SwitchBoard,
+    world::{self, TileCommand, TileResponse, World},
+    Core,
+};
+use glam::vec4;
+use itertools::Itertools;
+use mlua::{Error, Lua, Table};
+use parking_lot::{Mutex, RwLock};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -7,19 +18,7 @@ use std::{
         Arc,
     },
 };
-
-use glam::vec4;
-use itertools::Itertools;
-use mlua::{Error, Lua, Table};
-use parking_lot::{Mutex, RwLock};
 use winit::event::VirtualKeyCode;
-
-use crate::{
-    lua_ent::LuaEnt,
-    switch_board::SwitchBoard,
-    world::{self, TileCommand, TileResponse, World},
-    Core,
-};
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
@@ -107,7 +106,7 @@ pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
     switch_board: Arc<RwLock<SwitchBoard>>,
-    pitcher: Sender<(i32, String, i32, i32, i32, SyncSender<i32>)>,
+    main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     bits: Rc<Mutex<[bool; 256]>>,
 ) -> Result<(), Error> {
@@ -192,9 +191,17 @@ pub fn init_lua_sys(
     let switch = Arc::clone(&switch_board);
     lua!(
         "bg",
-        move |_, (x, y, z, w): (f32, f32, f32, f32)| {
+        move |_, (x, y, z, w): (f32, f32, f32, Option<f32>)| {
             let mut mutex = &mut switch.write();
-            mutex.background = vec4(x, y, z, w);
+            mutex.background = vec4(
+                x,
+                y,
+                z,
+                match w {
+                    Some(w) => w,
+                    None => 1.,
+                },
+            );
             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
             Ok(1)
         },
@@ -470,6 +477,17 @@ pub fn init_lua_sys(
         "Set the CRT parameters"
     );
 
+    // let switch = Arc::clone(&switch_board);
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "cam",
+        move |_, (x, y, z): (f32, f32, f32)| {
+            pitcher.send(("campos".to_string(), x, y, z, 0.));
+            Ok(())
+        },
+        "Set the camera position"
+    );
+
     lua!(
         "_self_destruct",
         |_, (): ()| {
@@ -507,10 +525,11 @@ pub fn reset(core: &mut Core) {
 
 pub fn load(core: &mut Core, sub_command: Option<String>) {
     // let mut mutex = crate::lua_master.lock();
-
-    core.lua_master
+    let catcher = core
+        .lua_master
         .start(Arc::clone(&core.switch_board), core.world.sender.clone());
 
+    core.catcher = Some(catcher);
     crate::texture::reset();
 
     match sub_command {

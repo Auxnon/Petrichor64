@@ -1,11 +1,14 @@
 math.randomseed(os.time())
 local fellas = {}
 crt({
-    resolution = 720,
-    curvature = 0.5,
-    flatness = 99.,
-    glitch = .0,
-    dark = 100.
+    resolution = 480,
+    curvature = 0.9,
+    flatness = 3.,
+    glitch = 6.0,
+    dark = .2,
+    low = .0,
+    high = .1,
+    bleed = .5
 })
 
 -- top west north east south bottom
@@ -105,11 +108,14 @@ dir = 0.01
 incr = -60
 delay = 0
 vel = 0
+camx = 0
 function loop()
     for i = 1, #fellas do
         walker(fellas[i])
     end
 
+    camx = camx + 0.1
+    cam(camx, 0, 0)
     local moving = false
     if key("W") then
         player.y = player.y + 0.1
