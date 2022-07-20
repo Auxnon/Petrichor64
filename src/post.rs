@@ -47,7 +47,6 @@ impl Post {
         queue: &wgpu::Queue,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        size: PhysicalSize<u32>,
         uniform_buf: &Buffer,
         uniform_size: u64,
     ) -> Post {
@@ -203,7 +202,50 @@ impl Post {
         }
     }
 
-    pub fn refresh(&mut self, device: &wgpu::Device, surface: Surface) {
+    pub fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: PhysicalSize<u32>,
+        uniform_buf: &Buffer,
+    ) {
+        println!("2resize {} {}", size.width, size.height);
+        // crate::texture::update_render_tex(
+        //     device,
+        //     queue,
+        //     &self.post_texture,
+        //     (size.width, size.height),
+        // );
+
+        let (post_texture_view, post_sampler, post_texture) =
+            crate::texture::render_sampler(device, queue, (size.width, size.height));
+
+        self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("post bind group"),
+            layout: &self.post_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&post_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&post_sampler),
+                },
+            ],
+        });
+        self.post_texture_view = post_texture_view;
+        self.post_sampler = post_sampler;
+        self.post_texture = post_texture;
+
+        // self.post_sampler = post_sampler;
+        // self.post_texture = post_texture;
+        println!("3resize done");
+
         // let view = match surface.get_current_texture() {
         //     Ok(output) => output
         //         .texture

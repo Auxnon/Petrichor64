@@ -249,7 +249,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
     var coords=in_coords;//(in_coords+1.)/2.;//vec2<f32>(in_coords.x,in_coords.y*resolution.y);
 
     uv = (coords );
-    vv = (2.0 - min((1.0 % 10.0), 2.0));
+    vv = (2.0 - min(((iTime*10.) ), 2.0)); //%10.
     let _e46 = vv;
     let _e52 = vv;
     fade = max(pow(_e52, 16.0), 1.0);
@@ -322,14 +322,8 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
          
             value = smoothStep(low_range,high_range, (1.0 - lum));
             v = min(value, 1.0);
-            let _e273 = uv;
-            let _e282 = uv;
-            let _e296 = uv;
-            let _e305 = uv;
-            tiny = cos(((6.28 * (((_e305.y + (iTime* 0.1)) * 0.2) % 0.01)) * 300.0));
-            let _e322 = uv;
-            let _e330 = uv;
-            L = (0.0 + (0.01 * cos(((_e330.x * 1.200) + (iTime * 20.0)))));
+            tiny = cos(((6.28 * (((uv.y + (iTime* 0.1)) * 0.2) % 0.01)) * 300.0));
+            L = (0.0 + (0.01 * cos(((uv.x * 1.200) + (iTime * 20.0)))));
 
 
     
@@ -388,7 +382,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
             output = vec4<f32>(col.x,col.y,col.z,1.);
         
     
-    if (((((uv.x > 0.0) && (uv.x < 1.0)) && (uv.y > 0.0)) && (uv.y < 1.0))) {
+    if (((((uv.x > 0.002) && (uv.x < 1.0)) && (uv.y > 0.0)) && (uv.y < 1.0))) {
         {
     return output;
         }

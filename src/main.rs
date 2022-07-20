@@ -600,11 +600,14 @@ impl Core {
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
+            // println!("1resize {} {}", self.size.width, self.size.height);
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
             let d = create_depth_texture(&self.config, &self.device);
             self.depth_texture = d.1;
+            self.post
+                .resize(&self.device, &self.queue, new_size, &self.uniform_buf);
         }
     }
 
@@ -796,20 +799,22 @@ fn main() {
             // frame!("END");
             // frame!();
         }
-
-        //     Event::RedrawRequested(_) => {
-        //         println!("redraw entered");
-        //         core.update();
-        //         match core.render() {
-        //             Ok(_) => {}
-        //             // Reconfigure the surface if lost
-        //             Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-        //             // The system is out of memory, we should probably quit
-        //             Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-        //             // All other errors (Outdated, Timeout) should be resolved by the next frame
-        //             Err(e) => eprintln!("{:?}", e),
-        //         }
-        //     }
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id: _,
+            } => match event {
+                WindowEvent::Resized(physical_size) => {
+                    core.resize(*physical_size);
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    // new_inner_size is &&mut so we have to dereference it twice
+                    core.resize(**new_inner_size);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
     });
 
     // unsafe {
