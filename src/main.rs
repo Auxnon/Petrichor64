@@ -706,15 +706,15 @@ impl Core {
                 //recv_timeout(Duration::from_millis(100))
                 Ok(p) => {
                     match p.0.as_str() {
-                    "campos" => {
-                        self.global.camera_pos = vec3(p.1, p.2, p.3);
+                        "campos" => {
+                            self.global.camera_pos = vec3(p.1, p.2, p.3);
                             println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                         }
                         "camrot" => {
                             self.global.mouse_active_pos = vec2(p.1, p.2);
                             println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
-                    }
-                    _ => {}
+                        }
+                        _ => {}
                     };
                     p.5.send(vec4(0., 0., 0., 0.));
                 }
@@ -793,6 +793,16 @@ fn main() {
     //     tracy::startup_tracy();
     // }
     let mut bits = [false; 256];
+
+    match crate::asset::check_for_auto() {
+        Some(s) => {
+            crate::command::reset(&mut core);
+            crate::command::load(&mut core, Some(s));
+        }
+        _ => {}
+    }
+
+    // :reload(core);
 
     event_loop.run(move |event, _, control_flow| {
         let mut locker = crate::controls::input_manager.write();

@@ -103,6 +103,15 @@ pub fn is_valid_type(s: &String) -> bool {
     s == "gltf" || s == "glb" || s == "png" || s == "ron" || s == "json"
 }
 
+pub fn check_for_auto() -> Option<String> {
+    let p = PathBuf::new().join("auto.game.png");
+    if p.exists() {
+        Some("auto".to_string())
+    } else {
+        None
+    }
+}
+
 pub fn walk_files(
     device: Option<&Device>,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
