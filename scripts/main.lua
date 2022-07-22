@@ -49,11 +49,9 @@ function tiler()
     -- clear_tiles()
     size = 20
     half = 0
-    -- t = 0
     for i = -size, size do
         for j = -size, size do
             mx = 4 + math.sqrt(i * i + j * j) / 20.
-            -- t = t + 1
             r = math.floor(math.random() * 4) + 1
             h = 0
             block = ""
@@ -63,7 +61,6 @@ function tiler()
             else
                 block = "block" .. r
             end
-            -- tile("grid", i, j, -8)
             if math.abs(i) > 4 or math.abs(j) > 4 then
                 tile("grass0", (i - half), (j - half), h + mx - 12)
                 for k = 0, h do
@@ -87,26 +84,7 @@ function main()
     bg(0, .6, .9, 1)
 
     tiler()
-    -- tile_done()
 
-    -- h = 15
-    -- c = 0
-
-    -- for i = -h, h do
-    --     for j = -h, h do
-    --         c = c + 1
-    --         t = spawn(c % 2 == 0 and "dog0" or "chicken", i, j, -7)
-    --         t:anim("Idle")
-    --         e = {
-    --             frame = 0,
-    --             delay = 0,
-    --             data = t
-    --         }
-    --         fellas[#fellas + 1] = e
-    --         -- fellas[#fellas + 1] = t
-
-    --     end
-    -- end
 end
 
 dir = 0.01
@@ -142,7 +120,6 @@ function loop()
     posx = posx + analog("laxisx")
     posy = posy + analog("laxisy")
 
-    log("in")
     local moving = false
     if key("W") then
         player.y = player.y + 0.01
@@ -183,31 +160,22 @@ function loop()
         posy = posy - 1.
     end
 
-    -- log("1" .. tostring(player:is_dirty()))
     camrot(camx, camy, 0)
     campos(posx, posy, 0)
-    -- camrot(analog("laxisx"), analog("laxisy"))
     if moving then
         player:anim("Walk")
     else
         player:anim("Idle")
     end
-    -- log("2" .. tostring(player:is_dirty()) .. "with" .. tostring(player:get_tex()))
 
     if key("space") then
         vel = 0.1
     end
 
-    -- log("z" .. player.z)
-
     if not is_tile(player.x, player.y + 0.5, player.z - 0.5) then
         vel = vel - 0.005
-        -- z = player.z
         player.z = player.z + vel
-        -- if is_tile(player.x, player.y, player.z - 2) then
-        --     player.z = z
-        -- vel = 0
-        -- end
+
     else
         player.z = player.z + math.abs(vel) + 0.001
         vel = -vel * .5

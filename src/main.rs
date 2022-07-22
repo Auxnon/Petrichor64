@@ -713,7 +713,7 @@ impl Core {
                         }
                         "camrot" => {
                             self.global.mouse_active_pos = vec2(p.1, p.2);
-                            println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
+                            // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                         }
                         _ => {}
                     };
