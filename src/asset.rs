@@ -32,15 +32,22 @@ pub fn unpack(device: &Device, target: &String, lua_master: &LuaCore) {
     match map.get("assets") {
         Some(dir) => {
             for item in dir {
-                match Path::new(&item.0).extension() {
+                let path = Path::new(&item.0);
+
+                match path.extension() {
                     Some(e) => {
                         let ext = e.to_os_string().into_string().unwrap();
                         if is_valid_type(&ext) {
-                            let chonk = (item.0.clone(), ext.clone(), String::new(), Some(&item.1));
+                            let name = match path.file_stem() {
+                                Some(s) => s.to_os_string().into_string().unwrap(),
+                                _ => item.0.clone(),
+                            };
+                            let chonk = (name.clone(), ext.clone(), String::new(), Some(&item.1));
+                            // println!("unpack🤡chonk {:?}", chonk.0);
                             if ext == "ron" || ext == "json" {
                                 configs.push(chonk);
                             } else {
-                                sources.insert(item.0.clone(), chonk);
+                                sources.insert(name, chonk);
                             }
                         }
                     }
@@ -146,6 +153,7 @@ pub fn walk_files(
                                 if is_valid_type(&ext) {
                                     let chonk =
                                         (file_name.clone(), ext.clone(), path.clone(), None);
+                                    // println!("load🤡chonk {:?}", chonk.0);
                                     if ext == "ron" || ext == "json" {
                                         configs.push(chonk);
                                     } else {
@@ -252,6 +260,7 @@ fn parse_assets(
         } {
             Some(template) => {
                 // name is either the name field or default to file name without the extension
+                log(format!("loaded template {} or {}", con.0, template.name));
                 let name = if template.name.len() > 0 {
                     template.name.clone()
                 } else {
@@ -260,6 +269,7 @@ fn parse_assets(
 
                 // println!("🟢template {}", name);
                 // now locate a resource that matches the name and take ownership, if none then there's nothing to do
+                // println!("checking {} sources", sources.len());
                 match sources.entry(name) {
                     Entry::Occupied(o) => {
                         // now load the resource with config template stuff
