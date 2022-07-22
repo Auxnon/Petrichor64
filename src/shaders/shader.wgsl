@@ -249,10 +249,9 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
     var coords=in_coords;//(in_coords+1.)/2.;//vec2<f32>(in_coords.x,in_coords.y*resolution.y);
 
     uv = (coords );
-    vv = (2.0 - min(((iTime*10.) ), 2.0)); //%10.
-    let _e46 = vv;
-    let _e52 = vv;
-    fade = max(pow(_e52, 16.0), 1.0);
+    vv = (2.0 - min(((iTime) ), 2.0)); //%10.
+
+    fade = max(pow(vv, 16.0), 1.0);
     let _e58 = uv;
     let _e62 = uv;
     let _e67 = corner_harshness;

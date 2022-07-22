@@ -1,11 +1,13 @@
 use crate::{
     lua_define::MainPacket,
     lua_ent::LuaEnt,
+    pad::Pad,
     switch_board::SwitchBoard,
     world::{self, TileCommand, TileResponse, World},
     Core,
 };
-use glam::vec4;
+use gilrs::{Button, Gamepad};
+use glam::{vec4, Vec4, Vec4Swizzles};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::{Mutex, RwLock};
@@ -109,6 +111,7 @@ pub fn init_lua_sys(
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     bits: Rc<Mutex<[bool; 256]>>,
+    gamepad: Rc<Mutex<Pad>>,
 ) -> Result<(), Error> {
     println!("init lua sys");
 
@@ -306,7 +309,7 @@ pub fn init_lua_sys(
     // );
 
     // MARK
-    // RED TODO this function is expensive? if called twice in one cycle it ruins key press checks??
+    // BLUE TODO this function is expensive? if called twice in one cycle it ruins key press checks??
     let sender = world_sender.clone();
     lua!(
         "is_tile",
@@ -385,6 +388,36 @@ pub fn init_lua_sys(
         },
         "Check if key is held down"
     );
+
+    let gam = Rc::clone(&gamepad);
+    lua!(
+        "button",
+        move |_, (button): (String)| { Ok(gam.lock().check(button) != 0.) },
+        "Check if button is held down"
+    );
+
+    lua!(
+        "analog",
+        move |_, (button): (String)| { Ok(gamepad.lock().check(button)) },
+        "Check how much a button is pressed, axis gives value between -1 and 1"
+    );
+
+    // res(
+    //     "t",
+    //     lua_globals.set(
+    //         "_bg",
+    //         lua_ctx
+    //             .create_function(move |_, (key): (String)| {
+    //                 // let h = match *gamepad.lock() {
+    //                 //     Some(game) => game.is_pressed(Button::South),
+    //                 //     _ => false,
+    //                 // };
+    //                 let b2 = b.lock();
+    //                 Ok(1)
+    //             })
+    //             .unwrap(),
+    //     ),
+    // );
 
     // lua!(
     //     "key_pressed",
@@ -493,12 +526,32 @@ pub fn init_lua_sys(
     // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
     lua!(
-        "cam",
+        "campos",
         move |_, (x, y, z): (f32, f32, f32)| {
-            pitcher.send(("campos".to_string(), x, y, z, 0.));
-            Ok(())
+            let (tx, rx) = sync_channel::<Vec4>(0);
+            pitcher.send(("campos".to_string(), x, y, z, 0., tx));
+            Ok(match rx.recv() {
+                Ok(v) => (v.x, v.y, v.z, v.w),
+                _ => (0., 0., 0., 0.),
+            })
         },
         "Set the camera position"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "camrot",
+        move |_, (x, y): (f32, f32)| {
+            let (tx, rx) = sync_channel::<Vec4>(0);
+            pitcher.send(("camrot".to_string(), x, y, 0., 0., tx));
+            // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
+
+            Ok(match rx.recv() {
+                Ok(v) => (v.x, v.y, v.z, v.w),
+                _ => (0., 0., 0., 0.),
+            })
+        },
+        "Set the camera rotation by azimuth and elevation"
     );
 
     lua!(
@@ -530,6 +583,7 @@ pub fn reset(core: &mut Core) {
 
     core.lua_master.die();
     core.world.destroy_it_all();
+    core.global.iteration = 0;
 
     // TODO why doe sent reset panic?
     let mut guard = crate::ent_master.write();
@@ -632,7 +686,11 @@ fn key_match(key: String) -> usize {
         "down" => 63,
         "back" => 64,
         "return" => 65,
-        "space" => 66,
+        // "space" => {
+        //     println!("space");
+        //     return 66;
+        // }
+        "space" => 76,
 
         // "space" => VirtualKeyCode::Space,
         // "lctrl" => VirtualKeyCode::LControl,

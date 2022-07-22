@@ -5,7 +5,7 @@ use once_cell::sync::OnceCell;
 use std::{
     f32::consts::PI,
     iter,
-    ops::{Div, DivAssign, Mul},
+    ops::{Add, Div, DivAssign, Mul},
     slice::SliceIndex,
 };
 // use tracy::frame;
@@ -37,7 +37,7 @@ pub fn generate_matrix(
     // let azimuth = pi * (0.5 + (mouse.1 % 100.) / 50.);
     let r = (1. - mouse.x) * pi * 2.;
     let azimuth = mouse.y * pi * 2.;
-    let pos = vec3(camera_pos.z, 0., 0.);
+    // let pos = vec3(camera_pos.z, 0., 0.);
     let az = azimuth.cos() * 100.;
     let c = vec3(r.cos() * az, r.sin() * az, azimuth.sin() * 100.);
 
@@ -58,8 +58,8 @@ pub fn generate_matrix(
 
     let mx_view = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
-        pos,
-        c,
+        camera_pos,
+        c.add(camera_pos),
         // vec3(10. + camera_pos.z, camera_pos.y, camera_pos.x), //+ camera_pos.z
         //vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
@@ -154,7 +154,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
     let time_ref: [f32; 12] = [
-        core.global.get("value".to_string()),
+        core.global.iteration as f32 / 30.,
         core.size.width as f32,
         core.size.height as f32,
         core.global.screen_effects.crt_resolution,

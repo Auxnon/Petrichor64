@@ -5,10 +5,10 @@ crt({
     curvature = 0.9,
     flatness = 3.,
     glitch = 6.0,
-    dark = .2,
+    dark = .7,
     low = .0,
     high = .1,
-    bleed = .5
+    bleed = .4
 })
 
 -- top west north east south bottom
@@ -45,17 +45,15 @@ function copy(o)
     return c
 end
 
-function main()
-    log("heya")
-    bg(0, .6, .9, 1)
-
+function tiler()
+    -- clear_tiles()
     size = 20
     half = 0
-    t = 0
+    -- t = 0
     for i = -size, size do
         for j = -size, size do
             mx = 4 + math.sqrt(i * i + j * j) / 20.
-            t = t + 1
+            -- t = t + 1
             r = math.floor(math.random() * 4) + 1
             h = 0
             block = ""
@@ -72,7 +70,7 @@ function main()
                     tile("grass0", (i - half), (j - half), k + mx - 13)
                 end
             else
-                tile("grass0", (i - half), (j - half), -8)
+                tile("grid", (i - half), (j - half), -8)
             end
         end
     end
@@ -82,6 +80,13 @@ function main()
     tile("north", 0, 4, -2)
     tile("south", 0, -4, -2)
 
+end
+
+function main()
+    log("heya")
+    bg(0, .6, .9, 1)
+
+    tiler()
     -- tile_done()
 
     -- h = 15
@@ -109,13 +114,31 @@ incr = -60
 delay = 0
 vel = 0
 camx = 0
+camy = 0
 function loop()
     for i = 1, #fellas do
         walker(fellas[i])
     end
 
-    camx = camx + 0.1
-    cam(camx, 0, 0)
+    if button("dleft") then
+        camx = camx - 0.4
+    end
+    if button("dright") then
+        camx = camx + 0.4
+    end
+
+    if button("dup") then
+        camy = camy + 0.4
+    end
+    if button("ddown") then
+        camy = camy - 0.4
+    end
+
+    camx = camx + analog("raxisx")
+    camy = camy + analog("raxisy")
+
+    campos(camx, camy, 0)
+
     local moving = false
     if key("W") then
         player.y = player.y + 0.1
@@ -137,6 +160,7 @@ function loop()
     end
     -- log("1" .. tostring(player:is_dirty()))
 
+    -- camrot(analog("laxisx"), analog("laxisy"))
     if moving then
         player:anim("Walk")
     else
@@ -144,14 +168,13 @@ function loop()
     end
     -- log("2" .. tostring(player:is_dirty()) .. "with" .. tostring(player:get_tex()))
 
-    if key("G") then
-        vel = .1
-        player.z = player.z + 0.002
+    if key("space") then
+        vel = 0.1
     end
 
     -- log("z" .. player.z)
 
-    if not is_tile(player.x, player.y, player.z - 2) then
+    if not is_tile(player.x, player.y + 0.5, player.z - 0.5) then
         vel = vel - 0.005
         -- z = player.z
         player.z = player.z + vel
@@ -159,6 +182,10 @@ function loop()
         --     player.z = z
         -- vel = 0
         -- end
+    else
+        player.z = player.z + math.abs(vel) + 0.001
+        vel = -vel * .5
+
     end
 
 end

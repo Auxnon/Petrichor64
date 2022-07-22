@@ -15,7 +15,7 @@ use std::{
 use world::World;
 
 use ent::Ent;
-use glam::{vec2, vec3, Mat4};
+use glam::{vec2, vec3, vec4, Mat4};
 use lazy_static::lazy_static;
 use parking_lot::{FairMutex, Mutex, RwLock};
 
@@ -42,6 +42,7 @@ mod log;
 mod lua_define;
 mod lua_ent;
 mod model;
+mod pad;
 mod post;
 mod ray;
 mod render;
@@ -65,6 +66,7 @@ pub struct Core {
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
     global: Global,
+
     stream: cpal::Stream,
     view_matrix: Mat4,
     perspective_matrix: Mat4,
@@ -166,7 +168,10 @@ impl Core {
                 &wgpu::DeviceDescriptor {
                     label: None,
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    limits: wgpu::Limits {
+                        max_storage_textures_per_shader_stage: 8,
+                        ..wgpu::Limits::default()
+                    },
                 },
                 None, // Trace path
             )
@@ -697,14 +702,22 @@ impl Core {
         }
 
         match self.catcher {
-            Some(ref mut c) => match c.try_recv() {
-                Ok(p) => match p.0.as_str() {
+            Some(ref mut c) => match c.recv() {
+                //recv_timeout(Duration::from_millis(100))
+                Ok(p) => {
+                    match p.0.as_str() {
                     "campos" => {
                         self.global.camera_pos = vec3(p.1, p.2, p.3);
-                        // println!("🧲 eyup {} {} {}", p.1, p.2, p.3);
+                            println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
+                        }
+                        "camrot" => {
+                            self.global.mouse_active_pos = vec2(p.1, p.2);
+                            println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                     }
                     _ => {}
-                },
+                    };
+                    p.5.send(vec4(0., 0., 0., 0.));
+                }
                 Err(_) => {}
             },
             None => {}
@@ -724,7 +737,7 @@ impl Core {
             self.global.fps = fps;
         }
         self.global.delayed += 1;
-        if self.global.delayed >= 32 {
+        if self.global.delayed >= 128 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
         }

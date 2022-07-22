@@ -10,6 +10,7 @@ pub struct Global {
     pub mouse_click_pos: Vec2,
     pub mouse_active_pos: Vec2,
     pub mouse_delta: Vec2,
+    pub game_controller: bool,
     pub console: bool,
     pub camera_pos: Vec3,
     pub background: Vec4,
@@ -25,6 +26,7 @@ impl Global {
         Global {
             values: HashMap::new(),
             console: false,
+            game_controller: false,
             mouse_active_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
             mouse_delta: vec2(0., 0.),

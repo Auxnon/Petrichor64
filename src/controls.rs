@@ -102,11 +102,14 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
 
     match input_helper.mouse() {
         Some((x, y)) => {
-            core.global.mouse_active_pos.x = x / core.size.width as f32;
-            core.global.mouse_active_pos.y = y / core.size.height as f32;
+            core.global.game_controller = false;
+            // core.global.mouse_active_pos.x = x / core.size.width as f32;
+            // core.global.mouse_active_pos.y = y / core.size.height as f32;
         }
         _ => {}
     }
+
+
     // core.input_helper.key_pressed(check_key_code)
     if input_helper.mouse_held(0) {}
     // if input_helper.mouse_pressed(0) {
@@ -287,40 +290,40 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
     // drop(bits);
 }
 
-fn key_match(key: String) -> Option<VirtualKeyCode> {
-    Some(match key.to_lowercase().as_str() {
-        "a" => VirtualKeyCode::A,
-        "b" => VirtualKeyCode::B,
-        "c" => VirtualKeyCode::C,
-        "d" => VirtualKeyCode::D,
-        "e" => VirtualKeyCode::E,
-        "f" => VirtualKeyCode::F,
-        "g" => VirtualKeyCode::G,
-        "h" => VirtualKeyCode::H,
-        "i" => VirtualKeyCode::I,
-        "j" => VirtualKeyCode::J,
-        "k" => VirtualKeyCode::K,
-        "l" => VirtualKeyCode::L,
-        "m" => VirtualKeyCode::M,
-        "n" => VirtualKeyCode::N,
-        "o" => VirtualKeyCode::O,
-        "p" => VirtualKeyCode::P,
-        "q" => VirtualKeyCode::Q,
-        "r" => VirtualKeyCode::R,
-        "s" => VirtualKeyCode::S,
-        "t" => VirtualKeyCode::T,
-        "u" => VirtualKeyCode::U,
-        "v" => VirtualKeyCode::V,
-        "w" => VirtualKeyCode::W,
-        "x" => VirtualKeyCode::X,
-        "y" => VirtualKeyCode::Y,
-        "z" => VirtualKeyCode::Z,
-        "space" => VirtualKeyCode::Space,
-        "lctrl" => VirtualKeyCode::LControl,
-        "rctrl" => VirtualKeyCode::RControl,
-        _ => return None,
-    })
-}
+// fn key_match(key: String) -> Option<VirtualKeyCode> {
+//     Some(match key.to_lowercase().as_str() {
+//         "a" => VirtualKeyCode::A,
+//         "b" => VirtualKeyCode::B,
+//         "c" => VirtualKeyCode::C,
+//         "d" => VirtualKeyCode::D,
+//         "e" => VirtualKeyCode::E,
+//         "f" => VirtualKeyCode::F,
+//         "g" => VirtualKeyCode::G,
+//         "h" => VirtualKeyCode::H,
+//         "i" => VirtualKeyCode::I,
+//         "j" => VirtualKeyCode::J,
+//         "k" => VirtualKeyCode::K,
+//         "l" => VirtualKeyCode::L,
+//         "m" => VirtualKeyCode::M,
+//         "n" => VirtualKeyCode::N,
+//         "o" => VirtualKeyCode::O,
+//         "p" => VirtualKeyCode::P,
+//         "q" => VirtualKeyCode::Q,
+//         "r" => VirtualKeyCode::R,
+//         "s" => VirtualKeyCode::S,
+//         "t" => VirtualKeyCode::T,
+//         "u" => VirtualKeyCode::U,
+//         "v" => VirtualKeyCode::V,
+//         "w" => VirtualKeyCode::W,
+//         "x" => VirtualKeyCode::X,
+//         "y" => VirtualKeyCode::Y,
+//         "z" => VirtualKeyCode::Z,
+//         "space" => VirtualKeyCode::Space,
+//         "lctrl" => VirtualKeyCode::LControl,
+//         "rctrl" => VirtualKeyCode::RControl,
+//         _ => return None,
+//     })
+// }
 
 fn log(str: String) {
     crate::log::log(format!("controls::{}", str));

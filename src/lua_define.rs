@@ -3,9 +3,12 @@ use crate::{
     ent_manager, ent_master,
     global::Global,
     lua_ent::LuaEnt,
+    pad::Pad,
     switch_board::SwitchBoard,
     world::{TileCommand, TileResponse},
 };
+use gilrs::{Axis, Button, Event, EventType, Gilrs};
+use glam::Vec4;
 use mlua::Lua;
 use parking_lot::{lock_api::RawMutexFair, Mutex, MutexGuard, RwLock};
 use std::{
@@ -17,7 +20,8 @@ use std::{
     },
     thread,
 };
-pub type MainPacket = (String, f32, f32, f32, f32);
+
+pub type MainPacket = (String, f32, f32, f32, f32, SyncSender<Vec4>);
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -358,6 +362,14 @@ fn start(
 
         let globals = lua_ctx.globals();
 
+        log("new controller connector starting".to_string());
+        let mut gilrs = Gilrs::new().unwrap();
+        for (_id, gamepad) in gilrs.gamepads() {
+            log(format!("{} is {:?}", gamepad.name(), gamepad.power_info()));
+        }
+
+        let mut pads = Rc::new(Mutex::new(Pad::new()));
+
         crate::command::init_lua_sys(
             &lua_ctx,
             &globals,
@@ -365,28 +377,71 @@ fn start(
             pitcher,
             world_sender,
             Rc::clone(&bit_mutex),
+            Rc::clone(&pads),
         );
 
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
-            //}
             let (s1, s2, bit_in, channel) = m;
 
-            //while let Ok((s1, s2, ent, channel)) = reciever.recv() {
-            //println!("➡️ lua_thread::recieved");
+            while let Some(Event { id, event, time }) = gilrs.next_event() {
+                // println!("{:?} New event from {}: {:?}", time, id, event);
+                match event {
+                    EventType::ButtonPressed(button, _) => {
+                        match button {
+                            Button::Start => pads.lock().start = 1.0,
+                            Button::South => pads.lock().south = 1.0,
+                            Button::East => pads.lock().east = 1.0,
+                            Button::West => pads.lock().west = 1.0,
+                            Button::North => pads.lock().north = 1.0,
 
-            // println!("we have a func! {:?}", res.clone().unwrap());
-            // if ent.is_some() {
-            // let res = globals.get::<_, Function>(s1.to_owned());
-            // if res.is_ok() {
-            //     match res.unwrap().call::<LuaEnt, LuaEnt>(ent.unwrap()) {
-            //         Ok(o) => channel.send((None, Some(o))).unwrap(),
-            //         Err(er) => channel.send((None, None)).unwrap(),
-            //     }
-            // } else {
-            //     channel.send((None, None));
-            // }
-            // } else {
+                            // Button::Z => pads.lock().z = 1.0,
+                            // Button::C => pads.lock().c = 1.0,
+                            Button::DPadUp => pads.lock().dup = 1.0,
+                            Button::DPadDown => pads.lock().ddown = 1.0,
+                            Button::DPadLeft => pads.lock().dleft = 1.0,
+                            Button::DPadRight => pads.lock().dright = 1.0,
+                            _ => {}
+                        }
+                    }
+                    EventType::ButtonReleased(button, _) => match button {
+                        Button::Start => pads.lock().start = 0.,
+                        Button::South => pads.lock().south = 0.,
+                        Button::East => pads.lock().east = 0.,
+                        Button::West => pads.lock().west = 0.,
+                        Button::North => pads.lock().north = 0.,
+                        // Button::Z => pads.lock().z = 0.,
+                        // Button::C => pads.lock().c = 0.,
+                        Button::DPadUp => pads.lock().dup = 0.,
+                        Button::DPadDown => pads.lock().ddown = 0.,
+                        Button::DPadLeft => pads.lock().dleft = 0.,
+                        Button::DPadRight => pads.lock().dright = 0.,
+
+                        _ => {}
+                    },
+                    EventType::AxisChanged(axis, value, _) => match axis {
+                        Axis::LeftStickX => pads.lock().laxisx = value,
+                        Axis::LeftStickY => pads.lock().laxisy = value,
+                        //         Axis::LeftZ => todo!(),
+                                Axis::RightStickX => pads.lock().raxisx = value,
+                                Axis::RightStickY => pads.lock().raxisy = value,
+                        //         Axis::RightZ => todo!(),
+                        //         Axis::DPadX => todo!(),
+                        //         Axis::DPadY => todo!(),
+                        _ => {}
+                    },
+                    _ => {}
+                    //     EventType::ButtonRepeated(_, _) => todo!(),
+                    //     EventType::ButtonChanged(_, _, _) => todo!(),
+                    //     EventType::Connected => todo!(),
+                    //     EventType::Disconnected => todo!(),
+                    //     EventType::Dropped => todo!(),
+                }
+            }
+            // let pd = pads.lock();
+            // println!("buttons {} {}", pd.laxisx, pd.laxisy);
+            // drop(pd);
+
             if s1 == "load" {
                 if s2 == "_self_destruct" {
                     break;
@@ -397,7 +452,6 @@ fn start(
                 //MARK if loop() then path string is the keyboard keys
                 // TODO load's chunk should call set_name to "main" etc, for better error handling
                 match match lua_ctx.load(&s1).eval::<mlua::Value>() {
-                    //res.unwrap().call::<String, String>(s2.to_owned()) {
                     Ok(o) => {
                         let output = format!("{:?}", o);
                         channel.send((Some(output), None))
@@ -415,9 +469,7 @@ fn start(
                     Some(b) => *bit_mutex.lock() = b,
                     _ => {}
                 }
-                // }
             }
-            // }
 
             /*  TODO is this still needed?
             match globals.get::<&str, mlua::Table>("_ents") {
@@ -451,8 +503,6 @@ fn start(
             //let res: String = concat2.call::<_, String>((s1, s2)).unwrap();
             //channel.send(res).unwrap()
         }
-
-        //})
     });
     (sender, catcher)
 }
