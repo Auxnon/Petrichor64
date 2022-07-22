@@ -256,10 +256,9 @@ pub fn init_lua_sys(
     );
 
     let sender = world_sender.clone();
-
     lua!(
         "tile",
-        move |_, (t, x, y, z): (String, f32, f32, f32)| {
+        move |_, (t, x, y, z): (String, i32, i32, i32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             // let mut mutex = &mut switch.write();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));
@@ -269,14 +268,28 @@ pub fn init_lua_sys(
         "Set a tile within 3d space."
     );
 
+    let sender = world_sender.clone();
     lua!(
-        "tile_done",
-        move |_, (): ()| {
+        "drop_chunk",
+        move |_, (x, y, z): (i32, i32, i32)| {
             // let mutex = &mut switch.write();
             // mutex.dirty = true;
+            World::drop_chunk(&sender, x, y, z);
             Ok(1)
         },
-        "Complete tile creation by triggering a redraw."
+        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes"
+    );
+
+    let sender = world_sender.clone();
+    lua!(
+        "clear_tiles",
+        move |_, (x, y, z): (i32, i32, i32)| {
+            // let mutex = &mut switch.write();
+            // mutex.dirty = true;
+            World::clear_tiles(&sender);
+            Ok(1)
+        },
+        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes"
     );
 
     // let switch = Arc::clone(&switch_board);
@@ -297,7 +310,7 @@ pub fn init_lua_sys(
     let sender = world_sender.clone();
     lua!(
         "is_tile",
-        move |_, (x, y, z): (f32, f32, f32)| {
+        move |_, (x, y, z): (i32, i32, i32)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             // let mut mutex = &mut switch.read();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));

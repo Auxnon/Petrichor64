@@ -90,6 +90,20 @@ impl Layer {
         }
     }
 
+    /** If a chunk exists */
+    pub fn drop_chunk(&mut self, x: i32, y: i32, z: i32) -> Option<String> {
+        let key = format!(
+            "{}:{}:{}",
+            x.div_euclid(16),
+            y.div_euclid(16),
+            z.div_euclid(16)
+        );
+        match self.chunks.remove_entry(&key) {
+            Some(pair) => Some(pair.0),
+            None => None,
+        }
+    }
+
     pub fn _get_chunk_mut(&mut self, key: String) -> Option<&mut Chunk> {
         match self.chunks.entry(key.clone()) {
             Entry::Occupied(o) => Some(o.into_mut()),

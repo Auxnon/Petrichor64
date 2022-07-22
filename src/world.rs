@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use glam::{vec4, Vec4};
+use glam::{ivec3, ivec4, IVec3, IVec4};
 use parking_lot::RwLock;
 use wgpu::Device;
 
@@ -20,9 +20,10 @@ texture index of 1 is "plain" and unmodifies texture
 
 pub enum TileCommand {
     Make((String, String, String, String, String, String, String)),
-    Set(Vec<(String, Vec4)>),
+    Set(Vec<(String, IVec4)>),
+    Drop(IVec3),
     Check(Vec<String>),
-    Is(Vec4),
+    Is(IVec3),
     Reset(),
 }
 
@@ -132,11 +133,12 @@ impl World {
 
                         res_handle(response.send(TileResponse::Chunks(chunks)))
                     }
-                    (TileCommand::Is(tile), response) => {
-                        let i = tile.as_ivec4();
-                        res_handle(
-                            response.send(TileResponse::Success(layer.is_tile(i.x, i.y, i.z))),
-                        )
+                    (TileCommand::Is(tile), response) => res_handle(
+                        response.send(TileResponse::Success(layer.is_tile(tile.x, tile.y, tile.z))),
+                    ),
+                    (TileCommand::Drop(v), response) => {
+                        layer.drop_chunk(v.x as i32, v.y as i32, v.z as i32);
+                        res_handle(response.send(TileResponse::Success(true)))
                     }
                     (TileCommand::Reset(), response) => {
                         layer.destroy_it_all();
@@ -194,12 +196,26 @@ impl World {
     pub fn set_tile(
         sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
         t: String,
-        x: f32,
-        y: f32,
-        z: f32,
+        x: i32,
+        y: i32,
+        z: i32,
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        sender.send((TileCommand::Set(vec![(t, vec4(0., x, y, z))]), tx));
+        sender.send((TileCommand::Set(vec![(t, ivec4(0, x, y, z))]), tx));
+
+        match rx.recv() {
+            Ok(TileResponse::Success(true)) => {}
+            _ => {}
+        }
+    }
+    pub fn drop_chunk(
+        sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        sender.send((TileCommand::Drop(ivec3(x, y, z)), tx));
 
         match rx.recv() {
             Ok(TileResponse::Success(true)) => {}
@@ -209,13 +225,13 @@ impl World {
 
     pub fn is_tile(
         sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
-        x: f32,
-        y: f32,
-        z: f32,
+        x: i32,
+        y: i32,
+        z: i32,
     ) -> bool {
         let (tx, rx) = sync_channel::<TileResponse>(0);
 
-        sender.send((TileCommand::Is(vec4(0., x, y, z)), tx));
+        sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
 
         match rx.recv() {
             Ok(TileResponse::Success(b)) => b,
@@ -233,6 +249,15 @@ impl World {
         s: String,
         n: String,
     ) {
+    }
+
+    pub fn clear_tiles(sender: &Sender<(TileCommand, SyncSender<TileResponse>)>) {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        sender.send((TileCommand::Reset(), tx));
+        match rx.recv() {
+            Ok(TileResponse::Success(true)) => {}
+            _ => {}
+        }
     }
 
     pub fn destroy_it_all(&mut self) {
