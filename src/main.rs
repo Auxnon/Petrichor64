@@ -702,13 +702,14 @@ impl Core {
         }
 
         match self.catcher {
-            Some(ref mut c) => match c.recv() {
-                //recv_timeout(Duration::from_millis(100))
-                Ok(p) => {
+            Some(ref mut c) => {
+                for p in c.try_iter() {
+                    //recv_timeout(Duration::from_millis(100))
+
                     match p.0.as_str() {
                         "campos" => {
                             self.global.camera_pos = vec3(p.1, p.2, p.3);
-                            println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
+                            // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                         }
                         "camrot" => {
                             self.global.mouse_active_pos = vec2(p.1, p.2);
@@ -716,10 +717,9 @@ impl Core {
                         }
                         _ => {}
                     };
-                    p.5.send(vec4(0., 0., 0., 0.));
+                    // p.5.send(true);
                 }
-                Err(_) => {}
-            },
+            }
             None => {}
         }
 

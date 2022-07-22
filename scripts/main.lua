@@ -115,6 +115,8 @@ delay = 0
 vel = 0
 camx = 0
 camy = 0
+posx = 0.
+posy = 0.
 function loop()
     for i = 1, #fellas do
         walker(fellas[i])
@@ -134,32 +136,56 @@ function loop()
         camy = camy - 0.4
     end
 
-    camx = camx + analog("raxisx")
-    camy = camy + analog("raxisy")
+    camx = camx - analog("raxisx") / 100.
+    camy = camy + analog("raxisy") / 100.
 
-    campos(camx, camy, 0)
+    posx = posx + analog("laxisx")
+    posy = posy + analog("laxisy")
 
+    log("in")
     local moving = false
     if key("W") then
-        player.y = player.y + 0.1
+        player.y = player.y + 0.01
+        camy = camy + 0.01
         moving = true
     end
     if key("S") then
-        player.y = player.y - 0.1
+        player.y = player.y - 0.01
+        camy = camy - 0.01
         moving = true
     end
 
     if key("A") then
         player.x = player.x - .1
+        camx = camx + 0.01
         moving = true
     end
 
     if key("D") then
         player.x = player.x + .1
+        camx = camx - 0.01
         moving = true
     end
-    -- log("1" .. tostring(player:is_dirty()))
 
+    if key("left") then
+        posx = posx + 1.
+    end
+
+    if key("right") then
+        posx = posx - 1.
+    end
+
+    if key("up") then
+        posy = posy + 1.
+    end
+
+    if key("down") then
+        posy = posy - 1.
+    end
+
+    -- log("1" .. tostring(player:is_dirty()))
+    camrot(camx, camy, 0)
+    campos(posx, posy, 0)
     -- camrot(analog("laxisx"), analog("laxisy"))
     if moving then
         player:anim("Walk")

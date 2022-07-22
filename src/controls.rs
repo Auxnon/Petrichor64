@@ -109,7 +109,6 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         _ => {}
     }
 
-
     // core.input_helper.key_pressed(check_key_code)
     if input_helper.mouse_held(0) {}
     // if input_helper.mouse_pressed(0) {

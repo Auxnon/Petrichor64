@@ -25,6 +25,7 @@ pub fn generate_matrix(
     let pi = std::f32::consts::PI;
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
 
+    // println!("mouse {:?}", mouse);
     let r = 0.5f32;
     let mx_view = Mat4::look_at_rh(
         vec3(92. * r.cos(), -128., 82.0),
@@ -35,7 +36,7 @@ pub fn generate_matrix(
     let mx_view = Mat4::IDENTITY;
     // let r = pi * (0.5 + (mouse.0 % 100.) / 50.);
     // let azimuth = pi * (0.5 + (mouse.1 % 100.) / 50.);
-    let r = (1. - mouse.x) * pi * 2.;
+    let r = mouse.x * pi * 2.; //(1. - mouse.x) * pi * 2.;
     let azimuth = mouse.y * pi * 2.;
     // let pos = vec3(camera_pos.z, 0., 0.);
     let az = azimuth.cos() * 100.;

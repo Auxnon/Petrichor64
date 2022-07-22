@@ -21,7 +21,7 @@ use std::{
     thread,
 };
 
-pub type MainPacket = (String, f32, f32, f32, f32, SyncSender<Vec4>);
+pub type MainPacket = (String, f32, f32, f32, f32); //SyncSender<bool>
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,

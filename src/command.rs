@@ -375,7 +375,7 @@ pub fn init_lua_sys(
             // let c = key.to_lowercase().chars().collect::<Vec<char>>()[0] as usize;
 
             // if bits.lock()[key_match(key.clone())] {
-            //     println!("lookin for key {}", c);
+
             // }
             Ok(bits.lock()[key_match(key)])
             // match bits.lock() {
@@ -528,12 +528,14 @@ pub fn init_lua_sys(
     lua!(
         "campos",
         move |_, (x, y, z): (f32, f32, f32)| {
-            let (tx, rx) = sync_channel::<Vec4>(0);
-            pitcher.send(("campos".to_string(), x, y, z, 0., tx));
-            Ok(match rx.recv() {
-                Ok(v) => (v.x, v.y, v.z, v.w),
-                _ => (0., 0., 0., 0.),
-            })
+            // let (tx, rx) = sync_channel::<bool>(0);
+            // println!("🧲 eyup send pos");
+            pitcher.send(("campos".to_string(), x, y, z, 0.));
+            // Ok(match rx.recv() {
+            //     Ok(v) => (true),
+            //     _ => (false),
+            // })
+            Ok(())
         },
         "Set the camera position"
     );
@@ -542,14 +544,17 @@ pub fn init_lua_sys(
     lua!(
         "camrot",
         move |_, (x, y): (f32, f32)| {
-            let (tx, rx) = sync_channel::<Vec4>(0);
-            pitcher.send(("camrot".to_string(), x, y, 0., 0., tx));
-            // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
+            // let (tx, rx) = sync_channel::<bool>(0);
 
-            Ok(match rx.recv() {
-                Ok(v) => (v.x, v.y, v.z, v.w),
-                _ => (0., 0., 0., 0.),
-            })
+            pitcher.send(("camrot".to_string(), x, y, 0., 0.));
+            // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
+            // println!("🧲 eyup send rot");
+
+            // Ok(match rx.recv() {
+            //     Ok(v) => (true),
+            //     _ => (false),
+            // })
+            Ok(())
         },
         "Set the camera rotation by azimuth and elevation"
     );
@@ -680,10 +685,10 @@ fn key_match(key: String) -> usize {
         "f15" => 50,
         "snapshot" => 51,
         "delete" => 56,
-        "left" => 60,
-        "up" => 61,
-        "right" => 62,
-        "down" => 63,
+        "left" => 70,
+        "up" => 71,
+        "right" => 72,
+        "down" => 73,
         "back" => 64,
         "return" => 65,
         // "space" => {
