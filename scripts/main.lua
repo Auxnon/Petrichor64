@@ -5,10 +5,10 @@ crt({
     curvature = 0.9,
     flatness = 3.,
     glitch = 6.0,
-    dark = .7,
-    low = .0,
-    high = .1,
-    bleed = .4
+    dark = .8,
+    low = .3,
+    high = .8,
+    bleed = .3
 })
 
 -- top west north east south bottom
