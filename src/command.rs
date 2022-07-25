@@ -41,6 +41,11 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 } else {
                     "game.png".to_string()
                 },
+                if segments.len() > 2 {
+                    Some(segments[2].to_string())
+                } else {
+                    None
+                },
                 &core.lua_master,
             );
         }

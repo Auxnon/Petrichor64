@@ -9,10 +9,13 @@ use wgpu::Device;
 
 use crate::lua_define::LuaCore;
 
-pub fn pack(name: &String, lua_master: &LuaCore) {
+pub fn pack(name: &String, cart_pic: Option<String>, lua_master: &LuaCore) {
     let sources = walk_files(None, lua_master);
-
-    crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
+    let icon = match cart_pic {
+        Some(pic) => pic,
+        None => "icon.png".to_string(),
+    };
+    crate::zip_pal::pack_zip(sources, &icon, &name)
 }
 pub fn super_pack(name: &String) -> &str {
     // let sources = walk_files(None);
@@ -43,7 +46,7 @@ pub fn unpack(device: &Device, target: &String, lua_master: &LuaCore) {
                                 _ => item.0.clone(),
                             };
                             let chonk = (name.clone(), ext.clone(), String::new(), Some(&item.1));
-                            // println!("unpack🤡chonk {:?}", chonk.0);
+                            println!("unpack🤡chonk {:?}", chonk.0);
                             if ext == "ron" || ext == "json" {
                                 configs.push(chonk);
                             } else {

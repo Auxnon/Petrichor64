@@ -238,7 +238,7 @@ fn tile_locate(
             p.x += p.z * x as f32;
             p.y += p.w * y as f32;
             let key = format!("{}{}", name, n);
-            println!("made texture {} at {}", key, p);
+            // println!("🟠made texture {} at {}", key, p);
             // Key to our texture
             let index_key = index_texture(key.clone(), p);
 
@@ -283,18 +283,19 @@ fn index_texture_direct(key: String, index: u32) {
 }
 
 pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<&AssetTemplate>) {
-    // println!("ol testure {} is {}", str, buffer.len());
+    // println!("🟢load_tex_from_buffer{} is {}", str, buffer.len());
     match image::load_from_memory(buffer.as_slice()) {
-        Ok(img) => sort_image(str, img, template),
+        Ok(img) => sort_image(str, img, template, true),
         Err(err) => {}
     }
 }
 
 pub fn load_tex(str: &String, template: Option<&AssetTemplate>) {
+    // println!("🟢load_tex{}", str);
     log(format!("apply texture {}", str));
 
     match load_img_nopath(str) {
-        Ok(img) => sort_image(str, img, template),
+        Ok(img) => sort_image(str, img, template, false),
         Err(err) => {
             // dictionary
             //     .lock()
@@ -303,8 +304,13 @@ pub fn load_tex(str: &String, template: Option<&AssetTemplate>) {
     }
 }
 
-fn sort_image(str: &String, img: DynamicImage, template: Option<&AssetTemplate>) {
-    let (name, mut is_tile) = get_name(str.clone());
+fn sort_image(
+    str: &String,
+    img: DynamicImage,
+    template: Option<&AssetTemplate>,
+    from_unpack: bool,
+) {
+    let (name, mut is_tile) = get_name(str.clone(), from_unpack);
     let mut rename = None;
     let mut tile_dim = 16u32;
     match template {
@@ -329,17 +335,31 @@ fn sort_image(str: &String, img: DynamicImage, template: Option<&AssetTemplate>)
     }
 }
 
-fn get_name(str: String) -> (String, bool) {
-    let smol = str.split(SLASH).collect::<Vec<_>>();
-    let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
-    match bits.get(0) {
-        Some(o) => {
-            if bits.len() > 2 && bits.get(1).unwrap() == &"tile" {
-                return (o.to_string(), true);
+fn get_name(str: String, from_unpack: bool) -> (String, bool) {
+    if from_unpack {
+        //TODO we can assume hopefully that no file extension was provided in an unpack call of this func, this should be fixed but it's complicated
+        let bits = str.split(".").collect::<Vec<_>>();
+        match bits.get(0) {
+            Some(o) => {
+                if bits.len() > 1 && bits.get(bits.len() - 1).unwrap() == &"tile" {
+                    return (o.to_string(), true);
+                }
+                (o.to_string(), false)
             }
-            (o.to_string(), false)
+            None => (str, false),
         }
-        None => (str, false),
+    } else {
+        let smol = str.split(SLASH).collect::<Vec<_>>();
+        let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
+        match bits.get(0) {
+            Some(o) => {
+                if bits.len() > 2 && bits.get(1).unwrap() == &"tile" {
+                    return (o.to_string(), true);
+                }
+                (o.to_string(), false)
+            }
+            None => (str, false),
+        }
     }
 }
 
@@ -349,7 +369,7 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
         .flat_map(|d| d.pixels.as_slice().to_owned())
         .collect::<Vec<_>>();
 
-    let (actual_name, bool) = get_name(str);
+    let (actual_name, bool) = get_name(str, false);
     log(format!("inject image {} from buffer", actual_name));
 
     let mut pos = Vec4::new(0., 0., 0., 0.);
