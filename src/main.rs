@@ -797,9 +797,12 @@ fn main() {
     match crate::asset::check_for_auto() {
         Some(s) => {
             crate::command::reset(&mut core);
-            crate::command::load(&mut core, Some(s));
+            crate::command::load_from_string(&mut core, Some(s));
         }
-        _ => {}
+        _ => {
+            #[cfg(feature = "include_auto")]
+            crate::command::reload(&mut core);
+        }
     }
 
     // :reload(core);

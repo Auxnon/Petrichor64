@@ -24,10 +24,10 @@ pub fn super_pack(name: &String) -> &str {
     crate::zip_pal::pack_game_bin(name)
 }
 
-pub fn unpack(device: &Device, target: &String, lua_master: &LuaCore) {
-    println!("unpack {}", target);
+pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCore) {
+    println!("unpack {}", name);
     let map =
-        crate::zip_pal::unpack_and_walk(target, vec!["assets".to_string(), "scripts".to_string()]);
+        crate::zip_pal::unpack_and_walk(file, vec!["assets".to_string(), "scripts".to_string()]);
 
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
     let mut configs = vec![];

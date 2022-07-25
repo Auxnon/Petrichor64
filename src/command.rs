@@ -58,14 +58,23 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             .to_string());
         }
         "$unpack" => {
-            //
-            crate::zip_pal::unpack_and_save(&"biggo.png".to_string(), &"biggo.zip".to_string());
+            if segments.len() > 1 {
+                let name = segments[1].to_string();
+                crate::zip_pal::unpack_and_save(
+                    crate::zip_pal::get_file_buffer(&format!("{}.game.zip", name)),
+                    &format!("{}.zip", name),
+                );
+            } else {
+                log("$unpack <file without .game.png>".to_string());
+            }
         }
         "$load" => {
             load(
                 core,
                 if segments.len() > 1 {
-                    Some(segments[1].to_string())
+                    let targ = format!("{}.game.png", segments[1].to_string());
+                    let file = crate::zip_pal::get_file_buffer(&targ);
+                    Some((targ, file))
                 } else {
                     None
                 },
@@ -600,7 +609,21 @@ pub fn reset(core: &mut Core) {
     guard.get_mut().unwrap().reset();
 }
 
-pub fn load(core: &mut Core, sub_command: Option<String>) {
+pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
+    let sub = match sub_command {
+        Some(s) => {
+            // log(format!("load from string {}", s));
+            Some((
+                s.clone(),
+                crate::zip_pal::get_file_buffer(&format!("{}.game.png", s)),
+            ))
+        }
+        None => None,
+    };
+    load(core, sub);
+}
+
+pub fn load(core: &mut Core, sub_command: Option<(String, Vec<u8>)>) {
     // let mut mutex = crate::lua_master.lock();
     let catcher = core
         .lua_master
@@ -611,7 +634,7 @@ pub fn load(core: &mut Core, sub_command: Option<String>) {
 
     match sub_command {
         Some(s) => {
-            crate::asset::unpack(&core.device, &format!("{}.game.png", s), &core.lua_master);
+            crate::asset::unpack(&core.device, &s.0, s.1, &core.lua_master);
         }
         None => {
             crate::asset::walk_files(Some(&core.device), &core.lua_master);
@@ -631,6 +654,16 @@ pub fn load(core: &mut Core, sub_command: Option<String>) {
 
 pub fn reload(core: &mut Core) {
     reset(core);
+    #[cfg(feature = "include_auto")]
+    {
+        log("auto loading included bytes".to_string());
+        let payload = (
+            "INCLUDE_AUTO".to_string(),
+            include_bytes!("../auto.game.png").to_vec(),
+        );
+        load(core, Some(payload));
+    }
+    #[cfg(not(feature = "include_auto"))]
     load(core, None);
 }
 

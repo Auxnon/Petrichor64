@@ -52,7 +52,7 @@ fn stretch(source: &String, out_name: &String) {
     writer.write(v.as_slice());
 }
 /** load a file and return as a u8 vector buffer */
-fn get_file_buffer(path_str: &String) -> Vec<u8> {
+pub fn get_file_buffer(path_str: &String) -> Vec<u8> {
     let path = Path::new(path_str);
     let mut v = vec![];
     match File::open(&path) {
@@ -123,8 +123,8 @@ pub fn pack_zip(sources: Vec<String>, thumb: &String, out: &String) {
 }
 
 /** unpacked a packed game image-zip and save the zip contents as a useable file*/
-pub fn unpack_and_save(target: &String, out: &String) {
-    let v = unpack(target);
+pub fn unpack_and_save(file: Vec<u8>, out: &String) {
+    let v = unpack(file);
     if v.len() > 0 {
         let new_file = File::create(&Path::new(out)).unwrap();
         let mut writer = BufWriter::new(new_file);
@@ -149,10 +149,10 @@ pub fn pack_game_bin(out: &String) -> &str {
 
 /** unpack a packed game image-zip and load all assets into memory and return as asset-path keyed hashmap of u8 buffers  */
 pub fn unpack_and_walk(
-    target: &String,
+    file: Vec<u8>,
     sort: Vec<String>,
 ) -> HashMap<String, Vec<(String, Vec<u8>)>> {
-    let v = unpack(target);
+    let v = unpack(file);
     let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
     if v.len() <= 0 {
         return map;
@@ -213,8 +213,8 @@ pub fn unpack_and_walk(
 }
 
 /** Unpacked a packed game image-zip into just the zip as a u8 buffer, buffer will still need unzipping */
-pub fn unpack(target: &String) -> Vec<u8> {
-    let mut gamefile = get_file_buffer(target);
+pub fn unpack(gamefile: Vec<u8>) -> Vec<u8> {
+    // let mut gamefile = get_file_buffer(target);
     if gamefile.len() <= 0 {
         lg("thumbnail is 0 bytes!");
         return vec![];
@@ -223,11 +223,11 @@ pub fn unpack(target: &String) -> Vec<u8> {
 
     let mut v = vec![];
     let mut toggle = false;
-    gamefile = gamefile[1..gamefile.len()].to_vec();
+    let newgamefile = gamefile[1..gamefile.len()].to_vec();
     let mut iter = 0;
     let test = [73, 69, 78, 68, 174, 66, 96, 130];
 
-    for chunk in gamefile.chunks(1) {
+    for chunk in newgamefile.chunks(1) {
         if !toggle {
             if chunk[0] == test[iter] {
                 if (iter < 7) {
