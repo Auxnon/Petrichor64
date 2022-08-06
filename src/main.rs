@@ -3,13 +3,14 @@
 use bytemuck::{Pod, Zeroable};
 use ent_manager::EntManager;
 use global::Global;
-use itertools::Itertools;
-use lua_define::{LuaCore, MainPacket};
+use lua_define::{LuaCore, MainPacket, SoundPacket};
 use once_cell::sync::OnceCell;
 use std::{
-    cell::RefCell,
     mem,
-    sync::{mpsc::Receiver, Arc},
+    sync::{
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
 };
 // use tracy::frame;
 use world::World;
@@ -17,7 +18,7 @@ use world::World;
 use ent::Ent;
 use glam::{vec2, vec3, vec4, Mat4};
 use lazy_static::lazy_static;
-use parking_lot::{FairMutex, Mutex, RwLock};
+use parking_lot::RwLock;
 
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, Texture};
@@ -68,6 +69,7 @@ pub struct Core {
     global: Global,
 
     stream: cpal::Stream,
+    singer: Sender<SoundPacket>,
     view_matrix: Mat4,
     perspective_matrix: Mat4,
     uniform_buf: Buffer,
@@ -148,6 +150,7 @@ lazy_static! {
 
 impl Core {
     async fn new(window: &Window) -> Core {
+        // crate::texture::save_audio_buffer(&vec![255u8; 1024]);
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -579,6 +582,8 @@ impl Core {
         let mut loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
+
+        let (stream, singer) = sound::init();
         Self {
             surface,
             device,
@@ -598,11 +603,12 @@ impl Core {
             bind_group,
             entity_bind_group,
             entity_uniform_buf,
-            stream: sound::init_sound(dupe_switch).unwrap(),
+            stream: stream.unwrap(),
+            singer: singer.clone(),
             world,
             master_texture: diff_tex,
             loop_helper,
-            lua_master: LuaCore::new(switch_board, world_sender),
+            lua_master: LuaCore::new(switch_board, world_sender, singer),
             catcher: None,
         }
     }

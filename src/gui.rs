@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 // use tracy::frame;
 
 use crate::model::{get_model, Model};
-use image::{ImageBuffer, RgbaImage};
+use image::{ImageBuffer, Rgba, RgbaImage};
 use once_cell::sync::OnceCell;
 use wgpu::{Device, QuerySet, Queue, Sampler, Texture, TextureView};
 
@@ -98,7 +98,13 @@ impl Gui {
                             .collect();
                         for (i, d) in digits.into_iter().enumerate() {
                             let sub = image::imageops::crop_imm(&self.letters, d * 4, 12, 4, 4);
-                            image::imageops::replace(&mut im, &sub, x * 16 + i as u32 * 5, y * 16);
+                            // let imm: &ImageBuffer<Rgba<u8>, Vec<u8>> = sub.inner();
+                            image::imageops::replace(
+                                &mut im,
+                                sub.inner(),
+                                (x * 16 + i as u32 * 5).into(),
+                                (y * 16).into(),
+                            );
                         }
 
                         //image::imageops::overlay(&mut self.img, &sub, x, y);
@@ -145,7 +151,7 @@ impl Gui {
         // };
         // image::imageops::dither(&mut self.img, &col {});
         for (i, line) in self.text.lines().enumerate() {
-            let y = i as u32 * 6;
+            let y = i as i64 * 6;
             let mut x = 4;
             for c in line.chars() {
                 let mut ind = c as u32;
@@ -172,7 +178,7 @@ impl Gui {
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
-                image::imageops::overlay(&mut self.console, &sub, x, y);
+                image::imageops::overlay(&mut self.console, sub.inner(), x, y);
                 x += 5;
             }
         }

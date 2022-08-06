@@ -1,21 +1,15 @@
 use crate::{
-    ent::Ent,
-    ent_manager, ent_master,
-    global::Global,
-    lua_ent::LuaEnt,
     pad::Pad,
     switch_board::SwitchBoard,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
-use glam::Vec4;
 use mlua::Lua;
-use parking_lot::{lock_api::RawMutexFair, Mutex, MutexGuard, RwLock};
+use parking_lot::{Mutex, RwLock};
 use std::{
-    process::exit,
     rc::Rc,
     sync::{
-        mpsc::{channel, sync_channel, Receiver, SendError, Sender, SyncSender},
+        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
         Arc,
     },
     thread,
@@ -38,10 +32,11 @@ impl LuaCore {
     pub fn new(
         switch_board: Arc<RwLock<SwitchBoard>>,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+        singer: Sender<SoundPacket>,
     ) -> LuaCore {
         log("lua core thread started".to_string());
 
-        let (rec, catcher) = start(switch_board, world_sender);
+        let (rec, catcher) = start(switch_board, world_sender, singer);
         LuaCore {
             to_lua_tx: rec,
             // catcher,
@@ -52,8 +47,9 @@ impl LuaCore {
         &mut self,
         switch_board: Arc<RwLock<SwitchBoard>>,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+        singer: Sender<SoundPacket>,
     ) -> Receiver<MainPacket> {
-        let (rec, catcher) = start(switch_board, world_sender);
+        let (rec, catcher) = start(switch_board, world_sender, singer);
         self.to_lua_tx = rec;
         // self.catcher = catcher;
         // reset()
@@ -331,6 +327,7 @@ fn lua_load(lua: &Lua, st: &String) {
 fn start(
     switch_board: Arc<RwLock<SwitchBoard>>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    singer: Sender<SoundPacket>,
 ) -> (
     Sender<(
         String,
@@ -376,6 +373,7 @@ fn start(
             switch_board,
             pitcher,
             world_sender,
+            singer,
             Rc::clone(&bit_mutex),
             Rc::clone(&pads),
         );

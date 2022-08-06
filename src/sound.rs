@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Arc, Mutex,
+};
 
 //use byte_slice_cast::AsByteSlice;
 use cpal::{
@@ -7,8 +10,17 @@ use cpal::{
 };
 use parking_lot::RwLock;
 
-use crate::switch_board::SwitchBoard;
+use crate::{lua_define::SoundPacket, switch_board::SwitchBoard};
 
+pub type SoundPacket = (f32, f32);
+
+pub struct Note {
+    pub frequency: f32,
+    pub duration: f32,
+    pub volume: f32,
+    pub channel: usize,
+    pub func: Box<dyn Fn(f32) -> f32>,
+}
 #[derive(Debug)]
 struct Opt {
     #[cfg(all(
@@ -48,7 +60,12 @@ impl Opt {
     }
 }
 
-pub fn init_sound(switch_board: Arc<RwLock<SwitchBoard>>) -> anyhow::Result<cpal::Stream> {
+pub fn init() -> (anyhow::Result<cpal::Stream>, Sender<SoundPacket>) {
+    let (singer, audience) = channel::<SoundPacket>();
+    (init_sound(audience), singer)
+}
+
+pub fn init_sound(audience: Receiver<SoundPacket>) -> anyhow::Result<cpal::Stream> {
     let opt = Opt::from_args();
 
     // Conditionally compile with jack if the feature is specified.
@@ -88,16 +105,16 @@ pub fn init_sound(switch_board: Arc<RwLock<SwitchBoard>>) -> anyhow::Result<cpal
     println!("Default output config: {:?}", config);
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), switch_board),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), switch_board),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), switch_board),
+        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), audience),
+        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), audience),
+        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), audience),
     }
 }
 
 pub fn run<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    switch_board: Arc<RwLock<SwitchBoard>>,
+    audience: Receiver<SoundPacket>,
 ) -> Result<cpal::Stream, anyhow::Error>
 where
     T: cpal::Sample,
@@ -116,7 +133,24 @@ where
     // for b in buffer.as_byte_slice() {
     //     println!("buffer {}", b);
     // }
-    let mut i = 6f32;
+    let volume_speed = 0.001;
+    let fade_speed = 0.00005;
+    let mut vol = 1.;
+    let mut occupied = [false; 16];
+    let mut buffer = vec![];
+    let mut once = false;
+    let mut buffer_count = 1;
+    let mut buffer_sum = 0.;
+
+    let mut notes = vec![];
+
+    let square = |a: f32| {
+        let mut total = 0.;
+        for i in (1..17).step_by(2) {
+            total += (i as f32 * a).sin() / (i as f32)
+        }
+        total
+    };
 
     let mut next_value = move || {
         sample_clock = (sample_clock + 1.0) % sample_rate;
@@ -126,44 +160,78 @@ where
         // println!("byte {}", b.len());
         //let f = [(sample_clock) as usize] as f32
 
-        let level = if switch_board.read().space { 6.0 } else { 12.0 };
-        i += ((level - i) / sample_rate);
+        match audience.try_recv() {
+            Ok(packet) => {
+                if packet.0 < 0. {
+                    if !once {
+                        println!("save sound");
+                        crate::texture::save_audio_buffer(&buffer);
+                        buffer.clear();
+                        once = true;
+                    }
+                } else {
+                    let channel = match occupied.iter().position(|x| *x == false) {
+                        Some(i) => i,
+                        None => 0,
+                    };
+                    occupied[channel] = true;
+                    // note, timer, current_level, channel
+                    notes.push((packet.0, packet.1, 0., channel));
+                }
+                // println!("notes {:?}", notes);
+            }
+            Err(e) => {}
+        };
 
-        let freq = i;
-        //println!("{}", i);
-        // + t / 2000.;
-        // match read().unwrap() {
-        //     //i think this speaks for itself
-        //     Event::Key(KeyEvent {
-        //         code: KeyCode::Char('h'),
-        //         modifiers: KeyModifiers::CONTROL,
-        //         //clearing the screen and printing our message
-        //     }) => {
-        //         //execute!(stdout, Clear(ClearType::All), Print("Hello world!")).unwrap()
-        //         freq = 1.;
-        //     }
-        //     // Event::Key(KeyEvent {
-        //     //     code: KeyCode::Char('t'),
-        //     //     modifiers: KeyModifiers::ALT,
-        //     // }) => execute!(stdout, Clear(ClearType::All), Print("crossterm is cool")).unwrap(),
-        //     Event::Key(KeyEvent {
-        //         code: KeyCode::Char('q'),
-        //         modifiers: KeyModifiers::CONTROL,
-        //     }) => {}
-        //     _ => (),
+        // vol -= 0.0002;
+
+        // if vol <= 0. {
+        //     vol = 0.;
         // }
 
+        // let mut value = 0.;
+
+        let mut all_waves = 0.;
+
+        notes.retain_mut(|note| {
+            // println!("note {:?}", note);
+            // value += note.0;
+            note.1 -= fade_speed;
+
+            if note.1 > 0. {
+                if note.2 < 1. {
+                    note.2 += volume_speed;
+                }
+                let volume = note.2;
+
+                let cycler =
+                    (sample_clock + note.3 as f32) * 2.0 * std::f32::consts::PI / sample_rate;
+                let totes = cycler * note.0;
+                all_waves += square(totes) * volume;
+                true
+            } else {
+                if note.2 > 0. {
+                    note.2 -= volume_speed;
+                    true
+                } else {
+                    occupied[note.3] = false;
+                    false
+                }
+            }
+        });
+
         // ((bufferIn[(2 * sample_clock as usize)]) as f32) / 128.
-        let t = sample_clock * 2.0 * std::f32::consts::PI / sample_rate; //*440.
-                                                                         //println!("t {}", t);
+        // let cycler = sample_clock * 2.0 * std::f32::consts::PI / sample_rate;
+
+        //*440.//println!("t {}", t);
 
         // switch_board.write().h = t;
 
         //sine
         //(t).sin()
 
-        let a = 2.;
-        let p = 4.;
+        // let a = 2.;
+        // let p = 4.;
 
         //triangle
         /*
@@ -195,8 +263,22 @@ where
         //     + pia(freq, t, 5., 16.)
         //     + pia(freq, t, 6., 32.);
         // s * s * s
-        (t * std::f32::consts::PI * freq).sin() / 20.
-        //(freq * t / 400.).sin() / 20.
+
+        // let hertz = value;
+
+        // let totes = cycler * hertz;
+
+        // square(totes)
+        buffer_sum += all_waves * 256.;
+
+        if buffer_count >= 64 {
+            buffer.push((buffer_sum / 64. + 256.) as u8);
+            buffer_sum = 0.;
+            buffer_count = 1;
+        }
+        buffer_count += 1;
+
+        all_waves
     };
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);

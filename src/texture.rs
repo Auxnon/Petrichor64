@@ -2,7 +2,11 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::template::AssetTemplate;
 use glam::{vec4, UVec2, UVec4, Vec4};
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
+use image::{imageops, DynamicImage, GenericImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
+use imageproc::{
+    drawing::{draw_filled_rect, draw_filled_rect_mut},
+    rect::Rect,
+};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, RwLock};
@@ -80,6 +84,54 @@ pub fn save_atlas() {
         Ok(s) => {}
         Err(err) => {}
     }
+}
+
+fn draw_rect(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
+    let magenta = Rgba([255u8, 0u8, 255u8, 127u8]);
+
+    // imageproc::drawing::write_pixel(img, 0, 0, &magenta);
+    draw_filled_rect_mut(
+        img,
+        imageproc::rect::Rect::at(10, 10).of_size(75, 75),
+        magenta,
+    );
+}
+
+//MARK save_audio_buffer
+pub fn save_audio_buffer(buffer: &Vec<u8>) {
+    println!("🟣buffer {} {}", buffer.len(), 512);
+    let w = buffer.len() as u32;
+    let h = 512;
+    let mut img: RgbaImage = ImageBuffer::new(w, h);
+
+    let yellow = image::Rgba::from([255, 255, 0, 255]);
+    let black = image::Rgba::from([0, 0, 0, 255]);
+    let rect = imageproc::rect::Rect::at(0, 0).of_size(w, h);
+    let mut new_img = draw_filled_rect(&img, rect, yellow);
+
+    //  (&mut img, black);
+    for (i, c) in buffer.iter().enumerate() {
+        new_img.put_pixel(i as u32, *c as u32, black);
+    }
+
+    // let image_buffer = match image::RgbaImage::from_raw(w, h, img.to_vec()) {
+    //     Some(o) => {
+    // o.put_pixel(0,0, black);
+
+    match image::save_buffer_with_format(
+        "sound.png",
+        &new_img,
+        w,
+        h,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    ) {
+        Ok(s) => {}
+        Err(err) => {}
+    }
+    // }
+    //     None => {}
+    // };
 }
 
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
@@ -470,7 +522,7 @@ pub fn get_tex_from_index(ind: u32) -> Vec4 {
 }
 
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
-    image::imageops::overlay(master_img, &source, x, y);
+    image::imageops::overlay(master_img, &source, x as i64, y as i64);
 }
 
 pub fn write_tex(device: &wgpu::Device, queue: &Queue, texture: &Texture, img: &RgbaImage) {

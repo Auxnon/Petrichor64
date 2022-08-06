@@ -1,5 +1,5 @@
 use crate::{
-    lua_define::MainPacket,
+    lua_define::{MainPacket, SoundPacket},
     lua_ent::LuaEnt,
     pad::Pad,
     switch_board::SwitchBoard,
@@ -124,6 +124,7 @@ pub fn init_lua_sys(
     switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    singer: Sender<SoundPacket>,
     bits: Rc<Mutex<[bool; 256]>>,
     gamepad: Rc<Mutex<Pad>>,
 ) -> Result<(), Error> {
@@ -572,6 +573,21 @@ pub fn init_lua_sys(
         },
         "Set the camera rotation by azimuth and elevation"
     );
+    lua!(
+        "sound",
+        move |_, (freq, length): (f32, Option<f32>)| {
+            let len = match length {
+                Some(l) => l,
+                None => 1.,
+            };
+
+            println!("freq {}", freq);
+
+            singer.send((freq, len));
+            Ok(())
+        },
+        "Make sound"
+    );
 
     lua!(
         "_self_destruct",
@@ -625,9 +641,11 @@ pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
 
 pub fn load(core: &mut Core, sub_command: Option<(String, Vec<u8>)>) {
     // let mut mutex = crate::lua_master.lock();
-    let catcher = core
-        .lua_master
-        .start(Arc::clone(&core.switch_board), core.world.sender.clone());
+    let catcher = core.lua_master.start(
+        Arc::clone(&core.switch_board),
+        core.world.sender.clone(),
+        core.singer.clone(),
+    );
 
     core.catcher = Some(catcher);
     crate::texture::reset();
