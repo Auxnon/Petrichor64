@@ -101,7 +101,7 @@ impl Gui {
                             // let imm: &ImageBuffer<Rgba<u8>, Vec<u8>> = sub.inner();
                             image::imageops::replace(
                                 &mut im,
-                                sub.inner(),
+                                &mut sub.to_image(),
                                 (x * 16 + i as u32 * 5).into(),
                                 (y * 16).into(),
                             );
@@ -178,7 +178,7 @@ impl Gui {
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
-                image::imageops::overlay(&mut self.console, sub.inner(), x, y);
+                image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);
                 x += 5;
             }
         }
