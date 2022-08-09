@@ -69,8 +69,8 @@ pub struct Core {
     size: winit::dpi::PhysicalSize<u32>,
     switch_board: Arc<RwLock<SwitchBoard>>,
     global: Global,
-
-    // stream: cpal::Stream,
+    /** despite it's unuse, this stream needs to persist or sound will not occur */
+    _stream: Option<cpal::Stream>,
     singer: Sender<SoundPacket>,
     // view_matrix: Mat4,
     // perspective_matrix: Mat4,
@@ -572,6 +572,14 @@ impl Core {
             .build_with_target_rate(60.0); // limit to X FPS if possible
 
         let (stream, singer) = sound::init();
+        let stream_result = match stream {
+            Ok(stream) => Some(stream),
+            Err(e) => {
+                crate::log::log(format!("sound steam error, continuing in silence!: {}", e));
+                None
+            }
+        };
+
         Self {
             surface,
             device,
@@ -591,7 +599,7 @@ impl Core {
             bind_group,
             entity_bind_group,
             entity_uniform_buf,
-            // stream: stream.unwrap(),
+            _stream: stream_result,
             singer: singer.clone(),
             world,
             master_texture: diff_tex,

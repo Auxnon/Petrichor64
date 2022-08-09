@@ -1,16 +1,7 @@
-use std::sync::{
-    mpsc::{channel, Receiver, Sender},
-    Arc, Mutex,
-};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 //use byte_slice_cast::AsByteSlice;
-use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-    Sample,
-};
-use parking_lot::RwLock;
-
-use crate::{lua_define::SoundPacket, switch_board::SwitchBoard};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 pub type SoundPacket = (f32, f32);
 
