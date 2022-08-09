@@ -763,6 +763,8 @@ fn main() {
 
     let mut core = pollster::block_on(Core::new(&window));
 
+    crate::online::init();
+
     let ent_guard = ent_master.read();
     let mut eman = EntManager::new();
     eman.uniform_alignment = core.uniform_alignment as u32;
