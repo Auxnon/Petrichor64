@@ -20,6 +20,7 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
+    pub loaded_directory: Option<String>,
 }
 impl Global {
     pub fn new() -> Global {
@@ -38,6 +39,7 @@ impl Global {
             delayed: 0,
             iteration: 0,
             screen_effects: ScreenBinds::new(),
+            loaded_directory: None,
         }
     }
     pub fn set(&mut self, key: String, v: f32) {

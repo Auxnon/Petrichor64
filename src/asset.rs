@@ -1,6 +1,5 @@
 use std::{
     collections::{hash_map::Entry, HashMap},
-    ffi::OsString,
     fs::{self, read_dir},
     path::{Path, PathBuf},
 };
@@ -9,13 +8,19 @@ use wgpu::Device;
 
 use crate::lua_define::LuaCore;
 
-pub fn pack(name: &String, cart_pic: Option<String>, lua_master: &LuaCore) {
-    let sources = walk_files(None, lua_master);
-    let icon = match cart_pic {
+pub fn pack(
+    name: &String,
+    directory: Option<String>,
+    cart_pic: Option<String>,
+    lua_master: &LuaCore,
+) {
+    let path = determine_path(directory);
+    let sources = walk_files(None, lua_master, path.clone());
+    let icon = path.join(match cart_pic {
         Some(pic) => pic,
         None => "icon.png".to_string(),
-    };
-    crate::zip_pal::pack_zip(sources, &icon, &name)
+    });
+    crate::zip_pal::pack_zip(sources, icon, &name)
 }
 pub fn super_pack(name: &String) -> &str {
     // let sources = walk_files(None);
@@ -92,11 +97,11 @@ pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCor
 //     let mut sources = vec![];
 // }
 
-pub fn init(device: &Device, lua_master: &LuaCore) {
-    walk_files(Some(device), lua_master);
-}
+// pub fn init(device: &Device, lua_master: &LuaCore, target: &String) {
+//     walk_files(Some(device), lua_master, determine_path(None));
+// }
 
-fn asset_sort() {}
+// fn asset_sort() {}
 
 fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.load(&buffer.to_string());
@@ -115,13 +120,7 @@ pub fn check_for_auto() -> Option<String> {
     }
 }
 
-pub fn walk_files(
-    device: Option<&Device>,
-    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
-    lua_master: &LuaCore,
-) -> Vec<String> {
-    //MARK
-
+pub fn determine_path(directory: Option<String>) -> PathBuf {
     #[cfg(not(debug_assertions))]
     let current = match std::env::current_exe() {
         Ok(mut cur) => {
@@ -133,10 +132,64 @@ pub fn walk_files(
 
     #[cfg(debug_assertions)]
     let current = PathBuf::from(".");
+    match directory {
+        Some(s) => {
+            let new_dir = current.join(s);
+            // if new_dir.is_dir() {
+            //     new_dir
+            // } else {
+            //     current
+            // }
+            new_dir
+        }
+        None => current,
+    }
+}
 
-    log(format!("current dir is {}", current.display()));
-    let assets_path = current.join(Path::new("assets"));
-    let scripts_path = current.join(Path::new("scripts"));
+pub fn make_directory(directory: String) {
+    let root = determine_path(Some(directory));
+    if !root.exists() {
+        fs::create_dir_all(&root).unwrap();
+    }
+    let assets = root.join("assets").to_path_buf();
+    let scripts = root.join("scripts").to_path_buf();
+    if !assets.exists() {
+        fs::create_dir_all(&assets).unwrap();
+    }
+    if !scripts.exists() {
+        fs::create_dir_all(&scripts).unwrap();
+    }
+    // scripts.join("main.lua").write_to_file("main.lua").unwrap();
+
+    fs::write(
+        scripts.join("main.lua"),
+        "math.randomseed(os.time())
+example = spawn('example', 12, math.random() * 3. - 1.5, math.random() * 3. - 1.5)
+bg(1, 1, .4, 1)
+function main()
+    log('main runs once everything has loaded')
+end
+function loop()
+    example.x = example.x + math.random() * 0.1 - 0.05
+    example.y = example.y + math.random() * 0.1 - 0.05
+end",
+    )
+    .unwrap();
+
+    crate::texture::simple_square(16, assets.join("example.png"));
+}
+
+pub fn walk_files(
+    device: Option<&Device>,
+    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
+    lua_master: &LuaCore,
+    current_path: PathBuf,
+) -> Vec<String> {
+    //MARK
+
+    log(format!("current dir is {}", current_path.display()));
+    let assets_path = current_path.join(Path::new("assets"));
+    let scripts_path = current_path.join(Path::new("scripts"));
 
     log(format!("assets dir is {}", assets_path.display()));
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
@@ -183,7 +236,7 @@ pub fn walk_files(
                 }
             }
         }
-        Err(err) => {
+        _ => {
             log("assets directory cannot be located".to_string());
         }
     }
@@ -228,7 +281,7 @@ pub fn walk_files(
                 }
             }
         }
-        Err(err) => {
+        _ => {
             log("scripts directory cannot be located".to_string());
         }
     }
@@ -331,7 +384,7 @@ fn parse_assets(
                             }
                         }
                     }
-                    Entry::Vacant(v) => {}
+                    Entry::Vacant(_) => {}
                 };
             }
             None => {}
@@ -352,7 +405,7 @@ fn parse_assets(
             };
         } else if ext == "png" {
             match device {
-                Some(d) => {
+                Some(_) => {
                     log(format!("loading {} as png image", file_name));
                     match buffer {
                         Some(b) => {
@@ -386,17 +439,17 @@ fn parse_assets(
 
 // }
 
-pub fn get_file_name(str: String) -> String {
-    let path = Path::new(&str);
+// pub fn get_file_name(str: String) -> String {
+//     let path = Path::new(&str);
 
-    match path.file_stem() {
-        Some(o) => match o.to_os_string().into_string() {
-            Ok(n) => n,
-            Err(e) => str,
-        },
-        None => str,
-    }
-}
+//     match path.file_stem() {
+//         Some(o) => match o.to_os_string().into_string() {
+//             Ok(n) => n,
+//             Err(_) => str,
+//         },
+//         None => str,
+//     }
+// }
 
 fn log(str: String) {
     crate::log::log(format!("📦assets::{}", str));

@@ -45,6 +45,11 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 } else {
                     None
                 },
+                if segments.len() > 3 {
+                    Some(segments[3].to_string())
+                } else {
+                    None
+                },
                 &core.lua_master,
             );
         }
@@ -71,12 +76,13 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             load(
                 core,
                 if segments.len() > 1 {
-                    let targ = format!("{}.game.png", segments[1].to_string());
-                    let file = crate::zip_pal::get_file_buffer(&targ);
-                    Some((targ, file))
+                    // let targ = format!("{}.game.png", segments[1].to_string());
+                    // let file = crate::zip_pal::get_file_buffer(&targ);
+                    Some(segments[1].to_string())
                 } else {
                     None
                 },
+                None,
             );
         }
         "$reset" => reset(core),
@@ -111,6 +117,15 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         "$clear" => crate::log::clear(),
         "$test" => {
             log("that test worked, yipee".to_string());
+        }
+        "$new" => {
+            if segments.len() > 1 {
+                let name = segments[1].to_string();
+                crate::asset::make_directory(name.clone());
+                log(format!("created directory {}", name));
+            } else {
+                log("$new <name>".to_string());
+            }
         }
         &_ => return false,
     }
@@ -628,20 +643,26 @@ pub fn reset(core: &mut Core) {
 }
 
 pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
-    let sub = match sub_command {
-        Some(s) => {
-            // log(format!("load from string {}", s));
-            Some((
-                s.clone(),
-                crate::zip_pal::get_file_buffer(&format!("{}.game.png", s)),
-            ))
-        }
-        None => None,
-    };
-    load(core, sub);
+    // let sub = match sub_command {
+    //     Some(s) => {
+    //         // log(format!("load from string {}", s));
+    //         Some((
+    //             s.clone(),
+    //             crate::zip_pal::get_file_buffer(&format!("{}.game.png", s)),
+    //         ))
+    //     }
+    //     None => None,
+    // };
+    load(core, sub_command, None);
 }
 
-pub fn load(core: &mut Core, sub_command: Option<(String, Vec<u8>)>) {
+/**
+ * Load a game from a zip file, directory, or included bytes
+ * @param core
+ * @param game_path: path to either a directory of game files or a single game file
+ * @param payload: included bytes, only used as part of build process
+ */
+pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>) {
     // let mut mutex = crate::lua_master.lock();
     let catcher = core.lua_master.start(
         Arc::clone(&core.switch_board),
@@ -652,24 +673,57 @@ pub fn load(core: &mut Core, sub_command: Option<(String, Vec<u8>)>) {
     core.catcher = Some(catcher);
     crate::texture::reset();
 
-    match sub_command {
-        Some(s) => {
-            crate::asset::unpack(&core.device, &s.0, s.1, &core.lua_master);
-        }
+    // if we get a path and it's a file, it needs to be unpacked, if it's a custom directoty we walk it, otherwise walk the local directory
+    match game_path {
+        Some(s) => match payload {
+            Some(p) => {
+                crate::asset::unpack(&core.device, &s, p, &core.lua_master);
+            }
+            None => {
+                let mut path = crate::asset::determine_path(Some(s.clone()));
+                core.global.loaded_directory = Some(s.clone());
+                if path.is_dir() {
+                    crate::asset::walk_files(Some(&core.device), &core.lua_master, path);
+                } else {
+                    match path.file_name() {
+                        Some(file_name) => {
+                            let new_path = format!("{:?}.game.png", file_name);
+                            drop(file_name);
+                            path.set_file_name(new_path);
+                            if path.is_file() {
+                                let buff = crate::zip_pal::get_file_buffer_from_path(path);
+                                crate::asset::unpack(&core.device, &s, buff, &core.lua_master);
+                            } else {
+                                err(format!("{} is not a file or directory", s));
+                            }
+                        }
+                        None => {
+                            err(format!("{} is not a file or directory", s));
+                        }
+                    };
+                }
+            }
+        },
         None => {
-            crate::asset::walk_files(Some(&core.device), &core.lua_master);
+            let path = crate::asset::determine_path(None);
+            crate::asset::walk_files(Some(&core.device), &core.lua_master, path);
         }
     };
 
-    crate::texture::refinalize(&core.device, &core.queue, &core.master_texture);
+    crate::texture::refinalize(&core.queue, &core.master_texture);
     // DEV  TODO
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
     // }
+    let dir = match &core.global.loaded_directory {
+        Some(s) => s.clone(),
+        None => "_".to_string(),
+    };
+    log("=================================================".to_string());
+    log(format!("loaded into game {}", dir));
+    log("-------------------------------------------------".to_string());
     core.update();
     core.lua_master.call_main();
-    log("=================================================".to_string());
-    log("loaded into game".to_string());
 }
 
 pub fn reload(core: &mut Core) {
@@ -677,14 +731,20 @@ pub fn reload(core: &mut Core) {
     #[cfg(feature = "include_auto")]
     {
         log("auto loading included bytes".to_string());
-        let payload = (
-            "INCLUDE_AUTO".to_string(),
-            include_bytes!("../auto.game.png").to_vec(),
-        );
-        load(core, Some(payload));
+        let payload = include_bytes!("../auto.game.png").to_vec();
+        load(core, Some("INCLUDE_AUTO".to_string()), Some(payload));
     }
     #[cfg(not(feature = "include_auto"))]
-    load(core, None);
+    {
+        load(
+            core,
+            match core.global.loaded_directory {
+                Some(ref s) => Some(s.clone()),
+                None => None,
+            },
+            None,
+        );
+    }
 }
 
 fn key_match(key: String) -> usize {
