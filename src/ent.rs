@@ -1,12 +1,7 @@
-use crate::{
-    lua_define::{self, LuaCore},
-    lua_ent::LuaEnt,
-    model::Model,
-};
+use crate::{lua_ent::LuaEnt, model::Model};
 use bytemuck::{Pod, Zeroable};
 
-use glam::{vec3, IVec4, Mat4, Quat, UVec4, Vec3, Vec4};
-use mlua::Function;
+use glam::{vec3, Mat4, Quat, UVec4, Vec3, Vec4};
 use once_cell::sync::OnceCell;
 use std::{ops::Mul, sync::Arc};
 
@@ -59,7 +54,6 @@ impl<'lua> Ent {
         // };
         let quat = Quat::from_axis_angle(offset.normalize(), angle);
 
-        let brain_name = "".to_string();
         // let brain_func = match brain {
         //     Some(o) => {
         //         brain_name = o;
@@ -122,10 +116,10 @@ impl<'lua> Ent {
         self.model = crate::model::get_model(&self.model_name)
     }
 
-    pub fn reparse(lua: LuaEnt) {}
+    pub fn reparse(_lua: LuaEnt) {}
 
     pub fn build_meta(&self, lua: &LuaEnt) -> Mat4 {
-        let rotation = Mat4::from_rotation_z(self.rotation);
+        // let rotation = Mat4::from_rotation_z(self.rotation);
 
         let quat = Quat::from_axis_angle(vec3(0., 0., 1.), self.rotation);
 

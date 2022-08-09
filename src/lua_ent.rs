@@ -1,6 +1,6 @@
-use crate::{ent_master, Ent};
+use crate::Ent;
 
-use mlua::{MetaMethod, UserData, UserDataFields, UserDataMethods};
+use mlua::{UserData, UserDataFields, UserDataMethods};
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
     pub x: f64,
@@ -14,7 +14,7 @@ pub struct LuaEnt {
     pub vel_z: f64,
     id: f64, // pub uuid: String,
     asset: String,
-    ent: Option<Ent>,
+    // ent: Option<Ent>,
     tex: String,
     anim: bool,
     dirty: bool,
@@ -120,7 +120,7 @@ impl LuaEnt {
             vel_y: 0.,
             vel_z: 0.,
             id: -1.,
-            ent: None,
+            // ent: None,
             asset: String::new(),
             tex: String::new(),
             dirty: false,
@@ -140,7 +140,7 @@ impl LuaEnt {
             vel_x: 0.,
             vel_y: 0.,
             vel_z: 0.,
-            ent: None,
+            // ent: None,
             asset,
             tex: String::new(),
             dirty: false,
@@ -190,7 +190,7 @@ impl Clone for LuaEnt {
             rot_y: self.rot_y,
             rot_z: self.rot_z,
             id: self.id,
-            ent: None,
+            // ent: None,
             asset: self.asset.clone(),
             tex: self.tex.clone(),
             dirty: false,

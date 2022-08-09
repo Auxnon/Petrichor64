@@ -1,11 +1,11 @@
 use rand::Rng;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::sync::Arc;
 // use tracy::frame;
 
 use crate::model::{get_model, Model};
-use image::{ImageBuffer, Rgba, RgbaImage};
+use image::{ImageBuffer, RgbaImage};
 use once_cell::sync::OnceCell;
-use wgpu::{Device, QuerySet, Queue, Sampler, Texture, TextureView};
+use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
 pub struct Gui {
     pub gui_pipeline: wgpu::RenderPipeline,
@@ -34,7 +34,7 @@ impl Gui {
 
         let letters = match crate::texture::load_img(&"4x4unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
-            Err(err) => {
+            Err(_) => {
                 #[cfg(not(windows))]
                 macro_rules! sp {
                     () => {
@@ -173,8 +173,8 @@ impl Gui {
                 if ind > 255 {
                     ind = 255;
                 }
-                let index_x = (ind % 16);
-                let index_y = (ind / 16);
+                let index_x = ind % 16;
+                let index_y = ind / 16;
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
                 let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
                 //sub.to_image().
@@ -201,15 +201,15 @@ impl Gui {
         self.output = false;
         self.apply_text();
     }
-    pub fn toggle_output(&mut self) {
-        if self.output {
-            self.disable_output();
-        } else {
-            self.enable_output();
-        }
-    }
+    // pub fn toggle_output(&mut self) {
+    //     if self.output {
+    //         self.disable_output();
+    //     } else {
+    //         self.enable_output();
+    //     }
+    // }
     // fn draw_img();
-    pub fn render(&mut self, device: &Device, queue: &Queue, time: f32) {
+    pub fn render(&mut self, queue: &Queue, time: f32) {
         //let mut rng = rand::thread_rng();
         // frame!("gui start");
         self.time = time;
@@ -227,7 +227,7 @@ impl Gui {
             } else {
                 &self.main
             };
-            crate::texture::write_tex(device, queue, &self.texture, raster);
+            crate::texture::write_tex(queue, &self.texture, raster);
             self.dirty = false;
         }
 

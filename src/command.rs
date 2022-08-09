@@ -1,26 +1,25 @@
 use crate::{
-    lua_define::{MainPacket, SoundPacket},
+    lua_define::MainPacket,
     lua_ent::LuaEnt,
     pad::Pad,
+    sound::SoundPacket,
     switch_board::SwitchBoard,
-    world::{self, TileCommand, TileResponse, World},
+    world::{TileCommand, TileResponse, World},
     Core,
 };
-use gilrs::{Button, Gamepad};
-use glam::{vec4, Vec4, Vec4Swizzles};
+
+use glam::vec4;
 use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::{Mutex, RwLock};
 use std::{
-    cell::RefCell,
-    path::{Path, PathBuf},
+    path::Path,
     rc::Rc,
     sync::{
-        mpsc::{sync_channel, Sender, SyncSender},
+        mpsc::{Sender, SyncSender},
         Arc,
     },
 };
-use winit::event::VirtualKeyCode;
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
@@ -131,7 +130,7 @@ pub fn init_lua_sys(
     println!("init lua sys");
 
     let default_func = lua_ctx
-        .create_function(|_, e: f32| Ok("placeholder func uwu"))
+        .create_function(|_, _: f32| Ok("placeholder func uwu"))
         .unwrap();
     res(
         "_default_func",
@@ -188,7 +187,7 @@ pub fn init_lua_sys(
 
     lua!(
         "push",
-        move |lua, (n): (f64)| {
+        move |_, n: f64| {
             // let ents = lua.globals().get::<&str, Table>("_ents")?;
             // ents.macro_export
 
@@ -210,7 +209,7 @@ pub fn init_lua_sys(
     lua!(
         "bg",
         move |_, (x, y, z, w): (f32, f32, f32, Option<f32>)| {
-            let mut mutex = &mut switch.write();
+            let mutex = &mut switch.write();
             mutex.background = vec4(
                 x,
                 y,
@@ -237,6 +236,7 @@ pub fn init_lua_sys(
     //         })
     //         .unwrap(),
     // ));
+
     let switch = Arc::clone(&switch_board);
     // let sender = world_sender.clone();
     lua!(
@@ -251,7 +251,8 @@ pub fn init_lua_sys(
             String,
             String
         )| {
-            let mut mutex = &mut switch.write();
+            // MARK the make command
+            let mutex = &mut switch.write();
             // World::make(&sender, name, t, b, e, w, s, n);
             mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
             mutex.dirty = true;
@@ -301,7 +302,7 @@ pub fn init_lua_sys(
     let sender = world_sender.clone();
     lua!(
         "clear_tiles",
-        move |_, (x, y, z): (i32, i32, i32)| {
+        move |_, (_x, _y, _z): (i32, i32, i32)| {
             // let mutex = &mut switch.write();
             // mutex.dirty = true;
             World::clear_tiles(&sender);
@@ -355,7 +356,7 @@ pub fn init_lua_sys(
                 Some(s) => s as u32,
                 None => 16,
             };
-            crate::texture::animations.write().insert(
+            crate::texture::ANIMATIONS.write().insert(
                 name,
                 (
                     items
@@ -373,7 +374,7 @@ pub fn init_lua_sys(
     // let pitchy = Arc::new(pitcher);
     lua!(
         "key",
-        move |_, (key): (String)| {
+        move |_, key: String| {
             // match key_match(key) {
             //     Some(k) => Ok(crate::controls::input_manager.read().key_held(k)),
             //     None => Ok(false),
@@ -407,13 +408,13 @@ pub fn init_lua_sys(
     let gam = Rc::clone(&gamepad);
     lua!(
         "button",
-        move |_, (button): (String)| { Ok(gam.lock().check(button) != 0.) },
+        move |_, button: String| { Ok(gam.lock().check(button) != 0.) },
         "Check if button is held down"
     );
 
     lua!(
         "analog",
-        move |_, (button): (String)| { Ok(gamepad.lock().check(button)) },
+        move |_, button: String| { Ok(gamepad.lock().check(button)) },
         "Check how much a button is pressed, axis gives value between -1 and 1"
     );
 
@@ -504,7 +505,7 @@ pub fn init_lua_sys(
 
     lua!(
         "add",
-        move |lua, (e): (LuaEnt)| {
+        move |lua, e: LuaEnt| {
             let ents = lua.globals().get::<&str, Table>("_ents")?;
             ents.set(e.get_id(), e);
             Ok(())
@@ -520,7 +521,7 @@ pub fn init_lua_sys(
     let switch = Arc::clone(&switch_board);
     lua!(
         "crt",
-        move |_, (table): (Table)| {
+        move |_, table: Table| {
             for it in table.pairs() {
                 match it {
                     Ok(pair) => {
@@ -604,9 +605,10 @@ pub fn init_lua_sys(
 fn res(target: &str, r: Result<(), Error>) {
     match r {
         Err(err) => {
-            let st = format!("🔴lua::problem setting default lua function {}", target);
-            println!("{}", st);
-            crate::log::log(st.to_string());
+            log(format!(
+                "🔴lua::problem setting default lua function {}, {}",
+                target, err
+            ));
         }
         _ => {}
     }

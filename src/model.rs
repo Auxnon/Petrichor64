@@ -1,23 +1,22 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{ivec3, vec3, vec4, IVec3, Vec3, Vec4};
-use gltf::{image::Data as ImageData, json::extensions::mesh, Texture};
+use glam::{ivec3, vec4, IVec3, Vec4};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use wgpu::{util::DeviceExt, Device};
 
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    pub static ref cube: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref plane: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref custom: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref dictionary:RwLock<HashMap<String,Arc<OnceCell<Model>> >> =RwLock::new(HashMap::new());
+    pub static ref CUBE: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
+    pub static ref PLANE: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
+    pub static ref CUSTOM: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
+    pub static ref DICTIONARY:RwLock<HashMap<String,Arc<OnceCell<Model>> >> =RwLock::new(HashMap::new());
     /** map our */
-    pub static ref int_dictionary:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
-    pub static ref int_map:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
+    pub static ref INT_DICTIONARY:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
+    pub static ref INT_MAP:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
 }
 
 #[repr(C)]
@@ -219,7 +218,7 @@ pub fn init(device: &Device) {
         usage: wgpu::BufferUsages::INDEX,
     });
 
-    let planeModel = Model {
+    let plane_model = Model {
         name: "plane".to_string(),
         vertex_buf: plane_vertex_buf,
         index_buf: plane_index_buf,
@@ -227,7 +226,7 @@ pub fn init(device: &Device) {
         index_count: plane_index_data.len(),
         data: None,
     };
-    plane.get_or_init(|| planeModel);
+    PLANE.get_or_init(|| plane_model);
 
     let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
     let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -240,7 +239,7 @@ pub fn init(device: &Device) {
         contents: bytemuck::cast_slice(&cube_index_data),
         usage: wgpu::BufferUsages::INDEX,
     });
-    let cubeModel = Model {
+    let cube_model = Model {
         name: "cube".to_string(),
         vertex_buf: cube_vertex_buf,
         index_buf: cube_index_buf,
@@ -248,18 +247,18 @@ pub fn init(device: &Device) {
         index_count: cube_index_data.len(),
         data: Some((cube_vertex_data, cube_index_data)),
     };
-    cube.get_or_init(|| cubeModel);
-    let d = dictionary
+    CUBE.get_or_init(|| cube_model);
+    DICTIONARY
         .write()
-        .insert("cube".to_string(), Arc::clone(&cube));
+        .insert("cube".to_string(), Arc::clone(&CUBE));
 }
 
 pub fn cube_model() -> Arc<OnceCell<Model>> {
-    Arc::clone(&cube)
+    Arc::clone(&CUBE)
 }
 
 pub fn plane_model() -> Arc<OnceCell<Model>> {
-    Arc::clone(&plane)
+    Arc::clone(&PLANE)
 }
 
 pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
@@ -267,7 +266,7 @@ pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
         return plane_model();
     }
 
-    match dictionary.read().get(str) {
+    match DICTIONARY.read().get(str) {
         Some(model) => Arc::clone(model),
         None => cube_model(),
     }
@@ -276,7 +275,7 @@ pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
 
 /** Returns a model by verts that are able to be adjusted through translation of the actual verts */
 pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
-    match dictionary.read().get(str) {
+    match DICTIONARY.read().get(str) {
         Some(model) => match model.get() {
             Some(_) => Some(Arc::clone(model)),
             _ => {
@@ -290,14 +289,14 @@ pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
 
 /** return model numerical index from a given model name */
 pub fn get_model_index(str: &String) -> Option<u32> {
-    match int_dictionary.read().get(str) {
+    match INT_DICTIONARY.read().get(str) {
         Some(u) => Some(u.clone()),
         None => None,
     }
 }
 
 pub fn get_model_from_index(index: u32) -> Option<Arc<OnceCell<Model>>> {
-    match int_map.read().get(&index) {
+    match INT_MAP.read().get(&index) {
         Some(model) => match model.get() {
             Some(_) => Some(Arc::clone(model)),
             _ => {
@@ -323,7 +322,7 @@ pub fn load_from_buffer(str: &String, slice: &Vec<u8>, device: &Device) {
         Ok((nodes, buffers, image_data)) => {
             load(str, nodes, buffers, image_data, device);
         }
-        Err(err) => {}
+        _ => {}
     }
 }
 
@@ -424,7 +423,7 @@ fn load(
                     let model_cell = Arc::new(once);
 
                     index_model(name.clone(), Arc::clone(&model_cell));
-                    dictionary.write().insert(name.to_string(), model_cell);
+                    DICTIONARY.write().insert(name.to_string(), model_cell);
                     log(format!("populated mesh {}", name));
                     //custom.get_or_init(|| customModel);
                 }
@@ -445,17 +444,17 @@ fn load(
 
 /** Create a simple numerical key for our model and map it, returning that numerical key*/
 fn index_model(key: String, model: Arc<OnceCell<Model>>) -> u32 {
-    let mut guard = crate::texture::counter.lock();
+    let mut guard = crate::texture::COUNTER.lock();
     let ind = *guard;
-    int_map.write().insert(ind, model);
-    int_dictionary.write().insert(key, ind);
+    INT_MAP.write().insert(ind, model);
+    INT_DICTIONARY.write().insert(key, ind);
     *guard += 1;
     ind
 }
 
 // TODO make this a cleaner function
 pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
-    let m = (cube.get().unwrap().clone());
+    let m = CUBE.get().unwrap().clone();
     let (verts, inds) = (m).data.as_ref().unwrap().clone();
     // let (verts, inds) =  {
     //     Some(m) => {
@@ -514,7 +513,7 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
 
     let arced_model = Arc::new(cell);
     let model_index = index_model(name.clone(), Arc::clone(&arced_model));
-    dictionary.write().insert(name.clone(), arced_model);
+    DICTIONARY.write().insert(name.clone(), arced_model);
     log(format!(
         "created new model cube {} with index {}",
         name, model_index
@@ -522,11 +521,11 @@ pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
 }
 
 pub fn reset() {
-    int_dictionary.write().clear();
-    int_map.write().clear();
-    let mut wr = dictionary.write();
+    INT_DICTIONARY.write().clear();
+    INT_MAP.write().clear();
+    let mut wr = DICTIONARY.write();
     wr.clear();
-    wr.insert("cube".to_string(), Arc::clone(&cube));
+    wr.insert("cube".to_string(), Arc::clone(&CUBE));
 }
 
 fn log(str: String) {

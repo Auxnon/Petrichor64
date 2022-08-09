@@ -3,8 +3,9 @@
 use bytemuck::{Pod, Zeroable};
 use ent_manager::EntManager;
 use global::Global;
-use lua_define::{LuaCore, MainPacket, SoundPacket};
+use lua_define::{LuaCore, MainPacket};
 use once_cell::sync::OnceCell;
+use sound::SoundPacket;
 use std::{
     mem,
     sync::{
@@ -16,7 +17,7 @@ use std::{
 use world::World;
 
 use ent::Ent;
-use glam::{vec2, vec3, vec4, Mat4};
+use glam::{vec2, vec3};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
@@ -43,6 +44,7 @@ mod log;
 mod lua_define;
 mod lua_ent;
 mod model;
+mod online;
 mod pad;
 mod post;
 mod ray;
@@ -68,10 +70,10 @@ pub struct Core {
     switch_board: Arc<RwLock<SwitchBoard>>,
     global: Global,
 
-    stream: cpal::Stream,
+    // stream: cpal::Stream,
     singer: Sender<SoundPacket>,
-    view_matrix: Mat4,
-    perspective_matrix: Mat4,
+    // view_matrix: Mat4,
+    // perspective_matrix: Mat4,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
@@ -144,7 +146,7 @@ lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
     // pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
-    pub static ref ent_master : Arc<RwLock<OnceCell<EntManager>>> = Arc::new((RwLock::new(OnceCell::new())));
+    pub static ref ent_master : Arc<RwLock<OnceCell<EntManager>>> = Arc::new(RwLock::new(OnceCell::new()));
     // pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
 }
 
@@ -216,7 +218,7 @@ impl Core {
             mapped_at_creation: false,
         });
 
-        let index_format = wgpu::IndexFormat::Uint16;
+        // let index_format = wgpu::IndexFormat::Uint16;
 
         let local_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -287,7 +289,7 @@ impl Core {
             ],
         });
 
-        let (mx_view, mx_persp, mx_model) = render::generate_matrix(
+        let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
             0.,
             vec3(0., 0., 0.),
@@ -407,7 +409,7 @@ impl Core {
         let depth = create_depth_texture(&config, &device);
 
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
-        let dupe_switch = Arc::clone(&switch_board);
+        // let dupe_switch = Arc::clone(&switch_board);
 
         //Gui
 
@@ -450,13 +452,6 @@ impl Core {
         //     ],
         //     label: None,
         // });
-
-        let gui_vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
-        let gui_desc = wgpu::VertexBufferLayout {
-            array_stride: vertex_size as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &gui_vertex_attr,
-        };
 
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Gui Pipeline"),
@@ -565,21 +560,14 @@ impl Core {
         gui.add_text("initialized".to_string());
         gui.add_img(&"map.tile.png".to_string());
 
-        let post = Post::new(
-            &config,
-            &queue,
-            &device,
-            &shader,
-            &uniform_buf,
-            uniform_size,
-        );
+        let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
 
         // let mut post = Gui::new(post_pipeline, post_group, post_texture, post_image);
         // let a_device = Arc::new(RwLock::new(&device));
         let world = World::new();
         let world_sender = world.sender.clone();
 
-        let mut loop_helper = spin_sleep::LoopHelper::builder()
+        let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
 
@@ -593,8 +581,8 @@ impl Core {
             depth_texture: depth.1,
             uniform_buf,
             uniform_alignment,
-            view_matrix: mx_view,
-            perspective_matrix: mx_persp,
+            // view_matrix: mx_view,
+            // perspective_matrix: mx_persp,
             render_pipeline,
             global: Global::new(),
             switch_board: Arc::clone(&switch_board),
@@ -603,7 +591,7 @@ impl Core {
             bind_group,
             entity_bind_group,
             entity_uniform_buf,
-            stream: stream.unwrap(),
+            // stream: stream.unwrap(),
             singer: singer.clone(),
             world,
             master_texture: diff_tex,
@@ -622,8 +610,7 @@ impl Core {
             self.surface.configure(&self.device, &self.config);
             let d = create_depth_texture(&self.config, &self.device);
             self.depth_texture = d.1;
-            self.post
-                .resize(&self.device, &self.queue, new_size, &self.uniform_buf);
+            self.post.resize(&self.device, new_size, &self.uniform_buf);
         }
     }
 
@@ -642,6 +629,7 @@ impl Core {
                     if mutex.make_queue.len() > 0 {
                         for m in mutex.make_queue.drain(0..) {
                             if m.len() == 7 {
+                                //MARK - add entity
                                 let m2 = vec![
                                     m[1].clone(),
                                     m[2].clone(),
@@ -650,7 +638,7 @@ impl Core {
                                     m[5].clone(),
                                     m[6].clone(),
                                 ];
-                                // crate::model::edit_cube(m[0].clone(), m2, &self.device);
+                                crate::model::edit_cube(m[0].clone(), m2, &self.device);
 
                                 // let name = m[0].clone();
                                 // println!("🧲 eyup1");
@@ -672,7 +660,7 @@ impl Core {
 
                     if mutex.remaps.len() > 0 {
                         for item in mutex.remaps.drain(0..) {
-                            if (item.0 == "globals") {
+                            if item.0 == "globals" {
                                 match item.1.as_str() {
                                     "resolution" => {
                                         self.global.screen_effects.crt_resolution = item.2
@@ -730,13 +718,13 @@ impl Core {
         }
 
         let mut ent_guard = ent_master.write();
-        let mut eman = ent_guard.get_mut().unwrap();
+        let eman = ent_guard.get_mut().unwrap();
         eman.check_ents();
         self.global.iteration += 1;
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let delta = self.loop_helper.loop_start();
+        let _delta = self.loop_helper.loop_start();
         // or .loop_start_s() for f64 seconds
         if let Some(fps) = self.loop_helper.report_rate() {
             //  let current_fps = Some(fps);
@@ -759,7 +747,7 @@ fn main() {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
     window.set_title("Petrichor");
-    let s = window.inner_size();
+    // let s = window.inner_size();
 
     // window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
     //     window.current_monitor(),
@@ -814,12 +802,12 @@ fn main() {
     // :reload(core);
 
     event_loop.run(move |event, _, control_flow| {
-        let mut locker = crate::controls::input_manager.write();
+        let mut locker = crate::controls::INPUT_MANAGER.write();
         controls::bit_check(&event, &mut bits);
 
         if locker.update(&event) {
             drop(locker);
-            let loop_pass = controls::controls_evaluate(&mut core, control_flow);
+            controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
             // println!("newbits {:?}", bits);
             core.update();
@@ -873,6 +861,6 @@ fn main() {
     // }
 }
 
-fn log(str: String) {
-    crate::log::log(format!("main::{}", str));
-}
+// fn log(str: String) {
+//     crate::log::log(format!("main::{}", str));
+// }

@@ -1,5 +1,6 @@
 use crate::{
     pad::Pad,
+    sound::SoundPacket,
     switch_board::SwitchBoard,
     world::{TileCommand, TileResponse},
 };
@@ -36,7 +37,7 @@ impl LuaCore {
     ) -> LuaCore {
         log("lua core thread started".to_string());
 
-        let (rec, catcher) = start(switch_board, world_sender, singer);
+        let (rec, _catcher) = start(switch_board, world_sender, singer);
         LuaCore {
             to_lua_tx: rec,
             // catcher,
@@ -92,13 +93,17 @@ impl LuaCore {
     ) -> (Option<String>, Option<[bool; 256]>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(0);
         // println!("xxx {} :: {}", func, path);
-        self.to_lua_tx.send((func.clone(), path.clone(), ent, tx));
-
-        //MutexGuard::unlock_fair(guard);
-        match rx.recv() {
-            Ok(lua_out) => lua_out,
+        match self.to_lua_tx.send((func.clone(), path.clone(), ent, tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(lua_out) => lua_out,
+                Err(e) => {
+                    log(format!("unable to recieve lua return command {}", e));
+                    err(e.to_string());
+                    (None, None)
+                }
+            },
             Err(e) => {
-                err(e.to_string());
+                err(format!("unable to inject lua command {}", e));
                 (None, None)
             }
         }
@@ -106,11 +111,12 @@ impl LuaCore {
 
     fn async_inject(&self, func: &String, path: &String, bits: Option<[bool; 256]>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(100);
-        self.to_lua_tx.send((func.clone(), path.clone(), bits, tx));
-
-        match rx.try_recv() {
-            Ok(lua_out) => (),
-            Err(e) => (),
+        match self.to_lua_tx.send((func.clone(), path.clone(), bits, tx)) {
+            Ok(_) => match rx.try_recv() {
+                Ok(_) => (),
+                _ => (),
+            },
+            _ => {}
         }
     }
 
@@ -151,9 +157,9 @@ impl LuaCore {
         self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
     }
 
-    pub fn spawn(&self, str: &String) {
-        //entity_factory.create_ent(str, self);
-    }
+    // pub fn spawn(&self, str: &String) {
+    //     //entity_factory.create_ent(str, self);
+    // }
 
     // pub fn load(&self, input_path: &String) {
     //     // let input_path = Path::new(".")
@@ -350,8 +356,9 @@ fn start(
     // let pitch_lusa = Arc::clone(&pitchers);
 
     log("init lua core".to_string());
-    let lua_thread = thread::spawn(move || {
-        let mut bits = [false; 256];
+    // let lua_thread =
+    thread::spawn(move || {
+        let bits = [false; 256];
 
         let bit_mutex = Rc::new(Mutex::new(bits));
 
@@ -365,9 +372,9 @@ fn start(
             log(format!("{} is {:?}", gamepad.name(), gamepad.power_info()));
         }
 
-        let mut pads = Rc::new(Mutex::new(Pad::new()));
+        let pads = Rc::new(Mutex::new(Pad::new()));
 
-        crate::command::init_lua_sys(
+        match crate::command::init_lua_sys(
             &lua_ctx,
             &globals,
             switch_board,
@@ -376,13 +383,25 @@ fn start(
             singer,
             Rc::clone(&bit_mutex),
             Rc::clone(&pads),
-        );
+        ) {
+            Err(err) => {
+                log(format!("lua command injection failed: {}", err));
+            }
+            _ => {
+                log("lua commands initialized".to_string());
+            }
+        }
 
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
             let (s1, s2, bit_in, channel) = m;
 
-            while let Some(Event { id, event, time }) = gilrs.next_event() {
+            while let Some(Event {
+                id: _,
+                event,
+                time: _,
+            }) = gilrs.next_event()
+            {
                 // println!("{:?} New event from {}: {:?}", time, id, event);
                 match event {
                     EventType::ButtonPressed(button, _) => {
@@ -456,12 +475,12 @@ fn start(
                     }
                     Err(er) => channel.send((Some(er.to_string()), None)),
                 } {
-                    Ok(s) => {}
                     Err(e) => {
                         if !s1.starts_with("loop") {
                             err(format!("lua server communication error occured -> {}", e))
                         }
                     }
+                    _ => {}
                 }
                 match bit_in {
                     Some(b) => *bit_mutex.lock() = b,

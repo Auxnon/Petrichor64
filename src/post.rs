@@ -1,7 +1,5 @@
-use wgpu::{BindGroup, Buffer, Surface};
+use wgpu::{BindGroup, Buffer};
 use winit::dpi::PhysicalSize;
-
-use crate::gui;
 
 const RENDER_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 
@@ -44,7 +42,6 @@ impl ScreenBinds {
 impl Post {
     pub fn new(
         config: &wgpu::SurfaceConfiguration,
-        queue: &wgpu::Queue,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         uniform_buf: &Buffer,
@@ -54,7 +51,7 @@ impl Post {
         //     gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
 
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(&device, &queue, (config.width, config.height));
+            crate::texture::render_sampler(&device, (config.width, config.height));
 
         let (post_pipeline, post_bind_group_layout) = {
             let bind_group_layout =
@@ -202,14 +199,8 @@ impl Post {
         }
     }
 
-    pub fn resize(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        size: PhysicalSize<u32>,
-        uniform_buf: &Buffer,
-    ) {
-        println!("2resize {} {}", size.width, size.height);
+    pub fn resize(&mut self, device: &wgpu::Device, size: PhysicalSize<u32>, uniform_buf: &Buffer) {
+        // println!("2resize {} {}", size.width, size.height);
         // crate::texture::update_render_tex(
         //     device,
         //     queue,
@@ -218,7 +209,7 @@ impl Post {
         // );
 
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(device, queue, (size.width, size.height));
+            crate::texture::render_sampler(device, (size.width, size.height));
 
         self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post bind group"),

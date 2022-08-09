@@ -135,7 +135,7 @@ where
     // }
     let volume_speed = 0.001;
     let fade_speed = 0.00005;
-    let mut vol = 1.;
+    // let mut vol = 1.;
     let mut occupied = [false; 16];
     let mut buffer = vec![];
     let mut once = false;
@@ -180,7 +180,7 @@ where
                 }
                 // println!("notes {:?}", notes);
             }
-            Err(e) => {}
+            _ => {}
         };
 
         // vol -= 0.0002;

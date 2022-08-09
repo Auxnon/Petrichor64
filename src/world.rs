@@ -1,13 +1,9 @@
 use std::{
     collections::hash_map::Entry,
-    sync::{
-        mpsc::{channel, sync_channel, Sender, SyncSender},
-        Arc,
-    },
+    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
 };
 
 use glam::{ivec3, ivec4, IVec3, IVec4};
-use parking_lot::RwLock;
 use wgpu::Device;
 
 use crate::tile::{Chunk, ChunkModel, Layer, LayerModel};
@@ -19,7 +15,7 @@ texture index of 1 is "plain" and unmodifies texture
 */
 
 pub enum TileCommand {
-    Make((String, String, String, String, String, String, String)),
+    // Make((String, String, String, String, String, String, String)),
     Set(Vec<(String, IVec4)>),
     Drop(IVec3),
     Check(Vec<String>),
@@ -106,17 +102,18 @@ impl World {
         let (sender, reciever) = channel::<(TileCommand, SyncSender<TileResponse>)>();
         // log("init lua core".to_string());
 
-        let world_thread = std::thread::spawn(move || {
+        // let world_thread =
+        std::thread::spawn(move || {
             let mut layer = Layer::new();
             // let a_device = Arc::clone(&device);
             for m in reciever {
                 match m {
-                    (TileCommand::Make((name, t, w, n, e, s, b)), response) => {
-                        // log(format!("set tile {}", tiles[0].0));
+                    // (TileCommand::Make((name, t, w, n, e, s, b)), response) => {
+                    //     // log(format!("set tile {}", tiles[0].0));
 
-                        // crate::model::edit_cube(name, vec![t, w, n, e, s, b], a_device);
-                        res_handle(response.send(TileResponse::Success(true)))
-                    }
+                    //     // crate::model::edit_cube(name, vec![t, w, n, e, s, b], a_device);
+                    //     res_handle(response.send(TileResponse::Success(true)))
+                    // }
                     (TileCommand::Set(tiles), response) => {
                         // log(format!("set tile {}", tiles[0].0));
                         layer.set_tile(
@@ -150,45 +147,45 @@ impl World {
         sender
     }
 
-    pub fn check() {}
-
     pub fn get_chunk_models(
         &mut self,
         device: &Device,
     ) -> std::collections::hash_map::Values<String, ChunkModel> {
         let (tx, rx) = sync_channel::<TileResponse>(0);
 
-        self.sender.send((TileCommand::Check(vec![]), tx));
-
-        //MutexGuard::unlock_fair(guard);
-        match rx.recv() {
-            Ok(TileResponse::Chunks(chunks)) => {
-                for chunk in chunks {
-                    // let key = chunk.key.clone();
-                    match self.layer.chunks.entry(chunk.key.clone()) {
-                        Entry::Occupied(o) => {
-                            let c = o.into_mut();
-                            c.build_chunk(chunk);
-                            c.cook(device);
-                        }
-                        Entry::Vacant(v) => {
-                            let ix = chunk.pos.x.div_euclid(16) * 16;
-                            let iy = chunk.pos.y.div_euclid(16) * 16;
-                            let iz = chunk.pos.z.div_euclid(16) * 16;
-                            println!(
-                                "populate new model chunk {} {} {} {}",
-                                chunk.key, ix, iy, iz
-                            );
-                            let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
-                            model.build_chunk(chunk);
-                            model.cook(device);
-                            v.insert(model);
+        match self.sender.send((TileCommand::Check(vec![]), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Chunks(chunks)) => {
+                    for chunk in chunks {
+                        // let key = chunk.key.clone();
+                        match self.layer.chunks.entry(chunk.key.clone()) {
+                            Entry::Occupied(o) => {
+                                let c = o.into_mut();
+                                c.build_chunk(chunk);
+                                c.cook(device);
+                            }
+                            Entry::Vacant(v) => {
+                                let ix = chunk.pos.x.div_euclid(16) * 16;
+                                let iy = chunk.pos.y.div_euclid(16) * 16;
+                                let iz = chunk.pos.z.div_euclid(16) * 16;
+                                println!(
+                                    "populate new model chunk {} {} {} {}",
+                                    chunk.key, ix, iy, iz
+                                );
+                                let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
+                                model.build_chunk(chunk);
+                                model.cook(device);
+                                v.insert(model);
+                            }
                         }
                     }
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
+
+        //MutexGuard::unlock_fair(guard);
 
         self.layer.chunks.values()
     }
@@ -201,10 +198,11 @@ impl World {
         z: i32,
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        sender.send((TileCommand::Set(vec![(t, ivec4(0, x, y, z))]), tx));
-
-        match rx.recv() {
-            Ok(TileResponse::Success(true)) => {}
+        match sender.send((TileCommand::Set(vec![(t, ivec4(0, x, y, z))]), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Success(true)) => {}
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -215,10 +213,11 @@ impl World {
         z: i32,
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        sender.send((TileCommand::Drop(ivec3(x, y, z)), tx));
-
-        match rx.recv() {
-            Ok(TileResponse::Success(true)) => {}
+        match sender.send((TileCommand::Drop(ivec3(x, y, z)), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Success(true)) => {}
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -231,40 +230,45 @@ impl World {
     ) -> bool {
         let (tx, rx) = sync_channel::<TileResponse>(0);
 
-        sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
-
-        match rx.recv() {
-            Ok(TileResponse::Success(b)) => b,
+        match sender.send((TileCommand::Is(ivec3(x, y, z)), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Success(b)) => b,
+                _ => false,
+            },
             _ => false,
         }
     }
 
-    pub fn make(
-        sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
-        name: String,
-        t: String,
-        b: String,
-        e: String,
-        w: String,
-        s: String,
-        n: String,
-    ) {
-    }
+    // pub fn make(
+    //     sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
+    //     name: String,
+    //     t: String,
+    //     b: String,
+    //     e: String,
+    //     w: String,
+    //     s: String,
+    //     n: String,
+    // ) {
+    // }
 
     pub fn clear_tiles(sender: &Sender<(TileCommand, SyncSender<TileResponse>)>) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        sender.send((TileCommand::Reset(), tx));
-        match rx.recv() {
-            Ok(TileResponse::Success(true)) => {}
+        match sender.send((TileCommand::Reset(), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Success(true)) => {}
+                _ => {}
+            },
             _ => {}
         }
     }
 
     pub fn destroy_it_all(&mut self) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        self.sender.send((TileCommand::Reset(), tx));
-        match rx.recv() {
-            Ok(TileResponse::Success(true)) => {}
+        match self.sender.send((TileCommand::Reset(), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Success(true)) => {}
+                _ => {}
+            },
             _ => {}
         }
 

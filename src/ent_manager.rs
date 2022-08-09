@@ -1,16 +1,10 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
-    rc::Rc,
     sync::{Arc, Mutex},
 };
 
 use glam::vec3;
-use lazy_static::lazy_static;
-
 use mlua::{UserData, UserDataMethods};
-use nalgebra::LU;
-use once_cell::sync::OnceCell;
 
 use crate::{ent::Ent, lua_ent::LuaEnt};
 // use serde::Deserialize;
@@ -159,7 +153,7 @@ impl EntManager {
                     Some(e) => {
                         if l.is_anim() {
                             // println!("anim {}", l.get_tex());
-                            match crate::texture::animations.read().get(l.get_tex()) {
+                            match crate::texture::ANIMATIONS.read().get(l.get_tex()) {
                                 Some(t) => {
                                     // println!("we found {} with {:?}", l.get_tex(), t);
                                     e.anim = t.0.clone();
@@ -316,11 +310,13 @@ impl EntManager {
 // }
 struct LuaEntMan {}
 impl UserData for LuaEntMan {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_method_mut("__index", |lua, this, ()| {
-            //test
-            Ok(())
-        });
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(_methods: &mut M) {
+        //TODO should we allow table field to not return nil? why?
+        // methods.add_meta_method_mut("__index", |lua, this, ()| {
+        //     //test
+        //     Ok(())
+        // });
+
         // methods.add_method("add", |lu, this, ()| {
         //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
         //     ents.set(this.get_id(), this);

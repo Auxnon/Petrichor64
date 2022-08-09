@@ -1,24 +1,18 @@
 use crate::Arc;
-use glam::{vec3, vec4, Mat3, Mat4, Quat, Vec2, Vec3, Vec4Swizzles};
-use itertools::Itertools;
+use glam::{vec3, Mat4, Vec2, Vec3};
 use once_cell::sync::OnceCell;
-use std::{
-    f32::consts::PI,
-    iter,
-    ops::{Add, Div, DivAssign, Mul},
-    slice::SliceIndex,
-};
+use std::{iter, ops::Add};
 // use tracy::frame;
 
 use crate::{
-    ent::{self, Ent, EntityUniforms},
+    ent::{Ent, EntityUniforms},
     model::Model,
     Core,
 };
 
 pub fn generate_matrix(
     aspect_ratio: f32,
-    rot: f32,
+    _rot: f32,
     camera_pos: Vec3,
     mouse: Vec2,
 ) -> (Mat4, Mat4, Mat4) {
@@ -26,14 +20,16 @@ pub fn generate_matrix(
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
 
     // println!("mouse {:?}", mouse);
-    let r = 0.5f32;
-    let mx_view = Mat4::look_at_rh(
-        vec3(92. * r.cos(), -128., 82.0),
-        vec3(0f32, 0.0, 0.0),
-        Vec3::Z,
-    );
+    // let r = 0.5f32;
 
-    let mx_view = Mat4::IDENTITY;
+    // let mx_view = Mat4::look_at_rh(
+    //     vec3(92. * r.cos(), -128., 82.0),
+    //     vec3(0f32, 0.0, 0.0),
+    //     Vec3::Z,
+    // );
+
+    // let mx_view = Mat4::IDENTITY;
+
     // let r = pi * (0.5 + (mouse.0 % 100.) / 50.);
     // let azimuth = pi * (0.5 + (mouse.1 % 100.) / 50.);
     let r = mouse.x * pi * 2.; //(1. - mouse.x) * pi * 2.;
@@ -90,11 +86,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     // TODO is this expensive? only sometimes?
-    core.gui.render(
-        &core.device,
-        &core.queue,
-        core.global.get("value2".to_string()),
-    );
+    core.gui
+        .render(&core.queue, core.global.get("value2".to_string()));
     // frame!("rendered gui texture");
 
     let mutex = crate::ent_master.read();
@@ -142,7 +135,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         *v = 0.
     }
 
-    let (mx_view, mx_persp, mx_model) = generate_matrix(
+    let (mx_view, mx_persp, _mx_model) = generate_matrix(
         core.size.width as f32 / core.size.height as f32,
         *v * 2. * std::f32::consts::PI,
         core.global.camera_pos,
@@ -224,9 +217,11 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     //     .collect::<Vec<_>>();
     if !neu {
         let mut buf: Vec<u8> = vec![];
-        for (entity, _, data) in &mut ent_array.iter() {
+        for (_entity, _, data) in &mut ent_array.iter() {
             // buf.extend_from_slice(bytemuck::bytes_of(data));
-            let int = entity.uniform_offset as usize;
+
+            // let int = entity.uniform_offset as usize;
+
             // let d = bytemuck::bytes_of(data);
             // let v: Vec<u8> = bytemuck::bytes_of(data).to_vec();
             // if v.len() > 0 {

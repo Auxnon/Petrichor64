@@ -1,17 +1,18 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::template::AssetTemplate;
 use glam::{vec4, UVec2, UVec4, Vec4};
-use image::{imageops, DynamicImage, GenericImage, GenericImageView, ImageBuffer, Rgba, RgbaImage};
-use imageproc::{
-    drawing::{draw_filled_rect, draw_filled_rect_mut},
-    rect::Rect,
-};
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
+use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, RwLock};
 use rustc_hash::FxHashMap;
-use wgpu::{util::DeviceExt, Queue, Sampler, Texture, TextureView};
+use wgpu::{Queue, Sampler, Texture, TextureView};
 
 #[cfg(target_os = "windows")]
 const SLASH: char = '\\';
@@ -20,59 +21,54 @@ const SLASH: char = '/';
 
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    pub static ref master: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
+    pub static ref MASTER: Arc<Mutex<OnceCell<RgbaImage>>> = Arc::new(Mutex::new(OnceCell::new()));
     /** Last position of a locatated section for a texture, x y, the last   */
-    pub static ref atlas_pos:Mutex<UVec4> = Mutex::new(UVec4::new(0,0,0,0));
+    pub static ref ATLAS_POS:Mutex<UVec4> = Mutex::new(UVec4::new(0,0,0,0));
     /** Current dimensions of the atlas image, likely stays the same in most cases */
-    pub static ref atlas_dim:Mutex<UVec2>= Mutex::new(UVec2::new(0,0));
+    pub static ref ATLAS_DIM:Mutex<UVec2>= Mutex::new(UVec2::new(0,0));
     /** Our wonderful string to uv coordinate map, give us a texture name and we'll give you a position on the atlas of that texture! */
-    pub static ref dictionary:RwLock<HashMap<String,Vec4>> =RwLock::new(HashMap::new());
+    pub static ref DICTIONARY:RwLock<HashMap<String,Vec4>> =RwLock::new(HashMap::new());
     /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
-    pub static ref counter:Mutex<u32> =Mutex::new(2);
-    /** map our */
-    pub static ref int_dictionary:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
-    pub static ref int_map:RwLock<FxHashMap<u32,Vec4>> = RwLock::new(FxHashMap::default());
-    pub static ref animations:RwLock<HashMap<String,(Vec<Vec4>,u32)>> = RwLock::new(HashMap::default());
+    pub static ref COUNTER:Mutex<u32> =Mutex::new(2);
+    /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
+    pub static ref INT_DICTIONARY:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
+    pub static ref INT_MAP:RwLock<FxHashMap<u32,Vec4>> = RwLock::new(FxHashMap::default());
+    pub static ref ANIMATIONS:RwLock<HashMap<String,(Vec<Vec4>,u32)>> = RwLock::new(HashMap::default());
 }
 
 pub fn init() {
     let img: RgbaImage = ImageBuffer::new(1024, 1024);
-    let mut d = atlas_dim.lock();
+    let mut d = ATLAS_DIM.lock();
     d.x = 1024;
     d.y = 1024;
-    let rgba = master.lock().get_or_init(|| img);
+    MASTER.lock().get_or_init(|| img);
 }
 
 pub fn reset() {
     let img: RgbaImage = ImageBuffer::new(1024, 1024);
-    let mut d = atlas_dim.lock();
+    let mut d = ATLAS_DIM.lock();
     d.x = 1024;
     d.y = 1024;
-    let mut p = atlas_pos.lock();
+    let mut p = ATLAS_POS.lock();
     p.x = 0;
     p.y = 0;
     p.z = 0;
     p.w = 0;
-    dictionary.write().clear();
-    *counter.lock() = 2;
-    int_dictionary.write().clear();
-    int_map.write().clear();
+    DICTIONARY.write().clear();
+    *COUNTER.lock() = 2;
+    INT_DICTIONARY.write().clear();
+    INT_MAP.write().clear();
 
-    match master.lock().get_mut() {
+    match MASTER.lock().get_mut() {
         Some(im) => image::imageops::replace(im, &img, 0, 0),
         None => error("Somehow missing our texture atlas?".to_string()),
     }
 }
 
 pub fn save_atlas() {
-    let mas = master.lock();
+    let mas = MASTER.lock();
     let buf = mas.get().unwrap();
     let dim = buf.dimensions();
-    println!("atlas w {} h {}", dim.0, dim.1);
-    // let v = buf.to_vec();
-    // for b in v {
-    //     print!("_{}", b);
-    // }
     match image::save_buffer_with_format(
         "atlas.png",
         &buf,
@@ -81,28 +77,49 @@ pub fn save_atlas() {
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
     ) {
-        Ok(s) => {}
-        Err(err) => {}
+        Ok(_) => lg!("saved atlas {}x{}", dim.0, dim.1),
+        Err(err) => lg!("failed to save atlas:{}", err),
     }
 }
 
-fn draw_rect(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
-    let magenta = Rgba([255u8, 0u8, 255u8, 127u8]);
+// fn draw_rect(img: &mut ImageBuffer<Rgba<u8>, Vec<u8>>) {
+//     let magenta = Rgba([255u8, 0u8, 255u8, 255u8]);
 
-    // imageproc::drawing::write_pixel(img, 0, 0, &magenta);
+//     // imageproc::drawing::write_pixel(img, 0, 0, &magenta);
+//     draw_filled_rect_mut(
+//         img,
+//         imageproc::rect::Rect::at(10, 10).of_size(75, 75),
+//         magenta,
+//     );
+// }
+
+pub fn simple_square(size: u32, path: PathBuf) {
+    let mut img: RgbaImage = ImageBuffer::new(size, size);
+    let magenta = Rgba([255u8, 0u8, 255u8, 255u8]);
     draw_filled_rect_mut(
-        img,
-        imageproc::rect::Rect::at(10, 10).of_size(75, 75),
+        &mut img,
+        imageproc::rect::Rect::at(0, 0).of_size(size, size),
         magenta,
     );
+    match image::save_buffer_with_format(
+        path,
+        &img,
+        size,
+        size,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    ) {
+        Err(err) => err!("could not save example image: {}", err),
+        _ => {}
+    }
 }
 
 //MARK save_audio_buffer
 pub fn save_audio_buffer(buffer: &Vec<u8>) {
-    println!("🟣buffer {} {}", buffer.len(), 512);
+    // println!("🟣buffer {} {}", buffer.len(), 512);
     let w = buffer.len() as u32;
     let h = 512;
-    let mut img: RgbaImage = ImageBuffer::new(w, h);
+    let img: RgbaImage = ImageBuffer::new(w, h);
 
     let yellow = image::Rgba::from([255, 255, 0, 255]);
     let black = image::Rgba::from([0, 0, 0, 255]);
@@ -126,44 +143,38 @@ pub fn save_audio_buffer(buffer: &Vec<u8>) {
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
     ) {
-        Ok(s) => {}
-        Err(err) => {}
+        Err(err) => {
+            err!("unable to save image: {}", err);
+        }
+        _ => {}
     }
-    // }
-    //     None => {}
-    // };
 }
 
 pub fn finalize(device: &wgpu::Device, queue: &Queue) -> (TextureView, Sampler, Texture) {
-    make_tex(device, queue, master.lock().get().unwrap())
+    make_tex(device, queue, MASTER.lock().get().unwrap())
 }
 
-pub fn refinalize(device: &wgpu::Device, queue: &Queue, texture: &Texture) {
-    write_tex(device, queue, texture, &master.lock().get().unwrap());
+pub fn refinalize(queue: &Queue, texture: &Texture) {
+    write_tex(queue, texture, &MASTER.lock().get().unwrap());
 }
 
-pub fn render_sampler(
-    device: &wgpu::Device,
-    queue: &Queue,
-    size: (u32, u32),
-) -> (TextureView, Sampler, Texture) {
+pub fn render_sampler(device: &wgpu::Device, size: (u32, u32)) -> (TextureView, Sampler, Texture) {
     let img: RgbaImage = ImageBuffer::new(size.0, size.1);
-
-    make_render_tex(device, queue, &img)
+    make_render_tex(device, &img)
 }
 
 /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
 pub fn locate(source: RgbaImage) -> Vec4 {
-    let mut m_guard = master.lock();
+    let mut m_guard = MASTER.lock();
     let m_ref = m_guard.get_mut().unwrap();
     assert!(
         source.width() < m_ref.width() && source.height() < m_ref.height(),
         "Texture atlas isnt big enough for this image :("
     );
     let mut found = false;
-    let mut apos = atlas_pos.lock();
+    let mut apos = ATLAS_POS.lock();
     let mut cpos = apos.clone();
-    let adim = atlas_dim.lock();
+    let adim = ATLAS_DIM.lock();
     let w = source.width();
     let h = source.height();
 
@@ -209,7 +220,7 @@ pub fn locate(source: RgbaImage) -> Vec4 {
     }
 
     assert!(found, "Texture atlas couldnt find an empty spot?");
-    log(format!("found position {} {}", cpos.x, cpos.y));
+    lg!("found position {} {}", cpos.x, cpos.y);
     stich(m_ref, source, cpos.x, cpos.y);
     Vec4::new(
         cpos.x as f32 / adim.x as f32,
@@ -225,7 +236,7 @@ pub fn load_img(str: &String) -> Result<DynamicImage, image::ImageError> {
     load_img_nopath(&text)
 }
 pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> {
-    log(str.clone());
+    lg!("{}", str.clone());
 
     println!("opening asset {}", str);
 
@@ -285,8 +296,8 @@ fn tile_locate(
             let n = x + (y * dw);
             let mut p = pos.clone();
 
-            p.z *= (iw as f32);
-            p.w *= (ih as f32);
+            p.z *= iw as f32;
+            p.w *= ih as f32;
             p.x += p.z * x as f32;
             p.y += p.w * y as f32;
             let key = format!("{}{}", name, n);
@@ -298,7 +309,7 @@ fn tile_locate(
             //     "made tile tex {} at {} {} {} {}",
             //     key, p.x, p.y, p.z, p.w
             // ));
-            let mut dict = dictionary.write();
+            let mut dict = DICTIONARY.write();
             dict.insert(key, p);
             if can_rename {
                 match rename {
@@ -321,34 +332,35 @@ fn tile_locate(
 
 /** Create a simple numerical key for our texture and uv and map it, returning that numerical key*/
 fn index_texture(key: String, p: Vec4) -> u32 {
-    let mut guard = counter.lock();
+    let mut guard = COUNTER.lock();
     let ind = *guard;
-    int_map.write().insert(ind, p);
-    int_dictionary.write().insert(key, ind);
+    INT_MAP.write().insert(ind, p);
+    INT_DICTIONARY.write().insert(key, ind);
     *guard += 1;
     ind
 }
 
 /** We already had a numerical key created in a previous index_texture call and want to add another String->u32 translation*/
 fn index_texture_direct(key: String, index: u32) {
-    int_dictionary.write().insert(key, index);
+    INT_DICTIONARY.write().insert(key, index);
 }
 
 pub fn load_tex_from_buffer(str: &String, buffer: &Vec<u8>, template: Option<&AssetTemplate>) {
     // println!("🟢load_tex_from_buffer{} is {}", str, buffer.len());
     match image::load_from_memory(buffer.as_slice()) {
         Ok(img) => sort_image(str, img, template, true),
-        Err(err) => {}
+        Err(err) => err!("failed to load texture {}", err),
     }
 }
 
 pub fn load_tex(str: &String, template: Option<&AssetTemplate>) {
     // println!("🟢load_tex{}", str);
-    log(format!("apply texture {}", str));
+    lg!("apply texture {}", str);
 
     match load_img_nopath(str) {
         Ok(img) => sort_image(str, img, template, false),
         Err(err) => {
+            err!("failed to load texture {}", err);
             // dictionary
             //     .lock()
             //     .insert(name, cgmath::Vector4::new(0., 0., 0., 0.));
@@ -382,7 +394,7 @@ fn sort_image(
     } else {
         let pos = locate(img.into_rgba8());
         println!("sort_image name {} pos {}", name, pos);
-        dictionary.write().insert(name.clone(), pos);
+        DICTIONARY.write().insert(name.clone(), pos);
         index_texture(name, pos);
     }
 }
@@ -421,15 +433,15 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
         .flat_map(|d| d.pixels.as_slice().to_owned())
         .collect::<Vec<_>>();
 
-    let (actual_name, bool) = get_name(str, false);
-    log(format!("inject image {} from buffer", actual_name));
+    let (actual_name, _) = get_name(str, false);
+    lg!("inject image {} from buffer", actual_name);
 
     let mut pos = Vec4::new(0., 0., 0., 0.);
     let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
         Some(o) => o,
         None => {
             error("Failed to load texture from mesh".to_string());
-            dictionary.write().insert(actual_name, pos);
+            DICTIONARY.write().insert(actual_name, pos);
             return;
         }
     };
@@ -483,19 +495,19 @@ pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
 
     pos = locate(image_buffer);
 
-    dictionary.write().insert(actual_name, pos);
+    DICTIONARY.write().insert(actual_name, pos);
 }
 
 /** return texture uv coordinates from a given texture name */
 pub fn get_tex(str: &String) -> Vec4 {
-    match dictionary.read().get(str) {
+    match DICTIONARY.read().get(str) {
         Some(v) => v.clone(),
         None => Vec4::new(0., 0., 0., 0.),
     }
 }
 
-pub fn list_keys() -> String {
-    dictionary
+pub fn _list_keys() -> String {
+    DICTIONARY
         .read()
         .keys()
         .map(|k| k.clone())
@@ -505,17 +517,17 @@ pub fn list_keys() -> String {
 
 /** return texture numerical index from a given texture name */
 pub fn get_tex_index(str: &String) -> u32 {
-    match int_dictionary.read().get(str) {
+    match INT_DICTIONARY.read().get(str) {
         Some(n) => n.clone(),
         _ => 1,
     }
 }
 /** return texture uv coordinates and numerical index from a given texture name */
-pub fn get_tex_and_index(str: &String) {}
+// pub fn get_tex_and_index(str: &String) {}
 
 /** return texture uv coordinates from a given texture numerical index */
 pub fn get_tex_from_index(ind: u32) -> Vec4 {
-    match int_map.read().get(&ind) {
+    match INT_MAP.read().get(&ind) {
         Some(uv) => uv.clone(),
         _ => vec4(1., 1., 0., 0.),
     }
@@ -525,7 +537,7 @@ pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x as i64, y as i64);
 }
 
-pub fn write_tex(device: &wgpu::Device, queue: &Queue, texture: &Texture, img: &RgbaImage) {
+pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
     let dimensions = img.dimensions();
 
     let texture_size = wgpu::Extent3d {
@@ -559,7 +571,7 @@ pub fn make_tex(
     queue: &Queue,
     img: &RgbaImage,
 ) -> (TextureView, Sampler, Texture) {
-    log("make master texture".to_string());
+    lg!("make master texture");
     let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
@@ -616,11 +628,11 @@ pub fn make_tex(
 
 pub fn make_render_tex(
     device: &wgpu::Device,
-    queue: &Queue,
+    // queue: &Queue,
     img: &RgbaImage,
 ) -> (TextureView, Sampler, Texture) {
-    log("make master texture".to_string());
-    let rgba = img; //img.as_rgba8().unwrap();
+    lg!("make master texture");
+    // let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
         width: dimensions.0,
@@ -679,14 +691,30 @@ pub fn make_render_tex(
 
 pub fn set_anims(name: &String, frames: Vec<Vec4>, animation_speed: u32) {
     println!("set anims {} {:?}", name, frames);
-    animations
+    ANIMATIONS
         .write()
         .insert(name.clone(), (frames, animation_speed));
 }
 
-fn log(str: String) {
-    crate::log::log(format!("🎨texture::{}", str));
+macro_rules! lg{
+    ($($arg:tt)*) => {{
+           {
+            crate::log::log(format!("🎨texture::{}",format!($($arg)*)));
+           }
+       }
+   }
 }
+
+macro_rules! err{
+    ($($arg:tt)*) => {{
+           {
+            crate::log::error(format!("‼︎ERROR::🎨texture::{}",format!($($arg)*)));
+           }
+       }
+   }
+}
+pub(crate) use err;
+pub(crate) use lg;
 
 fn error(str: String) {
     crate::log::error(format!("‼︎ERROR::🎨texture::{}", str));

@@ -8,7 +8,9 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     //let trans = Mat4::from_translation(core.camera_pos);
     //let mm = Mat4::from_translation(core.camera_pos) * Mat4::IDENTITY;
     //mx_model
-    let tran = Mat4::from_translation(core.global.camera_pos);
+
+    let _tran = Mat4::from_translation(core.global.camera_pos);
+
     // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
     //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
     //let inv = (mx_persp.inverse() * Mat4::IDENTITY) * mx_view.inverse();
@@ -50,18 +52,18 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // let cam_proj = (mx_persp).project_point3(core.camera_pos);
     // println!("cam pos proj {}", cam_proj);
 
-    let cam_eye = vec4(
+    let _cam_eye = vec4(
         core.global.camera_pos.x,
         core.global.camera_pos.y,
         core.global.camera_pos.z,
         1.,
     );
 
-    let aspect = core.size.width as f32 / core.size.height as f32;
+    let _aspect = core.size.width as f32 / core.size.height as f32;
     // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
 
     //let cam_center = vec4(0., 0., 0., 1.);
-    let cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
+    let _cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
 
     let win_coord = vec3(
         core.global.mouse_active_pos.x,
@@ -86,7 +88,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     //let f2 = persp2.unproject_point(&nalgebra::Point3::new(f.x, f.y, f.z));
     // let dir2 = n2 - f2;
     //persp2.unproject_point(p)
-    let FoV = 1.27323980963;
+    let _fov = 1.27323980963;
 
     //far_coord.x *= FoV * FoV;
     //far_coord.y *= FoV * FoV;
@@ -108,7 +110,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
 
     let out_point;
 
-    let PLANE_COLLIDE = true;
+    let plane_collide = true;
 
     // Calculate distance of intersection point from r.origin.
     // let denominator = planeP.dot(dir); // Vector3.Dot(p.Normal, ray.Direction);
@@ -118,18 +120,18 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // Calculate the picked position on the y = 0 plane.
     // out_point = near_unproj + dir * t;
     // println!("near_unproj {}", near_unproj);
-    if PLANE_COLLIDE {
+    if plane_collide {
         // let planeP = vec3(16., 0., 0.) - near_unproj;
-        let planeP = vec3(0., 0., -6.);
-        let planeN = vec3(0., 0., 1.);
+        let plane_p = vec3(0., 0., -6.);
+        let plane_n = vec3(0., 0., 1.);
 
-        let rayP = far_unproj; // + vec3(10., 0., 0.);
-        let rayD = dir;
-        let d = planeP.dot(-planeN);
-        let t = -(d + rayP.z * planeN.z + rayP.y * planeN.y + rayP.x * planeN.x)
-            / (rayD.z * planeN.z + rayD.y * planeN.y + rayD.x * planeN.x);
+        let ray_p = far_unproj; // + vec3(10., 0., 0.);
+        let ray_d = dir;
+        let d = plane_p.dot(-plane_n);
+        let t = -(d + ray_p.z * plane_n.z + ray_p.y * plane_n.y + ray_p.x * plane_n.x)
+            / (ray_d.z * plane_n.z + ray_d.y * plane_n.y + ray_d.x * plane_n.x);
 
-        out_point = rayP + t * rayD;
+        out_point = ray_p + t * ray_d;
 
         // screen_unproj; //.normalize().mul(20.); //dir.xyz().normalize().mul(20.);
     } else {
@@ -197,7 +199,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // ent_guard.get_mut(slice);
 
     if core.global.get("value2".to_string()) >= 1. {
-        let typeOf = 0; // DEV ents.len() % 2 == 0;
+        let _type_of = 0; // DEV ents.len() % 2 == 0;
         core.global.set("value2".to_string(), 0.);
 
         println!("  dir {} world space {}", dir, out_point);

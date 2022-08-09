@@ -1,15 +1,10 @@
 use rustc_hash::FxHashMap;
-use std::{
-    collections::hash_map::Entry,
-    ops::Mul,
-    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
-    thread,
-};
+use std::{collections::hash_map::Entry, ops::Mul};
 
-use glam::{ivec3, vec3, IVec3, Vec4};
+use glam::{ivec3, IVec3, Vec4};
 use wgpu::{util::DeviceExt, Buffer, Device};
 
-use crate::{model::Vertex, template::AssetTemplate};
+use crate::model::Vertex;
 
 pub struct Layer {
     chunks: FxHashMap<String, Chunk>,
@@ -107,7 +102,7 @@ impl Layer {
     pub fn _get_chunk_mut(&mut self, key: String) -> Option<&mut Chunk> {
         match self.chunks.entry(key.clone()) {
             Entry::Occupied(o) => Some(o.into_mut()),
-            Entry::Vacant(v) => None,
+            _ => None,
         }
     }
 
@@ -192,7 +187,7 @@ pub struct LayerModel {
 
 impl LayerModel {
     pub fn new() -> LayerModel {
-        let mut l = LayerModel {
+        let l = LayerModel {
             chunks: FxHashMap::default(),
         };
         // let x: i32 = 100;

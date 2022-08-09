@@ -5,10 +5,9 @@ use clipboard::{ClipboardContext, ClipboardProvider};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
 };
-use winit_input_helper::TextChar;
 
 #[cfg(target_os = "macos")]
 const COMMAND_KEY_L: VirtualKeyCode = VirtualKeyCode::LWin;
@@ -23,7 +22,7 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
-    pub static ref input_manager : Arc<RwLock<winit_input_helper::WinitInputHelper>>=Arc::new(RwLock::new(winit_input_helper::WinitInputHelper::new()));
+    pub static ref INPUT_MANAGER : Arc<RwLock<winit_input_helper::WinitInputHelper>>=Arc::new(RwLock::new(winit_input_helper::WinitInputHelper::new()));
 }
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
@@ -48,7 +47,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     //     }
     // }
 
-    let input_helper = &input_manager.read();
+    let input_helper = &INPUT_MANAGER.read();
 
     if input_helper.key_pressed(VirtualKeyCode::Escape) || input_helper.quit() {
         *control_flow = ControlFlow::Exit;
@@ -93,15 +92,18 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     //             }
     //         }
     //         _ => {}
-    let diff = input_helper.mouse_diff();
+
+    // let diff = input_helper.mouse_diff();
+
     // core.global.mouse_delta.x = diff.0;
     // core.global.mouse_delta.y = diff.1;
     // println!("mouse {} {}", diff.0, diff.1);
     // core.global.mouse_active_pos.x += diff.0 / 100.;
     // core.global.mouse_active_pos.y += diff.1 / 100.;
 
+    // TODO mouse inputs
     match input_helper.mouse() {
-        Some((x, y)) => {
+        Some((_x, _y)) => {
             core.global.game_controller = false;
             // core.global.mouse_active_pos.x = x / core.size.width as f32;
             // core.global.mouse_active_pos.y = y / core.size.height as f32;
@@ -191,10 +193,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         } else {
             let t = input_helper.text();
             if t.len() > 0 {
-                let neg = 0;
-                let emp: char;
+                // let neg = 0;
+                // let emp: char;
 
-                // let mut st = vec![];
                 match t.last() {
                     Some(s) => {
                         match s {
@@ -275,7 +276,6 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
             match state {
                 winit::event::ElementState::Pressed => {
                     // VirtualKeycode is an enum with a defined representation
-                    let i = *keycode as usize;
                     // println!("newkey is {}", i);
                     bits[*keycode as usize] = true;
                 }
