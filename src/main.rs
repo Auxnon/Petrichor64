@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 use bytemuck::{Pod, Zeroable};
+use command::MainCommmand;
 use ent_manager::EntManager;
 use global::Global;
 use lua_define::{LuaCore, MainPacket};
@@ -708,12 +709,12 @@ impl Core {
                 for p in c.try_iter() {
                     //recv_timeout(Duration::from_millis(100))
 
-                    match p.0.as_str() {
-                        "campos" => {
+                    match p.0 {
+                        MainCommmand::CamPos => {
                             self.global.camera_pos = vec3(p.1, p.2, p.3);
                             // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                         }
-                        "camrot" => {
+                        MainCommmand::CamRot => {
                             self.global.mouse_active_pos = vec2(p.1, p.2);
                             // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                         }

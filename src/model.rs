@@ -33,6 +33,38 @@ impl Vertex {
         self._pos[1] += pos.y as i16;
         self._pos[2] += pos.z as i16;
     }
+    pub fn rot90(&mut self) {
+        //+x -> -y, +y -> +x
+        let x = self._pos[0];
+        self._pos[0] = -self._pos[1];
+        self._pos[1] = x;
+    }
+    pub fn rot180(&mut self) {
+        //+x-> -x, +y -> -y
+        self._pos[0] = -self._pos[0];
+        self._pos[1] = -self._pos[1];
+    }
+    pub fn rot270(&mut self) {
+        //+x -> +y, +y-> -x
+        let x = self._pos[0];
+        self._pos[0] = self._pos[1];
+        self._pos[1] = -x;
+    }
+    pub fn rotp90(&mut self) {
+        let x = self._pos[0];
+        self._pos[0] = 16 - self._pos[1];
+        self._pos[1] = x;
+    }
+    pub fn rotp180(&mut self) {
+        self._pos[0] = 16 - self._pos[0];
+        self._pos[1] = 16 - self._pos[1];
+    }
+    pub fn rotp270(&mut self) {
+        //+x -> +y, +y-> -x
+        let x = self._pos[0];
+        self._pos[0] = self._pos[1];
+        self._pos[1] = 16 - x;
+    }
     pub fn texture(&mut self, uv: Vec4) {
         self._tex[0] = (self._tex[0] * uv.z) + uv.x;
         self._tex[1] = (self._tex[1] * uv.w) + uv.y;

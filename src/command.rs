@@ -292,11 +292,16 @@ pub fn init_lua_sys(
     let sender = world_sender.clone();
     lua!(
         "tile",
-        move |_, (t, x, y, z): (String, i32, i32, i32)| {
+        move |_, (t, x, y, z, r): (String, i32, i32, i32, Option<u8>)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             // let mut mutex = &mut switch.write();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));
-            World::set_tile(&sender, t, x, y, z);
+            let ro = match r {
+                Some(i) => i,
+                None => 0,
+            };
+
+            World::set_tile(&sender, t, x, y, z, ro);
             Ok(1)
         },
         "Set a tile within 3d space."
@@ -561,7 +566,7 @@ pub fn init_lua_sys(
         move |_, (x, y, z): (f32, f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
             // println!("🧲 eyup send pos");
-            pitcher.send(("campos".to_string(), x, y, z, 0.));
+            pitcher.send((MainCommmand::CamPos, x, y, z, 0.));
             // Ok(match rx.recv() {
             //     Ok(v) => (true),
             //     _ => (false),
@@ -577,7 +582,7 @@ pub fn init_lua_sys(
         move |_, (x, y): (f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
 
-            pitcher.send(("camrot".to_string(), x, y, 0., 0.));
+            pitcher.send((MainCommmand::CamRot, x, y, 0., 0.));
             // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
             // println!("🧲 eyup send rot");
 
@@ -830,4 +835,11 @@ fn log(str: String) {
 fn err(str: String) {
     println!("com_err::{}", str);
     crate::log::log(format!("com_err::{}", str));
+}
+
+pub enum MainCommmand {
+    Line,
+    Square,
+    CamPos,
+    CamRot,
 }

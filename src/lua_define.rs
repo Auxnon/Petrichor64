@@ -1,4 +1,5 @@
 use crate::{
+    command::MainCommmand,
     pad::Pad,
     sound::SoundPacket,
     switch_board::SwitchBoard,
@@ -16,7 +17,7 @@ use std::{
     thread,
 };
 
-pub type MainPacket = (String, f32, f32, f32, f32); //SyncSender<bool>
+pub type MainPacket = (MainCommmand, f32, f32, f32, f32); //SyncSender<bool>
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,

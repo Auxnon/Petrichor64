@@ -117,7 +117,8 @@ impl World {
                     (TileCommand::Set(tiles), response) => {
                         // log(format!("set tile {}", tiles[0].0));
                         layer.set_tile(
-                            &tiles[0].0,
+                            &tiles[0].0.to_lowercase(),
+                            tiles[0].1.x as u8,
                             tiles[0].1.y as i32,
                             tiles[0].1.z as i32,
                             tiles[0].1.w as i32,
@@ -196,9 +197,10 @@ impl World {
         x: i32,
         y: i32,
         z: i32,
+        r: u8,
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match sender.send((TileCommand::Set(vec![(t, ivec4(0, x, y, z))]), tx)) {
+        match sender.send((TileCommand::Set(vec![(t, ivec4(r as i32, x, y, z))]), tx)) {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Success(true)) => {}
                 _ => {}

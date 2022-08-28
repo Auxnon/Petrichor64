@@ -39,7 +39,7 @@ impl Layer {
     }
 
     /** Set 1 tile in a chunk, if chunk doesn't exist it will create it and set the new tile */
-    pub fn set_tile(&mut self, tile: &String, ix: i32, iy: i32, iz: i32) {
+    pub fn set_tile(&mut self, tile: &String, meta: u8, ix: i32, iy: i32, iz: i32) {
         let cell_type = match crate::model::get_model_index(&tile) {
             Some(model_index) => model_index,
             _ => crate::texture::get_tex_index(&tile),
@@ -52,7 +52,7 @@ impl Layer {
             ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16) + iz.rem_euclid(16)) as usize;
         // let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
         //     + ((iz / 16).rem_euclid(16))) as usize;
-        c.cells[index] = cell_type;
+        c.cells[index] = (cell_type, meta);
         // println!(
         //     "cell {:?} {} {} {} --- {} {} {}",
         //     index,
@@ -69,7 +69,7 @@ impl Layer {
     /** Set multiple tiles from a large array */
     pub fn set_tile_from_buffer(&mut self, buffer: &Vec<(String, Vec4)>) {
         for (s, t) in buffer {
-            self.set_tile(s, t.y as i32, t.z as i32, t.w as i32);
+            self.set_tile(s, t.x as u8, t.y as i32, t.z as i32, t.w as i32);
         }
     }
 
@@ -79,7 +79,7 @@ impl Layer {
             Some(c) => {
                 let index = ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16)
                     + iz.rem_euclid(16)) as usize;
-                c.cells[index] > 0
+                c.cells[index].0 > 0
             }
             _ => false,
         }
@@ -150,7 +150,7 @@ impl Layer {
 }
 pub struct Chunk {
     pub dirty: bool,
-    pub cells: [u32; 16 * 16 * 16],
+    pub cells: [(u32, u8); 16 * 16 * 16],
     /** Unmodified position within world space, index postion would be position divided by 16 */
     pub pos: IVec3,
     pub key: String,
@@ -161,7 +161,7 @@ impl Chunk {
     pub fn new(key: String, x: i32, y: i32, z: i32) -> Chunk {
         Chunk {
             dirty: false,
-            cells: [0; 16 * 16 * 16],
+            cells: [(0, 0); 16 * 16 * 16],
             pos: ivec3(x, y, z),
             key,
         }
@@ -177,7 +177,7 @@ impl Chunk {
     }
 
     pub fn zero_cells(&mut self) {
-        self.cells = [0; 16 * 16 * 16];
+        self.cells = [(0, 0); 16 * 16 * 16];
     }
 }
 
@@ -230,6 +230,7 @@ impl ChunkModel {
         }
     }
 
+    /* Piece together the chunk with either tilemap cubes, or gltf/glb model instances based on tile index number */
     pub fn build_chunk(&mut self, chunk: Chunk) {
         self.vert_data = vec![];
         self.ind_data = vec![];
@@ -241,10 +242,11 @@ impl ChunkModel {
 
         // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
         for (i, cell) in chunk.cells.clone().iter().enumerate() {
-            if *cell > 0u32 {
+            if (*cell).0 > 0u32 {
                 _add_tile_model(
                     self,
-                    *cell,
+                    (*cell).0,
+                    (*cell).1,
                     ((i / 256) % 16) as i32,
                     ((i / 16) % 16) as i32,
                     (i % 16) as i32,
@@ -278,7 +280,7 @@ impl ChunkModel {
     }
 }
 
-fn _add_tile_model(c: &mut ChunkModel, model_index: u32, ix: i32, iy: i32, iz: i32) {
+fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset =
@@ -290,15 +292,35 @@ fn _add_tile_model(c: &mut ChunkModel, model_index: u32, ix: i32, iy: i32, iz: i
 
     let (mut verts, mut inds) = match crate::model::get_model_from_index(model_index) {
         Some(m) => {
+            // let uv = crate::texture::get_tex_from_index(model_index);
             let modl = m.get().unwrap();
             let data = modl.data.as_ref().unwrap().clone();
             // print!("c{} {}", model_index, modl.name);
+            // print!("🟢🟣uv{} {}", uv, modl.name);
+            let method = match meta {
+                1 => |v: &mut Vertex| v.rotp90(),
+                2 => |v: &mut Vertex| v.rotp180(),
+                3 => |v: &mut Vertex| v.rotp270(),
+                _ => |_: &mut Vertex| {},
+            };
+
+            // log(format!("tile with {}",  meta));
             let verts = data
                 .0
                 .iter()
                 .map(|v| {
                     let mut v2 = v.clone();
+                    method(&mut v2);
+                    // match meta {
+                    //     1 => v2.rotp90(),
+                    //     2 => v2.rotp180(),
+                    //     3 => v2.rotp270(),
+                    //     _ => {}
+                    // }
                     v2.trans(offset);
+                    // v2.texture(uv);
+
+                    // v2.rotp90();
                     v2
                 })
                 .collect::<Vec<Vertex>>();
@@ -314,7 +336,7 @@ fn _add_tile_model(c: &mut ChunkModel, model_index: u32, ix: i32, iy: i32, iz: i
             let uv = crate::texture::get_tex_from_index(model_index);
             let cube = crate::model::cube_model();
             let data = cube.get().unwrap().data.as_ref().unwrap().clone();
-            // print!("🟢 loaded cube with text {}", uv);
+
             // crate::model::create_plane(16, None, None)
             let verts = data
                 .0
