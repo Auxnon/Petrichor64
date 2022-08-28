@@ -594,6 +594,7 @@ pub fn init_lua_sys(
         },
         "Set the camera rotation by azimuth and elevation"
     );
+    let sing = singer.clone();
     lua!(
         "sound",
         move |_, (freq, length): (f32, Option<f32>)| {
@@ -604,12 +605,30 @@ pub fn init_lua_sys(
 
             println!("freq {}", freq);
 
-            singer.send((freq, len));
+            sing.send((freq, len, vec![], vec![]));
             Ok(())
         },
         "Make sound"
     );
 
+    lua!(
+        "instr",
+        move |_, (length, notes, amps): (f32, Vec<f32>, Option<Vec<f32>>)| {
+            println!("freqs {:?}", notes);
+
+            singer.send((
+                -2.,
+                length,
+                notes,
+                match amps {
+                    Some(a) => a,
+                    None => vec![],
+                },
+            ));
+            Ok(())
+        },
+        "Make sound"
+    );
 
     let pitcher = main_pitcher.clone();
     lua!(
