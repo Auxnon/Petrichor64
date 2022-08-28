@@ -353,6 +353,15 @@ fn start(
 
     let (pitcher, catcher) = channel::<MainPacket>();
 
+    let mut online = false;
+    let net = match crate::online::init() {
+        Ok((nout, nin)) => {
+            online = true;
+            Some((nout, nin))
+        }
+        _ => None,
+    };
+
     // let pitchers = Arc::new(pitcher);
     // let pitch_lusa = Arc::clone(&pitchers);
 

@@ -783,8 +783,6 @@ fn main() {
 
     let mut core = pollster::block_on(Core::new(&window));
 
-    crate::online::init();
-
     let ent_guard = ent_master.read();
     let mut eman = EntManager::new();
     eman.uniform_alignment = core.uniform_alignment as u32;
@@ -822,7 +820,7 @@ fn main() {
             {
                 core.global.console = false;
                 core.gui.disable_console();
-            crate::command::reload(&mut core);
+                crate::command::reload(&mut core);
             }
         }
     }
