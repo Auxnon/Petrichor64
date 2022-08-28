@@ -322,7 +322,10 @@ pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
 /** return model numerical index from a given model name */
 pub fn get_model_index(str: &String) -> Option<u32> {
     match INT_DICTIONARY.read().get(str) {
-        Some(u) => Some(u.clone()),
+        Some(u) => {
+            // log(format!("🟢ye we got {} from {}", u, str));
+            Some(u.clone())
+        }
         None => None,
     }
 }
@@ -383,102 +386,147 @@ fn load(
     //let mut meshes: Vec<Mesh> = vec![];
     //let im1 = image_data.get(0).unwrap();
     // let bits = str.split(".").collect::<Vec<_>>();
-    let name = str; //bits.get(0).unwrap();
 
-    crate::texture::load_tex_from_img(str.to_string(), &image_data);
+    let p = std::path::PathBuf::from(&str);
+    match p.file_stem() {
+        Some(p) => {
+            let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
 
-    //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
-    //tex.set_filter(FilterMode::Nearest);
-    let mut first_instance = true;
-    for mesh in nodes.meshes() {
-        for primitive in mesh.primitives() {
-            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let uv_adjust =
+                crate::texture::load_tex_from_img(name.clone(), str.to_string(), &image_data);
 
-            let verts_interleaved = izip!(
-                reader.read_positions().unwrap(),
-                //reader.read_normals().unwrap(),
-                //reader.read_colors(0).unwrap().into_rgb_f32().into_iter(),
-                reader.read_tex_coords(0).unwrap().into_f32(),
-                //reader.read_indices().unwrap()
-            );
+            //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
+            //tex.set_filter(FilterMode::Nearest);
+            let mut first_instance = true;
+            let mut meshes = vec![];
 
-            let vertices = verts_interleaved
-                .map(|(pos, uv)|
-                    // position: Vec3::from(pos),
-                    // uv: Vec2::from(uv),
-                    // color: WHITE,
-                    vertexx(pos,[0,0,0],uv))
-                .collect::<Vec<Vertex>>();
-
-            if let Some(inds) = reader.read_indices() {
-                let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
-
-                // let mesh = macroquad::models::Mesh {
-                //     vertices,
-                //     indices,
-                //     texture: Some(tex),
-                // };
-
-                //             let index_data: &[u16] = &[0, 1, 2, 2, 1, 3];
-
-                // (vertex_data.to_vec(), index_data.to_vec())
-
-                //device.create_buffer_init(desc)
-                let mesh_vertex_buf =
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some(&format!("{}{}", str, " Mesh Vertex Buffer")),
-                        contents: bytemuck::cast_slice(&vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-
-                let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(&format!("{}{}", str, " Mesh Index Buffer")),
-                    contents: bytemuck::cast_slice(&indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                println!("Load mesh {} with {} verts", name, vertices.len());
-                println!("ind #{} verts #{}", indices.len(), vertices.len());
-
-                let model = Model {
-                    name: name.to_string(),
-                    vertex_buf: mesh_vertex_buf,
-                    index_buf: mesh_index_buf,
-                    index_format: wgpu::IndexFormat::Uint32,
-                    index_count: indices.len(),
-                    data: Some((vertices, indices)),
+            // for node in nodes.nodes(){
+            //     node.name()
+            // }
+            for mesh in nodes.meshes() {
+                let mesh_name = match mesh.name() {
+                    Some(n) => n,
+                    _ => "" as &str,
                 };
 
-                if first_instance {
-                    first_instance = false;
-                    let once = OnceCell::new();
-                    once.get_or_init(|| model);
-                    let model_cell = Arc::new(once);
+                first_instance = true;
+                for primitive in mesh.primitives() {
+                    // primitive.attributes().for_each(|(name, _)| {
+                    //     name.
+                    //     log(format!("attribute {:?}", name));
+                    // });
+                    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-                    index_model(name.clone(), Arc::clone(&model_cell));
-                    DICTIONARY.write().insert(name.to_string(), model_cell);
-                    log(format!("populated mesh {}", name));
-                    //custom.get_or_init(|| customModel);
+                    let verts_interleaved = izip!(
+                        reader.read_positions().unwrap(),
+                        //reader.read_normals().unwrap(),
+                        //reader.read_colors(0).unwrap().into_rgb_f32().into_iter(),
+                        reader.read_tex_coords(0).unwrap().into_f32(),
+                        //reader.read_indices().unwrap()
+                    );
+
+                    let vertices = verts_interleaved
+                        .map(|(pos, uv)| {
+                            // position: Vec3::from(pos),
+                            // uv: Vec2::from(uv),
+                            // color: WHITE,
+                            let mut vv = vertexx(pos, [0, 0, 0], uv);
+                            //DEV are we always offseting the glb uv by the tilemap this way?
+                            vv.texture(uv_adjust);
+                            vv
+                        })
+                        .collect::<Vec<Vertex>>();
+
+                    //         let verts = data
+                    // .0
+                    // .iter()
+                    // .map(|v| {
+                    //     let mut v2 = v.clone();
+                    //     v2.trans(offset);
+                    //     // v2.texture(uv);
+                    //     v2
+                    // })
+                    // .collect::<Vec<Vertex>>();
+
+                    if let Some(inds) = reader.read_indices() {
+                        let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
+
+                        let mesh_vertex_buf =
+                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some(&format!("{}{}", str, " Mesh Vertex Buffer")),
+                                contents: bytemuck::cast_slice(&vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+
+                        let mesh_index_buf =
+                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some(&format!("{}{}", str, " Mesh Index Buffer")),
+                                contents: bytemuck::cast_slice(&indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                        println!("Load mesh {} with {} verts", name, vertices.len());
+                        println!("ind #{} verts #{}", indices.len(), vertices.len());
+
+                        let model = Model {
+                            name: name.to_string(),
+                            vertex_buf: mesh_vertex_buf,
+                            index_buf: mesh_index_buf,
+                            index_format: wgpu::IndexFormat::Uint32,
+                            index_count: indices.len(),
+                            data: Some((vertices, indices)),
+                        };
+
+                        if first_instance {
+                            first_instance = false;
+                            let once = OnceCell::new();
+                            once.get_or_init(|| model);
+                            let model_cell = Arc::new(once);
+
+                            //
+                            log(format!(
+                                "populated model {} with mesh named {}",
+                                name, mesh_name
+                            ));
+
+                            meshes.push((mesh_name, model_cell));
+                        }
+                    };
                 }
+            }
 
-                //rand::srand(6);
-
-                //mat.mul_vec4(other)
-                //meshes.push(mesh);
-            };
+            if meshes.len() > 0 {
+                if meshes.len() == 1 {
+                    let mesh = meshes.pop().unwrap();
+                    let lower = name.to_lowercase();
+                    log(format!("single model stored as {}", name));
+                    index_model(lower.clone(), Arc::clone(&mesh.1));
+                    DICTIONARY.write().insert(lower.to_string(), mesh.1);
+                } else {
+                    for m in meshes {
+                        let compound_name = format!("{}.{}", name, m.0).to_lowercase();
+                        log(format!("multi-model stored as {}", compound_name));
+                        index_model(compound_name.clone(), Arc::clone(&m.1));
+                        DICTIONARY.write().insert(compound_name, m.1);
+                    }
+                }
+            }
         }
+
+        None => {}
     }
-    // match custom.get() {
-    //     Some(m) => println!("yeah we model here it's {}", m.index_count),
-    //     None => {}
-    // }
-    //return meshes;
 }
 
 /** Create a simple numerical key for our model and map it, returning that numerical key*/
 fn index_model(key: String, model: Arc<OnceCell<Model>>) -> u32 {
     let mut guard = crate::texture::COUNTER.lock();
     let ind = *guard;
+    println!(
+        "indexed model {} with key {}",
+        model.get().unwrap().name,
+        ind
+    );
     INT_MAP.write().insert(ind, model);
+
     INT_DICTIONARY.write().insert(key, ind);
     *guard += 1;
     ind
