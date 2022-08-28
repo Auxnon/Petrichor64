@@ -43,11 +43,12 @@ pub fn carriage() -> Option<String> {
     *CURRENT_LINE.lock() = "".to_string();
 
     *LOG_DIRTY.lock() = true;
-
+    *HISTORY_IT.lock() = 0;
     if s.len() > 0 {
         return Some(s);
     }
     None
+
     // buffer.lock().push("".to_string());
 }
 
@@ -55,17 +56,17 @@ pub fn get_line() -> String {
     CURRENT_LINE.lock().clone()
 }
 
-/** USER: popualtes current line with last issued command, if any*/
-
+/** USER: populates current line with last issued command, if any*/
 pub fn history_up() {
     let hist = HISTORY_BUFFER.lock();
     let mut it = *HISTORY_IT.lock();
 
     it += 1;
-    if it > hist.len() - 1 {
-        it = hist.len() - 1;
+    if it > hist.len() {
+        it = hist.len();
     }
-    let s = hist[(hist.len() - it) - 1].clone();
+    let s = hist[(hist.len() - it)].clone();
+    println!("up com {} len {} it {}", s, hist.len(), it);
     *HISTORY_IT.lock() = it;
     *CURRENT_LINE.lock() = s.clone();
     *LOG_DIRTY.lock() = true;
@@ -78,10 +79,16 @@ pub fn history_down() {
     if it > 0 {
         it -= 1;
     }
-    let s = hist[(hist.len() - it) - 1].clone();
+
+    if it > 0 {
+        let s = hist[(hist.len() - it)].clone();
+        *CURRENT_LINE.lock() = s.clone();
+        *LOG_DIRTY.lock() = true;
+    } else {
+        *CURRENT_LINE.lock() = "".to_string();
+        *LOG_DIRTY.lock() = true;
+    }
     *HISTORY_IT.lock() = it;
-    *CURRENT_LINE.lock() = s.clone();
-    *LOG_DIRTY.lock() = true;
 }
 
 /** USER: backspace, remove character from current line, if any */
