@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::model::{get_model, Model};
 use image::{ImageBuffer, RgbaImage};
+use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use once_cell::sync::OnceCell;
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
@@ -188,7 +189,53 @@ impl Gui {
         self.dirty = true;
     }
 
-    pub fn enable_output(&mut self) {
+    pub fn square(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let width = self.size[0];
+        let height = self.size[1];
+
+        let xx = x.max(0.) * width as f32;
+        let yy = y.max(0.) * height as f32;
+        let ww = (w.max(0.) * width as f32).max(1.);
+        let hh = (h.max(0.) * height as f32).max(1.);
+        // let mut im = RgbaImage::new(w, h);
+        // image::imageops::overlay(&mut self.main, &mut im, x, y);
+        draw_filled_rect_mut(
+            &mut self.main,
+            imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
+            image::Rgba([255, 255, 255, 255]),
+        );
+
+        self.dirty = true;
+    }
+
+    pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
+        let width = self.size[0];
+        let height = self.size[1];
+
+        let xx1 = x1.max(0.) * width as f32;
+        let yy1 = y1.max(0.) * height as f32;
+        let xx2 = x2.max(0.) * width as f32;
+        let yy2 = y2.max(0.) * height as f32;
+        // let mut im = RgbaImage::new(w, h);
+        // image::imageops::overlay(&mut self.main, &mut im, x, y);
+
+        let white = image::Rgba([255, 255, 255, 255]);
+        imageproc::drawing::draw_line_segment_mut(&mut self.main, (xx1, yy1), (xx2, yy2), white);
+        // draw_line_mut(
+        //     &mut self.main,
+        //     imageproc::point::Point::new(xx1 as i32, yy1 as i32),
+        //     imageproc::point::Point::new(xx2 as i32, yy2 as i32),
+        //     image::Rgba([255, 255, 255, 255]),
+        // );
+        self.dirty = true;
+    }
+
+    pub fn clean(&mut self) {
+        self.main = RgbaImage::new(self.size[0], self.size[1]);
+        self.dirty = true;
+    }
+
+    pub fn enable_console(&mut self) {
         self.text = crate::log::get(
             (self.size[0] / 5 - 2) as usize,
             (self.size[1] / 5 - 8) as usize,
@@ -196,7 +243,7 @@ impl Gui {
         self.output = true;
         self.apply_text();
     }
-    pub fn disable_output(&mut self) {
+    pub fn disable_console(&mut self) {
         self.text = "".to_string();
         self.output = false;
         self.apply_text();

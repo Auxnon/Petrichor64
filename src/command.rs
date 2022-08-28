@@ -610,6 +610,27 @@ pub fn init_lua_sys(
         "Make sound"
     );
 
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "sqr",
+        move |_, (x, y, w, h): (f32, f32, f32, f32)| {
+            pitcher.send((MainCommmand::Square, x, y, w, h));
+            Ok(())
+        },
+        "Draw a square on the gui"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "line",
+        move |_, (x, y, x2, y2): (f32, f32, f32, f32)| {
+            pitcher.send((MainCommmand::Line, x, y, x2, y2));
+            Ok(())
+        },
+        "Draw a line on the gui"
+    );
+
     lua!(
         "_self_destruct",
         |_, (): ()| {

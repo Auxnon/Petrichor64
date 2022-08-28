@@ -561,6 +561,11 @@ impl Core {
         gui.add_text("initialized".to_string());
         gui.add_img(&"map.tile.png".to_string());
 
+        let global = Global::new();
+        if global.console {
+            gui.enable_console()
+        }
+
         let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
 
         // let mut post = Gui::new(post_pipeline, post_group, post_texture, post_image);
@@ -593,7 +598,7 @@ impl Core {
             // view_matrix: mx_view,
             // perspective_matrix: mx_persp,
             render_pipeline,
-            global: Global::new(),
+            global,
             switch_board: Arc::clone(&switch_board),
             post,
             gui,
@@ -718,6 +723,12 @@ impl Core {
                             self.global.mouse_active_pos = vec2(p.1, p.2);
                             // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                         }
+                        MainCommmand::Square => {
+                            self.gui.square(p.1, p.2, p.3, p.4);
+                        }
+                        MainCommmand::Line => {
+                            self.gui.line(p.1, p.2, p.3, p.4);
+                        }
                         _ => {}
                     };
                     // p.5.send(true);
@@ -801,12 +812,18 @@ fn main() {
 
     match crate::asset::check_for_auto() {
         Some(s) => {
+            core.global.console = false;
+            core.gui.disable_console();
             crate::command::reset(&mut core);
             crate::command::load_from_string(&mut core, Some(s));
         }
         _ => {
             #[cfg(feature = "include_auto")]
+            {
+                core.global.console = false;
+                core.gui.disable_console();
             crate::command::reload(&mut core);
+            }
         }
     }
 
