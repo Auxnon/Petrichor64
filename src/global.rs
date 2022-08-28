@@ -26,7 +26,7 @@ impl Global {
     pub fn new() -> Global {
         Global {
             values: HashMap::new(),
-            console: false,
+            console: true,
             game_controller: false,
             mouse_active_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),

@@ -677,6 +677,7 @@ fn res(target: &str, r: Result<(), Error>) {
 pub fn reset(core: &mut Core) {
     crate::texture::reset();
     crate::model::reset();
+    core.gui.clean();
 
     core.lua_master.die();
     core.world.destroy_it_all();

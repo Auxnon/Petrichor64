@@ -150,9 +150,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         core.global.console = !core.global.console;
         if core.global.console {
             // crate::log::add("$load".to_string());
-            core.gui.enable_output()
+            core.gui.enable_console()
         } else {
-            core.gui.disable_output()
+            core.gui.disable_console()
         }
     } else if core.global.console {
         if input_helper.key_released(VirtualKeyCode::Return) {
