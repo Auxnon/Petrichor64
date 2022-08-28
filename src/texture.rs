@@ -427,75 +427,32 @@ fn get_name(str: String, from_unpack: bool) -> (String, bool) {
     }
 }
 
-pub fn load_tex_from_img(str: String, im: &Vec<gltf::image::Data>) {
+pub fn load_tex_from_img(short_name: String, path: String, im: &Vec<gltf::image::Data>) -> Vec4 {
     let pvec = im
         .iter()
         .flat_map(|d| d.pixels.as_slice().to_owned())
         .collect::<Vec<_>>();
 
-    let (actual_name, _) = get_name(str, false);
-    lg!("inject image {} from buffer", actual_name);
+    // println!("HI🟣🟣🟣🟣🟣🟣🟣");
+    // let (actual_name, _) = get_name(str, false);
 
     let mut pos = Vec4::new(0., 0., 0., 0.);
     let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
         Some(o) => o,
         None => {
             error("Failed to load texture from mesh".to_string());
-            DICTIONARY.write().insert(actual_name, pos);
-            return;
+            DICTIONARY.write().insert(short_name, pos);
+            return vec4(1., 1., 0., 0.);
         }
     };
 
-    // let pp = image::ImageBuffer::from_raw(128, 128, pvec.as_slice());
-
-    //let pvec = im.iter().flat_map(|d| d.into()).collect::<Vec<_>>();
-
-    // let pixels = pvec.as_slice();
-    // println!("pixels length {}", (pixels.len() as f32).sqrt());
-
-    // for i in pixels {
-    //     print!("{},", i);
-    // }
-
-    //let v=im.as_chunks().;
-
-    //let o = im.into_iter().zip(); //.map(|d| d.pixels);
-
-    //let k = o.into_iter().map(|d| d.to_owned().as_slice()).collect();
-    // let u = im
-    //     .iter()
-    //     .flat_map(|d| d.pixels)
-    //     .collect::<[u8]>()
-    //     .try_into()
-    //     .unwrap();
-    //let u = im.iter().map(|d| d.pixels.as_slice()).collect::<[u8]>();
-    //let u = im.iter().map(|d| d.pixels.as_slice()).;
-
-    // image::save_buffer_with_format(
-    //     "assets/pic.png",
-    //     &image_buffer,
-    //     64,
-    //     64,
-    //     image::ColorType::Rgba8,
-    //     image::ImageFormat::Png,
-    // );
-
-    //image::guess_format(buffer)
-
-    /*
-    match image::load_from_memory(&po) {
-        Ok(i) => {
-            println!("image is {} {}", i.width(), i.height());
-            pos = locate(i.into_rgba8());
-        }
-        Err(er) => {
-            error(format!("Cannot load in texture for mesh {} :: {}", str, er));
-        }
-    }*/
-
     pos = locate(image_buffer);
 
-    DICTIONARY.write().insert(actual_name, pos);
+    // println!("🔥inject image {} from buffe {}", short_name, pos);
+
+    DICTIONARY.write().insert(short_name.clone(), pos);
+    pos
+    // index_texture(short_name, pos);
 }
 
 /** return texture uv coordinates from a given texture name */

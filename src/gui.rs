@@ -8,18 +8,25 @@ use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use once_cell::sync::OnceCell;
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
+const LETTER_SIZE: u32 = 6;
+const GUI_DIM: u32 = 480;
+
 pub struct Gui {
     pub gui_pipeline: wgpu::RenderPipeline,
     pub gui_group: wgpu::BindGroup,
     pub model: Arc<OnceCell<Model>>,
     pub texture: Texture,
     text: String,
+    /** main game rendered gui raster to stay in memory if toggled to console */
     pub main: RgbaImage,
+    /** console raster with current output to stay in memory*/
     pub console: RgbaImage,
 
     time: f32,
     pub letters: RgbaImage,
     pub size: [u32; 2],
+    // console_dity: bool,
+    // main_dirty: bool,
     dirty: bool,
     output: bool,
 }
@@ -33,7 +40,7 @@ impl Gui {
     ) -> Gui {
         let d = img.dimensions();
 
-        let letters = match crate::texture::load_img(&"4x4unicode.png".to_string()) {
+        let letters = match crate::texture::load_img(&"6x6unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {
                 #[cfg(not(windows))]
@@ -50,7 +57,7 @@ impl Gui {
                     };
                 }
 
-                let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "4x4unicode.png"));
+                let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "6x6unicode.png"));
                 crate::texture::load_img_from_buffer(d)
                     .unwrap()
                     .into_rgba8()
@@ -98,12 +105,18 @@ impl Gui {
                             .map(|d| d.to_digit(10).unwrap())
                             .collect();
                         for (i, d) in digits.into_iter().enumerate() {
-                            let sub = image::imageops::crop_imm(&self.letters, d * 4, 12, 4, 4);
+                            let sub = image::imageops::crop_imm(
+                                &self.letters,
+                                d * LETTER_SIZE,
+                                12,
+                                LETTER_SIZE,
+                                LETTER_SIZE,
+                            );
                             // let imm: &ImageBuffer<Rgba<u8>, Vec<u8>> = sub.inner();
                             image::imageops::replace(
                                 &mut im,
                                 &mut sub.to_image(),
-                                (x * 16 + i as u32 * 5).into(),
+                                (x * 16 + i as u32 * (LETTER_SIZE + 1)).into(),
                                 (y * 16).into(),
                             );
                         }
@@ -152,8 +165,8 @@ impl Gui {
         // };
         // image::imageops::dither(&mut self.img, &col {});
         for (i, line) in self.text.lines().enumerate() {
-            let y = i as i64 * 6;
-            let mut x = 4;
+            let y = i as i64 * (LETTER_SIZE as i64 + 2);
+            let mut x = (LETTER_SIZE) as i64;
             for c in line.chars() {
                 let mut ind = c as u32;
                 // let res = c.to_digit(36);
@@ -177,10 +190,16 @@ impl Gui {
                 let index_x = ind % 16;
                 let index_y = ind / 16;
                 //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
-                let sub = image::imageops::crop_imm(&self.letters, index_x * 4, index_y * 4, 4, 4);
+                let sub = image::imageops::crop_imm(
+                    &self.letters,
+                    index_x * LETTER_SIZE,
+                    index_y * LETTER_SIZE,
+                    LETTER_SIZE,
+                    LETTER_SIZE,
+                );
                 //sub.to_image().
                 image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);
-                x += 5;
+                x += (LETTER_SIZE + 1) as i64;
             }
         }
 
@@ -237,8 +256,8 @@ impl Gui {
 
     pub fn enable_console(&mut self) {
         self.text = crate::log::get(
-            (self.size[0] / 5 - 2) as usize,
-            (self.size[1] / 5 - 8) as usize,
+            (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
+            (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
         );
         self.output = true;
         self.apply_text();
@@ -262,8 +281,8 @@ impl Gui {
         self.time = time;
         if self.output && crate::log::is_dirty() {
             self.text = crate::log::get(
-                (self.size[0] / 5 - 2) as usize,
-                (self.size[1] / 5 - 8) as usize,
+                (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
+                (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
             );
             self.apply_text();
             crate::log::clean();
@@ -339,9 +358,9 @@ pub fn init_image(
     queue: &Queue,
     aspect: f32,
 ) -> (TextureView, Sampler, Texture, RgbaImage) {
-    let h = (256. / aspect).ceil() as u32;
+    let h = (GUI_DIM as f32 / aspect).ceil() as u32;
     println!("aspect {}", h);
-    let mut img: RgbaImage = ImageBuffer::new(256, h);
+    let mut img: RgbaImage = ImageBuffer::new(GUI_DIM, h);
     img.put_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
     let out = crate::texture::make_tex(device, queue, &img);
     (out.0, out.1, out.2, img)
