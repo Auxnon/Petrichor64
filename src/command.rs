@@ -1,6 +1,7 @@
 use crate::{
     lua_define::MainPacket,
     lua_ent::LuaEnt,
+    online::MovePacket,
     pad::Pad,
     sound::SoundPacket,
     switch_board::SwitchBoard,
@@ -16,7 +17,7 @@ use std::{
     path::Path,
     rc::Rc,
     sync::{
-        mpsc::{Sender, SyncSender},
+        mpsc::{Receiver, SendError, Sender, SyncSender},
         Arc,
     },
 };
@@ -73,6 +74,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             }
         }
         "$load" => {
+            reset(core);
             load(
                 core,
                 if segments.len() > 1 {
@@ -138,6 +140,7 @@ pub fn init_lua_sys(
     switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    net_sender: Option<(Sender<MovePacket>, Receiver<MovePacket>)>,
     singer: Sender<SoundPacket>,
     bits: Rc<Mutex<[bool; 256]>>,
     gamepad: Rc<Mutex<Pad>>,
@@ -614,7 +617,7 @@ pub fn init_lua_sys(
     lua!(
         "instr",
         move |_, (length, notes, amps): (f32, Vec<f32>, Option<Vec<f32>>)| {
-            println!("freqs {:?}", notes);
+            // println!("freqs {:?}", notes);
 
             singer.send((
                 -2.,
@@ -645,6 +648,36 @@ pub fn init_lua_sys(
         "line",
         move |_, (x, y, x2, y2): (f32, f32, f32, f32)| {
             pitcher.send((MainCommmand::Line, x, y, x2, y2));
+            Ok(())
+        },
+        "Draw a line on the gui"
+    );
+
+    lua!(
+        "net",
+        move |_, (x, y, z): (f32, f32, f32)| {
+            crate::lg!("net");
+            match &net_sender {
+                Some((nin, nout)) => {
+                    // crate::lg!("send from com");
+                    match nin.send(vec![x, y, z]) {
+                        Ok(d) => {}
+                        Err(e) => {
+                            // println!("damn we got {}", e);
+                        }
+                    }
+                    match nout.try_recv() {
+                        Ok(r) => {
+                            crate::lg!("udp {:?}", r);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {
+                    crate::lg!("ain't got no online");
+                }
+            }
+            // pitcher.send((MainCommmand::Line, x, y, x2, y2));
             Ok(())
         },
         "Draw a line on the gui"
@@ -883,4 +916,15 @@ pub enum MainCommmand {
     Square,
     CamPos,
     CamRot,
+}
+
+macro_rules! lg{
+    ($($arg:tt)*) => {{
+           {
+            let st=format!("command::{}",format!($($arg)*));
+            println!("{}",st);
+            crate::log::log(st);
+           }
+       }
+   }
 }

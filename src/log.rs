@@ -145,7 +145,7 @@ pub fn _print(str: String, skip_first: bool) {
 }
 
 pub fn get(width: usize, height: usize) -> String {
-    println!("get len {}, height{}", BUFFER.lock().len(), height);
+    // println!("get len {}, height{}", BUFFER.lock().len(), height);
     let l = BUFFER.lock().len();
 
     let mut buf = if l < height {
@@ -168,4 +168,16 @@ pub fn is_dirty() -> bool {
 }
 pub fn clean() {
     *LOG_DIRTY.lock() = false;
+}
+
+#[macro_export]
+macro_rules! lg{
+    ($($arg:tt)*) => {{
+           {
+            let st=format!("::{}",format!($($arg)*));
+            println!("{}",st);
+            crate::log::log(st);
+           }
+       }
+   }
 }

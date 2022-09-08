@@ -246,6 +246,13 @@ function loop()
         end
     end
 
+    if key("space") then
+        bg(1, 0, 0)
+        net(7, 6, 0)
+    else
+        bg(0.1, 1., 1.)
+    end
+
     d = d + ddir
     if d > 1 then
         ddir = -ddir

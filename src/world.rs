@@ -169,10 +169,10 @@ impl World {
                                 let ix = chunk.pos.x.div_euclid(16) * 16;
                                 let iy = chunk.pos.y.div_euclid(16) * 16;
                                 let iz = chunk.pos.z.div_euclid(16) * 16;
-                                println!(
-                                    "populate new model chunk {} {} {} {}",
-                                    chunk.key, ix, iy, iz
-                                );
+                                // println!(
+                                //     "populate new model chunk {} {} {} {}",
+                                //     chunk.key, ix, iy, iz
+                                // );
                                 let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
                                 model.build_chunk(chunk);
                                 model.cook(device);

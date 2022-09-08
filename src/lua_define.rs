@@ -354,9 +354,16 @@ fn start(
     let (pitcher, catcher) = channel::<MainPacket>();
 
     let mut online = false;
+    let mut closer = None;
     let net = match crate::online::init() {
         Ok((nout, nin)) => {
-            online = true;
+            match nout.send(vec![0f32; 3]) {
+                Ok(s) => {
+                    closer = Some(nout.clone());
+                    online = true;
+                }
+                Err(e) => println!("pre send failed at {}", e),
+            }
             Some((nout, nin))
         }
         _ => None,
@@ -390,6 +397,7 @@ fn start(
             switch_board,
             pitcher,
             world_sender,
+            net,
             singer,
             Rc::clone(&bit_mutex),
             Rc::clone(&pads),
@@ -470,7 +478,16 @@ fn start(
             // drop(pd);
 
             if s1 == "load" {
+                // println!("load 1{}", s2);
                 if s2 == "_self_destruct" {
+                    // println!("closing 1");
+                    match closer {
+                        Some(n) => {
+                            // println!("closing 2");
+                            n.send(vec![-99., 0., 0.]);
+                        }
+                        _ => {}
+                    }
                     break;
                 } else {
                     lua_load(&lua_ctx, &s2);

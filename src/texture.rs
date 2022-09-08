@@ -656,7 +656,9 @@ pub fn set_anims(name: &String, frames: Vec<Vec4>, animation_speed: u32) {
 macro_rules! lg{
     ($($arg:tt)*) => {{
            {
-            crate::log::log(format!("🎨texture::{}",format!($($arg)*)));
+            let st=format!("🎨texture::{}",format!($($arg)*));
+            println!("{}",st);
+            crate::log::log(st);
            }
        }
    }

@@ -251,12 +251,12 @@ where
                         Some(i) => i,
                         None => 0,
                     };
-                    println!(
-                        "channel {} and volume divisor {} from length {}",
-                        channel,
-                        instrument_diviser,
-                        instrument.len()
-                    );
+                    // println!(
+                    //     "channel {} and volume divisor {} from length {}",
+                    //     channel,
+                    //     instrument_diviser,
+                    //     instrument.len()
+                    // );
                     occupied[channel] = true;
                     // note, timer, current_level aka volume, channel
                     notes.push((1., packet.1, 0., channel));

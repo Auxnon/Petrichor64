@@ -267,10 +267,10 @@ impl ChunkModel {
             contents: bytemuck::cast_slice(&self.ind_data),
             usage: wgpu::BufferUsages::INDEX,
         });
-        log(format!(
-            "cooked with tile indicie data: {}",
-            self.ind_data.len()
-        ));
+        // log(format!(
+        //     "cooked with tile indicie data: {}",
+        //     self.ind_data.len()
+        // ));
         self.buffers = Some((vertex_buf, index_buf));
         // self.dirty = false;
     }

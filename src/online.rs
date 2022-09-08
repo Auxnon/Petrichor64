@@ -6,15 +6,23 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
+use futures::{FutureExt, Stream};
+use tokio::{io, net::UdpSocket, sync::mpsc};
+
 pub type MovePacket = Vec<f32>;
 pub type MoveReponse = f32;
 
-#[tokio::main]
-pub async fn init() -> Result<(Sender<MovePacket>, Receiver<MovePacket>), Box<dyn Error>> {
+pub fn init() -> Result<
+    (
+        Sender<MovePacket>,
+        Receiver<MovePacket>, // ,Result<(), Box<dyn Error>>, //impl futures::Future<Output = Result<(), Box<dyn Error>>>,
+    ),
+    Box<dyn Error>,
+> {
     let tcp = true;
 
     // Parse what address we're going to connect to
-    let addr = "127.0.0.1:6142";
+    let addr = "127.0.0.1:6142"; //6142
     let addr = addr.parse::<SocketAddr>()?;
     // world_sender:
 
@@ -30,126 +38,249 @@ pub async fn init() -> Result<(Sender<MovePacket>, Receiver<MovePacket>), Box<dy
     // if tcp {
     //     tcp::connect(&addr, stdin, stdout).await?;
     // } else {
-    udp::connect(&addr, netin_send, netout_recv).await?;
-    // }
+    crate::lg!("online starting..");
+    // MARK we must poll this somehow
+    let h = std::thread::spawn(move || {
+        // futures::executor::block_on(
+
+        run(addr, netin_send, netout_recv);
+    });
+
+    // make_instance();
+    crate::lg!("online on");
     Ok((netout_send, netin_recv))
 }
 
-mod tcp {
-    use bytes::Bytes;
-    use futures::{future, Sink, SinkExt, Stream, StreamExt};
-    use std::{error::Error, io, net::SocketAddr};
-    use tokio::net::TcpStream;
-    use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
+#[tokio::main(flavor = "multi_thread")]
+async fn run(
+    addr: SocketAddr,
+    netin: Sender<MovePacket>,
+    netout: Receiver<MovePacket>,
+) -> Result<(), Box<dyn Error>> {
+    //impl futures::Future<Output = Result<(), Box<(dyn Error)>>> {
+    let socket = create_socket(addr).await;
+    // let socket2 = create_socket(addr).await;
+    let re = udp::connect(socket, netin, netout).await;
+    println!("🟣🟢🔴 terminated socket");
+    re
+}
 
-    pub async fn connect(
-        addr: &SocketAddr,
-        mut stdin: impl Stream<Item = Result<Bytes, io::Error>> + Unpin,
-        mut stdout: impl Sink<Bytes, Error = io::Error> + Unpin,
-    ) -> Result<(), Box<dyn Error>> {
-        let mut stream = TcpStream::connect(addr).await?;
-        let (r, w) = stream.split();
-        let mut sink = FramedWrite::new(w, BytesCodec::new());
-        // filter map Result<BytesMut, Error> stream into just a Bytes stream to match stdout Sink
-        // on the event of an Error, log the error and end the stream
-        let mut stream = FramedRead::new(r, BytesCodec::new())
-            .filter_map(|i| match i {
-                //BytesMut into Bytes
-                Ok(i) => future::ready(Some(i.freeze())),
-                Err(e) => {
-                    println!("failed to read from socket; error={}", e);
-                    future::ready(None)
-                }
-            })
-            .map(Ok);
+async fn create_socket(addr: SocketAddr) -> UdpSocket {
+    let bind_addr = if addr.ip().is_ipv4() {
+        "0.0.0.0:3186"
+    } else {
+        "[::]:0"
+    };
 
-        match future::join(sink.send_all(&mut stdin), stdout.send_all(&mut stream)).await {
-            (Err(e), _) | (_, Err(e)) => Err(e.into()),
-            _ => Ok(()),
+    let socket = match UdpSocket::bind(bind_addr).await {
+        Err(e) => {
+            eprintln!("🟣🟢🔴 sock_bind_err {}", e);
+            panic!("hi")
+        }
+        Ok(s) => {
+            println!("🟣🟢 sock made");
+            s
+        }
+    };
+
+    match socket.connect(addr).await {
+        Err(e) => {
+            eprintln!("🟣🟢🔴 sock_con_err {}", e);
+        }
+        _ => {
+            println!("🟣🟢 sock connected {}", addr);
         }
     }
+
+    // let (mut socket_sink, socket_stream) = UdpFramed::new(socket, BytesCodec::new()).split();
+    // socket.set_reuse_address(true)
+    return socket;
 }
 
 mod udp {
-    use bytes::Bytes;
-    use futures::{Sink, SinkExt, Stream, StreamExt};
+    use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt};
     use std::error::Error;
-    use std::io;
-    use std::net::SocketAddr;
     use std::sync::mpsc::{Receiver, Sender};
+    use std::sync::Arc;
+    use std::{io, thread};
     use tokio::net::UdpSocket;
+
+    use crate::lg;
 
     use super::MovePacket;
 
     pub async fn connect(
-        addr: &SocketAddr,
+        // addr: SocketAddr,
+        socket: UdpSocket,
+        // socket2: UdpSocket,
         // stdin: impl Stream<Item = Result<Bytes, io::Error>> + Unpin,
         // stdout: impl Sink<Bytes, Error = io::Error> + Unpin,
         netin: Sender<MovePacket>,
         netout: Receiver<MovePacket>,
     ) -> Result<(), Box<dyn Error>> {
-        // We'll bind our UDP socket to a local IP/port, but for now we
-        // basically let the OS pick both of those.
-        let bind_addr = if addr.ip().is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        };
+        let sock1 = Arc::new(socket);
+        let sock2 = sock1.clone();
 
-        let socket = UdpSocket::bind(&bind_addr).await?;
-        socket.connect(addr).await?;
+        let task1 = tokio::spawn(send(sock1, netin));
+        let task2 = tokio::spawn(recv(sock2, netout));
 
-        tokio::try_join!(send(netout, &socket), recv(netin, &socket))?;
+        tokio::try_join!(
+            async move {
+                match task1.await {
+                    Err(e) => {
+                        println!("task1 erroring");
+                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
+                    }
+                    Ok(o) => match o {
+                        Ok(m) => Ok(()),
+                        Err(e) => Err(e),
+                    },
+                }
+            },
+            async move {
+                match task2.await {
+                    Err(e) => {
+                        println!("task2 erroring");
+                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
+                    }
+                    Ok(o) => match o {
+                        Ok(m) => Ok(()),
+                        Err(e) => Err(e),
+                    },
+                }
+            }
+        )?;
+        // manager.abort()
+
+        lg!("online looping complete");
 
         Ok(())
     }
 
-    async fn send(
-        // mut stdin: impl Stream<Item = Result<Bytes, io::Error>> + Unpin,
-        netout: Receiver<MovePacket>,
-        writer: &UdpSocket,
-    ) -> Result<(), io::Error> {
-        // while let Some(item) = stdin.next().await {
-        //     let buf = item?;
-        //     writer.send(&buf[..]).await?;
-        // }
+    pub async fn send(socket: Arc<UdpSocket>, netin: Sender<MovePacket>) -> Result<(), io::Error> {
+        // println!("🟣 entry");
+
         loop {
-            match netout.recv() {
-                Ok(p) => {
-                    let p2 = p.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
-                    writer.send(&p2).await?;
+            // println!("🟣 in start");
+
+            let mut out_buf = [0u8; 3];
+
+            match socket.recv(&mut out_buf[..]).await {
+                Ok(b) => {
+                    let p = out_buf
+                        .iter()
+                        .map(|u| (*u as f32) / 100.)
+                        .collect::<Vec<f32>>();
+                    println!("🟣 netin recv {:?}", p);
+                    netin.send(p);
+                }
+                // Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                //     continue;
+                // }
+                Err(e) => {
+                    println!("🟣🔴 recv err:{}", e);
+                    // break;
+                }
+            }
+
+            // println!("🟣 in end");
+        }
+        Ok(())
+    }
+
+    pub async fn recv(
+        socket: Arc<UdpSocket>,
+        netout: Receiver<MovePacket>,
+    ) -> Result<(), io::Error> {
+        // println!("🟢 entry");
+        loop {
+            // println!("🟢 out start");
+            let cmd = netout.recv();
+            match cmd {
+                Ok(v) => {
+                    if (v[0] == -99.) {
+                        let e = std::io::Error::new(std::io::ErrorKind::Other, "closing!");
+                        // println!("🟢 trigger close");
+                        return Err(e);
+                    }
+                    let b = v.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
+                    // println!("🟢 netout recv {:?}", b);
+                    socket.send(&b).await?;
                 }
                 Err(e) => {
-                    return Err(io::Error::new(io::ErrorKind::Interrupted, e));
+                    // eprintln!("🟢🔴 err_recv: {}", e);
+                    // break;
+                    // retur
                 }
             }
+            // println!("🟢 out end");
         }
 
         Ok(())
     }
 
-    async fn recv(
-        // mut stdout: impl Sink<Bytes, Error = io::Error> + Unpin,
+    fn create(netin: Sender<MovePacket>, netout: Receiver<MovePacket>, socket: UdpSocket) {
+        tokio::task::spawn(run(netin, netout, socket));
+    }
+
+    //#[tokio::main]
+    async fn run(
         netin: Sender<MovePacket>,
-        reader: &UdpSocket,
+        netout: Receiver<MovePacket>,
+        socket: UdpSocket,
     ) -> Result<(), io::Error> {
-        loop {
-            let mut buf = vec![0; 1024];
-            let n = reader.recv(&mut buf[..]).await?;
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                println!("Hello world");
 
-            if n > 0 {
-                // let b = Bytes::from(buf);
-                netin.send(buf.iter().map(|x| (*x as f32) / 100.).collect());
+                loop {
+                    let to_send = match netout.try_recv() {
+                        Ok(p) => {
+                            println!("yes we a lua send in");
+                            Some(p)
+                        }
+                        _ => {
+                            println!("loop, no lua in packet");
+                            None
+                        }
+                    };
 
-                // match{
-                //     std::sync::mpsc::SendError(e) => {
-                //         return Err(e);
-                //     }
-                //     _ => {}
-                // };
-                // stdout.send(b).await?;
-            }
-        }
-        Ok(())
+                    //MARK confirmed that this works, so the mpsc channel is just closing to early, like the sender is being dropped somehow???
+                    let to_send = Some(vec![0., 3., 4.]);
+
+                    if let Some(p) = to_send {
+                        let b = p.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
+                        let amt = socket.send(&b).await?;
+                        println!("eched back {:?}", std::thread::current().id());
+                    }
+                    let mut out_buf = [0u8; 3];
+
+                    match socket.try_recv(&mut out_buf) {
+                        Ok(b) => {
+                            let p = out_buf
+                                .iter()
+                                .map(|u| (*u as f32) / 100.)
+                                .collect::<Vec<f32>>();
+                            netin.send(p);
+                        }
+                        _ => {}
+                    }
+
+                    match socket.try_recv_from(&mut out_buf) {
+                        Ok((n, _addr)) => {
+                            println!("GOT {:?}", &out_buf[..3]);
+                            // break;
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    println!("read some stuff {:?}", std::thread::current().id());
+                }
+            })
     }
 }

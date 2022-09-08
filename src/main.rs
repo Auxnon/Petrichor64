@@ -753,7 +753,7 @@ impl Core {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
-            println!("fps::{}", self.global.fps);
+            // println!("fps::{}", self.global.fps);
         }
 
         let s = render::render_loop(self, self.global.iteration);
