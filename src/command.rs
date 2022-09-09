@@ -147,6 +147,11 @@ pub fn init_lua_sys(
 ) -> Result<(), Error> {
     println!("init lua sys");
 
+    let (netout, netin) = match net_sender {
+        Some((nout, nin)) => (Some(nout), Some(nin)),
+        _ => (None, None),
+    };
+
     let default_func = lua_ctx
         .create_function(|_, _: f32| Ok("placeholder func uwu"))
         .unwrap();
@@ -654,33 +659,47 @@ pub fn init_lua_sys(
     );
 
     lua!(
-        "net",
+        "send",
         move |_, (x, y, z): (f32, f32, f32)| {
-            crate::lg!("net");
-            match &net_sender {
-                Some((nin, nout)) => {
-                    // crate::lg!("send from com");
-                    match nin.send(vec![x, y, z]) {
+            // crate::lg!("net");
+            match &netout {
+                Some(nout) => {
+                    // crate::lg!("send from com {},{}", x, y);
+                    match nout.send(vec![x, y, z]) {
                         Ok(d) => {}
                         Err(e) => {
                             // println!("damn we got {}", e);
                         }
                     }
-                    match nout.try_recv() {
+                }
+                _ => {
+                    // crate::lg!("ain't got no online");
+                }
+            }
+            Ok(())
+        },
+        "Send UDP"
+    );
+    lua!(
+        "recv",
+        move |_, _: ()| {
+            match &netin {
+                Some(nin) => {
+                    match nin.try_recv() {
                         Ok(r) => {
-                            crate::lg!("udp {:?}", r);
+                            return Ok(r);
+                            // crate::lg!("udp {:?}", r);
                         }
                         _ => {}
                     }
                 }
                 _ => {
-                    crate::lg!("ain't got no online");
+                    // crate::lg!("ain't got no online");
                 }
             }
-            // pitcher.send((MainCommmand::Line, x, y, x2, y2));
-            Ok(())
+            Ok(vec![0., 0., 0.])
         },
-        "Draw a line on the gui"
+        "Recieve UDP"
     );
 
     lua!(

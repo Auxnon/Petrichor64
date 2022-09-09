@@ -7,7 +7,11 @@ use std::{
 };
 
 use futures::{FutureExt, Stream};
-use tokio::{io, net::UdpSocket, sync::mpsc};
+use tokio::{
+    io::{self, AsyncWriteExt},
+    net::UdpSocket,
+    sync::mpsc,
+};
 
 pub type MovePacket = Vec<f32>;
 pub type MoveReponse = f32;
@@ -22,7 +26,8 @@ pub fn init() -> Result<
     let tcp = true;
 
     // Parse what address we're going to connect to
-    let addr = "127.0.0.1:6142"; //6142
+    // let addr = "127.0.0.1:6142"; //6142
+    let addr = "73.101.41.242:6142";
     let addr = addr.parse::<SocketAddr>()?;
     // world_sender:
 
@@ -67,7 +72,7 @@ async fn run(
 
 async fn create_socket(addr: SocketAddr) -> UdpSocket {
     let bind_addr = if addr.ip().is_ipv4() {
-        "0.0.0.0:3186"
+        "0.0.0.0:0"
     } else {
         "[::]:0"
     };
@@ -99,6 +104,7 @@ async fn create_socket(addr: SocketAddr) -> UdpSocket {
 
 mod udp {
     use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt};
+    use std::convert::TryInto;
     use std::error::Error;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Arc;
@@ -163,16 +169,17 @@ mod udp {
         loop {
             // println!("🟣 in start");
 
-            let mut out_buf = [0u8; 3];
+            let mut out_buf = [0u8; 16];
 
             match socket.recv(&mut out_buf[..]).await {
                 Ok(b) => {
-                    let p = out_buf
-                        .iter()
-                        .map(|u| (*u as f32) / 100.)
-                        .collect::<Vec<f32>>();
+                    // let p = out_buf
+                    //     .iter()
+                    //     .map(|u| (*u as f32) / 100.)
+                    //     .collect::<Vec<f32>>();
+                    let p = crate::online::tof32(&out_buf);
                     println!("🟣 netin recv {:?}", p);
-                    netin.send(p);
+                    netin.send(p.to_vec());
                 }
                 // Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 //     continue;
@@ -197,15 +204,29 @@ mod udp {
             // println!("🟢 out start");
             let cmd = netout.recv();
             match cmd {
-                Ok(v) => {
+                Ok(mut v) => {
                     if (v[0] == -99.) {
                         let e = std::io::Error::new(std::io::ErrorKind::Other, "closing!");
                         // println!("🟢 trigger close");
                         return Err(e);
                     }
-                    let b = v.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
-                    // println!("🟢 netout recv {:?}", b);
+                    if v.len() < 4 {
+                        v.resize(4, 0.);
+                    }
+                    // v.split(pred)
+                    let f: [f32; 4] = v.try_into().unwrap();
+                    // let r = v.try_into();
+                    // match r {
+                    //     Ok(i) => {
+                    let b = crate::online::fromf32(&f);
                     socket.send(&b).await?;
+                    //     }
+                    //     Err(_) => {}
+                    // }
+
+                    // let b = crate::online::fromf32(&.unwrap());
+                    // let b = v.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
+                    // println!("🟢 netout recv {:?}", b);
                 }
                 Err(e) => {
                     // eprintln!("🟢🔴 err_recv: {}", e);
@@ -219,68 +240,117 @@ mod udp {
         Ok(())
     }
 
-    fn create(netin: Sender<MovePacket>, netout: Receiver<MovePacket>, socket: UdpSocket) {
-        tokio::task::spawn(run(netin, netout, socket));
-    }
+    // fn create(netin: Sender<MovePacket>, netout: Receiver<MovePacket>, socket: UdpSocket) {
+    //     tokio::task::spawn(run(netin, netout, socket));
+    // }
 
     //#[tokio::main]
-    async fn run(
-        netin: Sender<MovePacket>,
-        netout: Receiver<MovePacket>,
-        socket: UdpSocket,
-    ) -> Result<(), io::Error> {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                println!("Hello world");
+    // async fn run(
+    //     netin: Sender<MovePacket>,
+    //     netout: Receiver<MovePacket>,
+    //     socket: UdpSocket,
+    // ) -> Result<(), io::Error> {
+    //     tokio::runtime::Builder::new_multi_thread()
+    //         .enable_all()
+    //         .build()
+    //         .unwrap()
+    //         .block_on(async {
+    //             println!("Hello world");
 
-                loop {
-                    let to_send = match netout.try_recv() {
-                        Ok(p) => {
-                            println!("yes we a lua send in");
-                            Some(p)
-                        }
-                        _ => {
-                            println!("loop, no lua in packet");
-                            None
-                        }
-                    };
+    //             loop {
+    //                 let to_send = match netout.try_recv() {
+    //                     Ok(p) => {
+    //                         println!("yes we a lua send in");
+    //                         Some(p)
+    //                     }
+    //                     _ => {
+    //                         println!("loop, no lua in packet");
+    //                         None
+    //                     }
+    //                 };
 
-                    //MARK confirmed that this works, so the mpsc channel is just closing to early, like the sender is being dropped somehow???
-                    let to_send = Some(vec![0., 3., 4.]);
+    //                 //MARK confirmed that this works, so the mpsc channel is just closing to early, like the sender is being dropped somehow???
+    //                 let to_send = Some(vec![0., 3., 4.]);
 
-                    if let Some(p) = to_send {
-                        let b = p.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
-                        let amt = socket.send(&b).await?;
-                        println!("eched back {:?}", std::thread::current().id());
-                    }
-                    let mut out_buf = [0u8; 3];
+    //                 if let Some(p) = to_send {
+    //                     let b = p.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
+    //                     let amt = socket.send(&b).await?;
+    //                     println!("eched back {:?}", std::thread::current().id());
+    //                 }
+    //                 let mut out_buf = [0u8; 3];
 
-                    match socket.try_recv(&mut out_buf) {
-                        Ok(b) => {
-                            let p = out_buf
-                                .iter()
-                                .map(|u| (*u as f32) / 100.)
-                                .collect::<Vec<f32>>();
-                            netin.send(p);
-                        }
-                        _ => {}
-                    }
+    //                 match socket.try_recv(&mut out_buf) {
+    //                     Ok(b) => {
+    //                         let p = out_buf
+    //                             .iter()
+    //                             .map(|u| (*u as f32) / 100.)
+    //                             .collect::<Vec<f32>>();
+    //                         netin.send(p);
+    //                     }
+    //                     _ => {}
+    //                 }
 
-                    match socket.try_recv_from(&mut out_buf) {
-                        Ok((n, _addr)) => {
-                            println!("GOT {:?}", &out_buf[..3]);
-                            // break;
-                        }
-                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                            continue;
-                        }
-                        Err(e) => return Err(e),
-                    };
-                    println!("read some stuff {:?}", std::thread::current().id());
-                }
-            })
-    }
+    //                 match socket.try_recv_from(&mut out_buf) {
+    //                     Ok((n, _addr)) => {
+    //                         println!("GOT {:?}", &out_buf[..3]);
+    //                         // break;
+    //                     }
+    //                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+    //                         continue;
+    //                     }
+    //                     Err(e) => return Err(e),
+    //                 };
+    //                 println!("read some stuff {:?}", std::thread::current().id());
+    //             }
+    //         })
+    // }
 }
+
+pub fn fromf32(data: &[f32; 4]) -> [u8; 16] {
+    let mut res = [0; 16];
+    for i in 0..4 {
+        res[4 * i..][..4].copy_from_slice(&data[i].to_le_bytes());
+    }
+    res
+}
+
+pub fn tof32(data: &[u8; 16]) -> [f32; 4] {
+    let mut res = [0f32; 4];
+    for i in 0..4 {
+        let mut f = [0u8; 4];
+        f.copy_from_slice(&data[4 * i..][..4]);
+        res[i] = f32::from_le_bytes(f);
+    }
+    res
+}
+
+// pub fn convertf32(data: &[f32; 4]) -> [u8; 16] {
+//     let mut res = [0; 16];
+//     for i in 0..4 {
+//         res[4 * i..][..4].copy_from_slice(&data[i].to_le_bytes());
+//     }
+//     res
+// }
+
+// pub fn cf32(data: &[f32; 4]) {
+//     for i in 0..4 {
+//         data[i].to_le_bytes()
+//     }
+// }
+
+// fn test(f: [f32; 4]) {
+//     // let buf = Vec::with_capacity(1024).writer();
+//     f[0].to_be_bytes()
+
+//     // byteorder::
+//     assert_eq!(1024, buf.get_ref().capacity());
+// }
+
+// fn to_byte_slice<'a>(floats: &'a [f32]) -> &'a [u8] {
+//     // bytemuck::cast()
+//     unsafe { std::slice::from_raw_parts(floats.as_ptr() as *const _, floats.len() * 4) }
+// }
+
+// fn to_float_vec(b: [u8]) {
+//     let f = unsafe { b.align_to::<f32>() };
+// }

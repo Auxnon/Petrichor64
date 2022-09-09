@@ -297,12 +297,12 @@ function loop()
                 out[n] = notes[brass[n]]
             end
 
-            instr(3., out)
+            -- instr(3., out)
         end
     end
     last = newnote
 
-    camera.y = camera.y + 0.2
+    -- camera.y = camera.y + 0.2
     campos(camera.x, camera.y, camera.z)
 
 end
