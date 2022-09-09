@@ -714,6 +714,7 @@ pub fn init_lua_sys(
     Ok(())
 }
 
+/** Error dumping helper */
 fn res(target: &str, r: Result<(), Error>) {
     match r {
         Err(err) => {
@@ -726,6 +727,7 @@ fn res(target: &str, r: Result<(), Error>) {
     }
 }
 
+/** core game reset, drop all resources including lua */
 pub fn reset(core: &mut Core) {
     crate::texture::reset();
     crate::model::reset();
@@ -785,18 +787,19 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
                 } else {
                     match path.file_name() {
                         Some(file_name) => {
-                            let new_path = format!("{:?}.game.png", file_name);
+                            let new_path = format!("{}.game.png", file_name.to_str().unwrap_or(""));
+                            // println!("it is {}", new_path);
                             drop(file_name);
                             path.set_file_name(new_path);
                             if path.is_file() {
                                 let buff = crate::zip_pal::get_file_buffer_from_path(path);
                                 crate::asset::unpack(&core.device, &s, buff, &core.lua_master);
                             } else {
-                                err(format!("{} is not a file or directory", s));
+                                err(format!("{:?} ({}) is not a file or directory (1)", path, s));
                             }
                         }
                         None => {
-                            err(format!("{} is not a file or directory", s));
+                            err(format!("{} is not a file or directory (2)", s));
                         }
                     };
                 }
@@ -824,6 +827,7 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
     core.lua_master.call_main();
 }
 
+/** reset and load previously loaded gamer, OR reload the binary binded game if compiled with it*/
 pub fn reload(core: &mut Core) {
     reset(core);
     #[cfg(feature = "include_auto")]

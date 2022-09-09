@@ -79,57 +79,63 @@ pub fn get_file_buffer_from_path(path: PathBuf) -> Vec<u8> {
 pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer_from_path(thumb);
-    // let new_file = File::create(&Path::new("temp")).unwrap();
-    let v = Vec::new();
-    let c = Cursor::new(v);
+    if image.len() > 0 {
+        crate::lg!("using icon of {} bytes", image.len());
 
-    let mut zip = zip::ZipWriter::new(c);
-    let options = FileOptions::default();
+        // let new_file = File::create(&Path::new("temp")).unwrap();
+        let v = Vec::new();
+        let c = Cursor::new(v);
 
-    for source in sources {
-        //.to_string();
-        // zip.add_directory(s, options);
-        //zip::ZipWriter::start_file;
-        match zip.start_file(
-            &source,
-            options.compression_method(zip::CompressionMethod::Stored),
-        ) {
-            Ok(_) => {}
-            Err(err) => {
-                log(format!("zipping error: {}", err));
+        let mut zip = zip::ZipWriter::new(c);
+        let options = FileOptions::default();
+
+        for source in sources {
+            //.to_string();
+            // zip.add_directory(s, options);
+            //zip::ZipWriter::start_file;
+            match zip.start_file(
+                &source,
+                options.compression_method(zip::CompressionMethod::Stored),
+            ) {
+                Ok(_) => {}
+                Err(err) => {
+                    log(format!("zipping error: {}", err));
+                }
+            }
+
+            let buff = get_file_buffer(&source);
+            let buffy = buff.as_slice();
+            // println!("buffy size {} and source {}", buffy.len(), source);
+            let re = zip.write(buffy);
+            if re.is_err() {
+                log(format!("zipping error: {}", re.unwrap()));
+            } else {
+                // log(format!(println!(" zip buffy size? {}", re.unwrap()));
             }
         }
 
-        let buff = get_file_buffer(&source);
-        let buffy = buff.as_slice();
-        // println!("buffy size {} and source {}", buffy.len(), source);
-        let re = zip.write(buffy);
-        if re.is_err() {
-            log(format!("zipping error: {}", re.unwrap()));
-        } else {
-            // log(format!(println!(" zip buffy size? {}", re.unwrap()));
-        }
-    }
+        // zip.write_all(buf)
+        match zip.finish() {
+            Ok(mut f) => {
+                f.set_position(0);
 
-    // zip.write_all(buf)
-    match zip.finish() {
-        Ok(mut f) => {
-            f.set_position(0);
+                // Read the "file's" contents into a vector
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf).unwrap();
+                println!("zip buffer size {}", buf.len());
 
-            // Read the "file's" contents into a vector
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf).unwrap();
-            println!("zip buffer size {}", buf.len());
-
-            image.append(&mut buf);
-            let new_file = File::create(&Path::new(out)).unwrap();
-            let mut writer = BufWriter::new(new_file);
-            match writer.write(image.as_slice()) {
-                Ok(_) => lg("cartridge zipped!"),
-                Err(err) => log(format!("failed zipping to cartridge: {}", err)),
+                image.append(&mut buf);
+                let new_file = File::create(&Path::new(out)).unwrap();
+                let mut writer = BufWriter::new(new_file);
+                match writer.write(image.as_slice()) {
+                    Ok(_) => lg("cartridge zipped!"),
+                    Err(err) => log(format!("failed zipping to cartridge: {}", err)),
+                }
             }
+            Err(_) => todo!(),
         }
-        Err(_) => todo!(),
+    } else {
+        crate::lg!("unable to pack file as icon chosen is not available, is it in the game directory root?");
     }
 }
 
@@ -197,20 +203,27 @@ pub fn unpack_and_walk(
         } else {
             file_name.clone()
         };
-        let mut part = shorter.splitn(2, "/");
-        let dir_o = part.next();
-        let name_o = part.next();
-        if dir_o.is_none() && name_o.is_none() {
+
+        let mut part = shorter.split("/").collect::<Vec<&str>>();
+        if part.len() > 1 {
+            // let dir_o = part.next();
+            // let name_o = part.next();
+
+            // if dir_o.is_none() && name_o.is_none() {
             // match archive.by_name(file_name.as_str()) {
             //     Ok(file) => {main_dir.push(file)},
             //     Err(..) => {
             //         println!("?");
             //     }
             // };
-        } else {
-            let dir = dir_o.unwrap();
-            let name = name_o.unwrap();
-            println!("full {}, file {}, dir {}", file_name, name, dir);
+            // } else {
+            let dir = part[part.len() - 2];
+            let name = part[part.len() - 1];
+            println!(
+                "check file {} and convert to dir {} and name {}",
+                shorter, dir, name
+            );
+            crate::lg!("full {}, file {}, dir {}", file_name, name, dir);
             match archive.by_name(file_name.as_str()) {
                 Ok(mut file) => match map.get_mut(&dir.to_string()) {
                     Some(ar) => {
@@ -228,10 +241,14 @@ pub fn unpack_and_walk(
                     println!("?");
                 }
             };
-        }
+            // }
 
-        println!("list: {}", file_name);
+            crate::lg!("list: {}", file_name);
+        } else {
+            crate::lg!("bad path for {}", file_name);
+        }
     }
+
     map
 }
 

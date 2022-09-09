@@ -39,6 +39,7 @@ pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCor
 
     match map.get("assets") {
         Some(dir) => {
+            crate::lg!("unpacking {} assets", dir.len());
             for item in dir {
                 let path = Path::new(&item.0);
 
@@ -69,6 +70,7 @@ pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCor
 
     match map.get("scripts") {
         Some(dir) => {
+            crate::lg!("unpacking {} scripts", dir.len());
             for item in dir {
                 match Path::new(&item.0).extension() {
                     Some(e) => {

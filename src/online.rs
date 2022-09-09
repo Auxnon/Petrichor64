@@ -27,6 +27,7 @@ pub fn init() -> Result<
 
     // Parse what address we're going to connect to
     // let addr = "127.0.0.1:6142"; //6142
+    // let addr = "https://makeavoy.com:6142";
     let addr = "73.101.41.242:6142";
     let addr = addr.parse::<SocketAddr>()?;
     // world_sender:

@@ -528,7 +528,7 @@ pub fn make_tex(
     queue: &Queue,
     img: &RgbaImage,
 ) -> (TextureView, Sampler, Texture) {
-    lg!("make master texture");
+    // lg!("make master texture");
     let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
@@ -588,7 +588,7 @@ pub fn make_render_tex(
     // queue: &Queue,
     img: &RgbaImage,
 ) -> (TextureView, Sampler, Texture) {
-    lg!("make master texture");
+    // lg!("make master texture");
     // let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {

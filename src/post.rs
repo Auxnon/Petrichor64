@@ -235,7 +235,7 @@ impl Post {
 
         // self.post_sampler = post_sampler;
         // self.post_texture = post_texture;
-        println!("3resize done");
+        // println!("3resize done");
 
         // let view = match surface.get_current_texture() {
         //     Ok(output) => output
