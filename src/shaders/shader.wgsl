@@ -394,9 +394,12 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
 fn post_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
 
-
+    if (globals.adjustments[11]>0.){
+        f_color=textureSample(t_diffuse, s_diffuse, p);
+    }else{
+        f_color=monitor(t_diffuse, s_diffuse,p,globals.adjustments);//array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.0));
+    }
     //f_color=textureSample(t_dif,fuse, s_diffuse, p);
 // globals.adjustments
-    f_color=monitor(t_diffuse, s_diffuse,p,globals.adjustments);//array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.0));
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }

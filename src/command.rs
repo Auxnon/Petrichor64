@@ -30,6 +30,9 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     let segments = s.split(" ").collect::<Vec<&str>>();
 
     match segments[0] {
+        "$m" => {
+            core.lua_master.func(&"crt({modernize=1})".to_string());
+        }
         "$die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             core.lua_master.die();
@@ -127,6 +130,25 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 log(format!("created directory {}", name));
             } else {
                 log("$new <name>".to_string());
+            }
+        }
+        "$find" => {
+            if segments.len() > 2 {
+                match segments[1] {
+                    "model" => {
+                        let v = crate::model::search_model(&segments[2].to_string());
+                        if v.len() > 0 {
+                            log(format!("models -> {}", v.join(",")));
+                        } else {
+                            log("no models".to_string());
+                        }
+                    }
+                    _ => {
+                        log("???".to_string());
+                    }
+                }
+            } else {
+                log("$find <model | ???> <search-query>".to_string());
             }
         }
         &_ => return false,

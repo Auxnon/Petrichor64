@@ -14,6 +14,7 @@ pub struct Post {
 }
 
 pub struct ScreenBinds {
+    pub modernize: f32,
     pub dark_factor: f32,
     pub low_range: f32,
     pub high_range: f32,
@@ -27,6 +28,7 @@ pub struct ScreenBinds {
 impl ScreenBinds {
     pub fn new() -> ScreenBinds {
         ScreenBinds {
+            modernize: 0.,
             dark_factor: 0.4,
             low_range: 0.05,
             high_range: 0.6,

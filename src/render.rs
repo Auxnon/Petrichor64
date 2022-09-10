@@ -159,7 +159,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         core.global.screen_effects.dark_factor,
         core.global.screen_effects.low_range,
         core.global.screen_effects.high_range,
-        0.,
+        core.global.screen_effects.modernize,
     ];
 
     // let iTime=adj[0];

@@ -688,6 +688,7 @@ impl Core {
                                     "glitch" => self.global.screen_effects.glitchiness = item.2,
                                     "high" => self.global.screen_effects.high_range = item.2,
                                     "low" => self.global.screen_effects.low_range = item.2,
+                                    "modernize" => self.global.screen_effects.modernize = item.2,
                                     _ => {}
                                 }
                             }
