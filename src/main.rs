@@ -73,17 +73,11 @@ pub struct Core {
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     _stream: Option<cpal::Stream>,
     singer: Sender<SoundPacket>,
-    // view_matrix: Mat4,
-    // perspective_matrix: Mat4,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
     world: World,
     catcher: Option<Receiver<MainPacket>>,
-    // ent_manager: EntManager,
-    // vertex_buf: Rc<wgpu::Buffer>,
-    // index_buf: Rc<wgpu::Buffer>,
-    // index_count: usize,
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     bind_group: BindGroup,
@@ -144,11 +138,8 @@ fn create_depth_texture(
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 lazy_static! {
-    //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
-    // pub static ref lua_master : Arc<Mutex<OnceCell<LuaCore>>> = Arc::new((Mutex::new(OnceCell::new())));
-    pub static ref ent_master : Arc<RwLock<OnceCell<EntManager>>> = Arc::new(RwLock::new(OnceCell::new()));
-    // pub static ref ent_table: Arc<Mutex<Vec<lua_ent::LuaEnt>>>= Arc::new(Mutex::new(vec![]));
+    pub static ref ent_master: Arc<RwLock<OnceCell<EntManager>>> =
+        Arc::new(RwLock::new(OnceCell::new()));
 }
 
 impl Core {
@@ -410,10 +401,8 @@ impl Core {
         let depth = create_depth_texture(&config, &device);
 
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
-        // let dupe_switch = Arc::clone(&switch_board);
 
         //Gui
-
         let (gui_texture_view, gui_sampler, gui_texture, gui_image) =
             gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
         let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -435,25 +424,6 @@ impl Core {
             label: None,
         });
 
-        // let post_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     layout: &bind_group_layout,
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: uniform_buf.as_entire_binding(),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::TextureView(&post_texture_view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 2,
-        //             resource: wgpu::BindingResource::Sampler(&post_sampler),
-        //         },
-        //     ],
-        //     label: None,
-        // });
-
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Gui Pipeline"),
             layout: Some(&render_pipeline_layout),
@@ -469,17 +439,7 @@ impl Core {
                 entry_point: "gui_fs_main",
                 targets: &[wgpu::ColorTargetState {
                     format: config.format,
-                    // blend: Some(wgpu::BlendState {
-                    //     color: wgpu::BlendComponent::OVER,
-                    //     alpha: wgpu::BlendComponent::OVER,
-                    // }),
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    // blend: Some(wgpu::Blend {
-                    //     src_factor: wgpu::BlendFactor::One,
-                    //     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                    //     operation: wgpu::BlendOperation::Add,
-                    // }),
-                    // write_mask: wgpu::ColorWrites::ALL,
                     write_mask: wgpu::ColorWrites::ALL,
                 }],
             }),
@@ -511,52 +471,6 @@ impl Core {
             multiview: None,
         });
 
-        /*let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Gui Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "post_vs_main",
-                buffers: &[],
-            },
-
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "post_fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLAMPING
-                //clamp_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-                unclipped_depth: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });*/
-
         let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
         gui.add_text("initialized".to_string());
         gui.add_img(&"map.tile.png".to_string());
@@ -568,8 +482,6 @@ impl Core {
 
         let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
 
-        // let mut post = Gui::new(post_pipeline, post_group, post_texture, post_image);
-        // let a_device = Arc::new(RwLock::new(&device));
         let world = World::new();
         let world_sender = world.sender.clone();
 
@@ -695,14 +607,6 @@ impl Core {
                         }
                         mutex.remaps.clear();
                     }
-
-                    // let tile_count = mutex.tile_queue.len();
-                    // if tile_count > 0 {
-                    //     self.world.set_tile_from_buffer(&mutex.tile_queue);
-                    //     self.world.build_dirty_chunks(&self.device);
-                    //     mutex.tile_queue.clear();
-                    //     println!("cooked {} tiles", tile_count);
-                    // }
                     mutex.dirty = false;
                     // r.dirty = false;
                 }
@@ -713,8 +617,6 @@ impl Core {
         match self.catcher {
             Some(ref mut c) => {
                 for p in c.try_iter() {
-                    //recv_timeout(Duration::from_millis(100))
-
                     match p.0 {
                         MainCommmand::CamPos => {
                             self.global.camera_pos = vec3(p.1, p.2, p.3);
@@ -788,18 +690,6 @@ fn main() {
     let mut eman = EntManager::new();
     eman.uniform_alignment = core.uniform_alignment as u32;
 
-    // eman.entities.push(Ent::new(
-    //     vec3(0.0, 1.0, 0.0),
-    //     45.,
-    //     1.,
-    //     0.,
-    //     "chicken".to_string(),
-    //     "plane".to_string(),
-    //     core.uniform_alignment as u32,
-    //     true,
-    //     None,
-    // ));
-
     ent_guard.get_or_init(|| eman);
 
     std::mem::drop(ent_guard);
@@ -836,22 +726,9 @@ fn main() {
             drop(locker);
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
-            // println!("newbits {:?}", bits);
             core.update();
 
-            // match crate::lua_master.try_lock() {
-            //     Some(cell) => match cell.get() {
-            //         Some(lu) => lu.call_loop(),
-            //         _ => {}
-            //     },
-            //     _ => {}
-            // }
             core.lua_master.call_loop(bits);
-            // match event {
-
-            //     Event::WindowEvent { window_id: (), event: Event::WindowEvent::Dev }
-            //     } => {}
-            // }
 
             match core.render() {
                 Ok(_) => {}

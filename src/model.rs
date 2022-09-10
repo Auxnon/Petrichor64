@@ -330,6 +330,17 @@ pub fn get_model_index(str: &String) -> Option<u32> {
     }
 }
 
+pub fn search_model(str: &String) -> Vec<String> {
+    let searcher = str.to_lowercase();
+    let mut v = vec![];
+    for i in DICTIONARY.read().keys() {
+        if i.starts_with(&searcher) {
+            v.push(i.clone());
+        }
+    }
+    v
+}
+
 pub fn get_model_from_index(index: u32) -> Option<Arc<OnceCell<Model>>> {
     match INT_MAP.read().get(&index) {
         Some(model) => match model.get() {
