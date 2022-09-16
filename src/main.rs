@@ -617,21 +617,25 @@ impl Core {
         match self.catcher {
             Some(ref mut c) => {
                 for p in c.try_iter() {
-                    match p.0 {
-                        MainCommmand::CamPos => {
-                            self.global.camera_pos = vec3(p.1, p.2, p.3);
+                    match p {
+                        MainCommmand::CamPos(v) => {
+                            self.global.camera_pos = v;
                             // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                         }
-                        MainCommmand::CamRot => {
-                            self.global.mouse_active_pos = vec2(p.1, p.2);
+                        MainCommmand::CamRot(v) => {
+                            self.global.mouse_active_pos = v;
                             // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                         }
-                        MainCommmand::Square => {
-                            self.gui.square(p.1, p.2, p.3, p.4);
+                        MainCommmand::Square(x, y, w, h) => {
+                            self.gui.square(x, y, w, h);
                         }
-                        MainCommmand::Line => {
-                            self.gui.line(p.1, p.2, p.3, p.4);
+                        MainCommmand::Line(x, y, x2, y2) => {
+                            self.gui.line(x, y, x2, y2);
                         }
+                        MainCommmand::Text(s, x, y) => {
+                            self.gui.direct_text(&s, false, x as i64, y as i64)
+                        }
+                        MainCommmand::Clear() => self.gui.clean(),
                         _ => {}
                     };
                     // p.5.send(true);

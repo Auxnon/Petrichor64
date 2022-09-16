@@ -4,6 +4,7 @@ use crate::Core;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
+
 use winit::{
     event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -49,7 +50,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
 
     let input_helper = &INPUT_MANAGER.read();
 
-    if input_helper.key_pressed(VirtualKeyCode::Escape) || input_helper.quit() {
+    if input_helper.quit() {
         *control_flow = ControlFlow::Exit;
     }
     match input_helper.dropped_file() {
@@ -189,6 +190,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
                 crate::command::reload(core);
+            } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
+                *control_flow = ControlFlow::Exit;
             }
         } else {
             let t = input_helper.text();

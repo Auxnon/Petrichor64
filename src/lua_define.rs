@@ -17,7 +17,7 @@ use std::{
     thread,
 };
 
-pub type MainPacket = (MainCommmand, f32, f32, f32, f32); //SyncSender<bool>
+pub type MainPacket = MainCommmand; //SyncSender<bool>
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -223,7 +223,7 @@ fn lua_load(lua: &Lua, st: &String) {
     let chunk = lua.load(&st);
     // chunk.eval()
     if let Err(s) = chunk.eval::<()>() {
-        println!("exec {}", s);
+        crate::lg!("exec {}", s);
     }
 
     //::<mlua::Function>

@@ -85,7 +85,7 @@ impl Gui {
     //pub fn type()
     pub fn add_text(&mut self, str: String) {
         self.text = format!("{}\n{}", self.text, str);
-        self.apply_text();
+        self.apply_console_out_text();
     }
     pub fn type_text(&mut self, str: String) {
         self.text = format!("{}\n{}", self.text, str);
@@ -139,7 +139,39 @@ impl Gui {
             }
         }
     }
-    pub fn apply_text(&mut self) {
+    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: i64, y: i64) {
+        let mut targ = if onto_console {
+            &mut self.console
+        } else {
+            &mut self.main
+        };
+
+        for (i, line) in txt.lines().enumerate() {
+            let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
+            let mut lx = x + (LETTER_SIZE) as i64;
+            for c in line.chars() {
+                let mut ind = c as u32;
+                if ind > 255 {
+                    ind = 255;
+                }
+                let index_x = ind % 16;
+                let index_y = ind / 16;
+                let sub = image::imageops::crop_imm(
+                    &self.letters,
+                    index_x * LETTER_SIZE,
+                    index_y * LETTER_SIZE,
+                    LETTER_SIZE,
+                    LETTER_SIZE,
+                );
+                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
+                lx += (LETTER_SIZE + 1) as i64;
+            }
+        }
+
+        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        self.dirty = true;
+    }
+    pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
         // image::imageops::horizontal_gradient(
         //     &mut im,
@@ -164,6 +196,7 @@ impl Gui {
         //     }
         // };
         // image::imageops::dither(&mut self.img, &col {});
+
         for (i, line) in self.text.lines().enumerate() {
             let y = i as i64 * (LETTER_SIZE as i64 + 2);
             let mut x = (LETTER_SIZE) as i64;
@@ -249,6 +282,7 @@ impl Gui {
         self.dirty = true;
     }
 
+    /* Clean off the main raster */
     pub fn clean(&mut self) {
         self.main = RgbaImage::new(self.size[0], self.size[1]);
         self.dirty = true;
@@ -260,12 +294,12 @@ impl Gui {
             (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
         );
         self.output = true;
-        self.apply_text();
+        self.apply_console_out_text();
     }
     pub fn disable_console(&mut self) {
         self.text = "".to_string();
         self.output = false;
-        self.apply_text();
+        self.apply_console_out_text();
     }
     // pub fn toggle_output(&mut self) {
     //     if self.output {
@@ -284,7 +318,7 @@ impl Gui {
                 (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
                 (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
             );
-            self.apply_text();
+            self.apply_console_out_text();
             crate::log::clean();
         }
         if self.dirty {

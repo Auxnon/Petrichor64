@@ -257,7 +257,9 @@ impl World {
         let (tx, rx) = sync_channel::<TileResponse>(0);
         match sender.send((TileCommand::Reset(), tx)) {
             Ok(_) => match rx.recv() {
-                Ok(TileResponse::Success(true)) => {}
+                Ok(TileResponse::Success(true)) => {
+                    // crate::lg!("cleared tiles")
+                }
                 _ => {}
             },
             _ => {}

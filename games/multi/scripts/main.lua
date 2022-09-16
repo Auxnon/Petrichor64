@@ -56,7 +56,7 @@ function main()
             else
                 t = "S"
             end
-            tile("grass-block.U", j * 2, i, -2, ro)
+            tile("grass-block.F", j, i, -2, 1)
 
             -- tile("beveled_cube.block", j * 2, i * 2, 0)
 

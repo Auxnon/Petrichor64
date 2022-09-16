@@ -256,7 +256,7 @@ pub fn unpack_and_walk(
 pub fn unpack(gamefile: Vec<u8>) -> Vec<u8> {
     // let mut gamefile = get_file_buffer(target);
     if gamefile.len() <= 0 {
-        lg("thumbnail is 0 bytes!");
+        lg("file to unpack is 0 bytes!");
         return vec![];
     }
     // println!("zip file found {}", gamefile.len());

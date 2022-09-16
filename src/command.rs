@@ -30,6 +30,10 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     let segments = s.split(" ").collect::<Vec<&str>>();
 
     match segments[0] {
+        "$q" => {
+            reset(core);
+            load(core, Some("games/midnight".to_string()), None);
+        }
         "$m" => {
             core.lua_master.func(&"crt({modernize=1})".to_string());
         }
@@ -352,7 +356,7 @@ pub fn init_lua_sys(
     let sender = world_sender.clone();
     lua!(
         "clear_tiles",
-        move |_, (_x, _y, _z): (i32, i32, i32)| {
+        move |_, (): ()| {
             // let mutex = &mut switch.write();
             // mutex.dirty = true;
             World::clear_tiles(&sender);
@@ -596,7 +600,7 @@ pub fn init_lua_sys(
         move |_, (x, y, z): (f32, f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
             // println!("🧲 eyup send pos");
-            pitcher.send((MainCommmand::CamPos, x, y, z, 0.));
+            pitcher.send(MainCommmand::CamPos(glam::vec3(x, y, z)));
             // Ok(match rx.recv() {
             //     Ok(v) => (true),
             //     _ => (false),
@@ -612,7 +616,7 @@ pub fn init_lua_sys(
         move |_, (x, y): (f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
 
-            pitcher.send((MainCommmand::CamRot, x, y, 0., 0.));
+            pitcher.send(MainCommmand::CamRot(glam::vec2(x, y)));
             // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
             // println!("🧲 eyup send rot");
 
@@ -664,7 +668,7 @@ pub fn init_lua_sys(
     lua!(
         "sqr",
         move |_, (x, y, w, h): (f32, f32, f32, f32)| {
-            pitcher.send((MainCommmand::Square, x, y, w, h));
+            pitcher.send(MainCommmand::Square(x, y, w, h));
             Ok(())
         },
         "Draw a square on the gui"
@@ -674,11 +678,50 @@ pub fn init_lua_sys(
     lua!(
         "line",
         move |_, (x, y, x2, y2): (f32, f32, f32, f32)| {
-            pitcher.send((MainCommmand::Line, x, y, x2, y2));
+            pitcher.send(MainCommmand::Line(x, y, x2, y2));
             Ok(())
         },
         "Draw a line on the gui"
     );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "text",
+        move |_, (txt, x, y): (String, Option<f32>, Option<f32>)| {
+            pitcher.send(MainCommmand::Text(
+                txt,
+                match x {
+                    Some(o) => o,
+                    _ => 0.,
+                },
+                match y {
+                    Some(o) => o,
+                    _ => 0.,
+                },
+            ));
+            Ok(())
+        },
+        "Draw text on the gui at position"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "clr",
+        move |_, _: ()| {
+            pitcher.send(MainCommmand::Clear());
+            Ok(())
+        },
+        "Clear the gui"
+    );
+
+    lua!(
+        "rnd",
+        move |_, (): ()| { Ok(rand::random::<f32>()) },
+        "Random"
+    );
+    lua!("flr", move |_, f: f32| { Ok(f.floor()) }, "Floor value");
+    lua!("ceil", move |_, f: f32| { Ok(f.ceil()) }, "Ceil value");
+    lua!("cos", move |_, f: f32| { Ok(f.cos()) }, "Cosine value");
+    lua!("sin", move |_, f: f32| { Ok(f.sin()) }, "Sine value");
 
     lua!(
         "send",
@@ -957,10 +1000,12 @@ fn err(str: String) {
 }
 
 pub enum MainCommmand {
-    Line,
-    Square,
-    CamPos,
-    CamRot,
+    Line(f32, f32, f32, f32),
+    Square(f32, f32, f32, f32),
+    Text(String, f32, f32),
+    CamPos(glam::Vec3),
+    CamRot(glam::Vec2),
+    Clear(),
 }
 
 macro_rules! lg{
