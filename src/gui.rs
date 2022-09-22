@@ -28,6 +28,7 @@ pub struct Gui {
     // console_dity: bool,
     // main_dirty: bool,
     dirty: bool,
+    target_sky: bool,
     output: bool,
 }
 
@@ -72,6 +73,7 @@ impl Gui {
             model: get_model(&"plane".to_string()),
             texture,
             console: img.clone(),
+            target_sky: false,
             main: img,
             text: "".to_string(),
             letters,
@@ -239,6 +241,31 @@ impl Gui {
         self.console =
             image::imageops::huerotate(&mut self.console, rand::thread_rng().gen_range(0..360));
         self.dirty = true;
+    }
+
+    pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
+        // let width = self.size[0];
+        // let height = self.size[1];
+
+        // draw_filled_rect_mut(
+        //     self.get_targ(),
+        //     imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
+        //     image::Rgba([
+        //         (r * 255.) as u8,
+        //         (g * 255.) as u8,
+        //         (b * 255.) as u8,
+        //         (a * 255.) as u8,
+        //     ]),
+        // );
+
+        // self.dirty = true;
+    }
+
+    pub fn target_gui(&mut self) {
+        self.target_sky = false;
+    }
+    pub fn target_sky(&mut self) {
+        // self.target_sky = true;
     }
 
     pub fn square(&mut self, x: f32, y: f32, w: f32, h: f32) {
