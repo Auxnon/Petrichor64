@@ -1,5 +1,6 @@
 use crate::{
     command::MainCommmand,
+    controls::ControlState,
     pad::Pad,
     sound::SoundPacket,
     switch_board::SwitchBoard,
@@ -24,8 +25,8 @@ pub struct LuaCore {
     to_lua_tx: Sender<(
         String,
         String,
-        Option<[bool; 256]>,
-        SyncSender<(Option<String>, Option<[bool; 256]>)>,
+        Option<ControlState>,
+        SyncSender<(Option<String>, Option<ControlState>)>,
     )>,
     // pub catcher: Receiver<MainPacket>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
@@ -82,7 +83,7 @@ impl LuaCore {
         }
     }
 
-    pub fn async_func(&self, func: &String, extra: &String, bits: [bool; 256]) {
+    pub fn async_func(&self, func: &String, extra: &String, bits: ControlState) {
         self.async_inject(func, extra, Some(bits));
     }
 
@@ -90,9 +91,9 @@ impl LuaCore {
         &self,
         func: &String,
         path: &String,
-        ent: Option<[bool; 256]>,
-    ) -> (Option<String>, Option<[bool; 256]>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(0);
+        ent: Option<ControlState>,
+    ) -> (Option<String>, Option<ControlState>) {
+        let (tx, rx) = sync_channel::<(Option<String>, Option<ControlState>)>(0);
         // println!("xxx {} :: {}", func, path);
         match self.to_lua_tx.send((func.clone(), path.clone(), ent, tx)) {
             Ok(_) => match rx.recv() {
@@ -110,8 +111,8 @@ impl LuaCore {
         }
     }
 
-    fn async_inject(&self, func: &String, path: &String, bits: Option<[bool; 256]>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<[bool; 256]>)>(100);
+    fn async_inject(&self, func: &String, path: &String, bits: Option<ControlState>) {
+        let (tx, rx) = sync_channel::<(Option<String>, Option<ControlState>)>(100);
         match self.to_lua_tx.send((func.clone(), path.clone(), bits, tx)) {
             Ok(_) => match rx.try_recv() {
                 Ok(_) => (),
@@ -130,7 +131,7 @@ impl LuaCore {
         self.func(&"main()".to_string());
     }
 
-    pub fn call_loop(&self, bits: [bool; 256]) {
+    pub fn call_loop(&self, bits: ControlState) {
         // let mut bits = [false; 256];
         // for t in pass.iter() {
         //     match t {
@@ -339,16 +340,16 @@ fn start(
     Sender<(
         String,
         String,
-        Option<[bool; 256]>,
-        SyncSender<(Option<String>, Option<[bool; 256]>)>,
+        Option<ControlState>,
+        SyncSender<(Option<String>, Option<ControlState>)>,
     )>,
     Receiver<MainPacket>,
 ) {
     let (sender, reciever) = channel::<(
         String,
         String,
-        Option<[bool; 256]>,
-        SyncSender<(Option<String>, Option<[bool; 256]>)>,
+        Option<ControlState>,
+        SyncSender<(Option<String>, Option<ControlState>)>,
     )>();
 
     let (pitcher, catcher) = channel::<MainPacket>();
@@ -375,9 +376,11 @@ fn start(
     log("init lua core".to_string());
     // let lua_thread =
     thread::spawn(move || {
-        let bits = [false; 256];
+        let keys = [false; 256];
+        let mice = [0.; 4];
 
-        let bit_mutex = Rc::new(Mutex::new(bits));
+        let keys_mutex = Rc::new(Mutex::new(keys));
+        let mice_mutex = Rc::new(Mutex::new(mice));
 
         let lua_ctx = Lua::new();
 
@@ -399,7 +402,8 @@ fn start(
             world_sender,
             net,
             singer,
-            Rc::clone(&bit_mutex),
+            Rc::clone(&keys_mutex),
+            Rc::clone(&mice_mutex),
             Rc::clone(&pads),
         ) {
             Err(err) => {
@@ -510,7 +514,10 @@ fn start(
                     _ => {}
                 }
                 match bit_in {
-                    Some(b) => *bit_mutex.lock() = b,
+                    Some(b) => {
+                        *keys_mutex.lock() = b.0;
+                        *mice_mutex.lock() = b.1;
+                    }
                     _ => {}
                 }
             }

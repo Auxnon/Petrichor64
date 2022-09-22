@@ -47,7 +47,8 @@ pub fn generate_matrix(
     let model_mat = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
         vec3(0., 0., 0.),
-        vec3(10., camera_pos.y, camera_pos.x), //+ camera_pos.z
+        camera_pos,
+        // vec3(10., camera_pos.y, camera_pos.x), //+ camera_pos.z
         //vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
         Vec3::Z,
@@ -139,7 +140,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         core.size.width as f32 / core.size.height as f32,
         *v * 2. * std::f32::consts::PI,
         core.global.camera_pos,
-        core.global.mouse_active_pos,
+        core.global.simple_cam_rot,
     );
 
     crate::ray::trace(core, mx_persp, mx_view);

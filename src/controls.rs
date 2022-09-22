@@ -20,6 +20,8 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 
+pub type ControlState = ([bool; 256], [f32; 4]);
+
 lazy_static! {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
@@ -104,10 +106,11 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
 
     // TODO mouse inputs
     match input_helper.mouse() {
-        Some((_x, _y)) => {
+        Some((x, y)) => {
             core.global.game_controller = false;
-            // core.global.mouse_active_pos.x = x / core.size.width as f32;
-            // core.global.mouse_active_pos.y = y / core.size.height as f32;
+            core.global.mouse_pos.x = x / core.size.width as f32;
+            core.global.mouse_pos.y = y / core.size.height as f32;
+            // println!(core.global.)
         }
         _ => {}
     }
@@ -253,7 +256,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
 }
 
-pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
+pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
     // match events{
     // winit::event::WindowEvent::KeyboardInput { device_id: (), input: (), is_synthetic: () },
     // _=>{}
@@ -280,10 +283,10 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut [bool; 256]) {
                 winit::event::ElementState::Pressed => {
                     // VirtualKeycode is an enum with a defined representation
                     // println!("newkey is {}", i);
-                    bits[*keycode as usize] = true;
+                    bits.0[*keycode as usize] = true;
                 }
                 winit::event::ElementState::Released => {
-                    bits[*keycode as usize] = false;
+                    bits.0[*keycode as usize] = false;
                 }
             }
         }

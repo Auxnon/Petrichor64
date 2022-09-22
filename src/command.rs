@@ -168,7 +168,8 @@ pub fn init_lua_sys(
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     net_sender: Option<(Sender<MovePacket>, Receiver<MovePacket>)>,
     singer: Sender<SoundPacket>,
-    bits: Rc<Mutex<[bool; 256]>>,
+    keys: Rc<Mutex<[bool; 256]>>,
+    mice: Rc<Mutex<[f32; 4]>>,
     gamepad: Rc<Mutex<Pad>>,
 ) -> Result<(), Error> {
     println!("init lua sys");
@@ -457,6 +458,12 @@ pub fn init_lua_sys(
             // }
         },
         "Check if key is held down"
+    );
+
+    lua!(
+        "mouse",
+        move |_, (): ()| { Ok(mice.lock().clone()) },
+        " Get mouse position from 0.-1."
     );
 
     let gam = Rc::clone(&gamepad);

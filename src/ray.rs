@@ -66,8 +66,8 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     let _cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
 
     let win_coord = vec3(
-        core.global.mouse_active_pos.x,
-        core.global.mouse_active_pos.y,
+        core.global.simple_cam_rot.x,
+        core.global.simple_cam_rot.y,
         0.,
     );
 
