@@ -25,7 +25,7 @@ pub enum TileCommand {
 
 pub enum TileResponse {
     Success(bool),
-    Chunks(Vec<Chunk>),
+    Chunks(Vec<Chunk>, bool),
 }
 
 pub struct World {
@@ -128,8 +128,12 @@ impl World {
                     (TileCommand::Check(_), response) => {
                         let chunks = layer.get_dirty();
                         // log(format!("chunks returned is {}", chunks.len()));
-
-                        res_handle(response.send(TileResponse::Chunks(chunks)))
+                        let dropped = layer.dropped;
+                        if dropped {
+                            println!("triggerd drop");
+                            layer.dropped = false;
+                        }
+                        res_handle(response.send(TileResponse::Chunks(chunks, dropped)))
                     }
                     (TileCommand::Is(tile), response) => res_handle(
                         response.send(TileResponse::Success(layer.is_tile(tile.x, tile.y, tile.z))),
@@ -156,27 +160,36 @@ impl World {
 
         match self.sender.send((TileCommand::Check(vec![]), tx)) {
             Ok(_) => match rx.recv() {
-                Ok(TileResponse::Chunks(chunks)) => {
-                    for chunk in chunks {
-                        // let key = chunk.key.clone();
-                        match self.layer.chunks.entry(chunk.key.clone()) {
-                            Entry::Occupied(o) => {
-                                let c = o.into_mut();
-                                c.build_chunk(chunk);
-                                c.cook(device);
-                            }
-                            Entry::Vacant(v) => {
-                                let ix = chunk.pos.x.div_euclid(16) * 16;
-                                let iy = chunk.pos.y.div_euclid(16) * 16;
-                                let iz = chunk.pos.z.div_euclid(16) * 16;
-                                // println!(
-                                //     "populate new model chunk {} {} {} {}",
-                                //     chunk.key, ix, iy, iz
-                                // );
-                                let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
-                                model.build_chunk(chunk);
-                                model.cook(device);
-                                v.insert(model);
+                Ok(TileResponse::Chunks(chunks, dropped)) => {
+                    if dropped && chunks.is_empty() {
+                        // for (s, c) in self.layer.chunks.drain() {
+                        //     // c.build_chunk(chunk);
+                        //     // c.cook(device);
+                        // }
+                        self.layer.chunks.clear()
+                    } else {
+                        for chunk in chunks {
+                            // let key = chunk.key.clone();
+                            match self.layer.chunks.entry(chunk.key.clone()) {
+                                Entry::Occupied(o) => {
+                                    let c = o.into_mut();
+                                    println!("rebuild model chunk {}", chunk.key);
+                                    c.build_chunk(chunk);
+                                    c.cook(device);
+                                }
+                                Entry::Vacant(v) => {
+                                    let ix = chunk.pos.x.div_euclid(16) * 16;
+                                    let iy = chunk.pos.y.div_euclid(16) * 16;
+                                    let iz = chunk.pos.z.div_euclid(16) * 16;
+                                    // println!(
+                                    //     "populate new model chunk {} {} {} {}",
+                                    //     chunk.key, ix, iy, iz
+                                    // );
+                                    let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
+                                    model.build_chunk(chunk);
+                                    model.cook(device);
+                                    v.insert(model);
+                                }
                             }
                         }
                     }
@@ -258,7 +271,7 @@ impl World {
         match sender.send((TileCommand::Reset(), tx)) {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Success(true)) => {
-                    // crate::lg!("cleared tiles")
+                    crate::lg!("cleared tiles")
                 }
                 _ => {}
             },

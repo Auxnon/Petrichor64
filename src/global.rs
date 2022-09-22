@@ -42,6 +42,20 @@ impl Global {
             loaded_directory: None,
         }
     }
+
+    /** wipe only significant variables that could hurt a new game after reset */
+    pub fn clean(&mut self) {
+        self.mouse_pos.x = 0.;
+        self.mouse_pos.y = 0.;
+        self.simple_cam_rot.x = std::f32::consts::FRAC_PI_2;
+        self.simple_cam_rot.y = 0.;
+        self.camera_pos.x = 0.;
+        self.camera_pos.y = 0.;
+        self.camera_pos.z = 0.;
+        self.delayed = 0;
+        self.iteration = 0;
+    }
+
     pub fn set(&mut self, key: String, v: f32) {
         self.values.insert(key, v);
     }

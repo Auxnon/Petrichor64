@@ -472,70 +472,6 @@ pub fn init_lua_sys(
         "Check how much a button is pressed, axis gives value between -1 and 1"
     );
 
-    // res(
-    //     "t",
-    //     lua_globals.set(
-    //         "_bg",
-    //         lua_ctx
-    //             .create_function(move |_, (key): (String)| {
-    //                 // let h = match *gamepad.lock() {
-    //                 //     Some(game) => game.is_pressed(Button::South),
-    //                 //     _ => false,
-    //                 // };
-    //                 let b2 = b.lock();
-    //                 Ok(1)
-    //             })
-    //             .unwrap(),
-    //     ),
-    // );
-
-    // lua!(
-    //     "key_pressed",
-    //     |_, (key): (String)| {
-    //         match key_match(key) {
-    //             Some(k) => Ok(crate::controls::input_manager.read().key_pressed(k)),
-    //             None => Ok(false),
-    //         }
-    //     },
-    //     "Check if key is pressed breifly"
-    // );
-
-    // lua!(
-    //     "key_released",
-    //     |_, (key): (String)| {
-    //         match key_match(key) {
-    //             Some(k) => Ok(crate::controls::input_manager.read().key_released(k)),
-    //             None => Ok(false),
-    //         }
-    //     },
-    //     "Check if key is released"
-    // );
-
-    // let switch = Arc::clone(&switch_board);
-    // res(lua_globals.set(
-    //     "_prt",
-    //     lua_ctx
-    //         .create_function(
-    //             move |_,
-    //                   (tex, n, x, y, z, vx, vy, vz): (
-    //                 String,
-    //                 f32,
-    //                 f32,
-    //                 f32,
-    //                 f32,
-    //                 f32,
-    //                 f32,
-    //                 f32,
-    //             )| {
-    //                 let mut mutex = &mut switch.write();
-    //                 mutex.dirty = true;
-    //                 Ok(1)
-    //             },
-    //         )
-    //         .unwrap(),
-    // ));
-    // let switch = Arc::clone(&switch_board);
-
     lua!(
         "spawn",
         move |_, (asset, x, y, z): (String, f64, f64, f64)| {
@@ -800,7 +736,7 @@ pub fn reset(core: &mut Core) {
 
     core.lua_master.die();
     core.world.destroy_it_all();
-    core.global.iteration = 0;
+    core.global.clean();
 
     // TODO why doe sent reset panic?
     let mut guard = crate::ent_master.write();

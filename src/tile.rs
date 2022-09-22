@@ -7,12 +7,15 @@ use wgpu::{util::DeviceExt, Buffer, Device};
 use crate::model::Vertex;
 
 pub struct Layer {
+    /** if all world tiles were cleared */
+    pub dropped: bool,
     chunks: FxHashMap<String, Chunk>,
 }
 
 impl Layer {
     pub fn new() -> Layer {
         Layer {
+            dropped: false,
             chunks: FxHashMap::default(), // ![Chunk::new()],
         }
     }
@@ -145,6 +148,7 @@ impl Layer {
     }
 
     pub fn destroy_it_all(&mut self) {
+        self.dropped = true;
         self.chunks.clear();
     }
 }
