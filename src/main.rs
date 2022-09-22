@@ -626,6 +626,9 @@ impl Core {
                             self.global.mouse_active_pos = v;
                             // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                         }
+                        MainCommmand::Fill(v) => {
+                            self.gui.fill(v.x, v.y, v.z, v.w);
+                        }
                         MainCommmand::Square(x, y, w, h) => {
                             self.gui.square(x, y, w, h);
                         }
@@ -701,7 +704,7 @@ fn main() {
     // unsafe {
     //     tracy::startup_tracy();
     // }
-    let mut bits = [false; 256];
+    let mut bits = ([false; 256], [0.; 4]);
 
     match crate::asset::check_for_auto() {
         Some(s) => {
@@ -725,6 +728,8 @@ fn main() {
     event_loop.run(move |event, _, control_flow| {
         let mut locker = crate::controls::INPUT_MANAGER.write();
         controls::bit_check(&event, &mut bits);
+        bits.1[0] = core.global.mouse_pos.x;
+        bits.1[1] = core.global.mouse_pos.y;
 
         if locker.update(&event) {
             drop(locker);

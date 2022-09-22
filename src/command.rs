@@ -255,21 +255,66 @@ pub fn init_lua_sys(
         "Pushes entities"
     );
 
-    let switch = Arc::clone(&switch_board);
+    // let switch = Arc::clone(&switch_board);
+    let pitcher = main_pitcher.clone();
     lua!(
-        "bg",
-        move |_, (x, y, z, w): (f32, f32, f32, Option<f32>)| {
-            let mutex = &mut switch.write();
-            mutex.background = vec4(
-                x,
-                y,
-                z,
-                match w {
-                    Some(w) => w,
-                    None => 1.,
+        "fill",
+        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
+            let v = match x {
+                mlua::Value::String(s) => match s.to_str() {
+                    Ok(s2) => {
+                        let s = if (s2.starts_with("#")) {
+                            &s2[1..s2.len()]
+                        } else {
+                            s2
+                        };
+
+                        let halfed = (s2.len() < 4);
+                        let res = if halfed {
+                            half_decode_hex(s)
+                        } else {
+                            decode_hex(s)
+                        };
+
+                        match res {
+                            Ok(b) => {
+                                if b.len() > 2 {
+                                    let f = b
+                                        .iter()
+                                        .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
+                                        .collect::<Vec<f32>>();
+                                    vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
+                                } else {
+                                    vec4(0., 0., 0., 0.)
+                                }
+                            }
+                            _ => vec4(0., 0., 0., 0.),
+                        }
+                    }
+                    _ => vec4(0., 0., 0., 0.),
                 },
-            );
+                mlua::Value::Integer(i) => vec4(
+                    i as f32,
+                    y.unwrap_or_else(|| 0.),
+                    z.unwrap_or_else(|| 0.),
+                    w.unwrap_or_else(|| 1.),
+                ),
+                mlua::Value::Number(f) => vec4(
+                    f as f32,
+                    y.unwrap_or_else(|| 0.),
+                    z.unwrap_or_else(|| 0.),
+                    w.unwrap_or_else(|| 1.),
+                ),
+                _ => vec4(1., 1., 1., 1.),
+            };
+
+            // let mutex = &mut switch.write();
+            // println!("🥵  v {}", v);
+            // mutex.background = v;
+
             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
+
+            pitcher.send(MainCommmand::Fill(v));
             Ok(1)
         },
         "Get background color"
@@ -448,7 +493,7 @@ pub fn init_lua_sys(
             // if bits.lock()[key_match(key.clone())] {
 
             // }
-            Ok(bits.lock()[key_match(key)])
+            Ok(keys.lock()[key_match(key)])
             // match bits.lock() {
             //     Ok(b) => {
             //         let z = b;
@@ -943,12 +988,26 @@ fn err(str: String) {
 }
 
 pub enum MainCommmand {
+    Fill(glam::Vec4),
     Line(f32, f32, f32, f32),
     Square(f32, f32, f32, f32),
     Text(String, f32, f32),
     CamPos(glam::Vec3),
     CamRot(glam::Vec2),
     Clear(),
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
+}
+
+fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
+    (0..s.len())
+        .map(|i| u8::from_str_radix(&s[i..i + 1], 16))
+        .collect()
 }
 
 macro_rules! lg{
