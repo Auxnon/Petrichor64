@@ -30,18 +30,18 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     let segments = s.split(" ").collect::<Vec<&str>>();
 
     match segments[0] {
-        "$q" => {
+        "q" => {
             reset(core);
-            load(core, Some("games/midnight".to_string()), None);
+            load(core, Some("games/witch".to_string()), None);
         }
-        "$m" => {
+        "m" => {
             core.lua_master.func(&"crt({modernize=1})".to_string());
         }
-        "$die" => {
+        "die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             core.lua_master.die();
         }
-        "$pack" => {
+        "pack" => {
             crate::asset::pack(
                 &if segments.len() > 1 {
                     format!("{}.game.png", segments[1])
@@ -61,7 +61,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 &core.lua_master,
             );
         }
-        "$superpack" => {
+        "superpack" => {
             log(crate::asset::super_pack(&if segments.len() > 1 {
                 format!("{}", segments[1])
             } else {
@@ -69,18 +69,18 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             })
             .to_string());
         }
-        "$unpack" => {
+        "unpack" => {
             if segments.len() > 1 {
                 let name = segments[1].to_string();
                 crate::zip_pal::unpack_and_save(
-                    crate::zip_pal::get_file_buffer(&format!("{}.game.zip", name)),
+                    crate::zip_pal::get_file_buffer(&format!("./{}.game.zip", name)),
                     &format!("{}.zip", name),
                 );
             } else {
-                log("$unpack <file without .game.png>".to_string());
+                log("unpack <file without .game.png>".to_string());
             }
         }
-        "$load" => {
+        "load" => {
             reset(core);
             load(
                 core,
@@ -94,12 +94,12 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 None,
             );
         }
-        "$reset" => reset(core),
-        "$reload" => reload(core),
-        "$atlas" => {
+        "reset" => reset(core),
+        "reload" => reload(core),
+        "atlas" => {
             crate::texture::save_atlas();
         }
-        "$ls" => {
+        "ls" => {
             let s = if segments.len() > 1 {
                 segments[1].to_string().clone()
             } else {
@@ -120,23 +120,23 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 }
             }
         }
-        "$ugh" => {
+        "ugh" => {
             // TODO ugh?
         }
-        "$clear" => crate::log::clear(),
-        "$test" => {
+        "clear" => crate::log::clear(),
+        "test" => {
             log("that test worked, yipee".to_string());
         }
-        "$new" => {
+        "new" => {
             if segments.len() > 1 {
                 let name = segments[1].to_string();
                 crate::asset::make_directory(name.clone());
                 log(format!("created directory {}", name));
             } else {
-                log("$new <name>".to_string());
+                log("new <name>".to_string());
             }
         }
-        "$find" => {
+        "find" => {
             if segments.len() > 2 {
                 match segments[1] {
                     "model" => {
@@ -152,7 +152,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                     }
                 }
             } else {
-                log("$find <model | ???> <search-query>".to_string());
+                log("find <model | ???> <search-query>".to_string());
             }
         }
         &_ => return false,
