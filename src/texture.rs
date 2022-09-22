@@ -376,18 +376,18 @@ fn sort_image(
 ) {
     let (name, mut is_tile) = get_name(str.clone(), from_unpack);
     let mut rename = None;
-    let mut tile_dim = 16u32;
+    let mut tile_dim = if is_tile > 0 { is_tile } else { 16u32 };
     match template {
         Some(t) => {
             if t.tiles.len() > 0 || t.size > 0 {
-                is_tile = true;
+                is_tile = 16;
             }
             rename = Some(t.tiles.clone());
             tile_dim = t.size;
         }
         _ => {}
     }
-    if is_tile {
+    if is_tile > 0 {
         let dim = (img.width(), img.height());
         let pos = locate(img.into_rgba8());
         tile_locate(name, dim, pos, tile_dim, rename);
@@ -399,30 +399,33 @@ fn sort_image(
     }
 }
 
-fn get_name(str: String, from_unpack: bool) -> (String, bool) {
+fn get_name(str: String, from_unpack: bool) -> (String, u32) {
     if from_unpack {
         //TODO we can assume hopefully that no file extension was provided in an unpack call of this func, this should be fixed but it's complicated
         let bits = str.split(".").collect::<Vec<_>>();
         match bits.get(0) {
             Some(o) => {
-                if bits.len() > 1 && bits.get(bits.len() - 1).unwrap() == &"tile" {
-                    return (o.to_string(), true);
+                let b = bits.get(bits.len() - 1).unwrap();
+                if bits.len() > 1 && b.starts_with("tile") {
+                    return (o.to_string(), if b.ends_with("32") { 32 } else { 16 });
                 }
-                (o.to_string(), false)
+                (o.to_string(), 0)
             }
-            None => (str, false),
+            None => (str, 0),
         }
     } else {
         let smol = str.split(SLASH).collect::<Vec<_>>();
-        let bits = smol.last().unwrap().split(".").collect::<Vec<_>>();
+        let actual = smol.last().unwrap();
+        let bits = actual.split(".").collect::<Vec<_>>();
         match bits.get(0) {
             Some(o) => {
-                if bits.len() > 2 && bits.get(1).unwrap() == &"tile" {
-                    return (o.to_string(), true);
+                let b = bits.get(1).unwrap();
+                if bits.len() > 2 && b.starts_with("tile") {
+                    return (o.to_string(), if b.ends_with("32") { 32 } else { 16 });
                 }
-                (o.to_string(), false)
+                (o.to_string(), 0)
             }
-            None => (str, false),
+            None => (str, 0),
         }
     }
 }

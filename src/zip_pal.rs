@@ -5,6 +5,8 @@ use std::{fs::File, path::Path};
 
 use zip::write::FileOptions;
 
+use crate::lg;
+
 /**
  * Squish a data file on to the end of an image file. PoC.
  */
@@ -54,6 +56,7 @@ use zip::write::FileOptions;
 /** load a file and return as a u8 vector buffer */
 pub fn get_file_buffer(path_str: &String) -> Vec<u8> {
     let path = PathBuf::new().join(path_str);
+    // println!("get filepath {:?}", path);
     get_file_buffer_from_path(path)
 }
 
@@ -153,7 +156,9 @@ pub fn unpack_and_save(file: Vec<u8>, out: &String) {
         let new_file = File::create(&Path::new(out)).unwrap();
         let mut writer = BufWriter::new(new_file);
         match writer.write(v.as_slice()) {
-            Ok(_) => {}
+            Ok(_) => {
+                lg!("unpacked game {} into {}.zip", out, out);
+            }
             Err(err) => log(format!("cannot unpack game: {}", err)),
         }
     }
