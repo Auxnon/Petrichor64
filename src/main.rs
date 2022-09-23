@@ -250,28 +250,53 @@ impl Core {
         //     mem::size_of::<[f32; 11]>() as wgpu::BufferAddress
         // );
         let main_bind_group_layout =
-                        min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("main bind group layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // wgpu::BindGroupLayoutEntry {
+                    //     binding: 3,
+                    //     visibility: wgpu::ShaderStages::FRAGMENT,
+                    //     ty: wgpu::BindingType::Texture {
+                    //         multisampled: false,
+                    //         sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                    //         view_dimension: wgpu::TextureViewDimension::D2,
+                    //     },
+                    //     count: None,
+                    // },
+                    // wgpu::BindGroupLayoutEntry {
+                    //     binding: 4,
+                    //     visibility: wgpu::ShaderStages::FRAGMENT,
+                    //     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    //     count: None,
+                    // },
+                ],
+            });
 
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
