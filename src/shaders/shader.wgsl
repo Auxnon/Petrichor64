@@ -151,6 +151,29 @@ fn gui_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }
 
+[[stage(vertex)]]
+fn sky_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
+    var out: GuiFrag;
+    if (in_vertex_index==0u){
+        out.pos=vec4<f32>(-1.,-1., 0.0, 1.0);
+    }else if (in_vertex_index==1u){
+        out.pos=vec4<f32>(1.,-1., 0.0, 1.0);
+    }else if (in_vertex_index==2u){
+        out.pos=vec4<f32>(-1.,1., 0.0, 1.0);
+    }else{
+        out.pos=vec4<f32>(1.,1., 0.0, 1.0);
+    }
+    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
+    return out;
+}
+
+[[stage(fragment)]]
+fn sky_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
+    let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
+    f_color=textureSample(t_diffuse, s_diffuse, p);
+   return f_color;
+}
+
 
 [[stage(vertex)]]
 fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
