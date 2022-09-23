@@ -11,6 +11,7 @@ camera = {
 
 function main()
     log('main runs once everything has loaded')
+
     -- f = io.open("games/midnight/assets/test.txt", "rb")
     -- txt = f:read("*all")
     -- log("loaded txt")
@@ -66,4 +67,9 @@ function loop()
     -- text("test", camera.r * 10, 10)
     example.y = x
     example.z = y
+
+    a = mouse()
+    -- text(a[1] .. "," .. a[2])
+    example.y = a[1] * 100.
+    example.z = a[2] * 100.
 end

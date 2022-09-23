@@ -1,4 +1,5 @@
-bg("544e68")
+sky()
+fill("544e68")
 key_delay = 0
 
 function wallB(x)
@@ -70,6 +71,7 @@ function main()
     tile("witch2", DISTANCE, 12, -1)
     treeline(DISTANCE)
     treeline(-DISTANCE)
+    enemy_start()
 
 end
 
