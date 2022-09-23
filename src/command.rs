@@ -1014,6 +1014,8 @@ fn err(str: String) {
 }
 
 pub enum MainCommmand {
+    Sky(),
+    Gui(),
     Fill(glam::Vec4),
     Line(f32, f32, f32, f32),
     Square(f32, f32, f32, f32),
