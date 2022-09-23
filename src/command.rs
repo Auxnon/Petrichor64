@@ -1,4 +1,5 @@
 use crate::{
+    controls::ControlState,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
     online::MovePacket,
@@ -257,6 +258,12 @@ pub fn init_lua_sys(
 
     // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
+    lua!(
+        "bg",
+        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
+        ""
+    );
+
     lua!(
         "fill",
         move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
@@ -650,6 +657,25 @@ pub fn init_lua_sys(
             Ok(())
         },
         "Make sound"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "sky",
+        move |_, (): ()| {
+            pitcher.send(MainCommmand::Sky());
+            Ok(())
+        },
+        "Set skybox as draw target"
+    );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "gui",
+        move |_, (): ()| {
+            pitcher.send(MainCommmand::Gui());
+            Ok(())
+        },
+        "Set gui as draw target"
     );
 
     let pitcher = main_pitcher.clone();

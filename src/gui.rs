@@ -13,14 +13,19 @@ const GUI_DIM: u32 = 480;
 
 pub struct Gui {
     pub gui_pipeline: wgpu::RenderPipeline,
+    pub sky_pipeline: wgpu::RenderPipeline,
     pub gui_group: wgpu::BindGroup,
+    pub sky_group: wgpu::BindGroup,
     pub model: Arc<OnceCell<Model>>,
-    pub texture: Texture,
+    pub overlay_texture: Texture,
+    pub sky_texture: Texture,
     text: String,
     /** main game rendered gui raster to stay in memory if toggled to console */
     pub main: RgbaImage,
     /** console raster with current output to stay in memory*/
     pub console: RgbaImage,
+    /** skybox raster */
+    pub sky: RgbaImage,
 
     time: f32,
     pub letters: RgbaImage,
@@ -28,6 +33,7 @@ pub struct Gui {
     // console_dity: bool,
     // main_dirty: bool,
     dirty: bool,
+    dirty_sky: bool,
     target_sky: bool,
     output: bool,
 }
@@ -35,11 +41,14 @@ pub struct Gui {
 impl Gui {
     pub fn new(
         gui_pipeline: wgpu::RenderPipeline,
+        sky_pipeline: wgpu::RenderPipeline,
         gui_group: wgpu::BindGroup,
-        texture: Texture,
-        img: RgbaImage,
+        overlay_texture: Texture,
+        sky_group: wgpu::BindGroup,
+        sky_texture: Texture,
+        gui_img: RgbaImage,
     ) -> Gui {
-        let d = img.dimensions();
+        let d = gui_img.dimensions();
 
         let letters = match crate::texture::load_img(&"6x6unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
@@ -69,12 +78,17 @@ impl Gui {
 
         Gui {
             gui_pipeline,
+            sky_pipeline,
             gui_group,
+            sky_group,
             model: get_model(&"plane".to_string()),
-            texture,
-            console: img.clone(),
+            overlay_texture,
+            sky_texture,
+            console: gui_img.clone(),
+            sky: gui_img.clone(),
+            dirty_sky: false,
             target_sky: false,
-            main: img,
+            main: gui_img,
             text: "".to_string(),
             letters,
             time: 0.,
@@ -127,14 +141,14 @@ impl Gui {
                     }
                 }
 
-                image::save_buffer_with_format(
-                    "tile.png",
-                    &im,
-                    im.width(),
-                    im.height(),
-                    image::ColorType::Rgba8,
-                    image::ImageFormat::Png,
-                );
+                // image::save_buffer_with_format(
+                //     "tile.png",
+                //     &im,
+                //     im.width(),
+                //     im.height(),
+                //     image::ColorType::Rgba8,
+                //     image::ImageFormat::Png,
+                // );
             }
             Err(e) => {
                 log(format!("{}", e));
@@ -142,36 +156,36 @@ impl Gui {
         }
     }
     pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: i64, y: i64) {
-        let mut targ = if onto_console {
-            &mut self.console
-        } else {
-            &mut self.main
-        };
+        // let mut targ = if onto_console {
+        //     &mut self.console
+        // } else {
+        //     &mut self.main
+        // };
 
-        for (i, line) in txt.lines().enumerate() {
-            let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
-            let mut lx = x + (LETTER_SIZE) as i64;
-            for c in line.chars() {
-                let mut ind = c as u32;
-                if ind > 255 {
-                    ind = 255;
-                }
-                let index_x = ind % 16;
-                let index_y = ind / 16;
-                let sub = image::imageops::crop_imm(
-                    &self.letters,
-                    index_x * LETTER_SIZE,
-                    index_y * LETTER_SIZE,
-                    LETTER_SIZE,
-                    LETTER_SIZE,
-                );
-                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
-                lx += (LETTER_SIZE + 1) as i64;
-            }
-        }
+        // for (i, line) in txt.lines().enumerate() {
+        //     let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
+        //     let mut lx = x + (LETTER_SIZE) as i64;
+        //     for c in line.chars() {
+        //         let mut ind = c as u32;
+        //         if ind > 255 {
+        //             ind = 255;
+        //         }
+        //         let index_x = ind % 16;
+        //         let index_y = ind / 16;
+        //         let sub = image::imageops::crop_imm(
+        //             &self.letters,
+        //             index_x * LETTER_SIZE,
+        //             index_y * LETTER_SIZE,
+        //             LETTER_SIZE,
+        //             LETTER_SIZE,
+        //         );
+        //         image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
+        //         lx += (LETTER_SIZE + 1) as i64;
+        //     }
+        // }
 
-        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
-        self.dirty = true;
+        // // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        // self.dirty = true;
     }
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
@@ -244,28 +258,26 @@ impl Gui {
     }
 
     pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
-        // let width = self.size[0];
-        // let height = self.size[1];
+        let width = self.size[0];
+        let height = self.size[1];
 
-        // draw_filled_rect_mut(
-        //     self.get_targ(),
-        //     imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
-        //     image::Rgba([
-        //         (r * 255.) as u8,
-        //         (g * 255.) as u8,
-        //         (b * 255.) as u8,
-        //         (a * 255.) as u8,
-        //     ]),
-        // );
-
-        // self.dirty = true;
+        draw_filled_rect_mut(
+            self.get_targ(),
+            imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
+            image::Rgba([
+                (r * 255.) as u8,
+                (g * 255.) as u8,
+                (b * 255.) as u8,
+                (a * 255.) as u8,
+            ]),
+        );
     }
 
     pub fn target_gui(&mut self) {
         self.target_sky = false;
     }
     pub fn target_sky(&mut self) {
-        // self.target_sky = true;
+        self.target_sky = true;
     }
 
     pub fn square(&mut self, x: f32, y: f32, w: f32, h: f32) {
@@ -279,12 +291,10 @@ impl Gui {
         // let mut im = RgbaImage::new(w, h);
         // image::imageops::overlay(&mut self.main, &mut im, x, y);
         draw_filled_rect_mut(
-            &mut self.main,
+            self.get_targ(),
             imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
             image::Rgba([255, 255, 255, 255]),
         );
-
-        self.dirty = true;
     }
 
     pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
@@ -299,14 +309,23 @@ impl Gui {
         // image::imageops::overlay(&mut self.main, &mut im, x, y);
 
         let white = image::Rgba([255, 255, 255, 255]);
-        imageproc::drawing::draw_line_segment_mut(&mut self.main, (xx1, yy1), (xx2, yy2), white);
+        imageproc::drawing::draw_line_segment_mut(self.get_targ(), (xx1, yy1), (xx2, yy2), white);
         // draw_line_mut(
         //     &mut self.main,
         //     imageproc::point::Point::new(xx1 as i32, yy1 as i32),
         //     imageproc::point::Point::new(xx2 as i32, yy2 as i32),
         //     image::Rgba([255, 255, 255, 255]),
         // );
-        self.dirty = true;
+    }
+
+    fn get_targ(&mut self) -> &mut RgbaImage {
+        if self.target_sky {
+            self.dirty_sky = true;
+            &mut self.sky
+        } else {
+            self.dirty = true;
+            &mut self.main
+        }
     }
 
     /* Clean off the main raster */
@@ -354,8 +373,12 @@ impl Gui {
             } else {
                 &self.main
             };
-            crate::texture::write_tex(queue, &self.texture, raster);
+            crate::texture::write_tex(queue, &self.overlay_texture, raster);
             self.dirty = false;
+        }
+        if self.dirty_sky {
+            crate::texture::write_tex(queue, &self.sky_texture, &self.sky);
+            self.dirty_sky = false;
         }
 
         if time % 0.2 == 0.0 {

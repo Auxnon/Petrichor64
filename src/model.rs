@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{ivec3, vec4, IVec3, Vec4};
+use glam::{ivec3, vec4, IVec3, Mat4, Quat, Vec3, Vec4};
 use itertools::izip;
 use lazy_static::lazy_static;
 use once_cell::sync::OnceCell;

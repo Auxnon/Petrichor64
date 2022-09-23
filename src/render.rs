@@ -283,7 +283,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         //world space
         {
             render_pass.set_pipeline(&core.render_pipeline);
-            render_pass.set_bind_group(0, &core.bind_group, &[]);
+            render_pass.set_bind_group(0, &core.main_bind_group, &[]);
 
             // let c = core.world.get_chunk_mut(0, 0, 0);
 

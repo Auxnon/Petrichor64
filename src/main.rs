@@ -80,7 +80,7 @@ pub struct Core {
     catcher: Option<Receiver<MainPacket>>,
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
-    bind_group: BindGroup,
+    main_bind_group: BindGroup,
     master_texture: Texture,
     gui: Gui,
     post: Post,
@@ -212,7 +212,7 @@ impl Core {
 
         // let index_format = wgpu::IndexFormat::Uint16;
 
-        let local_bind_group_layout =
+        let entity_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -224,10 +224,10 @@ impl Core {
                     },
                     count: None,
                 }],
-                label: None,
+                label: Some("entity bind group layout"),
             });
         let entity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &local_bind_group_layout,
+            layout: &entity_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -236,7 +236,7 @@ impl Core {
                     size: wgpu::BufferSize::new(entity_uniform_size),
                 }),
             }],
-            label: None,
+            label: Some("entity bind group"),
         });
 
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
@@ -249,15 +249,7 @@ impl Core {
         //     "struct size is {}",
         //     mem::size_of::<[f32; 11]>() as wgpu::BufferAddress
         // );
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
+        let main_bind_group_layout =
                         min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
                     },
                     count: None,
@@ -301,28 +293,10 @@ impl Core {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Create bind group
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
-                },
-                // wgpu::BindGroupEntry {
-                //     binding: 3,
-                //     resource: wgpu::BindingResource::Sampler(&post_sampler),
-                // },
-            ],
-            label: None,
+        let flat_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Sky Render Pipeline Layout"),
+            bind_group_layouts: &[&main_bind_group_layout],
+            push_constant_ranges: &[],
         });
 
         let vertex_size = mem::size_of::<crate::model::Vertex>();
@@ -330,7 +304,12 @@ impl Core {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout, &local_bind_group_layout], //&bind_group_layout
+                bind_group_layouts: &[
+                    // &main_bind_group_layout,
+                    &main_bind_group_layout,
+                    &entity_bind_group_layout,
+                    // &main_bind_group_layout,
+                ], //&bind_group_layout
                 push_constant_ranges: &[],
             });
 
@@ -405,8 +384,31 @@ impl Core {
         //Gui
         let (gui_texture_view, gui_sampler, gui_texture, gui_image) =
             gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
+
+        let (sky_texture_view, sky_sampler, sky_texture, sky_image) =
+            gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
+
+        let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &main_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&sky_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sky_sampler),
+                },
+            ],
+            label: None,
+        });
+
         let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
+            layout: &main_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -424,9 +426,41 @@ impl Core {
             label: None,
         });
 
+        // Create main bind group
+        let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &main_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                },
+                // wgpu::BindGroupEntry {
+                //     binding: 3,
+                //     resource: wgpu::BindingResource::TextureView(&sky_texture_view),
+                // },
+                // wgpu::BindGroupEntry {
+                //     binding: 4,
+                //     resource: wgpu::BindingResource::Sampler(&sky_sampler),
+                // },
+                // wgpu::BindGroupEntry {
+                //     binding: 3,
+                //     resource: wgpu::BindingResource::Sampler(&post_sampler),
+                // },
+            ],
+            label: None,
+        });
+
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Gui Pipeline"),
-            layout: Some(&render_pipeline_layout),
+            layout: Some(&flat_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "gui_vs_main",
@@ -471,9 +505,58 @@ impl Core {
             multiview: None,
         });
 
-        let mut gui = Gui::new(gui_pipeline, gui_group, gui_texture, gui_image);
+        let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Sky Pipeline"),
+            layout: Some(&flat_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "sky_vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "sky_fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+                unclipped_depth: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
+        let mut gui = Gui::new(
+            gui_pipeline,
+            sky_pipeline,
+            gui_group,
+            gui_texture,
+            sky_group,
+            sky_texture,
+            gui_image,
+        );
         gui.add_text("initialized".to_string());
-        gui.add_img(&"map.tile.png".to_string());
+        // gui.add_img(&"map.tile.png".to_string());
 
         let global = Global::new();
         if global.console {
@@ -514,7 +597,7 @@ impl Core {
             switch_board: Arc::clone(&switch_board),
             post,
             gui,
-            bind_group,
+            main_bind_group,
             entity_bind_group,
             entity_uniform_buf,
             _stream: stream_result,
@@ -623,8 +706,14 @@ impl Core {
                             // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                         }
                         MainCommmand::CamRot(v) => {
-                            self.global.mouse_active_pos = v;
+                            self.global.simple_cam_rot = v;
                             // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
+                        }
+                        MainCommmand::Sky() => {
+                            self.gui.target_sky();
+                        }
+                        MainCommmand::Gui() => {
+                            self.gui.target_gui();
                         }
                         MainCommmand::Fill(v) => {
                             self.gui.fill(v.x, v.y, v.z, v.w);
