@@ -8,22 +8,22 @@ use std::{ops::Mul, sync::Arc};
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct EntityUniforms {
-    // pub uv_mod: [f32; 4],
-    // pub color: [f32; 4],
-    // pub effects: [u32; 4],
+    pub uv_mod: [f32; 4],
+    pub color: [f32; 4],
+    pub effects: [u32; 4],
     pub model: [[f32; 4]; 4],
 }
 
 impl EntityUniforms {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
-    //     4=>Float32x4,5=>Float32x4,
-    // 6=>Uint32x4, 
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        4=>Float32x4,5=>Float32x4,
+    6=>Uint32x4, 
     7 => Float32x4, 8 => Float32x4, 9=> Float32x4,10=>Float32x4];
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         // let vertex_attr = ;
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<EntityUniforms>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
+            step_mode: wgpu::VertexStepMode::Instance,
             attributes: &Self::ATTRIBS,
         }
     }
@@ -236,9 +236,9 @@ impl<'lua> Ent {
             self.color.a as f32,
         ];
         EntityUniforms {
-            // color,
-            // uv_mod,
-            // effects,
+            color,
+            uv_mod,
+            effects,
             model: model.to_cols_array_2d(),
         }
     }

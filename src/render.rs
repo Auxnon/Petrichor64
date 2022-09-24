@@ -114,7 +114,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         })
         .collect::<Vec<_>>();
 
-    let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>)> = vec![];
+    let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>, EntityUniforms)> = vec![];
     let mut instances = vec![];
     for entity in &mut lua_ent_array.iter() {
         match entity_manager.get_from_id(entity.get_id()) {
@@ -125,7 +125,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
                 instances.push(instance);
                 // let instance=
                 let e = o.clone();
-                ent_array.push((e, model));
+                ent_array.push((e, model, data));
             }
             _ => {}
         }
@@ -263,9 +263,9 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
         //skybox space
         {
-            // render_pass.set_pipeline(&core.gui.gui_pipeline);
-            // render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
-            // render_pass.draw(0..4, 0..4);
+            render_pass.set_pipeline(&core.gui.gui_pipeline);
+            render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
+            render_pass.draw(0..4, 0..4);
 
             // render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
 
@@ -322,9 +322,9 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
         //gui space
         {
-            // render_pass.set_pipeline(&core.gui.gui_pipeline);
-            // render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
-            // render_pass.draw(0..4, 0..4);
+            render_pass.set_pipeline(&core.gui.gui_pipeline);
+            render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
+            render_pass.draw(0..4, 0..4);
 
             // frame!("render pass");
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);

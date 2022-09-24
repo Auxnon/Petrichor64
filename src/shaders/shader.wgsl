@@ -7,9 +7,9 @@ struct VertexOutput {
 };
 
 struct InstanceInput {
-    // [[location(4)]] uv_mod: vec4<f32>;
-    // [[location(5)]] color: vec4<f32>;
-    // [[location(6)]] effects: vec4<u32>;
+    [[location(4)]] uv_mod: vec4<f32>;
+    [[location(5)]] color: vec4<f32>;
+    [[location(6)]] effects: vec4<u32>;
     [[location(7)]] model_matrix_0: vec4<f32>;
     [[location(8)]] model_matrix_1: vec4<f32>;
     [[location(9)]] model_matrix_2: vec4<f32>;
@@ -74,12 +74,12 @@ fn vs_main(
     //    out.proj_position = globals.view_proj * world_pos;
 
     //billboard if true
-    if(1u> 0u){
+    if(instance.effects[0]> 0u){
         out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
     }else{
         out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
     }
-    let uv_mod=vec4<f32>(1.,1.,1.,1.);
+    let uv_mod=instance.uv_mod;
 
     out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
