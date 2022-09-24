@@ -8,10 +8,62 @@ use std::{ops::Mul, sync::Arc};
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct EntityUniforms {
-    pub model: [[f32; 4]; 4],
-    pub color: [f32; 4],
     pub uv_mod: [f32; 4],
+    pub color: [f32; 4],
     pub effects: [u32; 4],
+    pub model: [[f32; 4]; 4],
+}
+
+impl EntityUniforms {
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        4=>Float32x4,5=>Float32x4,
+    6=>Uint32x4, 
+    7 => Float32x4, 8 => Float32x4, 9=> Float32x4,10=>Float32x4];
+    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        // let vertex_attr = ;
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<EntityUniforms>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+    // pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+    //     use std::mem;
+    //     wgpu::VertexBufferLayout {
+    //         array_stride: mem::size_of::<EntityUniforms>() as wgpu::BufferAddress,
+    //         // We need to switch from using a step mode of Vertex to Instance
+    //         // This means that our shaders will only change to use the next
+    //         // instance when the shader starts processing a new instance
+    //         step_mode: wgpu::VertexStepMode::Instance,
+    //         attributes: &[
+    //             wgpu::VertexAttribute {
+    //                 offset: 0,
+    //                 // While our vertex shader only uses locations 0, and 1 now, in later tutorials we'll
+    //                 // be using 2, 3, and 4, for Vertex. We'll start at slot 5 not conflict with them later
+    //                 shader_location: 5,
+    //                 format: wgpu::VertexFormat::Float32x4,
+    //             },
+    //             // A mat4 takes up 4 vertex slots as it is technically 4 vec4s. We need to define a slot
+    //             // for each vec4. We'll have to reassemble the mat4 in
+    //             // the shader.
+    //             wgpu::VertexAttribute {
+    //                 offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+    //                 shader_location: 6,
+    //                 format: wgpu::VertexFormat::Float32x4,
+    //             },
+    //             wgpu::VertexAttribute {
+    //                 offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+    //                 shader_location: 7,
+    //                 format: wgpu::VertexFormat::Float32x4,
+    //             },
+    //             wgpu::VertexAttribute {
+    //                 offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+    //                 shader_location: 8,
+    //                 format: wgpu::VertexFormat::Float32x4,
+    //             },
+    //         ],
+    //     }
+    // }
 }
 
 #[derive(Clone)]
@@ -184,12 +236,37 @@ impl<'lua> Ent {
             self.color.a as f32,
         ];
         EntityUniforms {
-            model: model.to_cols_array_2d(),
             color,
             uv_mod,
             effects,
+            model: model.to_cols_array_2d(),
         }
     }
+
+    // pub fn get_instance(&self,lua: &LuaEnt, iteration: u64){
+    //     let model = self.build_meta(lua);
+
+    //     let effects = [
+    //         self.effects.x,
+    //         self.effects.y,
+    //         self.effects.z,
+    //         self.effects.w,
+    //     ];
+    //     let uv_mod = if self.anim.len() > 0 {
+    //         let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
+    //             / self.anim_speed as u64) as usize];
+    //         [a.x, a.y, a.z, a.w]
+    //     } else {
+    //         [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
+    //     };
+    //     let color = [
+    //         self.color.r as f32,
+    //         self.color.g as f32,
+    //         self.color.b as f32,
+    //         self.color.a as f32,
+    //     ];
+    // }
+
     // fn from_lua(&mut self, ent: LuaEnt) {
     //     self.pos.x = ent.x;
     //     self.pos.y = ent.y;

@@ -1,4 +1,5 @@
-bg("544e68")
+sky()
+fill("544e68")
 key_delay = 0
 
 function wallB(x)
@@ -70,6 +71,7 @@ function main()
     tile("witch2", DISTANCE, 12, -1)
     treeline(DISTANCE)
     treeline(-DISTANCE)
+    enemy_start()
 
 end
 
@@ -114,8 +116,14 @@ function loop()
 
     player.x = player.x + (move_pos.x - player.x) / 6.
     cam_pos.x = cam_pos.x + (room_pos.x - cam_pos.x) / 4.
+    sky()
+    line(0, 0, 1, 1)
+    gui()
+
     clr()
     text(cam_pos.x)
+    img("zom", 255, 1)
+    -- line(0, 0, 1, 1)
     campos(cam_pos.x, cam_pos.y, 2)
     -- log("x" .. player.y)
     -- player.y = example.y + rnd() * 0.1 - 0.05

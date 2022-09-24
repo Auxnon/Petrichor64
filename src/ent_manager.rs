@@ -3,8 +3,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::{
+    ent::EntityUniforms,
+    model::{Instance, InstanceRaw},
+};
 use glam::vec3;
 use mlua::{UserData, UserDataMethods};
+use wgpu::util::DeviceExt;
 
 use crate::{ent::Ent, lua_ent::LuaEnt};
 // use serde::Deserialize;
@@ -21,17 +26,45 @@ pub struct EntManager {
     // pub create: Vec<LuaEnt>,
     pub ent_table: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
+    pub instances: Vec<Instance>,
+    pub instance_buffer: wgpu::Buffer,
 }
 impl EntManager {
-    pub fn new() -> EntManager {
+    pub fn new(device: &wgpu::Device) -> EntManager {
         EntManager {
             // ent_table: Mutex::new(),
             ent_table: vec![],
             entities: HashMap::new(),
-            // create: vec![],
+            instances: vec![],
+            instance_buffer: EntManager::build_buffer(&vec![], device),
             uniform_alignment: 0,
         }
     }
+
+    pub fn build_buffer(instances: &Vec<Instance>, device: &wgpu::Device) -> wgpu::Buffer {
+        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    }
+
+    pub fn rebuild_instance_buffer(&mut self, device: &wgpu::Device) {
+        self.instance_buffer = EntManager::build_buffer(&self.instances, device);
+    }
+
+    pub fn build_instance_buffer(
+        instance_data: &Vec<EntityUniforms>,
+        device: &wgpu::Device,
+    ) -> wgpu::Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    }
+
     // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
     //     let mut ent = LuaEnt::empty();
     //     ent.x = x;

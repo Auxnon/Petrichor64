@@ -156,35 +156,73 @@ impl Gui {
         }
     }
     pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: i64, y: i64) {
-        // let mut targ = if onto_console {
-        //     &mut self.console
-        // } else {
-        //     &mut self.main
-        // };
+        let targ = if onto_console {
+            &mut self.console
+        } else {
+            if self.target_sky {
+                self.dirty_sky = true;
+                &mut self.sky
+            } else {
+                self.dirty = true;
+                &mut self.main
+            }
+        };
 
-        // for (i, line) in txt.lines().enumerate() {
-        //     let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
-        //     let mut lx = x + (LETTER_SIZE) as i64;
-        //     for c in line.chars() {
-        //         let mut ind = c as u32;
-        //         if ind > 255 {
-        //             ind = 255;
-        //         }
-        //         let index_x = ind % 16;
-        //         let index_y = ind / 16;
-        //         let sub = image::imageops::crop_imm(
-        //             &self.letters,
-        //             index_x * LETTER_SIZE,
-        //             index_y * LETTER_SIZE,
-        //             LETTER_SIZE,
-        //             LETTER_SIZE,
-        //         );
-        //         image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
-        //         lx += (LETTER_SIZE + 1) as i64;
-        //     }
-        // }
+        for (i, line) in txt.lines().enumerate() {
+            let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
+            let mut lx = x + (LETTER_SIZE) as i64;
+            for c in line.chars() {
+                let mut ind = c as u32;
+                if ind > 255 {
+                    ind = 255;
+                }
+                let index_x = ind % 16;
+                let index_y = ind / 16;
+                let sub = image::imageops::crop_imm(
+                    &self.letters,
+                    index_x * LETTER_SIZE,
+                    index_y * LETTER_SIZE,
+                    LETTER_SIZE,
+                    LETTER_SIZE,
+                );
+                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
+                lx += (LETTER_SIZE + 1) as i64;
+            }
+        }
 
-        // // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        // self.dirty = true;
+    }
+
+    pub fn draw_image(&mut self, image: &String, onto_console: bool, x: i64, y: i64) {
+        let targ = if onto_console {
+            &mut self.console
+        } else {
+            if self.target_sky {
+                self.dirty_sky = true;
+                &mut self.sky
+            } else {
+                self.dirty = true;
+                &mut self.main
+            }
+        };
+        let source = crate::texture::get_tex(image);
+
+        let m_guard = crate::texture::MASTER.lock();
+        let m_ref = m_guard.get().unwrap();
+
+        let w = m_ref.width();
+        let h = m_ref.height();
+        let sub = image::imageops::crop_imm(
+            m_ref,
+            (source.x * w as f32) as u32,
+            (source.y * h as f32) as u32,
+            (source.z * w as f32) as u32,
+            (source.w * h as f32) as u32,
+        );
+        image::imageops::overlay(targ, &mut sub.to_image(), x, y);
+
+        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
         // self.dirty = true;
     }
     pub fn apply_console_out_text(&mut self) {

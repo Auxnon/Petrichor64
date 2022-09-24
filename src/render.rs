@@ -1,4 +1,4 @@
-use crate::Arc;
+use crate::{model::InstanceRaw, Arc};
 use glam::{vec3, Mat4, Vec2, Vec3};
 use once_cell::sync::OnceCell;
 use std::{iter, ops::Add};
@@ -115,17 +115,23 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         .collect::<Vec<_>>();
 
     let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>, EntityUniforms)> = vec![];
+    let mut instances = vec![];
     for entity in &mut lua_ent_array.iter() {
         match entity_manager.get_from_id(entity.get_id()) {
             Some(o) => {
                 let model = o.model.clone();
                 let data = o.get_uniform(&entity.clone(), iteration);
+                let instance = data; //InstanceRaw { model: data.model,uv: data.};
+                instances.push(instance);
+                // let instance=
                 let e = o.clone();
                 ent_array.push((e, model, data));
             }
             _ => {}
         }
     }
+    let instance_buffer =
+        crate::ent_manager::EntManager::build_instance_buffer(&instances, &core.device);
 
     drop(ents);
     drop(entity_manager);
@@ -186,63 +192,38 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
     core.queue.write_buffer(&core.uniform_buf, 128, size3);
 
-    let m: Mat4 = Mat4::IDENTITY;
-    let data = EntityUniforms {
-        model: m.to_cols_array_2d(),
-        color: [1., 1., 1., 1.],
-        uv_mod: [0., 0., 1., 1.],
-        effects: [0, 0, 0, 0],
-    };
+    // let m: Mat4 = Mat4::IDENTITY;
+    // let data = EntityUniforms {
+    //     model: m.to_cols_array_2d(),
+    //     color: [1., 1., 1., 1.],
+    //     uv_mod: [0., 0., 1., 1.],
+    //     effects: [0, 0, 0, 0],
+    // };
 
-    core.queue.write_buffer(
-        &core.entity_uniform_buf,
-        0 as wgpu::BufferAddress,
-        bytemuck::bytes_of(&data),
-    );
+    // core.queue.write_buffer(
+    //     &core.entity_uniform_buf,
+    //     0 as wgpu::BufferAddress,
+    //     bytemuck::bytes_of(&data),
+    // );
 
-    // MARK 1
-    // frame!("ent use1::start");
-    let neu = true;
-    if neu {
-        for (entity, _, data) in &mut ent_array.iter() {
-            core.queue.write_buffer(
-                &core.entity_uniform_buf,
-                entity.uniform_offset as wgpu::BufferAddress,
-                bytemuck::bytes_of(data),
-            );
-        }
-    }
+    // let neu = true;
+    // if neu {
+    //     for (entity, _, data) in &mut ent_array.iter() {
+    //         core.queue.write_buffer(
+    //             &core.entity_uniform_buf,
+    //             entity.uniform_offset as wgpu::BufferAddress,
+    //             bytemuck::bytes_of(data),
+    //         );
+    //     }
+    // }
 
-    // let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-    // let instance_data = ent_array
-    //     .iter()
-    //     .map(|(entity, _, data)| bytemuck::bytes_of(data))
-    //     .collect::<Vec<_>>();
-    if !neu {
-        let mut buf: Vec<u8> = vec![];
-        for (_entity, _, data) in &mut ent_array.iter() {
-            // buf.extend_from_slice(bytemuck::bytes_of(data));
-
-            // let int = entity.uniform_offset as usize;
-
-            // let d = bytemuck::bytes_of(data);
-            // let v: Vec<u8> = bytemuck::bytes_of(data).to_vec();
-            // if v.len() > 0 {
-            buf.append(&mut bytemuck::bytes_of(data).to_vec());
-            //int..int + v.len(),
-            // }
-            // core.queue.write_buffer(
-            //     &core.entity_uniform_buf,
-            //     entity.uniform_offset as wgpu::BufferAddress,
-            //     bytemuck::bytes_of(data),
-            // );
-        }
-        core.queue.write_buffer(&core.entity_uniform_buf, 0, &buf);
-    }
-
-    // frame!("ent use1::end");
-
-    // RED
+    // if !neu {
+    //     let mut buf: Vec<u8> = vec![];
+    //     for (_entity, _, data) in &mut ent_array.iter() {
+    //         buf.append(&mut bytemuck::bytes_of(data).to_vec());
+    //     }
+    //     core.queue.write_buffer(&core.entity_uniform_buf, 0, &buf);
+    // }
 
     let mut encoder = core
         .device
@@ -280,57 +261,63 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             }),
         });
 
+        //skybox space
+        {
+            render_pass.set_pipeline(&core.gui.gui_pipeline);
+            render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
+            render_pass.draw(0..4, 0..4);
+
+            // render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
+
+            // frame!("render pass");
+            //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+            //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+            //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+        }
+
         //world space
         {
+            // render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
+
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
 
-            // let c = core.world.get_chunk_mut(0, 0, 0);
+            // let chunks = core.world.get_chunk_models(&core.device);
+            // // println!("------chunks {} ------", chunks.len());
 
-            // let go = match core.switch_board.try_read() {
-            //     Some(sw) => !sw.space,
-            //     _ => true,
-            // };
-
-            let chunks = core.world.get_chunk_models(&core.device);
-            // println!("------chunks {} ------", chunks.len());
-            render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
-            for c in chunks {
-                if c.buffers.is_some() {
-                    // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
-                    let b = c.buffers.as_ref().unwrap();
-                    render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.set_vertex_buffer(0, b.0.slice(..));
-                    render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
-                }
-            }
-
-            // {
-            //     let c = core.world.get_chunk_mut(0, 0, -2);
-            //     // println!(
-            //     //     "\nchunk drawing {:?} \n and {:?}",
-            //     //     c.ind_data,
-            //     //     c.vert_data.iter().map(|u| u.to_string()).join(", ")
-            //     // );
-            //     // println!("chunk {}", c.pos);
-            //     let b = c.buffers.as_ref().unwrap();
-            //     render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
-            //     render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
-            //     render_pass.set_vertex_buffer(0, b.0.slice(..));
-            //     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+            // for c in chunks {
+            //     if c.buffers.is_some() {
+            //         // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
+            //         let b = c.buffers.as_ref().unwrap();
+            //         render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
+            //         render_pass.set_vertex_buffer(0, b.0.slice(..));
+            //         render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+            //     }
             // }
 
-            // MARK 2
-            // frame!("entity use2::start");
+            if ent_array.len() > 0 {
+                // render_pass.set_bind_group(1, &core.entity_bind_group, &[256]);
+                render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
+                let m = ent_array.get(0).unwrap().1.get().unwrap();
 
-            for (entity, model, _) in &mut ent_array.iter() {
-                let m = model.get().unwrap();
-                render_pass.set_bind_group(1, &core.entity_bind_group, &[entity.uniform_offset]);
-                render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
-                render_pass.draw_indexed(0..m.index_count as u32, 0, 0..1);
+                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
+
+                // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+                // for (entity, model, _) in &mut ent_array.iter() {
+                //     // let m = model.get().unwrap();
+                //     render_pass.set_bind_group(
+                //         1,
+                //         &core.entity_bind_group,
+                //         &[entity.uniform_offset],
+                //     );
+
+                //     render_pass.draw_indexed(0..m.index_count as u32, 0, 0..1);
+                // }
+                render_pass.draw_indexed(0..m.index_count as u32, 0, 0..instances.len() as _);
             }
-            // frame!("ent use2::end");
         }
 
         //gui space
@@ -338,6 +325,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.draw(0..4, 0..4);
+
             // frame!("render pass");
             //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));

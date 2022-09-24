@@ -6,6 +6,16 @@ struct VertexOutput {
     [[location(3)]] vpos:vec4<f32>;
 };
 
+struct InstanceInput {
+    [[location(4)]] uv_mod: vec4<f32>;
+    [[location(5)]] color: vec4<f32>;
+    [[location(6)]] effects: vec4<u32>;
+    [[location(7)]] model_matrix_0: vec4<f32>;
+    [[location(8)]] model_matrix_1: vec4<f32>;
+    [[location(9)]] model_matrix_2: vec4<f32>;
+    [[location(10)]] model_matrix_3: vec4<f32>;
+};
+
 
 struct Globals {
     view_mat: mat4x4<f32>;
@@ -14,8 +24,6 @@ struct Globals {
     //num_lights: vec4<u32>;
 };
 
-// [[group(1), binding(0)]]
-// var<uniform> u_entity: Entity;
 
 [[group(0), binding(0)]]
 var<uniform> globals: Globals;
@@ -24,26 +32,37 @@ var t_diffuse: texture_2d<f32>;
 [[group(0), binding(2)]]
 var s_diffuse: sampler;
 
-struct Entity {
-    matrix: mat4x4<f32>;
-    color: vec4<f32>;
-    uv_mod:vec4<f32>;
-    effects:vec4<u32>;
-};
 
-[[group(1), binding(0)]]
-var<uniform> ent: Entity;
+// struct Entity {
+//     matrix: mat4x4<f32>;
+//     color: vec4<f32>;
+//     uv_mod:vec4<f32>;
+//     effects:vec4<u32>;
+// };
+
+// [[group(1), binding(0)]]
+// var<uniform> ent: Entity;
 
 [[stage(vertex)]]
 fn vs_main(
     [[location(0)]] position: vec4<i32>,
     [[location(1)]] normal: vec4<i32>,
     [[location(2)]] tex_coords: vec2<f32>,
+
+    
+    instance: InstanceInput
 ) -> VertexOutput {
 
     let billboarded=false;
-    let w = ent.matrix;
-    let world_pos =  ent.matrix *vec4<f32>(position); 
+    // let tex_coords=instance.uv;
+    // let w = ent.matrix;
+    let w=mat4x4<f32>(
+        instance.model_matrix_0,
+        instance.model_matrix_1,
+        instance.model_matrix_2,
+        instance.model_matrix_3,
+    );
+    let world_pos =  w *vec4<f32>(position); 
     var out: VertexOutput;
     out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
@@ -55,13 +74,14 @@ fn vs_main(
     //    out.proj_position = globals.view_proj * world_pos;
 
     //billboard if true
-    if(ent.effects[0] > 0u){
-        out.proj_position=globals.proj_mat*(globals.view_mat*ent.matrix*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
+    if(instance.effects[0]> 0u){
+        out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
     }else{
         out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
     }
+    let uv_mod=instance.uv_mod;
 
-    out.tex_coords=(tex_coords*vec2<f32>(ent.uv_mod.z,ent.uv_mod.w))+vec2<f32>(ent.uv_mod.x,ent.uv_mod.y);
+    out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
   
     out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0],world_pos.w);

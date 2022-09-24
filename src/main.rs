@@ -219,7 +219,7 @@ impl Core {
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
+                        has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(entity_uniform_size),
                     },
                     count: None,
@@ -258,7 +258,7 @@ impl Core {
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: true,
+                            has_dynamic_offset: false,
                             min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
                         },
                         count: None,
@@ -298,6 +298,39 @@ impl Core {
                 ],
             });
 
+        // let gui_bind_group_layout =
+        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //         label: None,
+        //         entries: &[
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 0,
+        //                 visibility: wgpu::ShaderStages::VERTEX,
+        //                 ty: wgpu::BindingType::Buffer {
+        //                     ty: wgpu::BufferBindingType::Uniform,
+        //                     has_dynamic_offset: false,
+        //                     min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+        //                 },
+        //                 count: None,
+        //             },
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 1,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Texture {
+        //                     multisampled: false,
+        //                     sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+        //                     view_dimension: wgpu::TextureViewDimension::D2,
+        //                 },
+        //                 count: None,
+        //             },
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 2,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        //                 count: None,
+        //             },
+        //         ],
+        //     });
+
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
             0.,
@@ -324,8 +357,6 @@ impl Core {
             push_constant_ranges: &[],
         });
 
-        let vertex_size = mem::size_of::<crate::model::Vertex>();
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -338,12 +369,12 @@ impl Core {
                 push_constant_ranges: &[],
             });
 
-        let vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
-        let vb_desc = wgpu::VertexBufferLayout {
-            array_stride: vertex_size as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &vertex_attr,
-        };
+        // let vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
+        // let vb_desc = wgpu::VertexBufferLayout {
+        //     array_stride: vertex_size as wgpu::BufferAddress,
+        //     step_mode: wgpu::VertexStepMode::Vertex,
+        //     attributes: &vertex_attr,
+        // };
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -352,7 +383,10 @@ impl Core {
                 module: &shader,
                 entry_point: "vs_main",
                 //targets:&[wgpu::],
-                buffers: &[vb_desc], //&vertex_buffers, //,
+                buffers: &[
+                    crate::model::Vertex::desc(),
+                    crate::ent::EntityUniforms::desc(),
+                ], //&vertex_buffers, //,
             },
 
             fragment: Some(wgpu::FragmentState {
@@ -752,6 +786,9 @@ impl Core {
                         MainCommmand::Text(s, x, y) => {
                             self.gui.direct_text(&s, false, x as i64, y as i64)
                         }
+                        MainCommmand::Img(s, x, y) => {
+                            self.gui.draw_image(&s, false, x as i64, y as i64)
+                        }
                         MainCommmand::Clear() => self.gui.clean(),
                         _ => {}
                     };
@@ -808,7 +845,7 @@ fn main() {
     let mut core = pollster::block_on(Core::new(&window));
 
     let ent_guard = ent_master.read();
-    let mut eman = EntManager::new();
+    let mut eman = EntManager::new(&core.device);
     eman.uniform_alignment = core.uniform_alignment as u32;
 
     ent_guard.get_or_init(|| eman);
