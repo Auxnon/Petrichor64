@@ -7,8 +7,7 @@ function zombie(n)
 end
 
 function enemy_start()
-
-    for i = 1, 19999 do
+    for i = 1, 10000 do
         zombie(i / 10.)
     end
 end
@@ -19,9 +18,11 @@ function enemy_loop()
     --     zombie()
     --     delay = 0
     -- end
+
     -- for i = 1, #zoms do
     --     local z = zoms[i]
     --     z.x = z.x + 0.01
     -- end
+
     -- delay = delay + 1
 end

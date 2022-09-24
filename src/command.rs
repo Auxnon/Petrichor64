@@ -716,6 +716,26 @@ pub fn init_lua_sys(
         },
         "Draw text on the gui at position"
     );
+    let pitcher = main_pitcher.clone();
+
+    lua!(
+        "img",
+        move |_, (im, x, y): (String, Option<f32>, Option<f32>)| {
+            pitcher.send(MainCommmand::Img(
+                im,
+                match x {
+                    Some(o) => o,
+                    _ => 0.,
+                },
+                match y {
+                    Some(o) => o,
+                    _ => 0.,
+                },
+            ));
+            Ok(())
+        },
+        "Draw text on the gui at position"
+    );
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -1020,6 +1040,7 @@ pub enum MainCommmand {
     Line(f32, f32, f32, f32),
     Square(f32, f32, f32, f32),
     Text(String, f32, f32),
+    Img(String, f32, f32),
     CamPos(glam::Vec3),
     CamRot(glam::Vec2),
     Clear(),

@@ -298,6 +298,39 @@ impl Core {
                 ],
             });
 
+        // let gui_bind_group_layout =
+        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //         label: None,
+        //         entries: &[
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 0,
+        //                 visibility: wgpu::ShaderStages::VERTEX,
+        //                 ty: wgpu::BindingType::Buffer {
+        //                     ty: wgpu::BufferBindingType::Uniform,
+        //                     has_dynamic_offset: false,
+        //                     min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+        //                 },
+        //                 count: None,
+        //             },
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 1,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Texture {
+        //                     multisampled: false,
+        //                     sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+        //                     view_dimension: wgpu::TextureViewDimension::D2,
+        //                 },
+        //                 count: None,
+        //             },
+        //             wgpu::BindGroupLayoutEntry {
+        //                 binding: 2,
+        //                 visibility: wgpu::ShaderStages::FRAGMENT,
+        //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        //                 count: None,
+        //             },
+        //         ],
+        //     });
+
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
             0.,
@@ -752,6 +785,9 @@ impl Core {
                         }
                         MainCommmand::Text(s, x, y) => {
                             self.gui.direct_text(&s, false, x as i64, y as i64)
+                        }
+                        MainCommmand::Img(s, x, y) => {
+                            self.gui.draw_image(&s, false, x as i64, y as i64)
                         }
                         MainCommmand::Clear() => self.gui.clean(),
                         _ => {}
