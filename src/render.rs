@@ -281,23 +281,24 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
-
-            // let chunks = core.world.get_chunk_models(&core.device);
+            render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
+            let chunks = core.world.get_chunk_models(&core.device);
             // // println!("------chunks {} ------", chunks.len());
 
-            // for c in chunks {
-            //     if c.buffers.is_some() {
-            //         // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
-            //         let b = c.buffers.as_ref().unwrap();
-            //         render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
-            //         render_pass.set_vertex_buffer(0, b.0.slice(..));
-            //         render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
-            //     }
-            // }
+            for c in chunks {
+                if c.buffers.is_some() {
+                    // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
+                    let b = c.buffers.as_ref().unwrap();
+                    render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_vertex_buffer(0, b.0.slice(..));
+                    render_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
+                    render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+                }
+            }
 
             if ent_array.len() > 0 {
                 // render_pass.set_bind_group(1, &core.entity_bind_group, &[256]);
-                render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
+
                 let m = ent_array.get(0).unwrap().1.get().unwrap();
 
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));

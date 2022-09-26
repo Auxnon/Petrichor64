@@ -185,7 +185,8 @@ impl World {
                                     //     "populate new model chunk {} {} {} {}",
                                     //     chunk.key, ix, iy, iz
                                     // );
-                                    let mut model = ChunkModel::new(chunk.key.clone(), ix, iy, iz);
+                                    let mut model =
+                                        ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
                                     model.build_chunk(chunk);
                                     model.cook(device);
                                     v.insert(model);

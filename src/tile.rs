@@ -219,17 +219,25 @@ pub struct ChunkModel {
     pub vert_data: Vec<Vertex>,
     pub ind_data: Vec<u32>,
     pub buffers: Option<(Buffer, Buffer)>,
+    pub instance_buffer: Buffer,
     pub pos: IVec3,
     pub key: String,
 }
 
 impl ChunkModel {
-    pub fn new(key: String, x: i32, y: i32, z: i32) -> ChunkModel {
+    pub fn new(device: &Device, key: String, x: i32, y: i32, z: i32) -> ChunkModel {
+        let pos = ivec3(x, y, z);
+        // println!("chunk pos {:?}", pos);
+        // ChunkModel::c
+        let t = ChunkModel::create_transform(pos);
+        let instance_buffer = ChunkModel::create_buffer(device, t);
+
         ChunkModel {
             vert_data: vec![],
             ind_data: vec![],
             buffers: None,
-            pos: ivec3(x, y, z),
+            instance_buffer,
+            pos,
             key,
         }
     }
@@ -238,6 +246,7 @@ impl ChunkModel {
     pub fn build_chunk(&mut self, chunk: Chunk) {
         self.vert_data = vec![];
         self.ind_data = vec![];
+
         self.buffers = None;
         // let texture = "grid".to_string(); // grass_down
         // MARK change model
@@ -256,6 +265,31 @@ impl ChunkModel {
                     (i % 16) as i32,
                 );
             }
+        }
+    }
+
+    fn create_buffer(device: &Device, e: EntityUniforms) -> Buffer {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&[e]),
+            usage: wgpu::BufferUsages::VERTEX,
+        })
+    }
+    fn create_transform(pos: IVec3) -> EntityUniforms {
+        let offset = (pos.clone()).as_vec3();
+        // + ivec3(-CHUNK_SIZE / 2, -CHUNK_SIZE / 2, -CHUNK_SIZE / 2).as_vec3();
+
+        // println!("offset {:?}", offset);
+        // let model =
+        //     Mat4::from_scale_rotation_translation(vec3(16., 16., 16.), Quat::IDENTITY, offset);
+        let model = Mat4::from_translation(offset.mul(16.));
+        // let model = Mat4::IDENTITY;
+
+        EntityUniforms {
+            color: [0.; 4],
+            uv_mod: [0., 0., 1., 1.],
+            effects: [0; 4],
+            model: model.to_cols_array_2d(),
         }
     }
 
@@ -287,8 +321,7 @@ impl ChunkModel {
 fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: i32, iz: i32) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
-    let offset =
-        (ivec3(ix as i32, iy as i32, iz as i32) + c.pos.clone()).mul(16) + ivec3(-8, -8, -8);
+    let offset = ivec3(ix as i32, iy as i32, iz as i32).mul(16) - ivec3(8, 8, 8);
     // println!(
     //     "model offset {} {} {} c.pos:{} offset:{} key:{}",
     //     ix, iy, iz, c.pos, offset, c.key
