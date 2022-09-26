@@ -1,11 +1,12 @@
 use rustc_hash::FxHashMap;
 use std::{collections::hash_map::Entry, ops::Mul};
 
-use glam::{ivec3, IVec3, Vec4};
+use glam::{ivec3, IVec3, Mat4, Vec4};
 use wgpu::{util::DeviceExt, Buffer, Device};
 
-use crate::model::Vertex;
+use crate::{ent::EntityUniforms, model::Vertex};
 
+const CHUNK_SIZE: i32 = 32;
 pub struct Layer {
     /** if all world tiles were cleared */
     pub dropped: bool,
@@ -51,8 +52,9 @@ impl Layer {
         // let uv = crate::texture::get_tex_index(&tile);
 
         let mut c = self.get_chunk_mut(ix, iy, iz);
-        let index =
-            ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16) + iz.rem_euclid(16)) as usize;
+        let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE) + iy.rem_euclid(CHUNK_SIZE))
+            * CHUNK_SIZE)
+            + iz.rem_euclid(CHUNK_SIZE)) as usize;
         // let index = ((((ix / 16).rem_euclid(16)) * 16 + ((iy / 16).rem_euclid(16))) * 16
         //     + ((iz / 16).rem_euclid(16))) as usize;
         c.cells[index] = (cell_type, meta);
@@ -80,8 +82,10 @@ impl Layer {
     pub fn is_tile(&self, ix: i32, iy: i32, iz: i32) -> bool {
         match self.get_chunk(ix, iy, iz) {
             Some(c) => {
-                let index = ((((ix.rem_euclid(16) * 16) + iy.rem_euclid(16)) * 16)
-                    + iz.rem_euclid(16)) as usize;
+                let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
+                    + iy.rem_euclid(CHUNK_SIZE))
+                    * CHUNK_SIZE)
+                    + iz.rem_euclid(CHUNK_SIZE)) as usize;
                 c.cells[index].0 > 0
             }
             _ => false,
@@ -92,9 +96,9 @@ impl Layer {
     pub fn drop_chunk(&mut self, x: i32, y: i32, z: i32) -> Option<String> {
         let key = format!(
             "{}:{}:{}",
-            x.div_euclid(16),
-            y.div_euclid(16),
-            z.div_euclid(16)
+            x.div_euclid(CHUNK_SIZE),
+            y.div_euclid(CHUNK_SIZE),
+            z.div_euclid(CHUNK_SIZE)
         );
         match self.chunks.remove_entry(&key) {
             Some(pair) => Some(pair.0),
@@ -112,17 +116,17 @@ impl Layer {
     pub fn get_chunk_mut_from_pos(&mut self, x: i32, y: i32, z: i32) -> &mut Chunk {
         let key = format!(
             "{}:{}:{}",
-            x.div_euclid(16),
-            y.div_euclid(16),
-            z.div_euclid(16)
+            x.div_euclid(CHUNK_SIZE),
+            y.div_euclid(CHUNK_SIZE),
+            z.div_euclid(CHUNK_SIZE)
         );
         // println!("hash chunk at {} {} {} {}",x,y,z,key);
         match self.chunks.entry(key.clone()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => {
-                let ix = x.div_euclid(16) * 16;
-                let iy = y.div_euclid(16) * 16;
-                let iz = z.div_euclid(16) * 16;
+                let ix = x.div_euclid(CHUNK_SIZE) * CHUNK_SIZE;
+                let iy = y.div_euclid(CHUNK_SIZE) * CHUNK_SIZE;
+                let iz = z.div_euclid(CHUNK_SIZE) * CHUNK_SIZE;
                 // println!("get new chunk {} {} {} {}", key, ix, iy, iz);
                 v.insert(Chunk::new(key, ix, iy, iz))
             }
@@ -131,9 +135,9 @@ impl Layer {
     pub fn get_chunk_from_pos(&self, x: i32, y: i32, z: i32) -> Option<&Chunk> {
         let key = format!(
             "{}:{}:{}",
-            x.div_euclid(16),
-            y.div_euclid(16),
-            z.div_euclid(16)
+            x.div_euclid(CHUNK_SIZE),
+            y.div_euclid(CHUNK_SIZE),
+            z.div_euclid(CHUNK_SIZE)
         );
         self.chunks.get(&key)
     }
@@ -154,7 +158,7 @@ impl Layer {
 }
 pub struct Chunk {
     pub dirty: bool,
-    pub cells: [(u32, u8); 16 * 16 * 16],
+    pub cells: [(u32, u8); (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize],
     /** Unmodified position within world space, index postion would be position divided by 16 */
     pub pos: IVec3,
     pub key: String,
@@ -165,7 +169,7 @@ impl Chunk {
     pub fn new(key: String, x: i32, y: i32, z: i32) -> Chunk {
         Chunk {
             dirty: false,
-            cells: [(0, 0); 16 * 16 * 16],
+            cells: [(0, 0); (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize],
             pos: ivec3(x, y, z),
             key,
         }
@@ -181,7 +185,7 @@ impl Chunk {
     }
 
     pub fn zero_cells(&mut self) {
-        self.cells = [(0, 0); 16 * 16 * 16];
+        self.cells = [(0, 0); (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize];
     }
 }
 
@@ -260,9 +264,9 @@ impl ChunkModel {
                     self,
                     (*cell).0,
                     (*cell).1,
-                    ((i / 256) % 16) as i32,
-                    ((i / 16) % 16) as i32,
-                    (i % 16) as i32,
+                    ((i as i32 / (CHUNK_SIZE * CHUNK_SIZE)) % CHUNK_SIZE),
+                    ((i as i32 / CHUNK_SIZE) % CHUNK_SIZE),
+                    (i as i32 % CHUNK_SIZE),
                 );
             }
         }
@@ -322,9 +326,12 @@ fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: 
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset = ivec3(ix as i32, iy as i32, iz as i32).mul(16) - ivec3(8, 8, 8);
+    // + c.pos.clone()).mul(CHUNK_SIZE)
+    //     + ivec3(-CHUNK_SIZE / 2, -CHUNK_SIZE / 2, -CHUNK_SIZE / 2);
+
     // println!(
-    //     "model offset {} {} {} c.pos:{} offset:{} key:{}",
-    //     ix, iy, iz, c.pos, offset, c.key
+    //     "model offset {} {} {} offset:{} key:{}",
+    //     ix, iy, iz, offset, c.key
     // );
 
     let (mut verts, mut inds) = match crate::model::get_model_from_index(model_index) {
