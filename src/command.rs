@@ -339,8 +339,9 @@ pub fn init_lua_sys(
     //         .unwrap(),
     // ));
 
-    let switch = Arc::clone(&switch_board);
+    // let switch = Arc::clone(&switch_board);
     // let sender = world_sender.clone();
+    let pitcher = main_pitcher.clone();
     lua!(
         "cube",
         move |_,
@@ -353,12 +354,15 @@ pub fn init_lua_sys(
             String,
             String
         )| {
-            // MARK the make command
-            let mutex = &mut switch.write();
-            // World::make(&sender, name, t, b, e, w, s, n);
-            mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
-            mutex.dirty = true;
-            drop(mutex);
+            // let mutex = &mut switch.write();
+            let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+            // println!("this far-1");
+
+            pitcher.send(MainCommmand::Make(vec![name, t, b, e, w, s, n], tx));
+            // rx.recv();
+            // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
+            // mutex.dirty = true;
+            // drop(mutex);
 
             // while (match switch.try_read() {
             //     Some(r) => r.dirty,
@@ -1045,6 +1049,7 @@ pub enum MainCommmand {
     CamPos(glam::Vec3),
     CamRot(glam::Vec2),
     Clear(),
+    Make(Vec<String>, SyncSender<u8>),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {

@@ -694,37 +694,23 @@ impl Core {
                     drop(r);
                     let mut mutex = self.switch_board.write();
 
-                    if mutex.make_queue.len() > 0 {
-                        for m in mutex.make_queue.drain(0..) {
-                            if m.len() == 7 {
-                                //MARK - add entity
-                                let m2 = vec![
-                                    m[1].clone(),
-                                    m[2].clone(),
-                                    m[3].clone(),
-                                    m[4].clone(),
-                                    m[5].clone(),
-                                    m[6].clone(),
-                                ];
-                                crate::model::edit_cube(m[0].clone(), m2, &self.device);
-
-                                // let name = m[0].clone();
-                                // println!("🧲 eyup1");
-
-                                // match m[..].try_into() {
-                                //     Ok(textures) => {
-                                //         println!("🧲 eyup");
-
-                                //         crate::model::edit_cube(name, textures, &self.device)
+                    // if mutex.make_queue.len() > 0 {
+                    //     for m in mutex.make_queue.drain(0..) {
+                    //         if m.len() == 7 {
+                    //             //MARK - add entity
+                    //             let m2 = vec![
+                    //                 m[1].clone(),
+                    //                 m[2].clone(),
+                    //                 m[3].clone(),
+                    //                 m[4].clone(),
+                    //                 m[5].clone(),
+                    //                 m[6].clone(),
+                    //             ];
+                    //             crate::model::edit_cube(m[0].clone(), m2, &self.device);
+                    //         }
                                 //     }
-                                //     _ => {
-                                //         log("cube creation missing variables, ignoring".to_string())
-                                //     }
+                    //     mutex.make_queue.clear();
                                 // }
-                            }
-                        }
-                        mutex.make_queue.clear();
-                    }
 
                     if mutex.remaps.len() > 0 {
                         for item in mutex.remaps.drain(0..) {
@@ -789,7 +775,28 @@ impl Core {
                         MainCommmand::Img(s, x, y) => {
                             self.gui.draw_image(&s, false, x as i64, y as i64)
                         }
+
                         MainCommmand::Clear() => self.gui.clean(),
+                        MainCommmand::Make(m, tx) => {
+                            // self.gui.draw_image(&s, false, x as i64, y as i64)
+                            // println!("this far");
+                            if m.len() == 7 {
+                                //MARK - add entity
+                                let m2 = vec![
+                                    m[1].clone(),
+                                    m[2].clone(),
+                                    m[3].clone(),
+                                    m[4].clone(),
+                                    m[5].clone(),
+                                    m[6].clone(),
+                                ];
+                                crate::model::edit_cube(m[0].clone(), m2, &self.device);
+                                // println!("this far2");
+
+                                tx.send(0);
+                                // println!("this far3");
+                            }
+                        }
                         _ => {}
                     };
                     // p.5.send(true);

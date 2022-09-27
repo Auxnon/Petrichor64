@@ -173,7 +173,7 @@ impl World {
                             match self.layer.chunks.entry(chunk.key.clone()) {
                                 Entry::Occupied(o) => {
                                     let c = o.into_mut();
-                                    println!("rebuild model chunk {}", chunk.key);
+                                    // println!("rebuild model chunk {}", chunk.key);
                                     c.build_chunk(chunk);
                                     c.cook(device);
                                 }
