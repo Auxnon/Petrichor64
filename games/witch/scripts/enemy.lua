@@ -1,14 +1,14 @@
 local zoms = {}
 function zombie(n)
     -- local z = spawn("zom", -DISTANCE + (rnd() * 8) - 4, 12 + n, -0.5)
-    local z = spawn("zom", -DISTANCE + (rnd() * 16) - 6, 12 + n, -0.5 + n / 10.)
+    local z = spawn("zom", -DISTANCE + (rnd() * 256) - 128, 12 + n, -0.5 + n / 3.)
     zoms[#zoms + 1] = z
     -- z:anim("rise")
 end
 
 function enemy_start()
-    for i = 1, 10000 do
-        zombie(i / 10.)
+    for i = 1, 100 do -- 10000
+        zombie(i / 50.)
     end
 end
 

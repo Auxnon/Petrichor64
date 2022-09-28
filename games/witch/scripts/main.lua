@@ -1,5 +1,12 @@
 sky()
 fill("544e68")
+img("twilight")
+text("MakeAvoy", 0, 180)
+line(.85, .85, 1, .85)
+line(.85, .85, .85, 1)
+line(.85, .85, 1, 1)
+gui()
+cube("xub", "witch0", "witch1", "witch0", "witch1", "witch2", "witch2")
 key_delay = 0
 
 function wallB(x)
@@ -42,9 +49,15 @@ function treeline(x)
     end
 end
 
+local l = {
+    [1] = {
+        [1] = 0,
+        [2] = 0
+    }
+}
 function main()
 
-    player = spawn('witchy', 0, 12, -0.5)
+    player = spawn('witchy', 0, 0, .5)
     DISTANCE = 12
     room_pos = {
         x = 0,
@@ -58,21 +71,53 @@ function main()
     move_spots = {-8, -3, 3, 8}
     cam_pos = {
         x = 0,
-        y = 0
+        y = -4,
+        z = 2
     }
+    tiler = 0
 
-    log('main runs once everything has loaded')
-    tile("witch0", 0, 12, -1)
-    wallB(0)
-    wallF(-6)
-    wallF(6)
-    floor(0)
-    tile("witch1", -DISTANCE, 12, -1)
-    tile("witch2", DISTANCE, 12, -1)
-    treeline(DISTANCE)
-    treeline(-DISTANCE)
+    -- tile("witch0", 0, 12, -1)
+    -- wallB(0)
+    -- wallF(-6)
+    -- wallF(6)
+    -- floor(0)
+    -- tile("witch1", -DISTANCE, 12, -1)
+    -- tile("witch2", DISTANCE, 12, -1)
+    -- treeline(DISTANCE)
+    -- treeline(-DISTANCE)
+
+    -- cool shape
+    -- for i = -8, 8 do
+    --     for j = -8, 8 do
+    --         for k = -8, 8 do
+    --             if abs(i) + abs(j) + abs(k) == 16 then
+    --                 tile("witch2", i, j + 12, k)
+    --             end
+    --         end
+    --     end
+    -- end
+
+    tile("witch0", 0, 0, 0)
     enemy_start()
 
+end
+
+function bld()
+    for i = -200, 200 do
+        -- for j = 0, 10 do
+        local j = tiler
+        -- if (i + j) % 2 == 0 then
+        -- local l = "witch" .. math.floor(rnd() * 3)
+        local l = "xub"
+        -- log(l)
+        local h = 1
+        if (i + j) % 10 == 0 then
+            h = cos(i / 10.) * 8.
+        end
+        tile(l, i, j + 10, h - 12, flr(rnd() * 6))
+        -- end
+        -- end
+    end
 end
 
 function clamp()
@@ -83,10 +128,16 @@ function clamp()
     end
 end
 
--- local r = 0
+local r = 0
+local tile_delay = 0
 function loop()
     -- r = r + 0.001
     -- camrot(r, 0)
+    -- clear_tiles()
+    tiler = tiler + 1
+    bld()
+
+    tile_delay = tile_delay + 1
     enemy_loop()
     if key_delay > 10 then
         if key("a") then
@@ -116,15 +167,30 @@ function loop()
 
     player.x = player.x + (move_pos.x - player.x) / 6.
     cam_pos.x = cam_pos.x + (room_pos.x - cam_pos.x) / 4.
-    sky()
-    line(0, 0, 1, 1)
-    gui()
+    -- sky()
 
     clr()
+    m = mouse()
+
+    for i = 2, #l do
+        line(l[i - 1][1], l[i - 1][2], l[i][1], l[i][2])
+    end
+
+    l[#l + 1] = {
+        [1] = m[1],
+        [2] = m[2]
+    }
+    if #l > 30 then
+        table.remove(l, 1)
+    end
+
     text(cam_pos.x)
     img("zom", 255, 1)
     -- line(0, 0, 1, 1)
-    campos(cam_pos.x, cam_pos.y, 2)
+    campos(cam_pos.x, cam_pos.y, cam_pos.z)
+    -- camrot(1.57, r)
+    -- r = r - 0.001
+    -- cam_pos.z = cam_pos.z + 0.002
     -- log("x" .. player.y)
     -- player.y = example.y + rnd() * 0.1 - 0.05
 end
