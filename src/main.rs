@@ -708,9 +708,9 @@ impl Core {
                     //             ];
                     //             crate::model::edit_cube(m[0].clone(), m2, &self.device);
                     //         }
-                                //     }
+                    //     }
                     //     mutex.make_queue.clear();
-                                // }
+                    // }
 
                     if mutex.remaps.len() > 0 {
                         for item in mutex.remaps.drain(0..) {
@@ -821,7 +821,7 @@ impl Core {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
-            // println!("fps::{}", self.global.fps);
+            println!("fps::{}", self.global.fps);
         }
 
         let s = render::render_loop(self, self.global.iteration);
@@ -833,7 +833,10 @@ impl Core {
 fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        .with_inner_size(winit::dpi::LogicalSize::new(640, 480))
+        .build(&event_loop)
+        .unwrap();
     window.set_title("Petrichor");
     // let s = window.inner_size();
 
@@ -846,7 +849,6 @@ fn main() {
     // window.set_cursor_grab(true);
     // }
 
-    // window.set_out(winit::dpi::LogicalSize::new(256, 256));
     // State::new uses async code, so we're going to wait for it to finish
 
     let mut core = pollster::block_on(Core::new(&window));

@@ -9,7 +9,7 @@ use once_cell::sync::OnceCell;
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
 const LETTER_SIZE: u32 = 6;
-const GUI_DIM: u32 = 256;
+const GUI_DIM: u32 = 320;
 
 pub struct Gui {
     pub gui_pipeline: wgpu::RenderPipeline,
