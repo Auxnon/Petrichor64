@@ -1,7 +1,7 @@
 use crate::{lua_ent::LuaEnt, model::Model};
 use bytemuck::{Pod, Zeroable};
 
-use glam::{vec3, Mat4, Quat, UVec4, Vec3, Vec4};
+use glam::{vec3, Mat4, Quat, UVec4, Vec3, Vec4, vec4};
 use once_cell::sync::OnceCell;
 use std::{ops::Mul, sync::Arc};
 
@@ -80,44 +80,62 @@ pub struct Ent {
     model_name: String,
     pub effects: UVec4,
     //pub brain: Option<Function<'lua>>,
-    pub brain_name: Option<String>,
+    // pub brain_name: Option<String>,
     pub anim: Vec<Vec4>,
     pub anim_speed: u32,
 }
 
 impl<'lua> Ent {
-    pub fn new(
+    pub fn new_dynamic(
         offset: Vec3,
         angle: f32,
         scale: f32,
         rotation: f32,
+        asset: String,
+        uniform_offset: wgpu::DynamicOffset,
+    )->Ent{
+        let (model_name,model,tex_name,tex,billboarded)=match crate::texture::get_tex_or_not(&asset.clone()){
+            Some(t)=>{
+                ("plane".to_string(),crate::model::PLANE.clone(),asset,t,true)
+            }
+            None=>{
+                (asset.clone(),crate::model::get_model(&asset),"".to_string(),vec4(0.,0.,0.,0.),false)
+            }
+        };
+        Ent::new_pure(offset,angle,scale,rotation,model_name,model,tex_name,tex,uniform_offset,billboarded)
+    }
+
+    pub fn new(offset: Vec3,
+        angle: f32,
+        scale: f32,
+        rotation: f32,
+        asset: String,
         tex_name: String,
-        model: String,
+        model_name: String,
+        uniform_offset: wgpu::DynamicOffset,
+        billboarded: bool)->Ent{
+            let model=crate::model::get_model(&model_name);
+            let tex=crate::texture::get_tex(&tex_name);
+            
+            Ent::new_pure(offset,angle,scale,rotation,model_name,model,tex_name,tex,uniform_offset,billboarded)
+            
+        }
+
+    pub fn new_pure(
+        offset: Vec3,
+        angle: f32,
+        scale: f32,
+        rotation: f32,
+        model_name: String,
+        model: Arc<OnceCell<Model>>,
+        tex_name: String,
+        tex: Vec4,
         uniform_offset: wgpu::DynamicOffset,
         billboarded: bool,
-        brain: Option<String>,
+        // brain: Option<String>,
     ) -> Ent {
-        //glam::Mat4::from_rotation_translation(rotation, translation);
 
-        // let transform = Decomposed {
-        //     disp: offset,
-        //     rot: Quaternion::from_axis_angle(offset.normalize(), Deg(angle)),
-        //     scale: scale,
-        // };
         let quat = Quat::from_axis_angle(offset.normalize(), angle);
-
-        // let brain_func = match brain {
-        //     Some(o) => {
-        //         brain_name = o;
-        //         let master = Arc::clone(&crate::lua_master);
-        //         let core = master.lock();
-
-        //         let a = core.get(o.clone());
-        //         //let v = core.get(o.clone());
-        //         Some(core)
-        //     }
-        //     None => None,
-        // };
 
         Ent {
             matrix: Mat4::from_scale_rotation_translation(
@@ -126,21 +144,13 @@ impl<'lua> Ent {
                 offset,
             ),
             rotation,
-            // rot: Vec3::new(0., 0., 0.),
             color: wgpu::Color::GREEN,
-            // scale,
-            // pos: offset,
-            // vel: Vec3::new(0., 0., 0.),
-            model: crate::model::get_model(&model), //0.5, 1., 32. / 512., 32. / 512.
-            //tex: cgmath::Vector4::new(0., 0., 0.5, 0.5), //crate::assets::get_tex(tex_name),
-            // tex: cgmath::Vector4::new(0.5, 0., 32. / 512., 32. / 512.),
-            tex: crate::texture::get_tex(&tex_name), //cgmath::Vector4::new(0., 0., 1., 1.),
+            model_name,
+            model, 
+            tex, 
             tex_name,
-            model_name: model,
             uniform_offset,
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
-            //brain: None,
-            brain_name: brain,
             anim: vec![],
             anim_speed: 16,
         }

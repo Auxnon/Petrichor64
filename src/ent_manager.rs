@@ -115,18 +115,17 @@ impl EntManager {
         let id = lua.get_id();
         let mut asset = lua.get_asset();
         if asset.len() == 0 {
-            asset = "chicken".to_string();
+            asset = "example".to_string();
         }
-        let ent = Ent::new(
+
+        // MARK should change plane to a model if the texture doesn't exist as one
+        let ent = Ent::new_dynamic(
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
             0.,
             1.,
             0.,
             asset,
-            "plane".to_string(),
             self.uniform_alignment * (id + 1) as u32,
-            true,
-            None,
         );
 
         self.entities.insert(lua.get_id(), ent);

@@ -465,6 +465,12 @@ pub fn get_tex(str: &String) -> Vec4 {
         None => Vec4::new(0., 0., 0., 0.),
     }
 }
+pub fn get_tex_or_not(str: &String) -> Option<Vec4> {
+    match DICTIONARY.read().get(str) {
+        Some(v) => Some(v.clone()),
+        None => None,
+    }
+}
 
 pub fn _list_keys() -> String {
     DICTIONARY
