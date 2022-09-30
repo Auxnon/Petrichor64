@@ -166,14 +166,14 @@ pub fn make_directory(directory: String) {
     fs::write(
         scripts.join("main.lua"),
         "
-example = spawn('example', 12, rnd() * 3. - 1.5, rnd() * 3. - 1.5)
+example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
 bg(1, 1, .4, 1)
 function main()
     log('main runs once everything has loaded')
 end
 function loop()
     example.x = example.x + rnd() * 0.1 - 0.05
-    example.y = example.y + rnd() * 0.1 - 0.05
+    example.z = example.z + rnd() * 0.1 - 0.05
 end",
     )
     .unwrap();
