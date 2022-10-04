@@ -2,10 +2,9 @@ use rand::Rng;
 use std::sync::Arc;
 // use tracy::frame;
 
-use crate::model::{get_model, Model};
+use crate::texture::TexManager;
 use image::{ImageBuffer, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
-use once_cell::sync::OnceCell;
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
 const LETTER_SIZE: u32 = 6;
@@ -16,7 +15,7 @@ pub struct Gui {
     pub sky_pipeline: wgpu::RenderPipeline,
     pub gui_group: wgpu::BindGroup,
     pub sky_group: wgpu::BindGroup,
-    pub model: Arc<OnceCell<Model>>,
+    // pub model: Arc<OnceCell<Model>>,
     pub overlay_texture: Texture,
     pub sky_texture: Texture,
     text: String,
@@ -81,7 +80,7 @@ impl Gui {
             sky_pipeline,
             gui_group,
             sky_group,
-            model: get_model(&"plane".to_string()),
+            // model: get_model(&"plane".to_string()),
             overlay_texture,
             sky_texture,
             console: gui_img.clone(),
@@ -194,7 +193,14 @@ impl Gui {
         // self.dirty = true;
     }
 
-    pub fn draw_image(&mut self, image: &String, onto_console: bool, x: i64, y: i64) {
+    pub fn draw_image(
+        &mut self,
+        tex_manager: &mut TexManager,
+        image: &String,
+        onto_console: bool,
+        x: i64,
+        y: i64,
+    ) {
         let targ = if onto_console {
             &mut self.console
         } else {
@@ -206,15 +212,12 @@ impl Gui {
                 &mut self.main
             }
         };
-        let source = crate::texture::get_tex(image);
+        let source = tex_manager.get_tex(image);
 
-        let m_guard = crate::texture::MASTER.lock();
-        let m_ref = m_guard.get().unwrap();
-
-        let w = m_ref.width();
-        let h = m_ref.height();
+        let w = tex_manager.MASTER.width();
+        let h = tex_manager.MASTER.height();
         let sub = image::imageops::crop_imm(
-            m_ref,
+            &mut tex_manager.MASTER,
             (source.x * w as f32) as u32,
             (source.y * h as f32) as u32,
             (source.z * w as f32) as u32,

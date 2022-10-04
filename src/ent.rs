@@ -1,9 +1,8 @@
-use crate::{lua_ent::LuaEnt, model::Model};
+use crate::{lua_ent::LuaEnt, model::{Model, ModelManager}, Core, texture::TexManager};
 use bytemuck::{Pod, Zeroable};
 
 use glam::{vec3, Mat4, Quat, UVec4, Vec3, Vec4, vec4};
-use once_cell::sync::OnceCell;
-use std::{ops::Mul, sync::Arc};
+use std::{ops::Mul, rc::Rc};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -71,7 +70,7 @@ pub struct Ent {
     pub matrix: Mat4,
     pub rotation: f32,
     pub color: wgpu::Color,
-    pub model: Arc<OnceCell<Model>>,
+    pub model: Rc<Model>,
     pub uniform_offset: wgpu::DynamicOffset,
     pub tex: Vec4,
     /**hold the string name of texture for hot reloads*/
@@ -87,6 +86,8 @@ pub struct Ent {
 
 impl<'lua> Ent {
     pub fn new_dynamic(
+        tex_manager:&TexManager,
+        model_manager:&ModelManager,
         offset: Vec3,
         angle: f32,
         scale: f32,
@@ -94,18 +95,20 @@ impl<'lua> Ent {
         asset: String,
         uniform_offset: wgpu::DynamicOffset,
     )->Ent{
-        let (model_name,model,tex_name,tex,billboarded)=match crate::texture::get_tex_or_not(&asset.clone()){
+        let (model_name,model,tex_name,tex,billboarded)=match tex_manager.get_tex_or_not(&asset.clone()){
             Some(t)=>{
-                ("plane".to_string(),crate::model::PLANE.clone(),asset,t,true)
+                ("plane".to_string(),model_manager.PLANE.clone(),asset,t,true)
             }
             None=>{
-                (asset.clone(),crate::model::get_model(&asset),"".to_string(),vec4(0.,0.,0.,0.),false)
+                (asset.clone(),model_manager.get_model(&asset),"".to_string(),vec4(0.,0.,0.,0.),false)
             }
         };
         Ent::new_pure(offset,angle,scale,rotation,model_name,model,tex_name,tex,uniform_offset,billboarded)
     }
 
-    pub fn new(offset: Vec3,
+    pub fn new(
+        core:&Core,
+        offset: Vec3,
         angle: f32,
         scale: f32,
         rotation: f32,
@@ -114,8 +117,8 @@ impl<'lua> Ent {
         model_name: String,
         uniform_offset: wgpu::DynamicOffset,
         billboarded: bool)->Ent{
-            let model=crate::model::get_model(&model_name);
-            let tex=crate::texture::get_tex(&tex_name);
+            let model=core.model_manager.get_model(&model_name);
+            let tex=core.tex_manager.get_tex(&tex_name);
             
             Ent::new_pure(offset,angle,scale,rotation,model_name,model,tex_name,tex,uniform_offset,billboarded)
             
@@ -127,7 +130,7 @@ impl<'lua> Ent {
         scale: f32,
         rotation: f32,
         model_name: String,
-        model: Arc<OnceCell<Model>>,
+        model: Rc<Model>,
         tex_name: String,
         tex: Vec4,
         uniform_offset: wgpu::DynamicOffset,
@@ -172,10 +175,10 @@ impl<'lua> Ent {
     //     }
     // }
 
-    pub fn hot_reload(&mut self) {
-        self.tex = crate::texture::get_tex(&self.tex_name); //crate::texture::get_tex(&self.tex_name);
+    pub fn hot_reload(&mut self,core: &Core) {
+        self.tex = core.tex_manager.get_tex(&self.tex_name); //crate::texture::get_tex(&self.tex_name);
         println!("hot reload {}", self.tex);
-        self.model = crate::model::get_model(&self.model_name)
+        self.model = core.model_manager.get_model(&self.model_name)
     }
 
     pub fn reparse(_lua: LuaEnt) {}

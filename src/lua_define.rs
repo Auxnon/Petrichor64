@@ -220,20 +220,9 @@ impl LuaCore {
     // }
 }
 fn lua_load(lua: &Lua, st: &String) {
-    // log(format!("got script :\n{}", st));
     let chunk = lua.load(&st);
-    // chunk.eval()
-    if let Err(s) = chunk.eval::<()>() {
-        crate::lg!("exec {}", s);
-    }
 
-    //::<mlua::Function>
-    // chunk.call(1);
-    // match chunk.exec() {
-    //     Ok(f) => log(format!("code loaded  ♥")),
-    //     Err(err) => log(format!("yucky code {}", err)),
-    // }
-    // lua.load_from_function(modname, func)
+    chunk.exec();
 }
 
 // fn lua_load_classic(lua: &Lua, st: &String) {
@@ -417,7 +406,6 @@ fn start(
         log("💫 lua_thread::orbiting".to_string());
         for m in reciever {
             let (s1, s2, bit_in, channel) = m;
-
             while let Some(Event {
                 id: _,
                 event,

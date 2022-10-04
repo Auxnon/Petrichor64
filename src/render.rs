@@ -1,7 +1,5 @@
-use crate::{model::InstanceRaw, Arc};
 use glam::{vec3, Mat4, Vec2, Vec3};
-use once_cell::sync::OnceCell;
-use std::{iter, ops::Add};
+use std::{iter, ops::Add, rc::Rc};
 // use tracy::frame;
 
 use crate::{
@@ -92,10 +90,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     core.gui
         .render(&core.queue, core.global.get("value2".to_string()));
     // frame!("rendered gui texture");
-
-    let mutex = crate::ent_master.read();
-
-    let entity_manager = mutex.get().unwrap();
+    let entity_manager = &core.ent_manager;
     let ents = &entity_manager.ent_table;
     // let (entity_manager,ents)=match crate::ent_master.try_read(){
     //     Some(guar)=>{
@@ -114,7 +109,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         })
         .collect::<Vec<_>>();
 
-    let mut ent_array: Vec<(Ent, Arc<OnceCell<Model>>, EntityUniforms)> = vec![];
+    let mut ent_array: Vec<(Ent, Rc<Model>, EntityUniforms)> = vec![];
     let mut instances = vec![];
     for entity in &mut lua_ent_array.iter() {
         match entity_manager.get_from_id(entity.get_id()) {
@@ -282,7 +277,9 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
             render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
-            let chunks = core.world.get_chunk_models(&core.device);
+            let chunks = core
+                .world
+                .get_chunk_models(&core.model_manager, &core.device);
             // // println!("------chunks {} ------", chunks.len());
 
             for c in chunks {
@@ -299,7 +296,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             if ent_array.len() > 0 {
                 // render_pass.set_bind_group(1, &core.entity_bind_group, &[256]);
 
-                let m = ent_array.get(0).unwrap().1.get().unwrap();
+                let m = &ent_array.get(0).unwrap().1;
 
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
                 render_pass.set_vertex_buffer(1, instance_buffer.slice(..));

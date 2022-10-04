@@ -1,12 +1,18 @@
 use std::{
-    collections::hash_map::Entry,
+    collections::{hash_map::Entry, HashMap},
+    rc::Rc,
     sync::mpsc::{channel, sync_channel, Sender, SyncSender},
 };
 
-use glam::{ivec3, ivec4, IVec3, IVec4};
+use glam::{ivec3, ivec4, vec4, IVec3, IVec4, Vec4};
+use rustc_hash::FxHashMap;
 use wgpu::Device;
 
-use crate::tile::{Chunk, ChunkModel, Layer, LayerModel};
+use crate::{
+    model::{Model, ModelManager},
+    tile::{Chunk, ChunkModel, Layer, LayerModel},
+    Core,
+};
 
 /*
 texture index of 0 is air and not rendered
@@ -19,18 +25,89 @@ pub enum TileCommand {
     Set(Vec<(String, IVec4)>),
     Drop(IVec3),
     Check(Vec<String>),
+    /** Simply get whether a tile is present at position or not */
     Is(IVec3),
+    /** Apply a texture string and it's vector uv map to our hash and create new index within the world if it doesn't exist*/
+    MapTex(String, u32),
+    /** Apply a model string and it's arc<model> to our hash and create new index within the world if it doesn't exist*/
+    MapModel(String),
     Reset(),
 }
 
 pub enum TileResponse {
     Success(bool),
+    Mapped(u32),
     Chunks(Vec<Chunk>, bool),
 }
 
+pub struct WorldInstance {
+    /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
+    pub COUNTER: u32,
+    /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
+    pub INT_TEX_DICTIONARY: HashMap<String, u32>,
+    // pub INT_TEX_MAP: FxHashMap<u32, Vec4>,
+    pub INT_MODEL_DICTIONARY: HashMap<String, u32>,
+    // pub INT_MODEL_MAP: FxHashMap<u32, Arc<OnceCell<Model>>>,
+}
+
+impl WorldInstance {
+    pub fn new() -> WorldInstance {
+        WorldInstance {
+            COUNTER: 2,
+            INT_TEX_DICTIONARY: HashMap::new(),
+            // INT_TEX_MAP: FxHashMap::default(),
+            INT_MODEL_DICTIONARY: HashMap::new(),
+            // INT_MODEL_MAP: FxHashMap::default(),
+        }
+    }
+
+    /** return texture numerical index from a given texture name */
+    pub fn get_tex_index(&self, str: &String) -> u32 {
+        match self.INT_TEX_DICTIONARY.get(str) {
+            Some(n) => n.clone(),
+            _ => 1,
+        }
+    }
+    /** return texture uv coordinates and numerical index from a given texture name */
+    // pub fn get_tex_and_index(str: &String) {}
+
+    /** Create a simple numerical key for our texture and uv and map it, returning that numerical key*/
+    fn index_texture(&mut self, key: String) -> u32 {
+        let ind = self.COUNTER;
+        self.INT_TEX_DICTIONARY.insert(key, ind);
+        self.COUNTER += 1;
+        ind
+    }
+
+    /** We already had a numerical key created in a previous index_texture call and want to add another String->u32 translation*/
+    fn index_texture_direct(&mut self, key: String, index: u32) {
+        self.INT_TEX_DICTIONARY.insert(key, index);
+    }
+
+    /** return model numerical index from a given model name */
+    pub fn get_model_index(&self, str: &String) -> Option<u32> {
+        match self.INT_MODEL_DICTIONARY.get(str) {
+            Some(u) => {
+                // log(format!("🟢ye we got {} from {}", u, str));
+                Some(u.clone())
+            }
+            None => None,
+        }
+    }
+
+    /** Create a simple numerical key for our model and map it, returning that numerical key*/
+    fn index_model(&mut self, key: String) -> u32 {
+        let ind = self.COUNTER;
+        self.INT_MODEL_DICTIONARY.insert(key, ind);
+        self.COUNTER += 1;
+        ind
+    }
+}
 pub struct World {
     layer: LayerModel,
     pub sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    pub local_tex_map: FxHashMap<u32, Vec4>,
+    pub local_model_map: FxHashMap<u32, Rc<Model>>,
 }
 
 impl World {
@@ -86,6 +163,8 @@ impl World {
         World {
             layer: LayerModel::new(),
             sender: World::init(),
+            local_tex_map: FxHashMap::default(),
+            local_model_map: FxHashMap::default(),
         }
     }
 
@@ -103,8 +182,13 @@ impl World {
         // log("init lua core".to_string());
 
         // let world_thread =
+        let mut model_map_dirty = false;
+        let mut tex_map_dirty = false;
+
         std::thread::spawn(move || {
             let mut layer = Layer::new();
+            let mut instance = WorldInstance::new();
+
             // let a_device = Arc::clone(&device);
             for m in reciever {
                 match m {
@@ -117,6 +201,7 @@ impl World {
                     (TileCommand::Set(tiles), response) => {
                         // log(format!("set tile {}", tiles[0].0));
                         layer.set_tile(
+                            &instance,
                             &tiles[0].0.to_lowercase(),
                             tiles[0].1.x as u8,
                             tiles[0].1.y as i32,
@@ -133,6 +218,36 @@ impl World {
                             println!("triggerd drop");
                             layer.dropped = false;
                         }
+
+                        // if dropped && chunks.is_empty() {
+                        // } else {
+                        //     for chunk in chunks {
+                        //         // let key = chunk.key.clone();
+                        //         match self.layer.chunks.entry(chunk.key.clone()) {
+                        //             Entry::Occupied(o) => {
+                        //                 let c = o.into_mut();
+                        //                 // println!("rebuild model chunk {}", chunk.key);
+                        //                 c.build_chunk(instance, chunk);
+                        //                 c.cook(device);
+                        //             }
+                        //             Entry::Vacant(v) => {
+                        //                 let ix = chunk.pos.x.div_euclid(16) * 16;
+                        //                 let iy = chunk.pos.y.div_euclid(16) * 16;
+                        //                 let iz = chunk.pos.z.div_euclid(16) * 16;
+                        //                 // println!(
+                        //                 //     "populate new model chunk {} {} {} {}",
+                        //                 //     chunk.key, ix, iy, iz
+                        //                 // );
+                        //                 let mut model =
+                        //                     ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
+                        //                 model.build_chunk(instance, chunk);
+                        //                 model.cook(device);
+                        //                 v.insert(model);
+                        //             }
+                        //         }
+                        //     }
+                        // }
+
                         res_handle(response.send(TileResponse::Chunks(chunks, dropped)))
                     }
                     (TileCommand::Is(tile), response) => res_handle(
@@ -146,6 +261,20 @@ impl World {
                         layer.destroy_it_all();
                         res_handle(response.send(TileResponse::Success(true)));
                     }
+                    (TileCommand::MapTex(name, direct), response) => {
+                        let i = if direct > 0 {
+                            instance.index_texture(name)
+                        } else {
+                            instance.index_texture_direct(name, direct);
+                            direct
+                        };
+
+                        res_handle(response.send(TileResponse::Mapped(i)));
+                    }
+                    (TileCommand::MapModel(name), response) => {
+                        let i = instance.index_model(name);
+                        res_handle(response.send(TileResponse::Mapped(i)));
+                    }
                 }
             }
         });
@@ -154,6 +283,7 @@ impl World {
 
     pub fn get_chunk_models(
         &mut self,
+        model_manager: &ModelManager,
         device: &Device,
     ) -> std::collections::hash_map::Values<String, ChunkModel> {
         let (tx, rx) = sync_channel::<TileResponse>(0);
@@ -162,10 +292,6 @@ impl World {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Chunks(chunks, dropped)) => {
                     if dropped && chunks.is_empty() {
-                        // for (s, c) in self.layer.chunks.drain() {
-                        //     // c.build_chunk(chunk);
-                        //     // c.cook(device);
-                        // }
                         self.layer.chunks.clear()
                     } else {
                         for chunk in chunks {
@@ -174,7 +300,12 @@ impl World {
                                 Entry::Occupied(o) => {
                                     let c = o.into_mut();
                                     // println!("rebuild model chunk {}", chunk.key);
-                                    c.build_chunk(chunk);
+                                    c.build_chunk(
+                                        &self.local_tex_map,
+                                        &self.local_model_map,
+                                        model_manager,
+                                        chunk,
+                                    );
                                     c.cook(device);
                                 }
                                 Entry::Vacant(v) => {
@@ -187,7 +318,12 @@ impl World {
                                     // );
                                     let mut model =
                                         ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
-                                    model.build_chunk(chunk);
+                                    model.build_chunk(
+                                        &self.local_tex_map,
+                                        &self.local_model_map,
+                                        model_manager,
+                                        chunk,
+                                    );
                                     model.cook(device);
                                     v.insert(model);
                                 }
@@ -321,6 +457,62 @@ impl World {
     //     let c = self.get_chunk_mut(ix, iy, iz);
     //     _add_tile_model(c, texture, model, ix, iy, iz);
     // }
+
+    /** index the texture uv by name  within the world, and the world instance generates an index by name to store on it's own thread*/
+    pub fn index_texture(&mut self, name: String, uv: Vec4) -> u32 {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        match self.sender.send((TileCommand::MapTex(name, 0), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Mapped(i)) => {
+                    self.local_tex_map.insert(i, uv);
+                    i
+                }
+                _ => 0,
+            },
+            _ => 0,
+        }
+    }
+    /** We already have an index for a texture we're just providing a string alias */
+    pub fn index_texture_alias(&self, name: String, direct: u32) {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        match self.sender.send((TileCommand::MapTex(name, direct), tx)) {
+            Ok(_) => match rx.recv() {
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /** index the model by name within the world, and the world instance generates an index by name to store on it's own thread*/
+    pub fn index_model(&mut self, name: String, model: Rc<Model>) {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        match self.sender.send((TileCommand::MapModel(name), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Mapped(i)) => {
+                    // self.local_tex_map.insert(k, v)
+                    self.local_model_map.insert(i, model);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    /** return texture uv coordinates from a given texture numerical index */
+    pub fn get_tex_from_index(&self, ind: u32) -> Vec4 {
+        match self.local_tex_map.get(&ind) {
+            Some(uv) => uv.clone(),
+            _ => vec4(1., 1., 0., 0.),
+        }
+    }
+
+    pub fn get_model_from_index(&self, index: u32) -> Option<Rc<Model>> {
+        match self.local_model_map.get(&index) {
+            Some(model) => Some(Rc::clone(model)),
+
+            None => None,
+        }
+    }
 }
 
 fn res_handle(res: Result<(), std::sync::mpsc::SendError<TileResponse>>) {

@@ -15,6 +15,7 @@ use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::{Mutex, RwLock};
 use std::{
+    collections::HashMap,
     path::Path,
     rc::Rc,
     sync::{
@@ -44,6 +45,10 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         }
         "pack" => {
             crate::asset::pack(
+                &mut core.tex_manager,
+                &mut core.model_manager,
+                &mut core.world,
+                &core.lua_master,
                 &if segments.len() > 1 {
                     format!("{}.game.png", segments[1])
                 } else {
@@ -59,7 +64,6 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 } else {
                     None
                 },
-                &core.lua_master,
             );
         }
         "superpack" => {
@@ -98,7 +102,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         "reset" => reset(core),
         "reload" => reload(core),
         "atlas" => {
-            crate::texture::save_atlas();
+            core.tex_manager.save_atlas();
         }
         "ls" => {
             let s = if segments.len() > 1 {
@@ -141,7 +145,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             if segments.len() > 2 {
                 match segments[1] {
                     "model" => {
-                        let v = crate::model::search_model(&segments[2].to_string());
+                        let v = core.model_manager.search_model(&segments[2].to_string());
                         if v.len() > 0 {
                             log(format!("models -> {}", v.join(",")));
                         } else {
@@ -236,25 +240,25 @@ pub fn init_lua_sys(
         "Prints string to console"
     );
 
-    lua!(
-        "push",
-        move |_, n: f64| {
-            // let ents = lua.globals().get::<&str, Table>("_ents")?;
-            // ents.macro_export
+    // lua!(
+    //     "push",
+    //     move |_, n: f64| {
+    //         // let ents = lua.globals().get::<&str, Table>("_ents")?;
+    //         // ents.macro_export
 
-            let mut guard = crate::ent_master.write();
-            let eman = guard.get_mut().unwrap();
+    //         let mut guard = crate::ent_master.write();
+    //         let eman = guard.get_mut().unwrap();
 
-            let ents = &eman.ent_table;
-            for wrapped_ent in &mut ents.iter() {
-                let mut eg = wrapped_ent.lock().unwrap();
-                eg.x += n;
-            }
+    //         let ents = &eman.ent_table;
+    //         for wrapped_ent in &mut ents.iter() {
+    //             let mut eg = wrapped_ent.lock().unwrap();
+    //             eg.x += n;
+    //         }
 
-            Ok(())
-        },
-        "Pushes entities"
-    );
+    //         Ok(())
+    //     },
+    //     "Pushes entities"
+    // );
 
     // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
@@ -459,6 +463,7 @@ pub fn init_lua_sys(
         "Set a tile within 3d space and immediately trigger a redraw."
     );
 
+    let pitcher = main_pitcher.clone();
     lua!(
         "anim",
         move |_, (name, items, speed): (String, Vec<String>, Option<f64>)| {
@@ -467,16 +472,7 @@ pub fn init_lua_sys(
                 Some(s) => s as u32,
                 None => 16,
             };
-            crate::texture::ANIMATIONS.write().insert(
-                name,
-                (
-                    items
-                        .iter()
-                        .map(|i| crate::texture::get_tex(i))
-                        .collect_vec(),
-                    anim_speed,
-                ),
-            );
+            pitcher.send(MainCommmand::Anim(name, items, anim_speed));
             Ok(true)
         },
         "Set an animation"
@@ -485,34 +481,7 @@ pub fn init_lua_sys(
     // let pitchy = Arc::new(pitcher);
     lua!(
         "key",
-        move |_, key: String| {
-            // match key_match(key) {
-            //     Some(k) => Ok(crate::controls::input_manager.read().key_held(k)),
-            //     None => Ok(false),
-            // }
-            // let (tx, rx) = sync_channel::<i32>(0);
-            // pitcher.send((0, key, tx));
-            // Ok(match rx.recv() {
-            //     Ok(n) => n == 1,
-            //     Err(e) => {
-            //         // err(e.to_string());
-            //         false
-            //     }
-            // })
-            // let c = key.to_lowercase().chars().collect::<Vec<char>>()[0] as usize;
-
-            // if bits.lock()[key_match(key.clone())] {
-
-            // }
-            Ok(keys.lock()[key_match(key)])
-            // match bits.lock() {
-            //     Ok(b) => {
-            //         let z = b;
-            //         Ok(b[c])
-            //     }
-            //     _ => Ok(false),
-            // }
-        },
+        move |_, key: String| { Ok(keys.lock()[key_match(key)]) },
         "Check if key is held down"
     );
 
@@ -535,23 +504,28 @@ pub fn init_lua_sys(
         "Check how much a button is pressed, axis gives value between -1 and 1"
     );
 
+    let pitcher = main_pitcher.clone();
     lua!(
         "spawn",
         move |_, (asset, x, y, z): (String, f64, f64, f64)| {
-            let mut guard = crate::ent_master.write();
-            let eman = guard.get_mut().unwrap();
-            let index = eman.ent_table.len();
-
+            // let (tx, rx) = std::sync::mpsc::sync_channel::<Arc<std::sync::Mutex<LuaEnt>>>(0);
+            let index = 0;
             let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
-
-            // Rc<RefCell
             let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            match pitcher.send(MainCommmand::Spawn(wrapped.clone())) {
+                Ok(_) => {}
+                Err(er) => log(format!("error sending spawn {}", er)),
+            }
+            Ok(wrapped)
 
-            let output_ent = Arc::clone(&wrapped);
+            // Ok(match rx.recv() {
+            //     Ok(e) => e,
+            //     Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
+            // })
 
-            eman.create_from_lua(wrapped);
+            // Ok(1)
 
-            Ok(output_ent)
+            // rx.recv()
         },
         "Spawn an entity"
     );
@@ -571,22 +545,27 @@ pub fn init_lua_sys(
      *  use to store an entity between context, for moving entities between games maybe?
      *  lua.create_registry_value(t)
      */
-    let switch = Arc::clone(&switch_board);
+    // let switch = Arc::clone(&switch_board);
+    let pitcher = main_pitcher.clone();
     lua!(
         "crt",
         move |_, table: Table| {
+            // pitcher.send(MainCommmand::Globals(table));
+            let mut hash = HashMap::new();
             for it in table.pairs() {
                 match it {
                     Ok(pair) => {
-                        switch
-                            .write()
-                            .remaps
-                            .push(("globals".to_string(), pair.0, pair.1));
+                        hash.insert(pair.0, pair.1);
+                        // switch
+                        //     .write()
+                        //     .remaps
+                        //     .push(("globals".to_string(), pair.0, pair.1));
                     }
                     _ => {}
                 }
             }
-            switch.write().dirty = true;
+            pitcher.send(MainCommmand::Globals(hash));
+            // switch.write().dirty = true;
             Ok(())
         },
         "Set the CRT parameters"
@@ -833,8 +812,8 @@ fn res(target: &str, r: Result<(), Error>) {
 
 /** core game reset, drop all resources including lua */
 pub fn reset(core: &mut Core) {
-    crate::texture::reset();
-    crate::model::reset();
+    core.tex_manager.reset();
+    core.model_manager.reset();
     core.gui.clean();
 
     core.lua_master.die();
@@ -842,8 +821,7 @@ pub fn reset(core: &mut Core) {
     core.global.clean();
 
     // TODO why doe sent reset panic?
-    let mut guard = crate::ent_master.write();
-    guard.get_mut().unwrap().reset();
+    core.ent_manager.reset();
 }
 
 pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
@@ -875,19 +853,35 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
     );
 
     core.catcher = Some(catcher);
-    crate::texture::reset();
+    core.tex_manager.reset();
 
     // if we get a path and it's a file, it needs to be unpacked, if it's a custom directoty we walk it, otherwise walk the local directory
     match game_path {
         Some(s) => match payload {
             Some(p) => {
-                crate::asset::unpack(&core.device, &s, p, &core.lua_master);
+                crate::asset::unpack(
+                    &mut core.tex_manager,
+                    &mut core.model_manager,
+                    &mut core.world,
+                    &core.lua_master,
+                    &core.device,
+                    &s,
+                    p,
+                );
+                // println!("unpacked");
             }
             None => {
                 let mut path = crate::asset::determine_path(Some(s.clone()));
                 core.global.loaded_directory = Some(s.clone());
                 if path.is_dir() {
-                    crate::asset::walk_files(Some(&core.device), &core.lua_master, path);
+                    crate::asset::walk_files(
+                        &mut core.tex_manager,
+                        &mut core.model_manager,
+                        &mut core.world,
+                        Some(&core.device),
+                        &core.lua_master,
+                        path,
+                    );
                 } else {
                     match path.file_name() {
                         Some(file_name) => {
@@ -897,7 +891,18 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
                             path.set_file_name(new_path);
                             if path.is_file() {
                                 let buff = crate::zip_pal::get_file_buffer_from_path(path);
-                                crate::asset::unpack(&core.device, &s, buff, &core.lua_master);
+
+                                // Some(&core.device),
+
+                                crate::asset::unpack(
+                                    &mut core.tex_manager,
+                                    &mut core.model_manager,
+                                    &mut core.world,
+                                    &core.lua_master,
+                                    &core.device,
+                                    &s,
+                                    buff,
+                                );
                             } else {
                                 err(format!("{:?} ({}) is not a file or directory (1)", path, s));
                             }
@@ -911,11 +916,19 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
         },
         None => {
             let path = crate::asset::determine_path(None);
-            crate::asset::walk_files(Some(&core.device), &core.lua_master, path);
+            crate::asset::walk_files(
+                &mut core.tex_manager,
+                &mut core.model_manager,
+                &mut core.world,
+                Some(&core.device),
+                &core.lua_master,
+                path,
+            );
         }
     };
 
-    crate::texture::refinalize(&core.queue, &core.master_texture);
+    core.tex_manager
+        .refinalize(&core.queue, &core.master_texture);
     // DEV  TODO
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
@@ -1050,6 +1063,9 @@ pub enum MainCommmand {
     CamRot(glam::Vec2),
     Clear(),
     Make(Vec<String>, SyncSender<u8>),
+    Anim(String, Vec<String>, u32),
+    Spawn(Arc<std::sync::Mutex<LuaEnt>>),
+    Globals(HashMap<String, f32>),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {

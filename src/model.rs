@@ -1,24 +1,379 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{ivec3, vec4, IVec3, Mat4, Quat, Vec3, Vec4};
 use itertools::izip;
-use lazy_static::lazy_static;
-use once_cell::sync::OnceCell;
-use parking_lot::RwLock;
-use rustc_hash::FxHashMap;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, rc::Rc};
 use wgpu::{util::DeviceExt, Device};
 
-lazy_static! {
+use crate::{texture::TexManager, world::World};
+
+pub struct ModelManager {
     //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    pub static ref CUBE: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref PLANE: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref CUSTOM: Arc<OnceCell<Model>> = Arc::new(OnceCell::new());
-    pub static ref DICTIONARY:RwLock<HashMap<String,Arc<OnceCell<Model>> >> =RwLock::new(HashMap::new());
-    /** map our */
-    pub static ref INT_DICTIONARY:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
-    pub static ref INT_MAP:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
+    pub CUBE: Rc<Model>,
+    pub PLANE: Rc<Model>,
+    // pub CUSTOM: Rc<Model>,
+    pub DICTIONARY: HashMap<String, Rc<Model>>,
+    // pub static ref INT_DICTIONARY:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
+    // pub static ref INT_MAP:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
 }
 
+impl ModelManager {
+    pub fn init(device: &Device) -> ModelManager {
+        let (plane_vertex_data, plane_index_data) = create_plane(16, Some(ivec3(-8, 0, 0)), None);
+        //device.create_buffer_init(desc)
+        let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Plane Vertex Buffer"),
+            contents: bytemuck::cast_slice(&plane_vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Plane Index Buffer"),
+            contents: bytemuck::cast_slice(&plane_index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let plane_model = Model {
+            name: "plane".to_string(),
+            vertex_buf: plane_vertex_buf,
+            index_buf: plane_index_buf,
+            index_format: wgpu::IndexFormat::Uint32,
+            index_count: plane_index_data.len(),
+            data: None,
+        };
+        let PLANE = Rc::new(plane_model);
+
+        let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
+        let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Cubes Vertex Buffer"),
+            contents: bytemuck::cast_slice(&cube_vertex_data),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let cube_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Cubes Index Buffer"),
+            contents: bytemuck::cast_slice(&cube_index_data),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let cube_model = Model {
+            name: "cube".to_string(),
+            vertex_buf: cube_vertex_buf,
+            index_buf: cube_index_buf,
+            index_format: wgpu::IndexFormat::Uint32,
+            index_count: cube_index_data.len(),
+            data: Some((cube_vertex_data, cube_index_data)),
+        };
+        let CUBE = Rc::new(cube_model);
+        let mut DICTIONARY = HashMap::new();
+
+        DICTIONARY.insert("cube".to_string(), CUBE.clone());
+        ModelManager {
+            CUBE,
+            PLANE,
+            // CUSTOM,
+            DICTIONARY,
+        }
+    }
+
+    pub fn cube_model(&self) -> Rc<Model> {
+        Rc::clone(&self.CUBE)
+    }
+
+    pub fn plane_model(&self) -> Rc<Model> {
+        Rc::clone(&self.PLANE)
+    }
+
+    pub fn get_model(&self, str: &String) -> Rc<Model> {
+        if str == "plane" {
+            return self.plane_model();
+        }
+
+        match self.DICTIONARY.get(str) {
+            Some(model) => Rc::clone(model),
+            None => self.cube_model(),
+        }
+        //Arc::clone(&custom)
+    }
+
+    /** Returns a model by verts that are able to be adjusted through translation of the actual verts */
+    pub fn get_adjustable_model(&self, str: &String) -> Option<Rc<Model>> {
+        match self.DICTIONARY.get(str) {
+            Some(model) => Some(Rc::clone(model)),
+            None => None,
+        }
+    }
+
+    pub fn search_model(&self, str: &String) -> Vec<String> {
+        let searcher = str.to_lowercase();
+        let mut v = vec![];
+        for i in self.DICTIONARY.keys() {
+            if i.starts_with(&searcher) {
+                v.push(i.clone());
+            }
+        }
+        v
+    }
+
+    /** big honking central gltf/glb loader function that inserts the new model into our dictionary lookup */
+    fn load(
+        &mut self,
+        world: &mut World,
+        tex_manager: &mut TexManager,
+        str: &String,
+        nodes: gltf::Document,
+        buffers: Vec<gltf::buffer::Data>,
+        image_data: Vec<gltf::image::Data>,
+        device: &Device,
+    ) {
+        //let mut meshes: Vec<Mesh> = vec![];
+        //let im1 = image_data.get(0).unwrap();
+        // let bits = str.split(".").collect::<Vec<_>>();
+
+        let p = std::path::PathBuf::from(&str);
+        match p.file_stem() {
+            Some(p) => {
+                let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
+
+                let uv_adjust =
+                    tex_manager.load_tex_from_img(name.clone(), str.to_string(), &image_data);
+
+                //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
+                //tex.set_filter(FilterMode::Nearest);
+                let mut first_instance = true;
+                let mut meshes = vec![];
+
+                // for node in nodes.nodes(){
+                //     node.name()
+                // }
+                for mesh in nodes.meshes() {
+                    let mesh_name = match mesh.name() {
+                        Some(n) => n,
+                        _ => "" as &str,
+                    };
+
+                    first_instance = true;
+                    for primitive in mesh.primitives() {
+                        // primitive.attributes().for_each(|(name, _)| {
+                        //     name.
+                        //     log(format!("attribute {:?}", name));
+                        // });
+                        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+
+                        let verts_interleaved = izip!(
+                            reader.read_positions().unwrap(),
+                            //reader.read_normals().unwrap(),
+                            //reader.read_colors(0).unwrap().into_rgb_f32().into_iter(),
+                            reader.read_tex_coords(0).unwrap().into_f32(),
+                            //reader.read_indices().unwrap()
+                        );
+
+                        let vertices = verts_interleaved
+                            .map(|(pos, uv)| {
+                                // position: Vec3::from(pos),
+                                // uv: Vec2::from(uv),
+                                // color: WHITE,
+                                let mut vv = vertexx(pos, [0, 0, 0], uv);
+                                //DEV are we always offseting the glb uv by the tilemap this way?
+                                vv.texture(uv_adjust);
+                                vv
+                            })
+                            .collect::<Vec<Vertex>>();
+
+                        //         let verts = data
+                        // .0
+                        // .iter()
+                        // .map(|v| {
+                        //     let mut v2 = v.clone();
+                        //     v2.trans(offset);
+                        //     // v2.texture(uv);
+                        //     v2
+                        // })
+                        // .collect::<Vec<Vertex>>();
+
+                        if let Some(inds) = reader.read_indices() {
+                            let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
+
+                            let mesh_vertex_buf =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some(&format!("{}{}", str, " Mesh Vertex Buffer")),
+                                    contents: bytemuck::cast_slice(&vertices),
+                                    usage: wgpu::BufferUsages::VERTEX,
+                                });
+
+                            let mesh_index_buf =
+                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some(&format!("{}{}", str, " Mesh Index Buffer")),
+                                    contents: bytemuck::cast_slice(&indices),
+                                    usage: wgpu::BufferUsages::INDEX,
+                                });
+                            println!("Load mesh {} with {} verts", name, vertices.len());
+                            println!("ind #{} verts #{}", indices.len(), vertices.len());
+
+                            let model = Model {
+                                name: name.to_string(),
+                                vertex_buf: mesh_vertex_buf,
+                                index_buf: mesh_index_buf,
+                                index_format: wgpu::IndexFormat::Uint32,
+                                index_count: indices.len(),
+                                data: Some((vertices, indices)),
+                            };
+
+                            if first_instance {
+                                first_instance = false;
+                                let model_cell = Rc::new(model);
+
+                                //
+                                log(format!(
+                                    "populated model {} with mesh named {}",
+                                    name, mesh_name
+                                ));
+
+                                meshes.push((mesh_name, model_cell));
+                            }
+                        };
+                    }
+                }
+
+                if meshes.len() > 0 {
+                    if meshes.len() == 1 {
+                        let mesh = meshes.pop().unwrap();
+                        let lower = name.to_lowercase();
+                        log(format!("single model stored as {}", name));
+                        //TODO is this mapped at some point?
+                        world.index_model(lower.clone(), Rc::clone(&mesh.1));
+                        self.DICTIONARY.insert(lower.to_string(), mesh.1);
+                    } else {
+                        for m in meshes {
+                            let compound_name = format!("{}.{}", name, m.0).to_lowercase();
+                            log(format!("multi-model stored as {}", compound_name));
+                            //TODO is this mapped at some point?
+                            world.index_model(compound_name.clone(), Rc::clone(&m.1));
+                            self.DICTIONARY.insert(compound_name, m.1);
+                        }
+                    }
+                }
+            }
+
+            None => {}
+        }
+    }
+
+    /** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */
+    pub fn load_from_buffer(
+        &mut self,
+        world: &mut World,
+        tex_manager: &mut TexManager,
+        str: &String,
+        slice: &Vec<u8>,
+        device: &Device,
+    ) {
+        match gltf::import_slice(slice) {
+            Ok((nodes, buffers, image_data)) => {
+                self.load(world, tex_manager, str, nodes, buffers, image_data, device);
+            }
+            _ => {}
+        }
+    }
+
+    /** entry model loader that first loads from disk and then sends to central load fn */
+    pub fn load_from_string(
+        &mut self,
+        world: &mut World,
+        tex_manager: &mut TexManager,
+        str: &String,
+        device: &Device,
+    ) {
+        let target = str; //format!("assets/{}", str);
+
+        match gltf::import(&target) {
+            Ok((nodes, buffers, image_data)) => {
+                self.load(world, tex_manager, str, nodes, buffers, image_data, device);
+            }
+            Err(err) => {
+                log(format!("gltf err for {} -> {}", &target, err));
+            }
+        }
+    }
+
+    // TODO make this a cleaner function
+    pub fn edit_cube(
+        &mut self,
+        world: &mut World,
+        tex_manager: &TexManager,
+        name: String,
+        textures: Vec<String>,
+        device: &Device,
+    ) {
+        let m = self.CUBE.clone();
+        let (verts, inds) = (m).data.as_ref().unwrap().clone();
+        // let (verts, inds) =  {
+        //     Some(m) => {
+        //         // println!("🟢we got a cube model");
+        //         let data = cube.get().unwrap().data.as_ref().unwrap().clone();
+        //         (data.0, data.1)
+        //     }
+        //     None => {
+        //         //println!("🔴failed to locate cube model");
+        //         crate::model::create_plane(16, None, None)
+        //     }
+        // };
+        let mut uv = vec![];
+        // println!("keys {}", crate::texture::list_keys());
+        for t in textures {
+            // println!("❓ {} ", t);
+            uv.push(tex_manager.get_tex(&t));
+        }
+        // let t2 = textures.map(|t| t.clone());
+        // let uvs = t2.map(|t| crate::texture::get_tex((&t.clone())));
+        let verts2 = verts
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut v2 = v.clone();
+                // v2.trans(offset.clone());
+
+                v2.texture(uv[(i / 4 as usize)]);
+                v2
+            })
+            .collect::<Vec<Vertex>>();
+
+        let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{}{}", name, " Mesh Vertex Buffer")),
+            contents: bytemuck::cast_slice(&verts2),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{}{}", name, " Mesh Index Buffer")),
+            contents: bytemuck::cast_slice(&inds),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let model = Model {
+            name: name.clone(),
+            vertex_buf: mesh_vertex_buf,
+            index_buf: mesh_index_buf,
+            index_format: wgpu::IndexFormat::Uint32,
+            index_count: inds.len(),
+            data: Some((verts2, inds)),
+        };
+
+        let rced_model = Rc::new(model);
+        //TODO is this mapped at some point?
+        let model_index = world.index_model(name.clone(), Rc::clone(&rced_model));
+        self.DICTIONARY.insert(name.clone(), rced_model);
+        // log(format!(
+        //     "created new model cube {} with index {}",
+        //     name, model_index
+        // ));
+    }
+
+    pub fn reset(&mut self) {
+        // INT_DICTIONARY.write().clear();
+        // INT_MAP.write().clear();
+        self.DICTIONARY.clear();
+        self.DICTIONARY
+            .insert("cube".to_string(), self.cube_model());
+    }
+}
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct Vertex {
@@ -303,124 +658,6 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
     }
 }
 
-pub fn init(device: &Device) {
-    let (plane_vertex_data, plane_index_data) = create_plane(16, Some(ivec3(-8, 0, 0)), None);
-    //device.create_buffer_init(desc)
-    let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Plane Vertex Buffer"),
-        contents: bytemuck::cast_slice(&plane_vertex_data),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-
-    let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Plane Index Buffer"),
-        contents: bytemuck::cast_slice(&plane_index_data),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
-    let plane_model = Model {
-        name: "plane".to_string(),
-        vertex_buf: plane_vertex_buf,
-        index_buf: plane_index_buf,
-        index_format: wgpu::IndexFormat::Uint32,
-        index_count: plane_index_data.len(),
-        data: None,
-    };
-    PLANE.get_or_init(|| plane_model);
-
-    let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
-    let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Cubes Vertex Buffer"),
-        contents: bytemuck::cast_slice(&cube_vertex_data),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-    let cube_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Cubes Index Buffer"),
-        contents: bytemuck::cast_slice(&cube_index_data),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-    let cube_model = Model {
-        name: "cube".to_string(),
-        vertex_buf: cube_vertex_buf,
-        index_buf: cube_index_buf,
-        index_format: wgpu::IndexFormat::Uint32,
-        index_count: cube_index_data.len(),
-        data: Some((cube_vertex_data, cube_index_data)),
-    };
-    CUBE.get_or_init(|| cube_model);
-    DICTIONARY
-        .write()
-        .insert("cube".to_string(), Arc::clone(&CUBE));
-}
-
-pub fn cube_model() -> Arc<OnceCell<Model>> {
-    Arc::clone(&CUBE)
-}
-
-pub fn plane_model() -> Arc<OnceCell<Model>> {
-    Arc::clone(&PLANE)
-}
-
-pub fn get_model(str: &String) -> Arc<OnceCell<Model>> {
-    if str == "plane" {
-        return plane_model();
-    }
-
-    match DICTIONARY.read().get(str) {
-        Some(model) => Arc::clone(model),
-        None => cube_model(),
-    }
-    //Arc::clone(&custom)
-}
-
-/** Returns a model by verts that are able to be adjusted through translation of the actual verts */
-pub fn get_adjustable_model(str: &String) -> Option<Arc<OnceCell<Model>>> {
-    match DICTIONARY.read().get(str) {
-        Some(model) => match model.get() {
-            Some(_) => Some(Arc::clone(model)),
-            _ => {
-                log(format!("missing model data field for {}", str));
-                None
-            }
-        },
-        None => None,
-    }
-}
-
-/** return model numerical index from a given model name */
-pub fn get_model_index(str: &String) -> Option<u32> {
-    match INT_DICTIONARY.read().get(str) {
-        Some(u) => {
-            // log(format!("🟢ye we got {} from {}", u, str));
-            Some(u.clone())
-        }
-        None => None,
-    }
-}
-
-pub fn search_model(str: &String) -> Vec<String> {
-    let searcher = str.to_lowercase();
-    let mut v = vec![];
-    for i in DICTIONARY.read().keys() {
-        if i.starts_with(&searcher) {
-            v.push(i.clone());
-        }
-    }
-    v
-}
-
-pub fn get_model_from_index(index: u32) -> Option<Arc<OnceCell<Model>>> {
-    match INT_MAP.read().get(&index) {
-        Some(model) => match model.get() {
-            Some(_) => Some(Arc::clone(model)),
-            _ => {
-                // log(format!("missing model data field by index {}", index));
-                None
-            }
-        },
-        None => None,
-    }
-}
 pub struct Model {
     pub name: String,
     pub vertex_buf: wgpu::Buffer,
@@ -428,263 +665,6 @@ pub struct Model {
     pub index_format: wgpu::IndexFormat,
     pub index_count: usize,
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
-}
-
-/** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */
-pub fn load_from_buffer(str: &String, slice: &Vec<u8>, device: &Device) {
-    match gltf::import_slice(slice) {
-        Ok((nodes, buffers, image_data)) => {
-            load(str, nodes, buffers, image_data, device);
-        }
-        _ => {}
-    }
-}
-
-/** entry model loader that first loads from disk and then sends to central load fn */
-pub fn load_from_string(str: &String, device: &Device) {
-    let target = str; //format!("assets/{}", str);
-
-    match gltf::import(&target) {
-        Ok((nodes, buffers, image_data)) => {
-            load(str, nodes, buffers, image_data, device);
-        }
-        Err(err) => {
-            log(format!("gltf err for {} -> {}", &target, err));
-        }
-    }
-}
-
-/** big honking central gltf/glb loader function that inserts the new model into our dictionary lookup */
-fn load(
-    str: &String,
-    nodes: gltf::Document,
-    buffers: Vec<gltf::buffer::Data>,
-    image_data: Vec<gltf::image::Data>,
-    device: &Device,
-) {
-    //let mut meshes: Vec<Mesh> = vec![];
-    //let im1 = image_data.get(0).unwrap();
-    // let bits = str.split(".").collect::<Vec<_>>();
-
-    let p = std::path::PathBuf::from(&str);
-    match p.file_stem() {
-        Some(p) => {
-            let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
-
-            let uv_adjust =
-                crate::texture::load_tex_from_img(name.clone(), str.to_string(), &image_data);
-
-            //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
-            //tex.set_filter(FilterMode::Nearest);
-            let mut first_instance = true;
-            let mut meshes = vec![];
-
-            // for node in nodes.nodes(){
-            //     node.name()
-            // }
-            for mesh in nodes.meshes() {
-                let mesh_name = match mesh.name() {
-                    Some(n) => n,
-                    _ => "" as &str,
-                };
-
-                first_instance = true;
-                for primitive in mesh.primitives() {
-                    // primitive.attributes().for_each(|(name, _)| {
-                    //     name.
-                    //     log(format!("attribute {:?}", name));
-                    // });
-                    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-
-                    let verts_interleaved = izip!(
-                        reader.read_positions().unwrap(),
-                        //reader.read_normals().unwrap(),
-                        //reader.read_colors(0).unwrap().into_rgb_f32().into_iter(),
-                        reader.read_tex_coords(0).unwrap().into_f32(),
-                        //reader.read_indices().unwrap()
-                    );
-
-                    let vertices = verts_interleaved
-                        .map(|(pos, uv)| {
-                            // position: Vec3::from(pos),
-                            // uv: Vec2::from(uv),
-                            // color: WHITE,
-                            let mut vv = vertexx(pos, [0, 0, 0], uv);
-                            //DEV are we always offseting the glb uv by the tilemap this way?
-                            vv.texture(uv_adjust);
-                            vv
-                        })
-                        .collect::<Vec<Vertex>>();
-
-                    //         let verts = data
-                    // .0
-                    // .iter()
-                    // .map(|v| {
-                    //     let mut v2 = v.clone();
-                    //     v2.trans(offset);
-                    //     // v2.texture(uv);
-                    //     v2
-                    // })
-                    // .collect::<Vec<Vertex>>();
-
-                    if let Some(inds) = reader.read_indices() {
-                        let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
-
-                        let mesh_vertex_buf =
-                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some(&format!("{}{}", str, " Mesh Vertex Buffer")),
-                                contents: bytemuck::cast_slice(&vertices),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-
-                        let mesh_index_buf =
-                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some(&format!("{}{}", str, " Mesh Index Buffer")),
-                                contents: bytemuck::cast_slice(&indices),
-                                usage: wgpu::BufferUsages::INDEX,
-                            });
-                        println!("Load mesh {} with {} verts", name, vertices.len());
-                        println!("ind #{} verts #{}", indices.len(), vertices.len());
-
-                        let model = Model {
-                            name: name.to_string(),
-                            vertex_buf: mesh_vertex_buf,
-                            index_buf: mesh_index_buf,
-                            index_format: wgpu::IndexFormat::Uint32,
-                            index_count: indices.len(),
-                            data: Some((vertices, indices)),
-                        };
-
-                        if first_instance {
-                            first_instance = false;
-                            let once = OnceCell::new();
-                            once.get_or_init(|| model);
-                            let model_cell = Arc::new(once);
-
-                            //
-                            log(format!(
-                                "populated model {} with mesh named {}",
-                                name, mesh_name
-                            ));
-
-                            meshes.push((mesh_name, model_cell));
-                        }
-                    };
-                }
-            }
-
-            if meshes.len() > 0 {
-                if meshes.len() == 1 {
-                    let mesh = meshes.pop().unwrap();
-                    let lower = name.to_lowercase();
-                    log(format!("single model stored as {}", name));
-                    index_model(lower.clone(), Arc::clone(&mesh.1));
-                    DICTIONARY.write().insert(lower.to_string(), mesh.1);
-                } else {
-                    for m in meshes {
-                        let compound_name = format!("{}.{}", name, m.0).to_lowercase();
-                        log(format!("multi-model stored as {}", compound_name));
-                        index_model(compound_name.clone(), Arc::clone(&m.1));
-                        DICTIONARY.write().insert(compound_name, m.1);
-                    }
-                }
-            }
-        }
-
-        None => {}
-    }
-}
-
-/** Create a simple numerical key for our model and map it, returning that numerical key*/
-fn index_model(key: String, model: Arc<OnceCell<Model>>) -> u32 {
-    let mut guard = crate::texture::COUNTER.lock();
-    let ind = *guard;
-    println!(
-        "indexed model {} with key {}",
-        model.get().unwrap().name,
-        ind
-    );
-    INT_MAP.write().insert(ind, model);
-
-    INT_DICTIONARY.write().insert(key, ind);
-    *guard += 1;
-    ind
-}
-
-// TODO make this a cleaner function
-pub fn edit_cube(name: String, textures: Vec<String>, device: &Device) {
-    let m = CUBE.get().unwrap().clone();
-    let (verts, inds) = (m).data.as_ref().unwrap().clone();
-    // let (verts, inds) =  {
-    //     Some(m) => {
-    //         // println!("🟢we got a cube model");
-    //         let data = cube.get().unwrap().data.as_ref().unwrap().clone();
-    //         (data.0, data.1)
-    //     }
-    //     None => {
-    //         //println!("🔴failed to locate cube model");
-    //         crate::model::create_plane(16, None, None)
-    //     }
-    // };
-    let mut uv = vec![];
-    // println!("keys {}", crate::texture::list_keys());
-    for t in textures {
-        // println!("❓ {} ", t);
-        uv.push(crate::texture::get_tex(&t));
-    }
-    // let t2 = textures.map(|t| t.clone());
-    // let uvs = t2.map(|t| crate::texture::get_tex((&t.clone())));
-    let verts2 = verts
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let mut v2 = v.clone();
-            // v2.trans(offset.clone());
-
-            v2.texture(uv[(i / 4 as usize)]);
-            v2
-        })
-        .collect::<Vec<Vertex>>();
-
-    let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{}{}", name, " Mesh Vertex Buffer")),
-        contents: bytemuck::cast_slice(&verts2),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-
-    let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some(&format!("{}{}", name, " Mesh Index Buffer")),
-        contents: bytemuck::cast_slice(&inds),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
-    let model = Model {
-        name: name.clone(),
-        vertex_buf: mesh_vertex_buf,
-        index_buf: mesh_index_buf,
-        index_format: wgpu::IndexFormat::Uint32,
-        index_count: inds.len(),
-        data: Some((verts2, inds)),
-    };
-
-    let cell = OnceCell::new();
-    cell.get_or_init(|| model);
-
-    let arced_model = Arc::new(cell);
-    let model_index = index_model(name.clone(), Arc::clone(&arced_model));
-    DICTIONARY.write().insert(name.clone(), arced_model);
-    log(format!(
-        "created new model cube {} with index {}",
-        name, model_index
-    ));
-}
-
-pub fn reset() {
-    INT_DICTIONARY.write().clear();
-    INT_MAP.write().clear();
-    let mut wr = DICTIONARY.write();
-    wr.clear();
-    wr.insert("cube".to_string(), Arc::clone(&CUBE));
 }
 
 fn log(str: String) {

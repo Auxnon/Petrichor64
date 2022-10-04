@@ -1,10 +1,14 @@
 use rustc_hash::FxHashMap;
-use std::{collections::hash_map::Entry, ops::Mul};
+use std::{collections::hash_map::Entry, ops::Mul, rc::Rc};
 
 use glam::{ivec3, IVec3, Mat4, Vec4};
 use wgpu::{util::DeviceExt, Buffer, Device};
 
-use crate::{ent::EntityUniforms, model::Vertex};
+use crate::{
+    ent::EntityUniforms,
+    model::{Model, ModelManager, Vertex},
+    world::WorldInstance,
+};
 
 const CHUNK_SIZE: i32 = 32;
 pub struct Layer {
@@ -43,10 +47,18 @@ impl Layer {
     }
 
     /** Set 1 tile in a chunk, if chunk doesn't exist it will create it and set the new tile */
-    pub fn set_tile(&mut self, tile: &String, meta: u8, ix: i32, iy: i32, iz: i32) {
-        let cell_type = match crate::model::get_model_index(&tile) {
+    pub fn set_tile(
+        &mut self,
+        instance: &WorldInstance,
+        tile: &String,
+        meta: u8,
+        ix: i32,
+        iy: i32,
+        iz: i32,
+    ) {
+        let cell_type = match instance.get_model_index(&tile) {
             Some(model_index) => model_index,
-            _ => crate::texture::get_tex_index(&tile),
+            _ => instance.get_tex_index(&tile),
         };
 
         // let uv = crate::texture::get_tex_index(&tile);
@@ -72,9 +84,9 @@ impl Layer {
     }
 
     /** Set multiple tiles from a large array */
-    pub fn set_tile_from_buffer(&mut self, buffer: &Vec<(String, Vec4)>) {
+    pub fn set_tile_from_buffer(&mut self, instance: &WorldInstance, buffer: &Vec<(String, Vec4)>) {
         for (s, t) in buffer {
-            self.set_tile(s, t.x as u8, t.y as i32, t.z as i32, t.w as i32);
+            self.set_tile(instance, s, t.x as u8, t.y as i32, t.z as i32, t.w as i32);
         }
     }
 
@@ -247,7 +259,13 @@ impl ChunkModel {
     }
 
     /* Piece together the chunk with either tilemap cubes, or gltf/glb model instances based on tile index number */
-    pub fn build_chunk(&mut self, chunk: Chunk) {
+    pub fn build_chunk(
+        &mut self,
+        tex_map: &FxHashMap<u32, Vec4>,
+        model_map: &FxHashMap<u32, Rc<Model>>,
+        model_manager: &ModelManager,
+        chunk: Chunk,
+    ) {
         self.vert_data = vec![];
         self.ind_data = vec![];
 
@@ -261,6 +279,9 @@ impl ChunkModel {
         for (i, cell) in chunk.cells.clone().iter().enumerate() {
             if (*cell).0 > 0u32 {
                 _add_tile_model(
+                    tex_map,
+                    model_map,
+                    model_manager,
                     self,
                     (*cell).0,
                     (*cell).1,
@@ -322,7 +343,17 @@ impl ChunkModel {
     }
 }
 
-fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: i32, iz: i32) {
+fn _add_tile_model(
+    tex_map: &FxHashMap<u32, Vec4>,
+    model_map: &FxHashMap<u32, Rc<Model>>,
+    model_manager: &ModelManager,
+    c: &mut ChunkModel,
+    model_index: u32,
+    meta: u8,
+    ix: i32,
+    iy: i32,
+    iz: i32,
+) {
     let current_count = c.vert_data.len() as u32;
     //println!("index bit adjustment {}", current_count);
     let offset = ivec3(ix as i32, iy as i32, iz as i32).mul(16) - ivec3(8, 8, 8);
@@ -334,10 +365,10 @@ fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: 
     //     ix, iy, iz, offset, c.key
     // );
 
-    let (mut verts, mut inds) = match crate::model::get_model_from_index(model_index) {
+    let (mut verts, mut inds) = match model_map.get(&model_index) {
         Some(m) => {
             // let uv = crate::texture::get_tex_from_index(model_index);
-            let modl = m.get().unwrap();
+            let modl = Rc::clone(m);
             let data = modl.data.as_ref().unwrap().clone();
             // print!("c{} {}", model_index, modl.name);
             // print!("🟢🟣uv{} {}", uv, modl.name);
@@ -377,9 +408,12 @@ fn _add_tile_model(c: &mut ChunkModel, model_index: u32, meta: u8, ix: i32, iy: 
             (verts, inds)
         }
         None => {
-            let uv = crate::texture::get_tex_from_index(model_index);
-            let cube = crate::model::cube_model();
-            let data = cube.get().unwrap().data.as_ref().unwrap().clone();
+            let uv = match tex_map.get(&model_index) {
+                Some(uv) => uv.clone(),
+                _ => glam::vec4(1., 1., 0., 0.),
+            };
+            let cube = model_manager.cube_model();
+            let data = cube.data.as_ref().unwrap().clone();
 
             // crate::model::create_plane(16, None, None)
             let verts = data

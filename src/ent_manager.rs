@@ -5,7 +5,8 @@ use std::{
 
 use crate::{
     ent::EntityUniforms,
-    model::{Instance, InstanceRaw},
+    model::{Instance, ModelManager},
+    texture::TexManager,
 };
 use glam::vec3;
 use mlua::{UserData, UserDataMethods};
@@ -109,7 +110,12 @@ impl EntManager {
     //     self.entities.update()
     // }
 
-    pub fn create_from_lua(&mut self, wrapped_lua: Arc<Mutex<LuaEnt>>) {
+    pub fn create_from_lua(
+        &mut self,
+        tex_manager: &TexManager,
+        model_manager: &ModelManager,
+        wrapped_lua: Arc<Mutex<LuaEnt>>,
+    ) {
         let lua = wrapped_lua.lock().unwrap();
         // let lua=guard.
         let id = lua.get_id();
@@ -120,6 +126,8 @@ impl EntManager {
 
         // MARK should change plane to a model if the texture doesn't exist as one
         let ent = Ent::new_dynamic(
+            tex_manager,
+            model_manager,
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
             0.,
             1.,
@@ -144,10 +152,10 @@ impl EntManager {
     pub fn get_from_id_mut(&mut self, id: i64) -> Option<&mut Ent> {
         self.entities.get_mut(&id)
     }
-    pub fn swap_tex(&mut self, tex: &String, ent_id: i64) {
+    pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: i64) {
         match self.entities.get_mut(&ent_id) {
             Some(e) => {
-                e.tex = crate::texture::get_tex(tex);
+                e.tex = tm.get_tex(tex);
             }
             _ => {}
         }
@@ -162,7 +170,7 @@ impl EntManager {
         // self.uniform_alignment = 0;
     }
 
-    pub fn check_ents(&mut self) {
+    pub fn check_ents(&mut self, tm: &TexManager) {
         let mut v: Vec<LuaEnt> = vec![];
         for lua_ent in self.ent_table.iter_mut() {
             match lua_ent.try_lock() {
@@ -185,7 +193,7 @@ impl EntManager {
                     Some(e) => {
                         if l.is_anim() {
                             // println!("anim {}", l.get_tex());
-                            match crate::texture::ANIMATIONS.read().get(l.get_tex()) {
+                            match tm.ANIMATIONS.get(l.get_tex()) {
                                 Some(t) => {
                                     // println!("we found {} with {:?}", l.get_tex(), t);
                                     e.anim = t.0.clone();
@@ -194,7 +202,7 @@ impl EntManager {
                                 _ => {}
                             }
                         } else {
-                            e.tex = crate::texture::get_tex(l.get_tex());
+                            e.tex = tm.get_tex(l.get_tex());
                             if e.anim.len() > 0 {
                                 e.anim = vec![];
                             }

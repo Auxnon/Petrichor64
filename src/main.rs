@@ -4,8 +4,9 @@ use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
 use ent_manager::EntManager;
 use global::Global;
+use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
-use once_cell::sync::OnceCell;
+use model::ModelManager;
 use sound::SoundPacket;
 use std::{
     mem,
@@ -14,6 +15,7 @@ use std::{
         Arc,
     },
 };
+use texture::TexManager;
 // use tracy::frame;
 use world::World;
 
@@ -86,6 +88,9 @@ pub struct Core {
     post: Post,
     loop_helper: spin_sleep::LoopHelper,
     lua_master: LuaCore,
+    tex_manager: TexManager,
+    model_manager: ModelManager,
+    ent_manager: EntManager,
 }
 
 #[repr(C)]
@@ -137,10 +142,6 @@ fn create_depth_texture(
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
-lazy_static! {
-    pub static ref ent_master: Arc<RwLock<OnceCell<EntManager>>> =
-        Arc::new(RwLock::new(OnceCell::new()));
-}
 
 impl Core {
     async fn new(window: &Window) -> Core {
@@ -176,8 +177,9 @@ impl Core {
             .unwrap();
 
         //this order is important, since models can load their own textures we need assets to init first
-        crate::texture::init();
-        model::init(&device);
+        let tex_manager = crate::texture::TexManager::new();
+        let model_manager = ModelManager::init(&device);
+        let mut ent_manager = EntManager::new(&device);
 
         // crate::texture::load_tex("gameboy".to_string());
         // crate::texture::load_tex("guy3".to_string());
@@ -185,7 +187,7 @@ impl Core {
         // crate::texture::load_tex("grass_down".to_string());
 
         let (diffuse_texture_view, diffuse_sampler, diff_tex) =
-            crate::texture::finalize(&device, &queue);
+            tex_manager.finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -639,6 +641,7 @@ impl Core {
                 None
             }
         };
+        ent_manager.uniform_alignment = uniform_alignment as u32;
 
         Self {
             surface,
@@ -665,6 +668,9 @@ impl Core {
             master_texture: diff_tex,
             loop_helper,
             lua_master: LuaCore::new(switch_board, world_sender, singer),
+            tex_manager,
+            model_manager,
+            ent_manager,
             catcher: None,
         }
     }
@@ -688,60 +694,42 @@ impl Core {
     // }
 
     fn update(&mut self) {
-        match self.switch_board.try_read() {
-            Some(r) => {
-                if r.dirty {
-                    drop(r);
-                    let mut mutex = self.switch_board.write();
+        // match self.switch_board.try_read() {
+        //     Some(r) => {
+        //         println!("try_read");
+        //         if r.dirty {
+        //             drop(r);
+        //             let mut mutex = self.switch_board.write();
 
-                    // if mutex.make_queue.len() > 0 {
-                    //     for m in mutex.make_queue.drain(0..) {
-                    //         if m.len() == 7 {
-                    //             //MARK - add entity
-                    //             let m2 = vec![
-                    //                 m[1].clone(),
-                    //                 m[2].clone(),
-                    //                 m[3].clone(),
-                    //                 m[4].clone(),
-                    //                 m[5].clone(),
-                    //                 m[6].clone(),
-                    //             ];
-                    //             crate::model::edit_cube(m[0].clone(), m2, &self.device);
-                    //         }
-                    //     }
-                    //     mutex.make_queue.clear();
-                    // }
-
-                    if mutex.remaps.len() > 0 {
-                        for item in mutex.remaps.drain(0..) {
-                            if item.0 == "globals" {
-                                match item.1.as_str() {
-                                    "resolution" => {
-                                        self.global.screen_effects.crt_resolution = item.2
-                                    }
-                                    "curvature" => {
-                                        self.global.screen_effects.corner_harshness = item.2
-                                    }
-                                    "flatness" => self.global.screen_effects.corner_ease = item.2,
-                                    "dark" => self.global.screen_effects.dark_factor = item.2,
-                                    "bleed" => self.global.screen_effects.lumen_threshold = item.2,
-                                    "glitch" => self.global.screen_effects.glitchiness = item.2,
-                                    "high" => self.global.screen_effects.high_range = item.2,
-                                    "low" => self.global.screen_effects.low_range = item.2,
-                                    "modernize" => self.global.screen_effects.modernize = item.2,
-                                    _ => {}
-                                }
-                            }
-                        }
-                        mutex.remaps.clear();
-                    }
-                    mutex.dirty = false;
-                    // r.dirty = false;
-                }
-            }
-            None => {}
-        }
-
+        //             if mutex.remaps.len() > 0 {
+        //                 for item in mutex.remaps.drain(0..) {
+        //                     if item.0 == "globals" {
+        //                         match item.1.as_str() {
+        //                             "resolution" => {
+        //                                 self.global.screen_effects.crt_resolution = item.2
+        //                             }
+        //                             "curvature" => {
+        //                                 self.global.screen_effects.corner_harshness = item.2
+        //                             }
+        //                             "flatness" => self.global.screen_effects.corner_ease = item.2,
+        //                             "dark" => self.global.screen_effects.dark_factor = item.2,
+        //                             "bleed" => self.global.screen_effects.lumen_threshold = item.2,
+        //                             "glitch" => self.global.screen_effects.glitchiness = item.2,
+        //                             "high" => self.global.screen_effects.high_range = item.2,
+        //                             "low" => self.global.screen_effects.low_range = item.2,
+        //                             "modernize" => self.global.screen_effects.modernize = item.2,
+        //                             _ => {}
+        //                         }
+        //                     }
+        //                 }
+        //                 mutex.remaps.clear();
+        //             }
+        //             mutex.dirty = false;
+        //             // r.dirty = false;
+        //         }
+        //     }
+        //     None => {}
+        // }
         match self.catcher {
             Some(ref mut c) => {
                 for p in c.try_iter() {
@@ -772,10 +760,20 @@ impl Core {
                         MainCommmand::Text(s, x, y) => {
                             self.gui.direct_text(&s, false, x as i64, y as i64)
                         }
-                        MainCommmand::Img(s, x, y) => {
-                            self.gui.draw_image(&s, false, x as i64, y as i64)
+                        MainCommmand::Img(s, x, y) => self.gui.draw_image(
+                            &mut self.tex_manager,
+                            &s,
+                            false,
+                            x as i64,
+                            y as i64,
+                        ),
+                        MainCommmand::Anim(name, items, speed) => {
+                            let texs = items
+                                .iter()
+                                .map(|i| self.tex_manager.get_tex(i))
+                                .collect_vec();
+                            self.tex_manager.ANIMATIONS.insert(name, (texs, speed));
                         }
-
                         MainCommmand::Clear() => self.gui.clean(),
                         MainCommmand::Make(m, tx) => {
                             // self.gui.draw_image(&s, false, x as i64, y as i64)
@@ -790,11 +788,48 @@ impl Core {
                                     m[5].clone(),
                                     m[6].clone(),
                                 ];
-                                crate::model::edit_cube(m[0].clone(), m2, &self.device);
+                                self.model_manager.edit_cube(
+                                    &mut self.world,
+                                    &self.tex_manager,
+                                    m[0].clone(),
+                                    m2,
+                                    &self.device,
+                                );
                                 // println!("this far2");
 
                                 tx.send(0);
                                 // println!("this far3");
+                            }
+                        }
+                        MainCommmand::Spawn(ent) => {
+                            let index = self.ent_manager.ent_table.len();
+                            // let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
+                            // // Rc<RefCell
+                            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
+                            // let output_ent = Arc::clone(&wrapped);
+                            self.ent_manager.create_from_lua(
+                                &self.tex_manager,
+                                &self.model_manager,
+                                ent,
+                            );
+                            // tx.send(output_ent);
+                        }
+                        MainCommmand::Globals(table) => {
+                            println!("global remap");
+                            for (k, v) in table.iter() {
+                                println!("global map {} {}", k, v);
+                                match k.as_str() {
+                                    "resolution" => self.global.screen_effects.crt_resolution = *v,
+                                    "curvature" => self.global.screen_effects.corner_harshness = *v,
+                                    "flatness" => self.global.screen_effects.corner_ease = *v,
+                                    "dark" => self.global.screen_effects.dark_factor = *v,
+                                    "bleed" => self.global.screen_effects.lumen_threshold = *v,
+                                    "glitch" => self.global.screen_effects.glitchiness = *v,
+                                    "high" => self.global.screen_effects.high_range = *v,
+                                    "low" => self.global.screen_effects.low_range = *v,
+                                    "modernize" => self.global.screen_effects.modernize = *v,
+                                    _ => {}
+                                }
                             }
                         }
                         _ => {}
@@ -804,10 +839,8 @@ impl Core {
             }
             None => {}
         }
+        self.ent_manager.check_ents(&self.tex_manager);
 
-        let mut ent_guard = ent_master.write();
-        let eman = ent_guard.get_mut().unwrap();
-        eman.check_ents();
         self.global.iteration += 1;
     }
 
@@ -852,14 +885,6 @@ fn main() {
     // State::new uses async code, so we're going to wait for it to finish
 
     let mut core = pollster::block_on(Core::new(&window));
-
-    let ent_guard = ent_master.read();
-    let mut eman = EntManager::new(&core.device);
-    eman.uniform_alignment = core.uniform_alignment as u32;
-
-    ent_guard.get_or_init(|| eman);
-
-    std::mem::drop(ent_guard);
 
     // unsafe {
     //     tracy::startup_tracy();

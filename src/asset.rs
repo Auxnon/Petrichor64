@@ -6,16 +6,26 @@ use std::{
 
 use wgpu::Device;
 
-use crate::lua_define::LuaCore;
+use crate::{lua_define::LuaCore, model::ModelManager, texture::TexManager, world::World, Core};
 
 pub fn pack(
+    tex_manager: &mut TexManager,
+    model_manager: &mut ModelManager,
+    world: &mut World,
+    lua_master: &LuaCore,
     name: &String,
     directory: Option<String>,
     cart_pic: Option<String>,
-    lua_master: &LuaCore,
 ) {
     let path = determine_path(directory);
-    let sources = walk_files(None, lua_master, path.clone());
+    let sources = walk_files(
+        tex_manager,
+        model_manager,
+        world,
+        None,
+        lua_master,
+        path.clone(),
+    );
     let icon = path.join(match cart_pic {
         Some(pic) => pic,
         None => "icon.png".to_string(),
@@ -29,7 +39,15 @@ pub fn super_pack(name: &String) -> &str {
     crate::zip_pal::pack_game_bin(name)
 }
 
-pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCore) {
+pub fn unpack(
+    tex_manager: &mut TexManager,
+    model_manager: &mut ModelManager,
+    world: &mut World,
+    lua_master: &LuaCore,
+    device: &Device,
+    name: &String,
+    file: Vec<u8>,
+) {
     println!("unpack {}", name);
     let map =
         crate::zip_pal::unpack_and_walk(file, vec!["assets".to_string(), "scripts".to_string()]);
@@ -66,7 +84,14 @@ pub fn unpack(device: &Device, name: &String, file: Vec<u8>, lua_master: &LuaCor
         }
         _ => {}
     }
-    parse_assets(Some(device), configs, sources);
+    parse_assets(
+        tex_manager,
+        model_manager,
+        world,
+        Some(device),
+        configs,
+        sources,
+    );
 
     match map.get("scripts") {
         Some(dir) => {
@@ -182,13 +207,14 @@ end",
 }
 
 pub fn walk_files(
+    tex_manager: &mut TexManager,
+    model_manager: &mut ModelManager,
+    world: &mut World,
     device: Option<&Device>,
-    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
     lua_master: &LuaCore,
+    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
     current_path: PathBuf,
 ) -> Vec<String> {
-    //MARK
-
     log(format!("current dir is {}", current_path.display()));
     let assets_path = current_path.join(Path::new("assets"));
     let scripts_path = current_path.join(Path::new("scripts"));
@@ -242,7 +268,7 @@ pub fn walk_files(
             log("assets directory cannot be located".to_string());
         }
     }
-    parse_assets(device, configs, sources);
+    parse_assets(tex_manager, model_manager, world, device, configs, sources);
 
     log(format!("scripts dir is {}", scripts_path.display()));
     match read_dir(&scripts_path) {
@@ -268,7 +294,6 @@ pub fn walk_files(
                             let st = fs::read_to_string(input_path).unwrap_or_default();
 
                             // println!("script item is {}", st);
-
                             if device.is_some() {
                                 handle_script(st.as_str(), lua_master)
                             }
@@ -293,11 +318,14 @@ pub fn walk_files(
 }
 
 fn parse_assets(
+    tex_manager: &mut TexManager,
+    model_manager: &mut ModelManager,
+    world: &mut World,
     device: Option<&Device>,
     configs: Vec<(String, String, String, Option<&Vec<u8>>)>,
     mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)>,
 ) {
-    println!("found {} template(s)", configs.len());
+    crate::lg!("found {} template(s)", configs.len());
     for con in configs {
         // yes a double match!
         // load direct or apply zipped config buffer to string and interpret to RoN
@@ -360,13 +388,14 @@ fn parse_assets(
                             // );
 
                             if resource.3.is_some() {
-                                crate::texture::load_tex_from_buffer(
+                                tex_manager.load_tex_from_buffer(
+                                    world,
                                     &resource.0,
                                     &resource.3.unwrap(),
                                     Some(&template),
                                 );
                             } else if device.is_some() {
-                                crate::texture::load_tex(&resource.2, Some(&template));
+                                tex_manager.load_tex(world, &resource.2, Some(&template));
                             }
 
                             if template.anims.len() > 0 {
@@ -379,9 +408,9 @@ fn parse_assets(
                                     // println!("🟢{:?}", a.1);
                                     let v =
                                         a.1.iter()
-                                            .map(|t| crate::texture::get_tex(&t))
+                                            .map(|t| tex_manager.get_tex(&t))
                                             .collect::<Vec<glam::Vec4>>();
-                                    crate::texture::set_anims(&a.0, v, 8);
+                                    tex_manager.set_anims(&a.0, v, 8);
                                 }
                             }
                         }
@@ -400,8 +429,10 @@ fn parse_assets(
             log(format!("loading {} as glb/gltf model", file_name));
             match device {
                 Some(d) => match buffer {
-                    Some(b) => crate::model::load_from_buffer(&file_name, &b, d),
-                    _ => crate::model::load_from_string(&path, d),
+                    Some(b) => {
+                        model_manager.load_from_buffer(world, tex_manager, &file_name, &b, d)
+                    }
+                    _ => model_manager.load_from_string(world, tex_manager, &path, d),
                 },
                 _ => {}
             };
@@ -410,10 +441,13 @@ fn parse_assets(
                 Some(_) => {
                     log(format!("loading {} as png image", file_name));
                     match buffer {
-                        Some(b) => {
-                            crate::texture::load_tex_from_buffer(&file_name.to_string(), &b, None)
-                        }
-                        _ => crate::texture::load_tex(&path, None),
+                        Some(b) => tex_manager.load_tex_from_buffer(
+                            world,
+                            &file_name.to_string(),
+                            &b,
+                            None,
+                        ),
+                        _ => tex_manager.load_tex(world, &path, None),
                     }
                 }
                 _ => {}
