@@ -74,10 +74,6 @@ impl TexManager {
         device: &wgpu::Device,
         queue: &Queue,
     ) -> (TextureView, Sampler, Texture) {
-        for (k, v) in self.DICTIONARY.iter() {
-            println!("tex>>{}>>{}", k, v);
-        }
-
         make_tex(device, queue, &self.MASTER)
     }
 
@@ -114,29 +110,6 @@ impl TexManager {
                 panic!("Texture atlas couldnt find an empty spot?");
             }
         }
-        // if (apos.x != 0 && apos.y != 0) {
-        //     //while (!found && apos.y < m_ref.height()) {
-
-        //     if (apos.x + w) <= adim.x {
-        //         found = true;
-        //         apos.x += w;
-        //     } else {
-        //         apos.x = 0;
-        //         apos.y += apos.w;
-        //         cpos.x = 0;
-        //         cpos.y = apos.y;
-        //         if (apos.x + w) < adim.x && (apos.y + h) < adim.y {
-        //             found = true;
-        //         }
-        //         apos.x += w;
-        //     }
-
-        //     //if()
-        //     //}
-        // } else {
-        //     found = true;
-        //     apos.x += w;
-        // }
         if found && self.ATLAS_POS.w < h {
             self.ATLAS_POS.w = h;
         }
@@ -311,11 +284,8 @@ impl TexManager {
 
         pos = self.locate(image_buffer);
 
-        // println!("🔥inject image {} from buffe {}", short_name, pos);
-
         self.DICTIONARY.insert(short_name.clone(), pos);
         pos
-        // index_texture(short_name, pos);
     }
 
     /** return texture uv coordinates from a given texture name */
@@ -378,15 +348,9 @@ pub fn save_audio_buffer(buffer: &Vec<u8>) {
     let black = image::Rgba::from([0, 0, 0, 255]);
     let rect = imageproc::rect::Rect::at(0, 0).of_size(w, h);
     let mut new_img = draw_filled_rect(&img, rect, yellow);
-
-    //  (&mut img, black);
     for (i, c) in buffer.iter().enumerate() {
         new_img.put_pixel(i as u32, *c as u32, black);
     }
-
-    // let image_buffer = match image::RgbaImage::from_raw(w, h, img.to_vec()) {
-    //     Some(o) => {
-    // o.put_pixel(0,0, black);
 
     match image::save_buffer_with_format(
         "sound.png",
@@ -423,20 +387,10 @@ pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> 
     // The dimensions method returns the images width and height.
     //println!("dimensions height {:?}", img.height());
 
-    // The color method returns the image's `ColorType`.
-    //println!("{:?}", img.color());
     img
 }
 pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageError> {
-    //Path::new(".").join("entities");
-    //log(text.clone());
-
     let img = image::load_from_memory(buffer);
-    // The dimensions method returns the images width and height.
-    //println!("dimensions height {:?}", img.height());
-
-    // The color method returns the image's `ColorType`.
-    //println!("{:?}", img.color());
     img
 }
 
@@ -564,13 +518,7 @@ pub fn make_tex(
     (diffuse_texture_view, diffuse_sampler, tex)
 }
 
-pub fn make_render_tex(
-    device: &wgpu::Device,
-    // queue: &Queue,
-    img: &RgbaImage,
-) -> (TextureView, Sampler, Texture) {
-    // lg!("make master texture");
-    // let rgba = img; //img.as_rgba8().unwrap();
+pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, Sampler, Texture) {
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
         width: dimensions.0,
@@ -596,24 +544,6 @@ pub fn make_render_tex(
         label: Some("post_texture"),
     });
 
-    // queue.write_texture(
-    //     // Tells wgpu where to copy the pixel data
-    //     wgpu::ImageCopyTexture {
-    //         texture: &tex,
-    //         mip_level: 0,
-    //         origin: wgpu::Origin3d::ZERO,
-    //         aspect: wgpu::TextureAspect::All,
-    //     },
-    //     // The actual pixel data
-    //     rgba,
-    //     // The layout of the texture
-    //     wgpu::ImageDataLayout {
-    //         offset: 0,
-    //         bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
-    //         rows_per_image: std::num::NonZeroU32::new(dimensions.1),
-    //     },
-    //     texture_size,
-    // );
     let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
     let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         address_mode_u: wgpu::AddressMode::Repeat,
