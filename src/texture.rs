@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use crate::{template::AssetTemplate, world::World};
@@ -75,10 +74,17 @@ impl TexManager {
         device: &wgpu::Device,
         queue: &Queue,
     ) -> (TextureView, Sampler, Texture) {
+        for (k, v) in self.DICTIONARY.iter() {
+            println!("tex>>{}>>{}", k, v);
+        }
+
         make_tex(device, queue, &self.MASTER)
     }
 
     pub fn refinalize(&self, queue: &Queue, texture: &Texture) {
+        for (k, v) in self.DICTIONARY.iter() {
+            println!("tex>>{}>>{}", k, v);
+        }
         write_tex(queue, texture, &self.MASTER);
     }
 
@@ -89,23 +95,22 @@ impl TexManager {
             "Texture atlas isnt big enough for this image :("
         );
         let mut found = false;
-        let mut apos = self.ATLAS_POS;
-        let mut cpos = apos.clone();
+        let mut cpos = self.ATLAS_POS.clone();
         let adim = self.ATLAS_DIM;
         let w = source.width();
         let h = source.height();
 
-        if apos.x + w <= adim.x && apos.y + h <= adim.y {
+        if self.ATLAS_POS.x + w <= adim.x && self.ATLAS_POS.y + h <= adim.y {
             found = true;
-            apos.x += w;
+            self.ATLAS_POS.x += w;
         } else {
-            if apos.x + w > adim.x {
-                apos.x = w;
-                apos.y += apos.w;
+            if self.ATLAS_POS.x + w > adim.x {
+                self.ATLAS_POS.x = w;
+                self.ATLAS_POS.y += self.ATLAS_POS.w;
                 cpos.x = 0;
-                cpos.y = apos.y;
+                cpos.y = self.ATLAS_POS.y;
                 found = true;
-            } else if apos.y + h < adim.y {
+            } else if self.ATLAS_POS.y + h < adim.y {
                 panic!("Texture atlas couldnt find an empty spot?");
             }
         }
@@ -132,8 +137,8 @@ impl TexManager {
         //     found = true;
         //     apos.x += w;
         // }
-        if found && apos.w < h {
-            apos.w = h;
+        if found && self.ATLAS_POS.w < h {
+            self.ATLAS_POS.w = h;
         }
 
         assert!(found, "Texture atlas couldnt find an empty spot?");
