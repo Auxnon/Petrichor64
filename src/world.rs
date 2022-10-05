@@ -461,9 +461,13 @@ impl World {
     /** index the texture uv by name  within the world, and the world instance generates an index by name to store on it's own thread*/
     pub fn index_texture(&mut self, name: String, uv: Vec4) -> u32 {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self.sender.send((TileCommand::MapTex(name, 0), tx)) {
+        match self
+            .sender
+            .send((TileCommand::MapTex(name.to_lowercase(), 0), tx))
+        {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Mapped(i)) => {
+                    // println!("mapped tex {} to {}", name, i);
                     self.local_tex_map.insert(i, uv);
                     i
                 }
@@ -475,7 +479,10 @@ impl World {
     /** We already have an index for a texture we're just providing a string alias */
     pub fn index_texture_alias(&self, name: String, direct: u32) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self.sender.send((TileCommand::MapTex(name, direct), tx)) {
+        match self
+            .sender
+            .send((TileCommand::MapTex(name.to_lowercase(), direct), tx))
+        {
             Ok(_) => match rx.recv() {
                 _ => {}
             },
@@ -486,7 +493,10 @@ impl World {
     /** index the model by name within the world, and the world instance generates an index by name to store on it's own thread*/
     pub fn index_model(&mut self, name: String, model: Rc<Model>) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self.sender.send((TileCommand::MapModel(name), tx)) {
+        match self
+            .sender
+            .send((TileCommand::MapModel(name.to_lowercase()), tx))
+        {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Mapped(i)) => {
                     // self.local_tex_map.insert(k, v)
