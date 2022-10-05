@@ -262,7 +262,7 @@ impl World {
                         res_handle(response.send(TileResponse::Success(true)));
                     }
                     (TileCommand::MapTex(name, direct), response) => {
-                        let i = if direct > 0 {
+                        let i = if direct <= 0 {
                             instance.index_texture(name)
                         } else {
                             instance.index_texture_direct(name, direct);
