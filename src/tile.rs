@@ -61,8 +61,6 @@ impl Layer {
             _ => instance.get_tex_index(&tile),
         };
 
-        // let uv = crate::texture::get_tex_index(&tile);
-
         let mut c = self.get_chunk_mut(ix, iy, iz);
         let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE) + iy.rem_euclid(CHUNK_SIZE))
             * CHUNK_SIZE)
@@ -273,7 +271,7 @@ impl ChunkModel {
         // let texture = "grid".to_string(); // grass_down
         // MARK change model
 
-        // println!("got cells {}", self.cells.len());
+        // println!("got cells {}", chunk.cells.len());
 
         // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
         for (i, cell) in chunk.cells.clone().iter().enumerate() {

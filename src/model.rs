@@ -126,14 +126,13 @@ impl ModelManager {
         //let mut meshes: Vec<Mesh> = vec![];
         //let im1 = image_data.get(0).unwrap();
         // let bits = str.split(".").collect::<Vec<_>>();
-
         let p = std::path::PathBuf::from(&str);
         match p.file_stem() {
             Some(p) => {
                 let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
-
+                                                                    // println!("the friggin width {} and height {}",image_data.width())
                 let uv_adjust =
-                    tex_manager.load_tex_from_img(name.clone(), str.to_string(), &image_data);
+                    tex_manager.load_tex_from_data(name.clone(), str.to_string(), &image_data);
 
                 //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
                 //tex.set_filter(FilterMode::Nearest);
@@ -172,7 +171,7 @@ impl ModelManager {
                                 // color: WHITE,
                                 let mut vv = vertexx(pos, [0, 0, 0], uv);
                                 //DEV are we always offseting the glb uv by the tilemap this way?
-                                vv.texture(uv_adjust);
+                                vv.texture(uv_adjust[0]);
                                 vv
                             })
                             .collect::<Vec<Vertex>>();

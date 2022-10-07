@@ -115,7 +115,7 @@ impl TexManager {
         }
 
         assert!(found, "Texture atlas couldnt find an empty spot?");
-        lg!("found position {} {}", cpos.x, cpos.y);
+        // lg!("found position ({},{}) and ({},{}) ", cpos.x, cpos.y, w, h);
         stich(&mut self.MASTER, source, cpos.x, cpos.y);
         Vec4::new(
             cpos.x as f32 / adim.x as f32,
@@ -257,35 +257,31 @@ impl TexManager {
             }
         }
     }
-
-    pub fn load_tex_from_img(
+    /** Loads images from a gltf into dictionary and returns array of uv rects for each resource */
+    pub fn load_tex_from_data(
         &mut self,
         short_name: String,
         path: String,
-        im: &Vec<gltf::image::Data>,
-    ) -> Vec4 {
-        let pvec = im
+        images: &Vec<gltf::image::Data>,
+    ) -> Vec<Vec4> {
+        images
             .iter()
-            .flat_map(|d| d.pixels.as_slice().to_owned())
-            .collect::<Vec<_>>();
+            .map(|imm| {
+                // println!("w {} h{}", imm.width, imm.height);
+                let im = imm.pixels.as_slice().to_owned();
 
-        // println!("HI🟣🟣🟣🟣🟣🟣🟣");
-        // let (actual_name, _) = get_name(str, false);
+                let pos = match image::RgbaImage::from_raw(imm.width, imm.height, im) {
+                    Some(o) => self.locate(o),
+                    None => {
+                        error("Failed to load texture from mesh".to_string());
+                        vec4(0., 0., 1., 1.)
+                    }
+                };
 
-        let mut pos = Vec4::new(0., 0., 0., 0.);
-        let image_buffer = match image::RgbaImage::from_raw(64, 64, pvec) {
-            Some(o) => o,
-            None => {
-                error("Failed to load texture from mesh".to_string());
-                self.DICTIONARY.insert(short_name, pos);
-                return vec4(1., 1., 0., 0.);
-            }
-        };
-
-        pos = self.locate(image_buffer);
-
-        self.DICTIONARY.insert(short_name.clone(), pos);
-        pos
+                self.DICTIONARY.insert(short_name.clone(), pos);
+                pos
+            })
+            .collect::<Vec<Vec4>>()
     }
 
     /** return texture uv coordinates from a given texture name */
