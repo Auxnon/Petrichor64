@@ -12,7 +12,8 @@ pub struct LuaEnt {
     pub vel_x: f64,
     pub vel_y: f64,
     pub vel_z: f64,
-    id: f64, // pub uuid: String,
+    pub scale: f64,
+    id: u64, // pub uuid: String,
     asset: String,
     // ent: Option<Ent>,
     tex: String,
@@ -119,7 +120,8 @@ impl LuaEnt {
             vel_x: 0.,
             vel_y: 0.,
             vel_z: 0.,
-            id: -1.,
+            id: 0,
+            scale: 1.,
             // ent: None,
             asset: String::new(),
             tex: String::new(),
@@ -128,9 +130,9 @@ impl LuaEnt {
         }
     }
 
-    pub fn new(id: f64, asset: String, x: f64, y: f64, z: f64) -> LuaEnt {
+    pub fn new(asset: String, x: f64, y: f64, z: f64, scale: f64) -> LuaEnt {
         LuaEnt {
-            id,
+            id: 0,
             x,
             y,
             z,
@@ -140,6 +142,7 @@ impl LuaEnt {
             vel_x: 0.,
             vel_y: 0.,
             vel_z: 0.,
+            scale,
             // ent: None,
             asset,
             tex: String::new(),
@@ -147,9 +150,12 @@ impl LuaEnt {
             anim: false,
         }
     }
-    pub fn get_id(&self) -> i64 {
+    pub fn set_id(&mut self, id: u64) {
+        self.id = id;
+    }
+    pub fn get_id(&self) -> u64 {
         // https://stackoverflow.com/questions/39638363/how-can-i-use-a-hashmap-with-f64-as-key-in-rust
-        self.id as i64
+        self.id
     }
     pub fn get_asset(&self) -> String {
         self.asset.clone()
@@ -190,6 +196,7 @@ impl Clone for LuaEnt {
             rot_y: self.rot_y,
             rot_z: self.rot_z,
             id: self.id,
+            scale: self.scale,
             // ent: None,
             asset: self.asset.clone(),
             tex: self.tex.clone(),

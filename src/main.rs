@@ -855,6 +855,14 @@ impl Core {
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
+            // println!(
+            //     " we have {} ents and {} luaents",
+            //     self.ent_manager.entities.len(),
+            //     self.ent_manager.ent_table.len()
+            // );
+            // for e in self.ent_manager.entities.values() {
+            //     println!("iter text {}", e.tex);
+            // }
         }
 
         let s = render::render_loop(self, self.global.iteration);
@@ -915,6 +923,7 @@ fn main() {
         controls::bit_check(&event, &mut bits);
         bits.1[0] = core.global.mouse_pos.x;
         bits.1[1] = core.global.mouse_pos.y;
+        // println!("bits {:?}", bits.0);
 
         if locker.update(&event) {
             drop(locker);

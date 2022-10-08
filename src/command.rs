@@ -507,10 +507,10 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "spawn",
-        move |_, (asset, x, y, z): (String, f64, f64, f64)| {
+        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
             // let (tx, rx) = std::sync::mpsc::sync_channel::<Arc<std::sync::Mutex<LuaEnt>>>(0);
-            let index = 0;
-            let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
+
+            let ent = crate::lua_ent::LuaEnt::new(asset, x, y, z, s.unwrap_or(1.));
             let wrapped = Arc::new(std::sync::Mutex::new(ent));
             match pitcher.send(MainCommmand::Spawn(wrapped.clone())) {
                 Ok(_) => {}

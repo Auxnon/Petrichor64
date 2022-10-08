@@ -109,18 +109,18 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         })
         .collect::<Vec<_>>();
 
-    let mut ent_array: Vec<(Ent, Rc<Model>, EntityUniforms)> = vec![];
+    let mut ent_array: Vec<Rc<Model>> = vec![];
     let mut instances = vec![];
     for entity in &mut lua_ent_array.iter() {
         match entity_manager.get_from_id(entity.get_id()) {
             Some(o) => {
                 let model = o.model.clone();
-                let data = o.get_uniform(&entity.clone(), iteration);
+                let data = o.get_uniform(&entity, iteration);
                 let instance = data; //InstanceRaw { model: data.model,uv: data.};
                 instances.push(instance);
                 // let instance=
                 let e = o.clone();
-                ent_array.push((e, model, data));
+                ent_array.push(model);
             }
             _ => {}
         }
@@ -186,39 +186,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
     // TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
     core.queue.write_buffer(&core.uniform_buf, 128, size3);
-
-    // let m: Mat4 = Mat4::IDENTITY;
-    // let data = EntityUniforms {
-    //     model: m.to_cols_array_2d(),
-    //     color: [1., 1., 1., 1.],
-    //     uv_mod: [0., 0., 1., 1.],
-    //     effects: [0, 0, 0, 0],
-    // };
-
-    // core.queue.write_buffer(
-    //     &core.entity_uniform_buf,
-    //     0 as wgpu::BufferAddress,
-    //     bytemuck::bytes_of(&data),
-    // );
-
-    // let neu = true;
-    // if neu {
-    //     for (entity, _, data) in &mut ent_array.iter() {
-    //         core.queue.write_buffer(
-    //             &core.entity_uniform_buf,
-    //             entity.uniform_offset as wgpu::BufferAddress,
-    //             bytemuck::bytes_of(data),
-    //         );
-    //     }
-    // }
-
-    // if !neu {
-    //     let mut buf: Vec<u8> = vec![];
-    //     for (_entity, _, data) in &mut ent_array.iter() {
-    //         buf.append(&mut bytemuck::bytes_of(data).to_vec());
-    //     }
-    //     core.queue.write_buffer(&core.entity_uniform_buf, 0, &buf);
-    // }
 
     let mut encoder = core
         .device
@@ -296,7 +263,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             if ent_array.len() > 0 {
                 // render_pass.set_bind_group(1, &core.entity_bind_group, &[256]);
 
-                let m = &ent_array.get(0).unwrap().1;
+                let m = &ent_array.get(0).unwrap();
 
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
                 render_pass.set_vertex_buffer(1, instance_buffer.slice(..));

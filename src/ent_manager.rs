@@ -23,7 +23,7 @@ use crate::{ent::Ent, lua_ent::LuaEnt};
 
 pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
-    pub entities: HashMap<i64, Ent>,
+    pub entities: HashMap<u64, Ent>,
     // pub create: Vec<LuaEnt>,
     pub ent_table: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
@@ -116,9 +116,10 @@ impl EntManager {
         model_manager: &ModelManager,
         wrapped_lua: Arc<Mutex<LuaEnt>>,
     ) {
-        let lua = wrapped_lua.lock().unwrap();
+        let mut lua = wrapped_lua.lock().unwrap();
+        let id = self.ent_table.len() as u64;
         // let lua=guard.
-        let id = lua.get_id();
+        lua.set_id(id);
         let mut asset = lua.get_asset();
         if asset.len() == 0 {
             asset = "example".to_string();
@@ -130,13 +131,13 @@ impl EntManager {
             model_manager,
             vec3(lua.x as f32, lua.y as f32, lua.z as f32),
             0.,
-            1.,
+            lua.scale as f32,
             0.,
             asset,
             self.uniform_alignment * (id + 1) as u32,
         );
 
-        self.entities.insert(lua.get_id(), ent);
+        self.entities.insert(id, ent);
         drop(lua);
         self.ent_table.push(wrapped_lua);
     }
@@ -146,13 +147,13 @@ impl EntManager {
 
         self.entities.get(&id)
     }
-    pub fn get_from_id(&self, id: i64) -> Option<&Ent> {
+    pub fn get_from_id(&self, id: u64) -> Option<&Ent> {
         self.entities.get(&id)
     }
-    pub fn get_from_id_mut(&mut self, id: i64) -> Option<&mut Ent> {
+    pub fn get_from_id_mut(&mut self, id: u64) -> Option<&mut Ent> {
         self.entities.get_mut(&id)
     }
-    pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: i64) {
+    pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: u64) {
         match self.entities.get_mut(&ent_id) {
             Some(e) => {
                 e.tex = tm.get_tex(tex);

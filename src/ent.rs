@@ -137,7 +137,7 @@ impl<'lua> Ent {
         billboarded: bool,
         // brain: Option<String>,
     ) -> Ent {
-
+        // println!("make ent with tex {}",tex);
         let quat = Quat::from_axis_angle(offset.normalize(), angle);
 
         Ent {
@@ -195,7 +195,8 @@ impl<'lua> Ent {
         //     scale: entity.scale * 16.,
         // };
 
-        let s = 16.; // DEV entity.scale;
+        let s:f32 = 16.*(lua.scale as f32);
+        // println!("scale {}",s);
         let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
         Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos)
         // DEV i32
@@ -240,7 +241,10 @@ impl<'lua> Ent {
             // println!("animating {} {}", self.anim.len(), a);
             [a.x, a.y, a.z, a.w]
         } else {
-            [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
+            let t=
+            [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
+            // println!("t {:?}",t);
+            t
         };
         let color = [
             self.color.r as f32,
