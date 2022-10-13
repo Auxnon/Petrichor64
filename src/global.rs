@@ -11,6 +11,7 @@ pub struct Global {
     pub mouse_click_pos: Vec2,
     pub simple_cam_rot: Vec2,
     pub mouse_delta: Vec2,
+    pub scroll_delta: f32,
     pub game_controller: bool,
     pub console: bool,
     pub camera_pos: Vec3,
@@ -40,6 +41,7 @@ impl Global {
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,
             iteration: 0,
+            scroll_delta: 0.,
             screen_effects: ScreenBinds::new(),
             loaded_directory: None,
         }

@@ -114,6 +114,10 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         }
         _ => {}
     }
+    core.global.scroll_delta = input_helper.scroll_diff();
+    if core.global.scroll_delta != 0. {
+        crate::log::scroll(core.global.scroll_delta);
+    }
 
     // core.input_helper.key_pressed(check_key_code)
     if input_helper.mouse_held(0) {}

@@ -1,5 +1,4 @@
 use rand::Rng;
-use std::sync::Arc;
 // use tracy::frame;
 
 use crate::texture::TexManager;
@@ -228,6 +227,7 @@ impl Gui {
         // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
         // self.dirty = true;
     }
+
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
         // image::imageops::horizontal_gradient(
@@ -253,6 +253,8 @@ impl Gui {
         //     }
         // };
         // image::imageops::dither(&mut self.img, &col {});
+
+        const WHITE: image::Rgba<u8> = image::Rgba([255, 255, 0, 100]);
 
         for (i, line) in self.text.lines().enumerate() {
             let y = i as i64 * (LETTER_SIZE as i64 + 2);
@@ -286,6 +288,13 @@ impl Gui {
                     index_y * LETTER_SIZE,
                     LETTER_SIZE,
                     LETTER_SIZE,
+                );
+
+                draw_filled_rect_mut(
+                    &mut self.console,
+                    imageproc::rect::Rect::at((x - 1) as i32, (y - 1) as i32)
+                        .of_size(LETTER_SIZE + 2, LETTER_SIZE + 2 as u32),
+                    WHITE,
                 );
                 //sub.to_image().
                 image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);

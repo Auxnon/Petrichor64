@@ -5,6 +5,7 @@ lazy_static! {
     static ref LOG_DIRTY: Mutex<bool> = Mutex::new(false);
     static ref HISTORY_BUFFER: Mutex<Vec<String>> = Mutex::new(vec!["".to_string()]);
     static ref HISTORY_IT: Mutex<usize> = Mutex::new(0);
+    static ref OFFSET: Mutex<f32> = Mutex::new(0.);
     static ref CURRENT_LINE: Mutex<String> = Mutex::new(String::new());
 }
 
@@ -144,14 +145,54 @@ pub fn _print(str: String, skip_first: bool) {
     *LOG_DIRTY.lock() = true;
 }
 
+pub fn scroll(delta: f32) {
+    *OFFSET.lock() += delta;
+    *LOG_DIRTY.lock() = true;
+}
+
+pub fn check_width(buf: Vec<String>, width: usize) -> Vec<String> {
+    let mut out = vec![];
+    for l in buf {
+        let mut h = l;
+        while h.len() > width {
+            let (a, b) = h.split_at(width);
+            out.push(a.to_string());
+            h = b.to_string();
+        }
+        out.push(h);
+    }
+    out
+}
+
 pub fn get(width: usize, height: usize) -> String {
     // println!("get len {}, height{}", BUFFER.lock().len(), height);
+
     let l = BUFFER.lock().len();
 
-    let mut buf = if l < height {
-        BUFFER.lock().join("\n")
+    let pre_buf = if l < height {
+        BUFFER.lock().clone()
     } else {
-        BUFFER.lock()[(l - (height - 1))..].join("\n")
+        let offset = (*OFFSET.lock() / 10.).floor() as usize;
+
+        let contro_height = (l - (height - 1));
+        let (deg, cap) = if contro_height < offset {
+            (0, l)
+        } else {
+            (contro_height - offset, l - offset)
+        };
+
+        println!("offset {} to cap{}", deg, cap);
+
+        BUFFER.lock()[(deg)..cap].to_vec()
+    };
+
+    let next_buf = check_width(pre_buf, width);
+    let prel = next_buf.len();
+
+    let mut buf = if prel < height {
+        next_buf.join("\n")
+    } else {
+        next_buf[(prel - (height - 1))..].join("\n")
     };
     buf.push_str("\n>");
     let cur = CURRENT_LINE.lock().clone();
