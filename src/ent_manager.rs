@@ -24,6 +24,7 @@ use crate::{ent::Ent, lua_ent::LuaEnt};
 pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
     pub entities: HashMap<u64, Ent>,
+    pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
     pub ent_table: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
@@ -34,6 +35,7 @@ impl EntManager {
     pub fn new(device: &wgpu::Device) -> EntManager {
         EntManager {
             // ent_table: Mutex::new(),
+            specks: vec![],
             ent_table: vec![],
             entities: HashMap::new(),
             instances: vec![],
@@ -64,43 +66,6 @@ impl EntManager {
             contents: bytemuck::cast_slice(instance_data),
             usage: wgpu::BufferUsages::VERTEX,
         })
-    }
-
-    // pub fn add(&mut self, x: f32, y: f32, z: f32) -> LuaEnt {
-    //     let mut ent = LuaEnt::empty();
-    //     ent.x = x;
-    //     ent.y = y;
-    //     ent.z = z;
-    //     // self.create.push(ent.clone());
-    //     ent
-    // }
-    pub fn check_create(&mut self) {
-        // if self.create.len() > 0 {
-        //     println!("create an ent");
-        //     let typeOf = true;
-        //     for c in &self.create {
-        //         self.entities.push(Ent::new(
-        //             vec3(c.x, c.y, c.z),
-        //             0.,
-        //             if typeOf { 1. } else { 1. },
-        //             0.,
-        //             if typeOf {
-        //                 "chicken".to_string()
-        //             } else {
-        //                 "package".to_string()
-        //             },
-        //             if typeOf {
-        //                 "plane".to_string()
-        //             } else {
-        //                 "package".to_string()
-        //             },
-        //             (self.entities.len() as u32 * self.uniform_alignment) as u32,
-        //             typeOf,
-        //             None, //Some("walker".to_string()),
-        //         ));
-        //     }
-        //     self.create.clear();
-        // }
     }
 
     pub fn get_uuid() -> String {
@@ -142,6 +107,31 @@ impl EntManager {
         self.ent_table.push(wrapped_lua);
     }
 
+    pub fn awful_test(&mut self, tex_manager: &TexManager, model_manager: &ModelManager) {
+        let first = self.ent_table.len() as u64;
+        for i in 0..100000 {
+            let id = first + i;
+            let p = vec3(
+                -50. + rand::random::<f32>() * 100.,
+                -50. + rand::random::<f32>() * 100.,
+                -5. + rand::random::<f32>() * 10.,
+            );
+            let mut ent = Ent::new_dynamic(
+                tex_manager,
+                model_manager,
+                p,
+                0.,
+                1.,
+                0.,
+                "zom".to_string(),
+                self.uniform_alignment * (id + 1) as u32,
+            );
+            ent.pos = Some(p);
+            self.specks.push(ent);
+        }
+        println!("awful test run {}", self.entities.len());
+    }
+
     pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Ent> {
         let id = lua.get_id();
 
@@ -168,10 +158,11 @@ impl EntManager {
     pub fn reset(&mut self) {
         self.entities.clear();
         self.ent_table.clear();
+        self.specks.clear();
         // self.uniform_alignment = 0;
     }
 
-    pub fn check_ents(&mut self, tm: &TexManager) {
+    pub fn check_ents(&mut self, tm: &TexManager, mm: &ModelManager) {
         let mut v: Vec<LuaEnt> = vec![];
         for lua_ent in self.ent_table.iter_mut() {
             match lua_ent.try_lock() {
@@ -213,6 +204,19 @@ impl EntManager {
                 }
             }
         }
+
+        // if (self.specks.len() == 0 && self.specks.len() < 10000) {
+        //     self.awful_test(tm, mm);
+        // } else {
+        //     for s in self.specks.iter_mut() {
+        //         match s.pos {
+        //             Some(mut p) => {
+        //                 p.z += 0.1;
+        //             }
+        //             _ => {}
+        //         }
+        //     }
+        // }
     }
 }
 // use crate::model::Model;

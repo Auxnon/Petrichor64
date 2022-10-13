@@ -125,9 +125,20 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             _ => {}
         }
     }
+
     let instance_buffer =
         crate::ent_manager::EntManager::build_instance_buffer(&instances, &core.device);
 
+    if false {
+        let speck_instances = core
+            .ent_manager
+            .specks
+            .iter()
+            .map(|m| m.simple_unfiforms(0))
+            .collect();
+        let speck_buffer =
+            crate::ent_manager::EntManager::build_instance_buffer(&speck_instances, &core.device);
+    }
     drop(ents);
     drop(entity_manager);
 
@@ -261,27 +272,22 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             }
 
             if ent_array.len() > 0 {
-                // render_pass.set_bind_group(1, &core.entity_bind_group, &[256]);
-
                 let m = &ent_array.get(0).unwrap();
 
                 render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
                 render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
                 render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
 
-                // render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-
-                // for (entity, model, _) in &mut ent_array.iter() {
-                //     // let m = model.get().unwrap();
-                //     render_pass.set_bind_group(
-                //         1,
-                //         &core.entity_bind_group,
-                //         &[entity.uniform_offset],
-                //     );
-
-                //     render_pass.draw_indexed(0..m.index_count as u32, 0, 0..1);
-                // }
                 render_pass.draw_indexed(0..m.index_count as u32, 0, 0..instances.len() as _);
+            }
+
+            if core.ent_manager.specks.len() > 0 {
+                // let m = &core.model_manager.PLANE;
+
+                // render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
+                // render_pass.set_vertex_buffer(1, speck_buffer.slice(..));
+                // render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
+                // render_pass.draw_indexed(0..m.index_count as u32, 0, 0..speck_instances.len() as _);
             }
         }
 

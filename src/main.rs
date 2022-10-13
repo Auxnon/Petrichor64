@@ -839,7 +839,8 @@ impl Core {
             }
             None => {}
         }
-        self.ent_manager.check_ents(&self.tex_manager);
+        self.ent_manager
+            .check_ents(&self.tex_manager, &self.model_manager);
 
         self.global.iteration += 1;
     }

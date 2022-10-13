@@ -78,10 +78,11 @@ pub struct Ent {
     /**hold the string name of models for hot reloads*/
     model_name: String,
     pub effects: UVec4,
-    //pub brain: Option<Function<'lua>>,
+    // pub brain: Option<Function<'lua>>,
     // pub brain_name: Option<String>,
     pub anim: Vec<Vec4>,
     pub anim_speed: u32,
+    pub pos:Option<Vec3>
 }
 
 impl<'lua> Ent {
@@ -140,6 +141,7 @@ impl<'lua> Ent {
         // println!("make ent with tex {}",tex);
         let quat = Quat::from_axis_angle(offset.normalize(), angle);
 
+        // let f=mlua::Lua::set_warning_function(&self, callback)
         Ent {
             matrix: Mat4::from_scale_rotation_translation(
                 Vec3::new(scale, scale, scale),
@@ -156,24 +158,9 @@ impl<'lua> Ent {
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
             anim: vec![],
             anim_speed: 16,
+            pos:None
         }
     }
-
-    // pub fn to_lua(&self) -> LuaEnt {
-    //     LuaEnt {
-    //         x: self.pos.x,
-    //         y: self.pos.y,
-    //         z: self.pos.z,
-    //         vel_x: self.vel.x,
-    //         vel_y: self.vel.y,
-    //         vel_z: self.vel.z,
-
-    //         rot_x: self.rot.x,
-    //         rot_y: self.rot.y,
-    //         rot_z: self.rot.z,
-    //         // id: -1.,
-    //     }
-    // }
 
     pub fn hot_reload(&mut self,core: &Core) {
         self.tex = core.tex_manager.get_tex(&self.tex_name); //crate::texture::get_tex(&self.tex_name);
@@ -260,58 +247,42 @@ impl<'lua> Ent {
         }
     }
 
-    // pub fn get_instance(&self,lua: &LuaEnt, iteration: u64){
-    //     let model = self.build_meta(lua);
+    pub fn simple_unfiforms(&self,iteration: u64) -> EntityUniforms{
+        let mat=match self.pos{
+            Some(p)=>{
+                Mat4::from_translation(p).mul(16.)
+            }
+            _=>self.matrix
+        };
+        let effects = [
+            self.effects.x,
+            self.effects.y,
+            self.effects.z,
+            self.effects.w,
+        ];
+        let uv_mod = if self.anim.len() > 0 {
+            let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
+                / self.anim_speed as u64) as usize];
 
-    //     let effects = [
-    //         self.effects.x,
-    //         self.effects.y,
-    //         self.effects.z,
-    //         self.effects.w,
-    //     ];
-    //     let uv_mod = if self.anim.len() > 0 {
-    //         let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
-    //             / self.anim_speed as u64) as usize];
-    //         [a.x, a.y, a.z, a.w]
-    //     } else {
-    //         [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
-    //     };
-    //     let color = [
-    //         self.color.r as f32,
-    //         self.color.g as f32,
-    //         self.color.b as f32,
-    //         self.color.a as f32,
-    //     ];
-    // }
-
-    // fn from_lua(&mut self, ent: LuaEnt) {
-    //     self.pos.x = ent.x;
-    //     self.pos.y = ent.y;
-    //     self.pos.z = ent.z;
-
-    //     self.vel.x = ent.vel_x;
-    //     self.vel.y = ent.vel_y;
-    //     self.vel.z = ent.vel_z;
-
-    //     self.rot.x = ent.rot_x;
-    //     self.rot.y = ent.rot_y;
-    //     self.rot.z = ent.rot_z;
-    // }
-
-    pub fn run(&mut self) {
-        // let lua_ent = self.to_lua();
-        // println!("{:?}", &self.brain_name);
-
-        // match &self.brain_name {
-        //     Some(brain) => {
-        //         let result = crate::lua_master
-        //             .lock()
-        //             .get()
-        //             .unwrap()
-        //             .call(&brain, self.to_lua());
-        //         self.from_lua(result);
-        //     }
-        //     None => {}
-        // }
+            // println!("animating {} {}", self.anim.len(), a);
+            [a.x, a.y, a.z, a.w]
+        } else {
+            let t=
+            [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
+            // println!("t {:?}",t);
+            t
+        };
+        let color = [
+            self.color.r as f32,
+            self.color.g as f32,
+            self.color.b as f32,
+            self.color.a as f32,
+        ];
+        EntityUniforms {
+            color,
+            uv_mod,
+            effects,
+            model: mat.to_cols_array_2d(),
+        }
     }
 }
