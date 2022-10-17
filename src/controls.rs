@@ -167,7 +167,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             let command = crate::log::carriage();
             if command.is_some() {
                 // if core.global.test {
-                let com = command.unwrap().to_lowercase();
+                let com = command.unwrap(); //.to_lowercase();
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
