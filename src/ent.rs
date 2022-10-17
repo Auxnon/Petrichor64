@@ -1,4 +1,4 @@
-use crate::{lua_ent::LuaEnt, model::{Model, ModelManager}, Core, texture::TexManager};
+use crate::{lua_ent::LuaEnt, model::{Model, ModelManager}, Core, texture::{TexManager, Anim}};
 use bytemuck::{Pod, Zeroable};
 
 use glam::{vec3, Mat4, Quat, UVec4, Vec3, Vec4, vec4};
@@ -80,8 +80,8 @@ pub struct Ent {
     pub effects: UVec4,
     // pub brain: Option<Function<'lua>>,
     // pub brain_name: Option<String>,
-    pub anim: Vec<Vec4>,
-    pub anim_speed: u32,
+ anim: Option<Anim>,
+     anim_it:u64,
     pub pos:Option<Vec3>
 }
 
@@ -156,8 +156,8 @@ impl<'lua> Ent {
             tex_name,
             uniform_offset,
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
-            anim: vec![],
-            anim_speed: 16,
+            anim: None,
+            anim_it:0,
             pos:None
         }
     }
@@ -221,18 +221,25 @@ impl<'lua> Ent {
             self.effects.z,
             self.effects.w,
         ];
-        let uv_mod = if self.anim.len() > 0 {
-            let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
-                / self.anim_speed as u64) as usize];
+        let uv_mod = match &self.anim {
+            Some(anim)=>{
+            let a = if anim.once{
+                let iteratee=(((iteration-self.anim_it as u64)/anim.speed as u64) as usize).min(anim.frames.len()-1);
+                anim.frames[iteratee]
+             }else{ anim.frames[(((iteration-self.anim_it) % (anim.frames.len() as u32 * anim.speed) as u64)
+                / anim.speed as u64) as usize]
+             };
 
             // println!("animating {} {}", self.anim.len(), a);
             [a.x, a.y, a.z, a.w]
-        } else {
+        },
+        None=>{
             let t=
             [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
             // println!("t {:?}",t);
             t
-        };
+        }};
+
         let color = [
             self.color.r as f32,
             self.color.g as f32,
@@ -247,6 +254,7 @@ impl<'lua> Ent {
         }
     }
 
+    /** specks? */
     pub fn simple_unfiforms(&self,iteration: u64) -> EntityUniforms{
         let mat=match self.pos{
             Some(p)=>{
@@ -260,18 +268,17 @@ impl<'lua> Ent {
             self.effects.z,
             self.effects.w,
         ];
-        let uv_mod = if self.anim.len() > 0 {
-            let a = self.anim[((iteration % (self.anim.len() as u32 * self.anim_speed) as u64)
-                / self.anim_speed as u64) as usize];
-
-            // println!("animating {} {}", self.anim.len(), a);
+        let uv_mod = match &self.anim {
+            Some(anim)=>{
+            let a = anim.frames[((iteration % (anim.frames.len() as u32 * anim.speed) as u64)
+                / anim.speed as u64) as usize];
             [a.x, a.y, a.z, a.w]
-        } else {
+        },
+        None=>{
             let t=
             [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
-            // println!("t {:?}",t);
             t
-        };
+        }};
         let color = [
             self.color.r as f32,
             self.color.g as f32,
@@ -283,6 +290,16 @@ impl<'lua> Ent {
             uv_mod,
             effects,
             model: mat.to_cols_array_2d(),
+        }
+    }
+
+    pub fn set_anim(&mut self,a:Anim,iteration: u64){
+        self.anim=Some(a);
+        self.anim_it=iteration;
+    }
+    pub fn remove_anim(&mut self){
+        if self.anim.is_some(){
+            self.anim=None;
         }
     }
 }

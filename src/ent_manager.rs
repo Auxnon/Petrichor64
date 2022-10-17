@@ -162,7 +162,7 @@ impl EntManager {
         // self.uniform_alignment = 0;
     }
 
-    pub fn check_ents(&mut self, tm: &TexManager, mm: &ModelManager) {
+    pub fn check_ents(&mut self, iteration: u64, tm: &TexManager, mm: &ModelManager) {
         let mut v: Vec<LuaEnt> = vec![];
         for lua_ent in self.ent_table.iter_mut() {
             match lua_ent.try_lock() {
@@ -188,16 +188,13 @@ impl EntManager {
                             match tm.ANIMATIONS.get(l.get_tex()) {
                                 Some(t) => {
                                     // println!("we found {} with {:?}", l.get_tex(), t);
-                                    e.anim = t.0.clone();
-                                    e.anim_speed = t.1;
+                                    e.set_anim(t.clone(), iteration);
                                 }
                                 _ => {}
                             }
                         } else {
                             e.tex = tm.get_tex(l.get_tex());
-                            if e.anim.len() > 0 {
-                                e.anim = vec![];
-                            }
+                            e.remove_anim();
                         }
                     }
                     _ => {}

@@ -27,7 +27,35 @@ pub struct TexManager {
     // /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
     // pub INT_DICTIONARY: HashMap<String, u32>,
     // pub INT_MAP: FxHashMap<u32, Vec4>,
-    pub ANIMATIONS: HashMap<String, (Vec<Vec4>, u32)>,
+    pub ANIMATIONS: HashMap<String, Anim>,
+}
+pub struct Anim {
+    pub frames: Vec<Vec4>,
+    pub speed: u32,
+    pub once: bool,
+}
+impl Anim {
+    pub fn empty() -> Anim {
+        Anim {
+            frames: vec![],
+            speed: 16,
+            once: false,
+        }
+    }
+}
+impl Clone for Anim {
+    // pub fn new(frames:Vec<Vec4>,){
+    //     Anim{
+    //         frames
+    //     }
+    // }
+    fn clone(&self) -> Anim {
+        Anim {
+            frames: self.frames.clone(),
+            speed: self.speed,
+            once: self.once,
+        }
+    }
 }
 impl TexManager {
     pub fn new() -> TexManager {
@@ -125,15 +153,18 @@ impl TexManager {
         )
     }
 
+    /** Locates all tiles within a single provided image, indexing by provided tile dimension, 16x16 by default.
+     * Each tile iterates starting at 0. An image named Example with 3 tiles will be accessed via Example0,Example1,Example2.
+     * Returns the tile referenced at index 0 so accessing this texture named Example is still possible without calling Example0  */
     fn tile_locate(
         &mut self,
         world: &mut World,
-        name: String,
+        name: &String,
         dim: (u32, u32),
         pos: Vec4,
         mut tile_dim: u32,
         rename: Option<HashMap<u32, String>>,
-    ) {
+    ) -> Vec4 {
         if tile_dim == 0 {
             tile_dim = 16;
         }
@@ -156,6 +187,8 @@ impl TexManager {
         //     "d {} {} {} {} and seed pos {} {} {} {}",
         //     dw, dh, iw, ih, pos.x, pos.y, pos.z, pos.w
         // );
+        let mut first_complete = false;
+        let mut first = vec4(0., 0., 1., 1.);
         let can_rename = if rename.is_some() { true } else { false };
         for y in 0..dh {
             for x in 0..dw {
@@ -169,6 +202,10 @@ impl TexManager {
                 let key = format!("{}{}", name, n);
                 // println!("🟠made texture {} at {}", key, p);
                 // Key to our texture
+
+                if !first_complete {
+                    first = p.clone();
+                }
                 let index_key = world.index_texture(key.clone(), p);
 
                 // log(format!(
@@ -194,6 +231,7 @@ impl TexManager {
                 }
             }
         }
+        first
         //dictionary.lock().insert(name, pos);
     }
 
@@ -218,16 +256,16 @@ impl TexManager {
             }
             _ => {}
         }
-        if is_tile > 0 {
+        let pos = if is_tile > 0 {
             let dim = (img.width(), img.height());
             let pos = self.locate(img.into_rgba8());
-            self.tile_locate(world, name, dim, pos, tile_dim, rename);
+            self.tile_locate(world, &name, dim, pos, tile_dim, rename)
         } else {
-            let pos = self.locate(img.into_rgba8());
-            // lg!("sort_image name {} pos {}", name, pos);
-            self.DICTIONARY.insert(name.clone(), pos);
-            world.index_texture(name, pos);
-        }
+            self.locate(img.into_rgba8())
+        };
+        // lg!("sort_image name {} pos {}", name, pos);
+        self.DICTIONARY.insert(name.clone(), pos);
+        world.index_texture(name, pos);
     }
     pub fn load_tex_from_buffer(
         &mut self,
@@ -326,10 +364,22 @@ impl TexManager {
             .join(",")
     }
 
-    pub fn set_anims(&mut self, name: &String, frames: Vec<Vec4>, animation_speed: u32) {
+    pub fn set_anims(
+        &mut self,
+        name: &String,
+        frames: Vec<Vec4>,
+        animation_speed: u32,
+        once: bool,
+    ) {
         println!("set anims {} {:?}", name, frames);
-        self.ANIMATIONS
-            .insert(name.clone(), (frames, animation_speed));
+        self.ANIMATIONS.insert(
+            name.clone(),
+            Anim {
+                frames,
+                speed: animation_speed,
+                once,
+            },
+        );
     }
 }
 

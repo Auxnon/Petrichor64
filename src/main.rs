@@ -772,11 +772,18 @@ impl Core {
                         }
                         MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
                         MainCommmand::Anim(name, items, speed) => {
-                            let texs = items
+                            let frames = items
                                 .iter()
                                 .map(|i| self.tex_manager.get_tex(i))
                                 .collect_vec();
-                            self.tex_manager.ANIMATIONS.insert(name, (texs, speed));
+                            self.tex_manager.ANIMATIONS.insert(
+                                name,
+                                crate::texture::Anim {
+                                    frames,
+                                    speed,
+                                    once: false,
+                                },
+                            );
                         }
                         MainCommmand::Clear() => self.gui.clean(),
                         MainCommmand::Make(m, tx) => {
@@ -836,6 +843,11 @@ impl Core {
                                 }
                             }
                         }
+                        MainCommmand::AsyncError(e) => {
+                            let s = format!("async error: {}", e);
+                            println!("{}", s);
+                            crate::log::log(s);
+                        }
                         _ => {}
                     };
                     // p.5.send(true);
@@ -843,8 +855,11 @@ impl Core {
             }
             None => {}
         }
-        self.ent_manager
-            .check_ents(&self.tex_manager, &self.model_manager);
+        self.ent_manager.check_ents(
+            self.global.iteration,
+            &self.tex_manager,
+            &self.model_manager,
+        );
 
         self.global.iteration += 1;
     }

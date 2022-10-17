@@ -410,7 +410,7 @@ fn parse_assets(
                                         a.1.iter()
                                             .map(|t| tex_manager.get_tex(&t))
                                             .collect::<Vec<glam::Vec4>>();
-                                    tex_manager.set_anims(&a.0, v, 8);
+                                    tex_manager.set_anims(&a.0, v, 8, a.2);
                                 }
                             }
                         }

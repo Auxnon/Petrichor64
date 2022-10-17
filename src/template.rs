@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use crate::texture::Anim;
+
 #[derive(Default, Debug, Deserialize)]
 pub struct AssetTemplate {
     #[serde(default = "default_tile_name")]
@@ -16,20 +18,22 @@ pub struct AssetTemplate {
     #[serde(default = "default_tile_size")]
     pub size: u32,
     #[serde(default = "default_anim")]
-    pub anims: Vec<(String, Vec<String>)>,
+    pub anims: Vec<(String, Vec<String>, bool)>,
 }
 
 // #[derive(Debug)]
-pub struct Anim {
+pub struct TemplateAnim {
     name: String,
     anims: Vec<String>,
+    once: bool,
 }
 
-impl Anim {
-    pub fn new() -> Anim {
+impl TemplateAnim {
+    pub fn new() -> TemplateAnim {
         Self {
             name: String::new(),
             anims: vec![],
+            once: false,
         }
     }
 }
@@ -50,7 +54,7 @@ fn default_tile_name() -> String {
 fn default_tile_size() -> u32 {
     0 as u32
 }
-fn default_anim() -> Vec<(String, Vec<String>)> {
+fn default_anim() -> Vec<(String, Vec<String>, bool)> {
     vec![]
 }
 
@@ -150,6 +154,7 @@ fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
                             let from = &tag["from"];
                             let to = &tag["to"];
                             let direction = &tag["direction"];
+                            let once = &tag["once"];
 
                             let ifrom = match from.as_u64() {
                                 Some(i) => i,
@@ -164,6 +169,11 @@ fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
                             let idir = match direction.as_str() {
                                 Some(i) => i,
                                 None => "forward",
+                            };
+
+                            let ionce = match once.as_bool() {
+                                Some(o) => o,
+                                _ => false,
                             };
 
                             let frames: Vec<u64> = match idir {
@@ -182,6 +192,7 @@ fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
                                     .iter()
                                     .map(|n| format!("{}{}", filename, n))
                                     .collect(),
+                                ionce,
                             ));
                         }
                         _ => {}
