@@ -346,6 +346,14 @@ impl Gui {
             image::Rgba([255, 255, 255, 255]),
         );
     }
+    pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
+        self.get_targ().get_pixel_mut(x, y).0 = [
+            (r * 255.) as u8,
+            (g * 255.) as u8,
+            (b * 255.) as u8,
+            (a * 255.) as u8,
+        ];
+    }
 
     pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
         let width = self.size[0];

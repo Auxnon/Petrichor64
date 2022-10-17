@@ -760,13 +760,17 @@ impl Core {
                         MainCommmand::Text(s, x, y) => {
                             self.gui.direct_text(&s, false, x as i64, y as i64)
                         }
-                        MainCommmand::Img(s, x, y) => self.gui.draw_image(
+                        MainCommmand::DrawImg(s, x, y) => self.gui.draw_image(
                             &mut self.tex_manager,
                             &s,
                             false,
                             x as i64,
                             y as i64,
                         ),
+                        MainCommmand::GetImg(s, tx) => {
+                            tx.send(self.tex_manager.get_img(&s));
+                        }
+                        MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
                         MainCommmand::Anim(name, items, speed) => {
                             let texs = items
                                 .iter()

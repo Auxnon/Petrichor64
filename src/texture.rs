@@ -298,6 +298,26 @@ impl TexManager {
         }
     }
 
+    /** return the actual image buffer data from a given texture name */
+    pub fn get_img(&self, str: &String) -> (u32, u32, Vec<u8>) {
+        let im = match self.DICTIONARY.get(str) {
+            Some(v) => image::imageops::crop_imm(
+                &self.MASTER,
+                (v.x * self.ATLAS_DIM.x as f32) as u32,
+                (v.y * self.ATLAS_DIM.y as f32) as u32,
+                (v.z * self.ATLAS_DIM.x as f32) as u32,
+                (v.w * self.ATLAS_DIM.y as f32) as u32,
+            )
+            .to_image(),
+            None => self.MASTER.clone(),
+        };
+        // let w = im.width();
+        // let h = im.height();
+        // let v = im.into_vec();
+
+        (im.width(), im.height(), im.into_vec())
+    }
+
     pub fn _list_keys(&self) -> String {
         self.DICTIONARY
             .keys()

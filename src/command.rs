@@ -10,7 +10,7 @@ use crate::{
     Core,
 };
 
-use glam::vec4;
+use glam::{vec4, Vec4};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table};
 use parking_lot::{Mutex, RwLock};
@@ -168,7 +168,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
 pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
-    switch_board: Arc<RwLock<SwitchBoard>>,
+    // switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     net_sender: Option<(Sender<MovePacket>, Receiver<MovePacket>)>,
@@ -197,10 +197,14 @@ pub fn init_lua_sys(
 
     lua_globals.set("_ents", lua_ctx.create_table()?);
 
+    // lua_ctx.set_warning_function(|a, b, f| {
+    //     log(format!("hi {:?}", b));
+    //     Ok(())
+    // });
+
     #[macro_export]
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr) => {
-            // println!("hiya sailor, it's {}", $name);
             res(
                 $name,
                 lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
@@ -261,90 +265,41 @@ pub fn init_lua_sys(
     // );
 
     // let switch = Arc::clone(&switch_board);
-    let pitcher = main_pitcher.clone();
+
     lua!(
         "bg",
         move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
         ""
     );
 
+    let pitcher = main_pitcher.clone();
     lua!(
         "fill",
-        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
-            let v = match x {
-                mlua::Value::String(s) => match s.to_str() {
-                    Ok(s2) => {
-                        let s = if (s2.starts_with("#")) {
-                            &s2[1..s2.len()]
-                        } else {
-                            s2
-                        };
-
-                        let halfed = (s2.len() < 4);
-                        let res = if halfed {
-                            half_decode_hex(s)
-                        } else {
-                            decode_hex(s)
-                        };
-
-                        match res {
-                            Ok(b) => {
-                                if b.len() > 2 {
-                                    let f = b
-                                        .iter()
-                                        .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
-                                        .collect::<Vec<f32>>();
-                                    vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
-                                } else {
-                                    vec4(0., 0., 0., 0.)
-                                }
-                            }
-                            _ => vec4(0., 0., 0., 0.),
-                        }
-                    }
-                    _ => vec4(0., 0., 0., 0.),
-                },
-                mlua::Value::Integer(i) => vec4(
-                    i as f32,
-                    y.unwrap_or_else(|| 0.),
-                    z.unwrap_or_else(|| 0.),
-                    w.unwrap_or_else(|| 1.),
-                ),
-                mlua::Value::Number(f) => vec4(
-                    f as f32,
-                    y.unwrap_or_else(|| 0.),
-                    z.unwrap_or_else(|| 0.),
-                    w.unwrap_or_else(|| 1.),
-                ),
-                _ => vec4(1., 1., 1., 1.),
-            };
-
-            // let mutex = &mut switch.write();
-            // println!("🥵  v {}", v);
-            // mutex.background = v;
-
-            // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
-
-            pitcher.send(MainCommmand::Fill(v));
+        move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
+            pitcher.send(MainCommmand::Fill(get_color(r, g, b, a)));
             Ok(1)
         },
-        "Get background color"
+        "Set background color"
     );
 
-    // res(lua_globals.set(
-    //     "_bg",
-    //     lua_ctx
-    //         .create_function(move |_, (x, y, z, w): (f32, f32, f32, f32)| {
-    //             let mut mutex = &mut switch.write();
-    //             mutex.background = vec4(x, y, z, w);
-    //             // parking_lot::RwLockWriteGuard::unlock_fair(*mutex);
-    //             Ok(1)
-    //         })
-    //         .unwrap(),
-    // ));
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "pixel",
+        move |_,
+              (x, y, r, g, b, a): (
+            u32,
+            u32,
+            mlua::Value,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            pitcher.send(MainCommmand::Pixel(x, y, get_color(r, g, b, a)));
+            Ok(1)
+        },
+        "Set color of pixel at x,y"
+    );
 
-    // let switch = Arc::clone(&switch_board);
-    // let sender = world_sender.clone();
     let pitcher = main_pitcher.clone();
     lua!(
         "cube",
@@ -704,7 +659,7 @@ pub fn init_lua_sys(
     lua!(
         "img",
         move |_, (im, x, y): (String, Option<f32>, Option<f32>)| {
-            pitcher.send(MainCommmand::Img(
+            pitcher.send(MainCommmand::DrawImg(
                 im,
                 match x {
                     Some(o) => o,
@@ -718,6 +673,31 @@ pub fn init_lua_sys(
             Ok(())
         },
         "Draw text on the gui at position"
+    );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "gimg",
+        move |lu, im: String| {
+            match lu.create_table() {
+                Ok(table) => {
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, Vec<u8>)>(0);
+                    match pitcher.send(MainCommmand::GetImg(im, tx)) {
+                        Ok(o) => match rx.recv() {
+                            Ok(d) => {
+                                table.set("w", d.0)?;
+                                table.set("h", d.1)?;
+                                table.set("data", d.2)?;
+                                Ok(table)
+                            }
+                            _ => Ok(table),
+                        },
+                        _ => Ok(table),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        },
+        "Get image data"
     );
 
     let pitcher = main_pitcher.clone();
@@ -740,6 +720,11 @@ pub fn init_lua_sys(
     lua!("abs", move |_, f: f32| { Ok(f.abs()) }, "Absolute value");
     lua!("cos", move |_, f: f32| { Ok(f.cos()) }, "Cosine value");
     lua!("sin", move |_, f: f32| { Ok(f.sin()) }, "Sine value");
+    lua!(
+        "sqrt",
+        move |_, f: f32| { Ok(f.sqrt()) },
+        "Squareroot value"
+    );
 
     lua!(
         "send",
@@ -1058,7 +1043,9 @@ pub enum MainCommmand {
     Line(f32, f32, f32, f32),
     Square(f32, f32, f32, f32),
     Text(String, f32, f32),
-    Img(String, f32, f32),
+    DrawImg(String, f32, f32),
+    GetImg(String, SyncSender<(u32, u32, Vec<u8>)>),
+    Pixel(u32, u32, glam::Vec4),
     CamPos(glam::Vec3),
     CamRot(glam::Vec2),
     Clear(),
@@ -1066,6 +1053,7 @@ pub enum MainCommmand {
     Anim(String, Vec<String>, u32),
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Globals(HashMap<String, f32>),
+    AsyncError(String),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
@@ -1079,6 +1067,56 @@ fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
     (0..s.len())
         .map(|i| u8::from_str_radix(&s[i..i + 1], 16))
         .collect()
+}
+
+fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> Vec4 {
+    match x {
+        mlua::Value::String(s) => match s.to_str() {
+            Ok(s2) => {
+                let s = if s2.starts_with("#") {
+                    &s2[1..s2.len()]
+                } else {
+                    s2
+                };
+
+                let halfed = s2.len() < 4;
+                let res = if halfed {
+                    half_decode_hex(s)
+                } else {
+                    decode_hex(s)
+                };
+
+                match res {
+                    Ok(b) => {
+                        if b.len() > 2 {
+                            let f = b
+                                .iter()
+                                .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
+                                .collect::<Vec<f32>>();
+                            vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
+                        } else {
+                            vec4(0., 0., 0., 0.)
+                        }
+                    }
+                    _ => vec4(0., 0., 0., 0.),
+                }
+            }
+            _ => vec4(0., 0., 0., 0.),
+        },
+        mlua::Value::Integer(i) => vec4(
+            i as f32,
+            y.unwrap_or_else(|| 0.),
+            z.unwrap_or_else(|| 0.),
+            w.unwrap_or_else(|| 1.),
+        ),
+        mlua::Value::Number(f) => vec4(
+            f as f32,
+            y.unwrap_or_else(|| 0.),
+            z.unwrap_or_else(|| 0.),
+            w.unwrap_or_else(|| 1.),
+        ),
+        _ => vec4(1., 1., 1., 1.),
+    }
 }
 
 macro_rules! lg{
