@@ -26,7 +26,7 @@ pub struct LuaCore {
         String,
         String,
         Option<ControlState>,
-        SyncSender<(Option<String>, Option<ControlState>)>,
+        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>,
     // pub catcher: Receiver<MainPacket>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
@@ -83,8 +83,8 @@ impl LuaCore {
         }
     }
 
-    pub fn async_func(&self, func: &String, extra: &String, bits: ControlState) {
-        self.async_inject(func, extra, Some(bits));
+    pub fn async_func(&self, func: &String, bits: ControlState) {
+        self.async_inject(func, Some(bits));
     }
 
     fn inject(
@@ -95,7 +95,10 @@ impl LuaCore {
     ) -> (Option<String>, Option<ControlState>) {
         let (tx, rx) = sync_channel::<(Option<String>, Option<ControlState>)>(0);
         // println!("xxx {} :: {}", func, path);
-        match self.to_lua_tx.send((func.clone(), path.clone(), ent, tx)) {
+        match self
+            .to_lua_tx
+            .send((func.clone(), path.clone(), ent, Some(tx)))
+        {
             Ok(_) => match rx.recv() {
                 Ok(lua_out) => lua_out,
                 Err(e) => {
@@ -111,13 +114,13 @@ impl LuaCore {
         }
     }
 
-    fn async_inject(&self, func: &String, path: &String, bits: Option<ControlState>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<ControlState>)>(100);
-        match self.to_lua_tx.send((func.clone(), path.clone(), bits, tx)) {
-            Ok(_) => match rx.try_recv() {
-                Ok(_) => (),
-                _ => (),
-            },
+    fn async_inject(&self, func: &String, bits: Option<ControlState>) {
+        // let (tx, rx) = channel::<(Option<String>, Option<ControlState>)>();
+        match self
+            .to_lua_tx
+            .send((func.clone(), "".to_string(), bits, None))
+        {
+            Ok(_) => {}
             _ => {}
         }
     }
@@ -128,7 +131,8 @@ impl LuaCore {
     }
 
     pub fn call_main(&self) {
-        self.func(&"main()".to_string());
+        const empty: ControlState = ([false; 256], [0f32; 4]);
+        self.async_func(&"main()".to_string(), empty);
     }
 
     pub fn call_loop(&self, bits: ControlState) {
@@ -151,7 +155,7 @@ impl LuaCore {
         //     })
         //     .collect::<String>();
 
-        self.async_func(&"loop()".to_string(), &"".to_string(), bits);
+        self.async_func(&"loop()".to_string(), bits);
     }
 
     pub fn die(&self) {
@@ -220,7 +224,7 @@ impl LuaCore {
     // }
 }
 fn lua_load(lua: &Lua, st: &String) {
-    let chunk = lua.load(&st);
+    let chunk = lua.load(st);
 
     chunk.exec();
 }
@@ -330,7 +334,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        SyncSender<(Option<String>, Option<ControlState>)>,
+        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>,
     Receiver<MainPacket>,
 ) {
@@ -338,7 +342,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        SyncSender<(Option<String>, Option<ControlState>)>,
+        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>();
 
     let (pitcher, catcher) = channel::<MainPacket>();
@@ -373,6 +377,8 @@ fn start(
 
         let lua_ctx = Lua::new();
 
+        lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
+
         let globals = lua_ctx.globals();
 
         log("new controller connector starting".to_string());
@@ -383,10 +389,13 @@ fn start(
 
         let pads = Rc::new(Mutex::new(Pad::new()));
 
+        let error_sender = pitcher.clone();
+        let mut debounce_error_string = "".to_string();
+        let mut debounce_error_counter = 60;
         match crate::command::init_lua_sys(
             &lua_ctx,
             &globals,
-            switch_board,
+            // switch_board,
             pitcher,
             world_sender,
             net,
@@ -487,20 +496,59 @@ fn start(
             } else {
                 //MARK if loop() then path string is the keyboard keys
                 // TODO load's chunk should call set_name to "main" etc, for better error handling
-                match match lua_ctx.load(&s1).eval::<mlua::Value>() {
-                    Ok(o) => {
-                        let output = format!("{:?}", o);
-                        channel.send((Some(output), None))
+                let res = lua_ctx.load(&s1).eval::<mlua::Value>();
+                match channel {
+                    Some(sync) => {
+                        match match res {
+                            Ok(o) => {
+                                let output = format!("{:?}", o);
+                                sync.send((Some(output), None))
+                            }
+                            Err(er) => sync.send((Some(er.to_string()), None)),
+                        } {
+                            Err(e) => {
+                                // println!("loop err: {}", e);
+                                // if !s1.starts_with("loop") {
+                                err(format!("lua server communication error occured -> {}", e))
+                                // }
+                            }
+                            _ => {}
+                        };
                     }
-                    Err(er) => channel.send((Some(er.to_string()), None)),
-                } {
-                    Err(e) => {
-                        if !s1.starts_with("loop") {
-                            err(format!("lua server communication error occured -> {}", e))
+                    _ => {
+                        //=== async functions error handler will debounce since we deal with rapid event looping ===
+                        match res {
+                            Err(e) => {
+                                debounce_error_string = format!("{}", e);
+                                debounce_error_counter += 1;
+                                if debounce_error_counter >= 60 {
+                                    debounce_error_counter = 0;
+                                    match lua_ctx.inspect_stack(1) {
+                                        Some(d) => {
+                                            // d.names().name
+                                            println!("stack {:?}", d.stack());
+                                            println!("er line is {}", d.curr_line());
+                                        }
+                                        _ => {}
+                                    };
+                                    error_sender.send(crate::MainCommmand::AsyncError(
+                                        debounce_error_string,
+                                    ));
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    _ => {}
                 }
+
+                // {
+                //     Err(e) => {
+                //         if !s1.starts_with("loop") {
+                //             err(format!("lua server communication error occured -> {}", e))
+                //         }
+                //     }
+                //     _ => {}
+                // }
                 match bit_in {
                     Some(b) => {
                         *keys_mutex.lock() = b.0;

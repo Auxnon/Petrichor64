@@ -181,7 +181,7 @@ pub fn get(width: usize, height: usize) -> String {
             (contro_height - offset, l - offset)
         };
 
-        println!("offset {} to cap{}", deg, cap);
+        // println!("offset {} to cap{}", deg, cap);
 
         BUFFER.lock()[(deg)..cap].to_vec()
     };
