@@ -66,6 +66,7 @@ pub fn get_file_buffer_from_path(path: PathBuf) -> Vec<u8> {
         Ok(f) => {
             let mut reader = BufReader::new(f);
             // reader.re
+
             match reader.read_to_end(&mut v) {
                 Ok(_) => {
                     //log(format!("buffer size {} for {}", x, &path_str)),

@@ -21,7 +21,6 @@ use world::World;
 
 use ent::Ent;
 use glam::{vec2, vec3};
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 
 use switch_board::SwitchBoard;
@@ -49,13 +48,13 @@ mod lua_ent;
 mod model;
 mod online;
 mod pad;
+mod parse;
 mod post;
 mod ray;
 mod render;
 mod sound;
 mod switch_board;
 mod template;
-mod text;
 mod texture;
 mod tile;
 mod world;
@@ -91,6 +90,7 @@ pub struct Core {
     tex_manager: TexManager,
     model_manager: ModelManager,
     ent_manager: EntManager,
+    input_manager: winit_input_helper::WinitInputHelper,
 }
 
 #[repr(C)]
@@ -247,10 +247,7 @@ impl Core {
         });
 
         let uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
-        // println!(
-        //     "struct size is {}",
-        //     mem::size_of::<[f32; 11]>() as wgpu::BufferAddress
-        // );
+
         let main_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("main bind group layout"),
@@ -642,7 +639,7 @@ impl Core {
             }
         };
         ent_manager.uniform_alignment = uniform_alignment as u32;
-
+        let input_manager = winit_input_helper::WinitInputHelper::new();
         Self {
             surface,
             device,
@@ -667,11 +664,12 @@ impl Core {
             world,
             master_texture: diff_tex,
             loop_helper,
-            lua_master: LuaCore::new(switch_board, world_sender, singer),
+            lua_master: LuaCore::new(switch_board, world_sender, singer, false),
             tex_manager,
             model_manager,
             ent_manager,
             catcher: None,
+            input_manager,
         }
     }
 
@@ -812,19 +810,26 @@ impl Core {
                                 // println!("this far3");
                             }
                         }
-                        MainCommmand::Spawn(ent) => {
-                            let index = self.ent_manager.ent_table.len();
-                            // let ent = crate::lua_ent::LuaEnt::new(index as f64, asset, x, y, z);
-                            // // Rc<RefCell
-                            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
-                            // let output_ent = Arc::clone(&wrapped);
-                            self.ent_manager.create_from_lua(
-                                &self.tex_manager,
-                                &self.model_manager,
-                                ent,
-                            );
-                            // tx.send(output_ent);
+                        MainCommmand::Spawn(asset, x, y, z, s, count, tx) => {
+                            let mut v = vec![];
+                            for i in 0..count {
+                                let index = self.ent_manager.id_counter;
+                                self.ent_manager.id_counter += 1;
+                                let ent =
+                                    crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
+                                // // Rc<RefCell
+                                let wrapped = Arc::new(std::sync::Mutex::new(ent));
+                                v.push(Arc::clone(&wrapped));
+                                self.ent_manager.create_from_lua(
+                                    &self.tex_manager,
+                                    &self.model_manager,
+                                    wrapped,
+                                );
+                            }
+
+                            tx.send(v);
                         }
+                        MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
                         MainCommmand::Globals(table) => {
                             println!("global remap");
                             for (k, v) in table.iter() {
@@ -844,7 +849,15 @@ impl Core {
                             }
                         }
                         MainCommmand::AsyncError(e) => {
-                            let s = format!("async error: {}", e);
+                            let ee = e
+                                .split_inclusive(|c| c == '[' || c == ']')
+                                .enumerate()
+                                .filter(|(i, s)| i % 2 == 0)
+                                .map(|x| x.1)
+                                .join("...]");
+                            // .collect::<Vec<String>>();
+                            // s = re.sub(r'\(.*?\)', '', s)
+                            let s = format!("async error: {}", ee);
                             println!("{}", s);
                             crate::log::log(s);
                         }
@@ -865,7 +878,17 @@ impl Core {
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        // match self.loop_helper.report_rate() {
+        //     Some(fps)=>{
+
+        //     }
+        //     _=>{
+
+        //     }
+        // }
+
         let _delta = self.loop_helper.loop_start();
+
         // or .loop_start_s() for f64 seconds
         if let Some(fps) = self.loop_helper.report_rate() {
             //  let current_fps = Some(fps);
@@ -886,12 +909,18 @@ impl Core {
         }
 
         let s = render::render_loop(self, self.global.iteration);
-        self.loop_helper.loop_sleep();
+        self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
+
+        // match self.loop_helper.report_rate() {
+        //     Some(t) => println!("now we over {}", t),
+        //     None => println!("not yet"),
+        // };
         s
     }
 }
 
 fn main() {
+    crate::parse::test(&"test.lua".to_string());
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -939,14 +968,12 @@ fn main() {
     // :reload(core);
 
     event_loop.run(move |event, _, control_flow| {
-        let mut locker = crate::controls::INPUT_MANAGER.write();
         controls::bit_check(&event, &mut bits);
         bits.1[0] = core.global.mouse_pos.x;
         bits.1[1] = core.global.mouse_pos.y;
         // println!("bits {:?}", bits.0);
 
-        if locker.update(&event) {
-            drop(locker);
+        if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
             core.update();

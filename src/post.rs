@@ -28,7 +28,7 @@ pub struct ScreenBinds {
 impl ScreenBinds {
     pub fn new() -> ScreenBinds {
         ScreenBinds {
-            modernize: 0.,
+            modernize: 1.,
             dark_factor: 0.4,
             low_range: 0.05,
             high_range: 0.6,

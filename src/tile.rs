@@ -363,6 +363,13 @@ fn _add_tile_model(
     //     ix, iy, iz, offset, c.key
     // );
 
+    let method = match meta {
+        1 => |v: &mut Vertex| v.rotp90(),
+        2 => |v: &mut Vertex| v.rotp180(),
+        3 => |v: &mut Vertex| v.rotp270(),
+        _ => |_: &mut Vertex| {},
+    };
+
     let (mut verts, mut inds) = match model_map.get(&model_index) {
         Some(m) => {
             // let uv = crate::texture::get_tex_from_index(model_index);
@@ -370,12 +377,6 @@ fn _add_tile_model(
             let data = modl.data.as_ref().unwrap().clone();
             // print!("c{} {}", model_index, modl.name);
             // print!("🟢🟣uv{} {}", uv, modl.name);
-            let method = match meta {
-                1 => |v: &mut Vertex| v.rotp90(),
-                2 => |v: &mut Vertex| v.rotp180(),
-                3 => |v: &mut Vertex| v.rotp270(),
-                _ => |_: &mut Vertex| {},
-            };
 
             // log(format!("tile with {}",  meta));
             let verts = data
@@ -419,6 +420,7 @@ fn _add_tile_model(
                 .iter()
                 .map(|v| {
                     let mut v2 = v.clone();
+                    method(&mut v2);
                     v2.trans(offset);
                     v2.texture(uv);
                     v2

@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
 use crate::Core;
 use clipboard::{ClipboardContext, ClipboardProvider};
-use lazy_static::lazy_static;
-use parking_lot::RwLock;
 
 use winit::{
     event::{Event, VirtualKeyCode, WindowEvent},
@@ -21,12 +17,6 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 
 pub type ControlState = ([bool; 256], [f32; 4]);
-
-lazy_static! {
-    //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    // pub static ref globals: Arc<RwLock<Global>> = Arc::new(RwLock::new(Global::new()));
-    pub static ref INPUT_MANAGER : Arc<RwLock<winit_input_helper::WinitInputHelper>>=Arc::new(RwLock::new(winit_input_helper::WinitInputHelper::new()));
-}
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {
@@ -49,8 +39,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     //         _ => {}
     //     }
     // }
-
-    let input_helper = &INPUT_MANAGER.read();
+    let input_helper = &core.input_manager;
 
     if input_helper.quit() {
         *control_flow = ControlFlow::Exit;

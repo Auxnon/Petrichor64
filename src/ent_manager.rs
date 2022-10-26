@@ -30,6 +30,7 @@ pub struct EntManager {
     pub uniform_alignment: u32,
     pub instances: Vec<Instance>,
     pub instance_buffer: wgpu::Buffer,
+    pub id_counter: u64,
 }
 impl EntManager {
     pub fn new(device: &wgpu::Device) -> EntManager {
@@ -41,6 +42,7 @@ impl EntManager {
             instances: vec![],
             instance_buffer: EntManager::build_buffer(&vec![], device),
             uniform_alignment: 0,
+            id_counter: 2,
         }
     }
 
@@ -81,10 +83,8 @@ impl EntManager {
         model_manager: &ModelManager,
         wrapped_lua: Arc<Mutex<LuaEnt>>,
     ) {
-        let mut lua = wrapped_lua.lock().unwrap();
-        let id = self.ent_table.len() as u64;
-        // let lua=guard.
-        lua.set_id(id);
+        let lua = wrapped_lua.lock().unwrap();
+        let id = lua.get_id();
         let mut asset = lua.get_asset();
         if asset.len() == 0 {
             asset = "example".to_string();
@@ -107,30 +107,38 @@ impl EntManager {
         self.ent_table.push(wrapped_lua);
     }
 
-    pub fn awful_test(&mut self, tex_manager: &TexManager, model_manager: &ModelManager) {
-        let first = self.ent_table.len() as u64;
-        for i in 0..100000 {
-            let id = first + i;
-            let p = vec3(
-                -50. + rand::random::<f32>() * 100.,
-                -50. + rand::random::<f32>() * 100.,
-                -5. + rand::random::<f32>() * 10.,
-            );
-            let mut ent = Ent::new_dynamic(
-                tex_manager,
-                model_manager,
-                p,
-                0.,
-                1.,
-                0.,
-                "zom".to_string(),
-                self.uniform_alignment * (id + 1) as u32,
-            );
-            ent.pos = Some(p);
-            self.specks.push(ent);
-        }
-        println!("awful test run {}", self.entities.len());
+    pub fn kill_ent(&mut self, id: u64) {
+        self.ent_table.retain(|e| {
+            let ee = e.lock().unwrap();
+            !(ee.get_id() == id || ee.dead)
+        });
+        self.entities.remove(&id);
     }
+
+    // pub fn awful_test(&mut self, tex_manager: &TexManager, model_manager: &ModelManager) {
+    //     let first = self.ent_table.len() as u64;
+    //     for i in 0..100000 {
+    //         let id = first + i;
+    //         let p = vec3(
+    //             -50. + rand::random::<f32>() * 100.,
+    //             -50. + rand::random::<f32>() * 100.,
+    //             -5. + rand::random::<f32>() * 10.,
+    //         );
+    //         let mut ent = Ent::new_dynamic(
+    //             tex_manager,
+    //             model_manager,
+    //             p,
+    //             0.,
+    //             1.,
+    //             0.,
+    //             "zom".to_string(),
+    //             self.uniform_alignment * (id + 1) as u32,
+    //         );
+    //         ent.pos = Some(p);
+    //         self.specks.push(ent);
+    //     }
+    //     println!("awful test run {}", self.entities.len());
+    // }
 
     pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Ent> {
         let id = lua.get_id();

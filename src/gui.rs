@@ -1,7 +1,7 @@
 use rand::Rng;
 // use tracy::frame;
 
-use crate::texture::TexManager;
+use crate::{command::NumCouple, texture::TexManager};
 use image::{ImageBuffer, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
@@ -330,11 +330,11 @@ impl Gui {
         self.target_sky = true;
     }
 
-    pub fn square(&mut self, x: f32, y: f32, w: f32, h: f32) {
+    pub fn square(&mut self, x: NumCouple, y: NumCouple, w: NumCouple, h: NumCouple) {
         let width = self.size[0];
         let height = self.size[1];
 
-        let xx = x.max(0.) * width as f32;
+        let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
         let yy = y.max(0.) * height as f32;
         let ww = (w.max(0.) * width as f32).max(1.);
         let hh = (h.max(0.) * height as f32).max(1.);

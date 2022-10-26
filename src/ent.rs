@@ -96,15 +96,23 @@ impl<'lua> Ent {
         asset: String,
         uniform_offset: wgpu::DynamicOffset,
     )->Ent{
-        let (model_name,model,tex_name,tex,billboarded)=match tex_manager.get_tex_or_not(&asset.clone()){
-            Some(t)=>{
-                ("plane".to_string(),model_manager.PLANE.clone(),asset,t,true)
-            }
-            None=>{
-                (asset.clone(),model_manager.get_model(&asset),"".to_string(),vec4(0.,0.,0.,0.),false)
-            }
+        // let (model_name,model,tex_name,tex,billboarded)=match tex_manager.get_tex_or_not(&asset.clone()){
+        //     Some(t)=>{
+        //         ("plane".to_string(),model_manager.PLANE.clone(),asset,t,true)
+        //     }
+        //     None=>{
+        //         let m=model_manager.get_model(&asset);
+        //         m.
+        //         (asset.clone(),m,"".to_string(),vec4(0.,0.,0.,0.),false)
+        //     }
+        // };
+
+        let (model_name,billboarded,model,tex)=match model_manager.get_model_or_not(&asset){
+            Some(m)=> ("plane".to_string(),false,m,vec4(0.,0.,1.,1.)),
+            None=>(asset.clone(),true,&model_manager.PLANE,tex_manager.get_tex(&asset))
         };
-        Ent::new_pure(offset,angle,scale,rotation,model_name,model,tex_name,tex,uniform_offset,billboarded)
+
+        Ent::new_pure(offset,angle,scale,rotation,model_name,Rc::clone(model),asset.clone(),tex,uniform_offset,billboarded)
     }
 
     pub fn new(
@@ -172,8 +180,7 @@ impl<'lua> Ent {
 
     pub fn build_meta(&self, lua: &LuaEnt) -> Mat4 {
         // let rotation = Mat4::from_rotation_z(self.rotation);
-
-        let quat = Quat::from_axis_angle(vec3(0., 0., 1.), self.rotation);
+        let quat = Quat::from_euler(glam::EulerRot::XYZ, lua.rot_x as f32,lua.rot_y as f32,lua.rot_z as f32);
 
         // let transform = cgmath::De composed {
         //     disp: entity.pos.mul(16.),
@@ -182,7 +189,7 @@ impl<'lua> Ent {
         //     scale: entity.scale * 16.,
         // };
 
-        let s:f32 = 16.*(lua.scale as f32);
+        let s:f32 = 1.*(lua.scale as f32);
         // println!("scale {}",s);
         let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
         Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos)

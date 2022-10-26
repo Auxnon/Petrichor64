@@ -205,6 +205,7 @@ impl TexManager {
 
                 if !first_complete {
                     first = p.clone();
+                    first_complete = true;
                 }
                 let index_key = world.index_texture(key.clone(), p);
 

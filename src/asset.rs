@@ -365,7 +365,7 @@ fn parse_assets(
                 // println!("🟢template {}", name);
                 // now locate a resource that matches the name and take ownership, if none then there's nothing to do
                 // println!("checking {} sources", sources.len());
-                match sources.entry(name) {
+                match sources.entry(name.clone()) {
                     Entry::Occupied(o) => {
                         // now load the resource with config template stuff
                         let resource = o.remove_entry().1; // TODO we're removing the entry but only using it if it's a png, this may cause assets to be ignored if they're not png, buggy
@@ -405,12 +405,13 @@ fn parse_assets(
                                 //     template.anims.len()
                                 // );
                                 for a in template.anims {
+                                    let compound = format!("{}.{}", &name, a.0).to_lowercase();
                                     // println!("🟢{:?}", a.1);
                                     let v =
                                         a.1.iter()
                                             .map(|t| tex_manager.get_tex(&t))
                                             .collect::<Vec<glam::Vec4>>();
-                                    tex_manager.set_anims(&a.0, v, 8, a.2);
+                                    tex_manager.set_anims(&compound, v, 8, a.2);
                                 }
                             }
                         }

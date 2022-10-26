@@ -18,7 +18,7 @@ use std::{
     thread,
 };
 
-pub type MainPacket = MainCommmand; //SyncSender<bool>
+pub type MainPacket = MainCommmand;
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -28,7 +28,6 @@ pub struct LuaCore {
         Option<ControlState>,
         Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>,
-    // pub catcher: Receiver<MainPacket>, //to_lua_rx: Mutex<Receiver<(String, String, LuaEnt, SyncSender<Option<LuaEnt>>)>>,
 }
 
 impl LuaCore {
@@ -36,10 +35,11 @@ impl LuaCore {
         switch_board: Arc<RwLock<SwitchBoard>>,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         singer: Sender<SoundPacket>,
+        dangerous: bool,
     ) -> LuaCore {
         log("lua core thread started".to_string());
 
-        let (rec, _catcher) = start(switch_board, world_sender, singer);
+        let (rec, _catcher) = start(switch_board, world_sender, singer, dangerous);
         LuaCore {
             to_lua_tx: rec,
             // catcher,
@@ -51,30 +51,14 @@ impl LuaCore {
         switch_board: Arc<RwLock<SwitchBoard>>,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         singer: Sender<SoundPacket>,
+        dangerous: bool,
     ) -> Receiver<MainPacket> {
-        let (rec, catcher) = start(switch_board, world_sender, singer);
+        let (rec, catcher) = start(switch_board, world_sender, singer, dangerous);
         self.to_lua_tx = rec;
         // self.catcher = catcher;
         // reset()
         catcher
     }
-
-    // pub fn call(&self, func: &String, ent: LuaEnt) -> LuaEnt {
-    //     let r = self.inject(func, &"".to_string(), Some(ent.clone()));
-    //     match r.0 {
-    //         Some(message) => {
-    //             println!("lua_call::{}", message);
-    //         }
-    //         _ => {}
-    //     }
-    //     match r.1 {
-    //         Some(ento) => {
-    //             // println!("ye");
-    //             ento
-    //         }
-    //         None => ent,
-    //     }
-    // }
 
     pub fn func(&self, func: &String) -> String {
         match self.inject(func, &"0".to_string(), None).0 {
@@ -136,25 +120,6 @@ impl LuaCore {
     }
 
     pub fn call_loop(&self, bits: ControlState) {
-        // let mut bits = [false; 256];
-        // for t in pass.iter() {
-        //     match t {
-        //         winit_input_helper::TextChar::Char(c) => {
-        //             let b = *c as usize;
-        //             // println!("key {} is {}", *c, b);
-        //             bits[b] = true
-        //         }
-        //         _ => {}
-        //     }
-        // }
-        // let text = pass
-        //     .iter()
-        //     .filter_map(|t| match t {
-        //         winit_input_helper::TextChar::Char(c) => Some(*c),
-        //         _ => None,
-        //     })
-        //     .collect::<String>();
-
         self.async_func(&"loop()".to_string(), bits);
     }
 
@@ -162,66 +127,6 @@ impl LuaCore {
         log("lua go bye bye".to_string());
         self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
     }
-
-    // pub fn spawn(&self, str: &String) {
-    //     //entity_factory.create_ent(str, self);
-    // }
-
-    // pub fn load(&self, input_path: &String) {
-    //     // let input_path = Path::new(".")
-    //     //     .join("scripts")
-    //     //     .join(str.to_owned())
-    //     //     .with_extension("lua");
-
-    //     let name = crate::asset::get_file_name(input_path.to_owned());
-    //     let st = fs::read_to_string(input_path).unwrap_or_default();
-    //     log(format!("got script {} :\n{}", input_path, st));
-    //     let chunk = self.lua.load(&st);
-    //     let globals = self.lua.globals();
-    //     //chunk.eval()
-    //     //let d= chunk.eval::<mlua::Chunk>();
-
-    //     match chunk.eval::<mlua::Function>() {
-    //         Ok(code) => {
-    //             log(format!("code loaded {} ♥", name));
-    //             globals.set(name, code);
-    //         }
-    //         Err(err) => {
-    //             println!(
-    //                 "::lua::  bad lua code for 📜{} !! Assigning default \"{}\"",
-    //                 name, err
-    //             );
-    //             globals.set(name, globals.get::<_, Function>("default_func").unwrap());
-    //         }
-    //     }
-    // }
-
-    //let out = self.lua.globals().get("default_func").unwrap();
-    //out
-
-    // pub fn get(&self, str: String) -> Function {
-    //     let globals = self.lua.globals();
-    //     //let version = globals.get::<_, String>("_VERSION").unwrap();
-    //     let res = globals.get::<_, Function>(str.to_owned());
-    //     if res.is_err() {
-    //         self.load(&str.to_owned());
-    //         let res2 = globals.get::<_, Function>(str.to_owned());
-    //         if res2.is_err() {
-    //             log(format!(
-    //                 "failed to get lua code for 📜{} even after default func",
-    //                 str
-    //             ));
-    //         }
-    //         log(format!(
-    //             "we didnt find lua code so we loaded it and returned it for 📜{}",
-    //             str
-    //         ));
-    //         res2.unwrap()
-    //     } else {
-    //         log(format!("we got and returned a func for {}", str));
-    //         res.unwrap()
-    //     }
-    // }
 }
 fn lua_load(lua: &Lua, st: &String) {
     let chunk = lua.load(st);
@@ -329,6 +234,7 @@ fn start(
     switch_board: Arc<RwLock<SwitchBoard>>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     singer: Sender<SoundPacket>,
+    dangerous: bool,
 ) -> (
     Sender<(
         String,
@@ -375,9 +281,13 @@ fn start(
         let keys_mutex = Rc::new(Mutex::new(keys));
         let mice_mutex = Rc::new(Mutex::new(mice));
 
-        let lua_ctx = Lua::new();
-
-        lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
+        let lua_ctx = if true {
+            unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
+        } else {
+            Lua::new()
+        };
+        // lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
+        // lua_ctx.sa
 
         let globals = lua_ctx.globals();
 

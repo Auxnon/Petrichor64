@@ -109,25 +109,45 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         })
         .collect::<Vec<_>>();
 
-    let mut ent_array: Vec<Rc<Model>> = vec![];
-    let mut instances = vec![];
+    let mut cur = &"".to_string();
+    let mut model_array: Vec<Rc<Model>> = vec![];
+    let mut transforms = vec![];
+    let mut instance_buffers = vec![];
     for entity in &mut lua_ent_array.iter() {
         match entity_manager.get_from_id(entity.get_id()) {
             Some(o) => {
-                let model = o.model.clone();
+                if cur != &o.model.name {
+                    cur = &o.model.name;
+                    if model_array.len() > 0 {
+                        instance_buffers.push((
+                            crate::ent_manager::EntManager::build_instance_buffer(
+                                &transforms,
+                                &core.device,
+                            ),
+                            transforms.len(),
+                        ));
+                        transforms = vec![];
+                    }
+                    model_array.push(Rc::clone(&o.model));
+                }
                 let data = o.get_uniform(&entity, iteration);
-                let instance = data; //InstanceRaw { model: data.model,uv: data.};
-                instances.push(instance);
+                // let instance = data; //InstanceRaw { model: data.model,uv: data.};
+                // instances.push(instance);
+                transforms.push(data);
                 // let instance=
-                let e = o.clone();
-                ent_array.push(model);
+                // let e = o.clone();
+                // ent_array.push(model);
             }
             _ => {}
         }
     }
 
-    let instance_buffer =
-        crate::ent_manager::EntManager::build_instance_buffer(&instances, &core.device);
+    instance_buffers.push((
+        crate::ent_manager::EntManager::build_instance_buffer(&transforms, &core.device),
+        transforms.len(),
+    ));
+
+    // crate::ent_manager::EntManager::build_instance_buffer(&instances, &core.device);
 
     if false {
         let speck_instances = core
@@ -271,14 +291,16 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
                 }
             }
 
-            if ent_array.len() > 0 {
-                let m = &ent_array.get(0).unwrap();
+            if model_array.len() > 0 {
+                for (i, m) in model_array.iter().enumerate() {
+                    let (instance_buffer, size) = instance_buffers.get(i).unwrap();
+                    render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
+                    render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                    render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
 
-                render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
-                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
-
-                render_pass.draw_indexed(0..m.index_count as u32, 0, 0..instances.len() as _);
+                    render_pass.draw_indexed(0..m.index_count as u32, 0, 0..*size as _);
+                }
+                // let m = &ent_array.get(0).unwrap();
             }
 
             if core.ent_manager.specks.len() > 0 {

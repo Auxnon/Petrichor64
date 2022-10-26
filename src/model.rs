@@ -92,6 +92,9 @@ impl ModelManager {
         }
         //Arc::clone(&custom)
     }
+    pub fn get_model_or_not(&self, str: &String) -> Option<&Rc<Model>> {
+        self.DICTIONARY.get(str)
+    }
 
     /** Returns a model by verts that are able to be adjusted through translation of the actual verts */
     pub fn get_adjustable_model(&self, str: &String) -> Option<Rc<Model>> {
@@ -206,8 +209,10 @@ impl ModelManager {
                             println!("Load mesh {} with {} verts", name, vertices.len());
                             println!("ind #{} verts #{}", indices.len(), vertices.len());
 
+                            let compound_name = format!("{}.{}", name, mesh_name).to_lowercase();
+
                             let model = Model {
-                                name: name.to_string(),
+                                name: compound_name,
                                 vertex_buf: mesh_vertex_buf,
                                 index_buf: mesh_index_buf,
                                 index_format: wgpu::IndexFormat::Uint32,
@@ -215,18 +220,18 @@ impl ModelManager {
                                 data: Some((vertices, indices)),
                             };
 
-                            if first_instance {
-                                first_instance = false;
-                                let model_cell = Rc::new(model);
+                            // if first_instance {
+                            //     first_instance = false;
+                            let model_cell = Rc::new(model);
 
-                                //
-                                log(format!(
-                                    "populated model {} with mesh named {}",
-                                    name, mesh_name
-                                ));
+                            //
+                            log(format!(
+                                "populated model {} with mesh named {}",
+                                name, mesh_name
+                            ));
 
-                                meshes.push((mesh_name, model_cell));
-                            }
+                            meshes.push((mesh_name, model_cell));
+                            // }
                         };
                     }
                 }
@@ -236,16 +241,20 @@ impl ModelManager {
                         let mesh = meshes.pop().unwrap();
                         let lower = name.to_lowercase();
                         log(format!("single model stored as {}", name));
-                        //TODO is this mapped at some point?
+                        //TODO is this mapped at some point?`
                         world.index_model(lower.clone(), Rc::clone(&mesh.1));
-                        self.DICTIONARY.insert(lower.to_string(), mesh.1);
+                        self.DICTIONARY
+                            .insert(lower.to_string(), Rc::clone(&mesh.1));
+                        let compound_name = format!("{}.{}", lower, mesh.0).to_lowercase();
+                        log(format!("backup model stored as {}", compound_name));
+                        self.DICTIONARY.insert(compound_name, mesh.1);
                     } else {
                         for m in meshes {
-                            let compound_name = format!("{}.{}", name, m.0).to_lowercase();
-                            log(format!("multi-model stored as {}", compound_name));
+                            log(format!("multi-model stored as {}", m.1.name));
+                            // m.1.name = compound_name;
                             //TODO is this mapped at some point?
-                            world.index_model(compound_name.clone(), Rc::clone(&m.1));
-                            self.DICTIONARY.insert(compound_name, m.1);
+                            world.index_model(m.1.name.clone(), Rc::clone(&m.1));
+                            self.DICTIONARY.insert(m.1.name.clone(), m.1);
                         }
                     }
                 }

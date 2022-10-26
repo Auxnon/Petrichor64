@@ -12,7 +12,7 @@ use crate::{
 
 use glam::{vec4, Vec4};
 use itertools::Itertools;
-use mlua::{Error, Lua, Table};
+use mlua::{Error, Lua, Table, Value};
 use parking_lot::{Mutex, RwLock};
 use std::{
     collections::HashMap,
@@ -160,6 +160,12 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 log("find <model | ???> <search-query>".to_string());
             }
         }
+        "parse" => {
+            if segments.len() > 1 {
+                let s = segments[1].to_string();
+                crate::parse::test(&s)
+            }
+        }
         &_ => return false,
     }
     true
@@ -195,7 +201,7 @@ pub fn init_lua_sys(
     let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
     lua_globals.set("multi", multi.unwrap());
 
-    lua_globals.set("_ents", lua_ctx.create_table()?);
+    // lua_globals.set("_ents", lua_ctx.create_table()?);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -307,17 +313,28 @@ pub fn init_lua_sys(
               (name, t, w, n, e, s, b): (
             String,
             String,
-            String,
-            String,
-            String,
-            String,
-            String
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>
         )| {
             // let mutex = &mut switch.write();
             let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
             // println!("this far-1");
 
-            pitcher.send(MainCommmand::Make(vec![name, t, b, e, w, s, n], tx));
+            pitcher.send(MainCommmand::Make(
+                vec![
+                    name,
+                    t.clone(),
+                    b.unwrap_or(t.clone()),
+                    e.unwrap_or(t.clone()),
+                    w.unwrap_or(t.clone()),
+                    s.unwrap_or(t.clone()),
+                    n.unwrap_or(t),
+                ],
+                tx,
+            ));
             // rx.recv();
             // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
             // mutex.dirty = true;
@@ -461,39 +478,85 @@ pub fn init_lua_sys(
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "spawn",
-        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
-            // let (tx, rx) = std::sync::mpsc::sync_channel::<Arc<std::sync::Mutex<LuaEnt>>>(0);
-
-            let ent = crate::lua_ent::LuaEnt::new(asset, x, y, z, s.unwrap_or(1.));
-            let wrapped = Arc::new(std::sync::Mutex::new(ent));
-            match pitcher.send(MainCommmand::Spawn(wrapped.clone())) {
+        "batch_spawn",
+        move |_, (count, asset, x, y, z, s): (u64, String, f64, f64, f64, Option<f64>,)| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
+            match pitcher.send(MainCommmand::Spawn(
+                asset,
+                x,
+                y,
+                z,
+                s.unwrap_or(1.),
+                count,
+                tx,
+            )) {
                 Ok(_) => {}
                 Err(er) => log(format!("error sending spawn {}", er)),
             }
-            Ok(wrapped)
 
-            // Ok(match rx.recv() {
-            //     Ok(e) => e,
-            //     Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
-            // })
+            Ok(match rx.recv() {
+                Ok(e) => e,
+                Err(e) => vec![Arc::new(std::sync::Mutex::new(LuaEnt::empty()))],
+            })
+        },
+        "Spawns multiple entities"
+    );
 
-            // Ok(1)
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "spawn",
+        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
+            // let ent = crate::lua_ent::LuaEnt::new(asset, x, y, z, s.unwrap_or(1.));
+            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
+                Ok(_) => {}
+                Err(er) => log(format!("error sending spawn {}", er)),
+            }
 
-            // rx.recv()
+            Ok(match rx.recv() {
+                Ok(mut e) => e.remove(0),
+                Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
+            })
         },
         "Spawn an entity"
     );
 
+    let pitcher = main_pitcher.clone();
     lua!(
-        "add",
-        move |lua, e: LuaEnt| {
-            let ents = lua.globals().get::<&str, Table>("_ents")?;
-            ents.set(e.get_id(), e);
+        "kill",
+        move |lu, (ent): (Arc<std::sync::Mutex<LuaEnt>>)| {
+            // ent.
+            // match ent.get("id") {
+            //     Ok(id) => match pitcher.send(MainCommmand::Kill(id)) {
+            //         Ok(_) => {}
+            //         Err(er) => log(format!("error sending spawn {}", er)),
+            //     },
+            //     _ => {}
+            // }
+            // lu.remove_registry_value(ent);
+
+            match pitcher.send(MainCommmand::Kill(ent.lock().unwrap().get_id())) {
+                Ok(_) => {}
+                Err(er) => log(format!("error sending spawn {}", er)),
+            }
+
+            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
+
             Ok(())
         },
-        "Add an entity to our global render table"
+        "Kills an entity"
     );
+
+    // lua!(
+    //     "add",
+    //     move |lua, e: LuaEnt| {
+    //         let ents = lua.globals().get::<&str, Table>("_ents")?;
+    //         ents.set(e.get_id(), e);
+    //         Ok(())
+    //     },
+    //     "Add an entity to our global render table"
+    // );
 
     /**
      * // YELLOW
@@ -506,6 +569,7 @@ pub fn init_lua_sys(
         "crt",
         move |_, table: Table| {
             // pitcher.send(MainCommmand::Globals(table));
+
             let mut hash = HashMap::new();
             for it in table.pairs() {
                 match it {
@@ -519,7 +583,9 @@ pub fn init_lua_sys(
                     _ => {}
                 }
             }
+            println!("crt {:?}", hash);
             pitcher.send(MainCommmand::Globals(hash));
+
             // switch.write().dirty = true;
             Ok(())
         },
@@ -619,8 +685,8 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "sqr",
-        move |_, (x, y, w, h): (f32, f32, f32, f32)| {
-            pitcher.send(MainCommmand::Square(x, y, w, h));
+        move |_, (x, y, w, h): (Value, Value, Value, Value)| {
+            pitcher.send(MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)));
             Ok(())
         },
         "Draw a square on the gui"
@@ -629,8 +695,8 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "line",
-        move |_, (x, y, x2, y2): (f32, f32, f32, f32)| {
-            pitcher.send(MainCommmand::Line(x, y, x2, y2));
+        move |_, (x, y, x2, y2): (Value, Value, Value, Value)| {
+            pitcher.send(MainCommmand::Line(numm(x), numm(y), numm(x2), numm(y2)));
             Ok(())
         },
         "Draw a line on the gui"
@@ -638,16 +704,16 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "text",
-        move |_, (txt, x, y): (String, Option<f32>, Option<f32>)| {
+        move |_, (txt, x, y): (String, Option<Value>, Option<Value>)| {
             pitcher.send(MainCommmand::Text(
                 txt,
                 match x {
-                    Some(o) => o,
-                    _ => 0.,
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
                 },
                 match y {
-                    Some(o) => o,
-                    _ => 0.,
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
                 },
             ));
             Ok(())
@@ -658,16 +724,16 @@ pub fn init_lua_sys(
 
     lua!(
         "img",
-        move |_, (im, x, y): (String, Option<f32>, Option<f32>)| {
+        move |_, (im, x, y): (String, Option<Value>, Option<Value>)| {
             pitcher.send(MainCommmand::DrawImg(
                 im,
                 match x {
-                    Some(o) => o,
-                    _ => 0.,
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
                 },
                 match y {
-                    Some(o) => o,
-                    _ => 0.,
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
                 },
             ));
             Ok(())
@@ -715,8 +781,16 @@ pub fn init_lua_sys(
         move |_, (): ()| { Ok(rand::random::<f32>()) },
         "Random"
     );
-    lua!("flr", move |_, f: f32| { Ok(f.floor()) }, "Floor value");
-    lua!("ceil", move |_, f: f32| { Ok(f.ceil()) }, "Ceil value");
+    lua!(
+        "flr",
+        move |_, f: f32| { Ok(f.floor() as u32) },
+        "Floor value"
+    );
+    lua!(
+        "ceil",
+        move |_, f: f32| { Ok(f.ceil() as u32) },
+        "Ceil value"
+    );
     lua!("abs", move |_, f: f32| { Ok(f.abs()) }, "Absolute value");
     lua!("cos", move |_, f: f32| { Ok(f.cos()) }, "Cosine value");
     lua!("sin", move |_, f: f32| { Ok(f.sin()) }, "Sine value");
@@ -835,6 +909,7 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
         Arc::clone(&core.switch_board),
         core.world.sender.clone(),
         core.singer.clone(),
+        false,
     );
 
     core.catcher = Some(catcher);
@@ -1036,14 +1111,16 @@ fn err(str: String) {
     crate::log::log(format!("com_err::{}", str));
 }
 
+/** A tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val)*/
+pub type NumCouple = (bool, f32);
 pub enum MainCommmand {
     Sky(),
     Gui(),
     Fill(glam::Vec4),
-    Line(f32, f32, f32, f32),
-    Square(f32, f32, f32, f32),
-    Text(String, f32, f32),
-    DrawImg(String, f32, f32),
+    Line(NumCouple, NumCouple, NumCouple, NumCouple),
+    Square(NumCouple, NumCouple, NumCouple, NumCouple),
+    Text(String, NumCouple, NumCouple),
+    DrawImg(String, NumCouple, NumCouple),
     GetImg(String, SyncSender<(u32, u32, Vec<u8>)>),
     Pixel(u32, u32, glam::Vec4),
     CamPos(glam::Vec3),
@@ -1051,7 +1128,16 @@ pub enum MainCommmand {
     Clear(),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
-    Spawn(Arc<std::sync::Mutex<LuaEnt>>),
+    Spawn(
+        String,
+        f64,
+        f64,
+        f64,
+        f64,
+        u64,
+        SyncSender<Vec<Arc<std::sync::Mutex<LuaEnt>>>>,
+    ),
+    Kill(u64),
     Globals(HashMap<String, f32>),
     AsyncError(String),
 }
@@ -1069,6 +1155,14 @@ fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
         .collect()
 }
 
+/** converts or value into a tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val) */
+fn numm(x: mlua::Value) -> NumCouple {
+    match x {
+        mlua::Value::Integer(i) => (true, i as f32),
+        mlua::Value::Number(f) => (false, f as f32),
+        _ => (false, 0.),
+    }
+}
 fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> Vec4 {
     match x {
         mlua::Value::String(s) => match s.to_str() {

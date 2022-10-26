@@ -19,6 +19,7 @@ pub struct LuaEnt {
     tex: String,
     anim: bool,
     dirty: bool,
+    pub dead: bool,
 }
 
 impl UserData for LuaEnt {
@@ -101,6 +102,7 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("id", |_, this| Ok(this.id));
     }
 }
+
 // impl serde::Serialize for LuaEnt {
 //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 //     where
@@ -108,6 +110,7 @@ impl UserData for LuaEnt {
 //         todo!()
 //     }
 // }
+
 impl LuaEnt {
     pub fn empty() -> LuaEnt {
         LuaEnt {
@@ -127,12 +130,13 @@ impl LuaEnt {
             tex: String::new(),
             dirty: false,
             anim: false,
+            dead: false,
         }
     }
 
-    pub fn new(asset: String, x: f64, y: f64, z: f64, scale: f64) -> LuaEnt {
+    pub fn new(id: u64, asset: String, x: f64, y: f64, z: f64, scale: f64) -> LuaEnt {
         LuaEnt {
-            id: 0,
+            id,
             x,
             y,
             z,
@@ -148,11 +152,12 @@ impl LuaEnt {
             tex: String::new(),
             dirty: false,
             anim: false,
+            dead: false,
         }
     }
-    pub fn set_id(&mut self, id: u64) {
-        self.id = id;
-    }
+    // pub fn set_id(&mut self, id: u64) {
+    //     self.id = id;
+    // }
     pub fn get_id(&self) -> u64 {
         // https://stackoverflow.com/questions/39638363/how-can-i-use-a-hashmap-with-f64-as-key-in-rust
         self.id
@@ -202,6 +207,7 @@ impl Clone for LuaEnt {
             tex: self.tex.clone(),
             dirty: false,
             anim: self.anim,
+            dead: false,
         }
     }
 }
