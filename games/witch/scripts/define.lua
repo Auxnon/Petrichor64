@@ -1,0 +1,1 @@
+---kill @type fun(ent:userdata)

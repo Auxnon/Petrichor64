@@ -14,6 +14,10 @@ crt({
     modernize = 1
 })
 
+MID = 12
+
+
+
 function tern(cond, T, F)
     if cond then
         return T
@@ -24,68 +28,6 @@ end
 
 key_delay = 0
 
-function wallB(x)
-    for i = 1, 12 do
-        for j = 0, 6 do
-            tile("witch0", x + i - 6, 18, j)
-        end
-    end
-end
-
-function wallF(x)
-    for i = 1, 8 do
-        for j = 2, 6 do
-            tile("witch0", x, 10 + i, j)
-        end
-    end
-    for i = 3, 8 do
-        for j = 0, 2 do
-            tile("witch0", x, 10 + i, j)
-        end
-    end
-end
-
-function floor(x)
-    for i = -6, 6 do
-        for j = 1, 8 do
-            tile("witch0", x + i, j + 10, -1)
-        end
-    end
-end
-
-function treeline(x)
-    for i = -5, 5, 2 do
-        for j = 1, 90 do
-            if (i * j) % 5 == 0 then
-                tile("witch-blocks", x + i, -12 + j, 0, flr(rnd() * 4))
-            end
-
-        end
-    end
-    for i = -5, 5 do
-        for j = 1, 90 do
-            v = 0
-            t = 0
-            local l = rnd()
-            if l > 0.8 then
-                v = 3
-            elseif l > 0.7 then
-                v = tern(rnd() > 0.5, 7, 8)
-                t = rnd() * 4
-                tile("witch-grass6", x + i - 1, -12 + j - 1, -1, 0)
-                tile("witch-grass1", x + i - 1, -12 + j, -1, 0)
-                tile("witch-grass6", x + i + 1, -12 + j - 1, -1, 0)
-                tile("witch-grass1", x + i, -12 + j - 1, -1, 0)
-
-                tile("witch-grass6", x + i + 1, -12 + j + 1, -1, 0)
-                tile("witch-grass1", x + i + 1, -12 + j, -1, 0)
-                tile("witch-grass6", x + i - 1, -12 + j + 1, -1, 0)
-                tile("witch-grass1", x + i, -12 + j + 1, -1, 0)
-            end
-            tile("witch-grass" .. (v), x + i, -12 + j, -1, t)
-        end
-    end
-end
 
 local l = {
     [1] = {
@@ -95,112 +37,169 @@ local l = {
 }
 function main()
 
-    player = spawn('witchy', 0, 12, -.5)
+
+
+
     DISTANCE = 12
     room_pos = {
         x = 0,
         y = 0
     }
-    move_pos = {
-        x = 0,
-        y = 0
-    }
-    move_index = 2
-    move_spots = {-8, -3, 3, 8}
+
+    move_index = 5
+    move_spots = { -27, -20, -17, -8, -3, 3, 8, 17, 20, 27 }
     cam_pos = {
         x = 0,
         y = -4,
         z = 2
     }
+
+    move_pos = {
+        x = move_spots[move_index],
+        y = 0
+    }
+
+    player = spawn('wood-door.doorframe', move_spots[move_index], MID, -.5)
+    -- player:anim("attack")
+
     tiler = 0
 
-    tile("witch0", 0, 12, -1)
+    just_grass(0)
+    treeline(0, 40, 90)
+    tile("witch0", 0, MID, -1)
     wallB(0)
     wallF(-6)
+    rdoor = spawn("wood-door.door", 6, 12.5, -0.5)
+    ldoor = spawn("wood-door.door", -6, 12.5, -0.5)
+    cauldron = spawn("cauldron", 0, MID, 0.5)
     wallF(6)
     floor(0)
-    tile("witch1", -DISTANCE, 12, -1)
-    tile("witch2", DISTANCE, 12, -1)
-    treeline(DISTANCE)
-    treeline(-DISTANCE)
+    roof(0)
+    tile("witch1", -DISTANCE, MID, -1)
+    tile("witch2", DISTANCE, MID, -1)
 
-    -- cool shape
-    -- for i = -8, 8 do
-    --     for j = -8, 8 do
-    --         for k = -8, 8 do
-    --             if abs(i) + abs(j) + abs(k) == 16 then
-    --                 tile("witch2", i, j + 12, k)
-    --             end
-    --         end
-    --     end
-    -- end
+    treeline(DISTANCE * 2, 30, 90)
+    light_tree(2 * DISTANCE)
+    roadin(DISTANCE * 2)
 
-    tile("witch0", 0, 12, 0)
+
+
+
+    treeline(DISTANCE, 30, 90)
+    -- graves(DISTANCE)
+    light_tree(DISTANCE)
+    -- light_tree(DISTANCE)
+    roadup(DISTANCE)
+
+    treeline(-DISTANCE * 2, 30, 90)
+    light_tree(-2 * DISTANCE)
+
+    treeline(-DISTANCE, 30, 90)
+    graves(-DISTANCE)
+
+
+    treeline(3 * DISTANCE, 1, 90)
+    treeline(-3 * DISTANCE, 1, 90)
+
+    water(DISTANCE * 2)
+
+    --
+
+    -- tile("witch0", 0, MID, 0)
     enemy_start()
-    particle_init()
+    Particle_Init()
+    init_items()
 
+    -- local im = gimg("example")
+    -- for i = 1, #im.data do
+    --     log("#" .. im.data[i])
+    -- end
+    -- log("image is " .. im.w .. "," .. im.h .. " and " .. im.data)
 end
 
--- function bld()
---     for i = -200, 200 do
---         -- for j = 0, 10 do
---         local j = tiler
---         -- if (i + j) % 2 == 0 then
---         -- local l = "witch" .. math.floor(rnd() * 3)
---         local l = "xub"
---         -- log(l)
---         local h = 1
---         if (i + j) % 10 == 0 then
---             h = cos(i / 10.) * 8.
---         end
---         tile(l, i, j + 10, h - 12, flr(rnd() * 6))
---         -- end
---         -- end
---     end
--- end
+local function clamp(before)
 
-function clamp()
-    if room_pos.x > DISTANCE then
-        room_pos.x = DISTANCE
-    elseif room_pos.x < -DISTANCE then
+    if move_index == 1 or move_index == 2 then
+        room_pos.x = -2 * DISTANCE
+    elseif move_index == 3 or move_index == 4 then
         room_pos.x = -DISTANCE
+    elseif move_index == 5 or move_index == 6 then
+        room_pos.x = 0
+    elseif move_index == 7 or move_index == 8 then
+        room_pos.x = DISTANCE
+    elseif move_index == 9 or move_index == 10 then
+        room_pos.x = 2 * DISTANCE
     end
+
+    -- door check
+    if (before == 4 and move_index == 5) then
+        ldoor_dest = 2 * 3.14
+        door_delay = 60
+    end
+    if (before == 5 and move_index == 4) then
+        ldoor_dest = 3.14
+        door_delay = 60
+
+    end
+
+    if (before == 6 and move_index == 7) then
+        rdoor_dest = 2 * 3.14
+        door_delay = 60
+    end
+    if (before == 7 and move_index == 6) then
+        rdoor_dest = 3.14
+        door_delay = 60
+    end
+
 end
 
-local r = 0
 local tile_delay = 0
+door_delay = 60
+ldoor_dest = 3 * 3.14 / 2
+rdoor_dest = 3 * 3.14 / 2
 function loop()
-    -- r = r + 0.001
-    -- camrot(r, 0)
-    -- clear_tiles()
-    -- tiler = tiler + 1
-    -- bld()
+    -- door.rot_z = -3.14 / 2
 
     tile_delay = tile_delay + 1
-    -- enemy_loop()
-    particle_loop()
+    enemy_loop()
+    Particle_Loop()
+    item_loop()
     if key_delay > 10 then
         if key("a") then
 
-            room_pos.x = room_pos.x - DISTANCE
-            if move_index == 4 then
-                move_index = 3
-            else
-                move_index = 1
+            -- room_pos.x = room_pos.x - DISTANCE
+            -- if move_index == 4 then
+            --     move_index = 3
+            -- else
+            --     move_index = 1
+            -- end
+            local before = move_index
+            if move_index > 1 then
+                move_index = move_index - 1
             end
             move_pos.x = move_spots[move_index]
-            clamp()
+
+
+            -- room_pos.x = (move_index / 2) * DISTANCE
+            clamp(before)
             key_delay = 0
 
         elseif key("d") then
-            room_pos.x = room_pos.x + DISTANCE
-            if move_index == 1 then
-                move_index = 2
-            else
-                move_index = 4
+            -- room_pos.x = room_pos.x + DISTANCE
+            -- if move_index == 1 then
+            --     move_index = 2
+            -- else
+            --     move_index = 4
+            -- end
+
+            local before = move_index
+            if move_index < #move_spots then
+                move_index = move_index + 1
             end
             move_pos.x = move_spots[move_index]
-            clamp()
+            -- room_pos.x = ((move_index-#move_spots) / 2) * DISTANCE
+
+            clamp(before)
             key_delay = 0
         end
     else
@@ -227,13 +226,25 @@ function loop()
         table.remove(l, 1)
     end
 
-    sqr(100, 100, 10, 10)
+    if door_delay > 0 then
+        -- print("door" .. ldoor.rot_z)
+        if door_delay < 30 then
+            ldoor_dest = 3 * 3.14 / 2
+            rdoor_dest = 3 * 3.14 / 2
+        end
+        ldoor.rot_z = ldoor.rot_z - (ldoor.rot_z - ldoor_dest) / 10.
+        rdoor.rot_z = rdoor.rot_z - (rdoor.rot_z - rdoor_dest) / 10.
+        door_delay = door_delay - 1
+    end
 
-    -- img("zom", 255, 1)
-    -- line(0, 0, 1, 1)
-    cam_pos.y = cam_pos.y + 0.005
-    text(cam_pos.y, 0, 200)
+
+
+    sqr(0.2, 0.8, 0.2, 0.1)
+
+    text(player.x, 0, 200)
     campos(cam_pos.x, cam_pos.y, cam_pos.z)
+
+
 
     -- camrot(1.57, r)
     -- r = r - 0.001
