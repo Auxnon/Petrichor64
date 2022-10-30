@@ -17,3 +17,8 @@ Cargo.lock
 pic.png
 tile.png
 .vscode/settings.json
+/moonscript
+/moon
+moonscript.lua
+/lulpeg
+lulpeg.lua
