@@ -220,6 +220,7 @@ impl<'lua> Ent {
      * provide iteration to determine how to animate if applicable
      */
     pub fn get_uniform(&self, lua: &LuaEnt, iteration: u64) -> EntityUniforms {
+        let flipped=lua.flipped;
         let model = self.build_meta(lua);
         // self.matrix = model;
         let effects = [
@@ -238,13 +239,24 @@ impl<'lua> Ent {
              };
 
             // println!("animating {} {}", self.anim.len(), a);
-            [a.x, a.y, a.z, a.w]
+            // println!("animating {}",flipped);
+            if flipped{
+                [a.x+a.z, a.y,- a.z, a.w]
+            }else{
+                [a.x, a.y, a.z, a.w]
+            }
+            
         },
         None=>{
-            let t=
-            [self.tex.x, self.tex.y, self.tex.z, self.tex.w];
+            if flipped{
+                
+            [self.tex.x+self.tex.z, self.tex.y, -self.tex.z, self.tex.w]
+                
+            }else{
+                
+            [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
+            }
             // println!("t {:?}",t);
-            t
         }};
 
         let color = [

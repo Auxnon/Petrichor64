@@ -19,6 +19,7 @@ pub struct LuaEnt {
     tex: String,
     anim: bool,
     dirty: bool,
+    pub flipped: bool,
     pub dead: bool,
 }
 
@@ -43,9 +44,13 @@ impl UserData for LuaEnt {
             //     }
             //     _ => {}
             // }
-            this.tex = tex;
-            this.anim = false;
-            this.dirty = true;
+            if this.tex != tex {
+                this.tex = tex;
+                this.dirty = true;
+            } else if this.anim {
+                this.anim = false;
+                this.dirty = true;
+            }
 
             Ok(true)
         });
@@ -99,6 +104,12 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("vel_z", |_, this| Ok(this.vel_z));
         fields.add_field_method_set("vel_z", |_, this, vel_z: f64| Ok(this.vel_z = vel_z));
 
+        fields.add_field_method_get("flipped", |_, this| Ok(this.flipped));
+        fields.add_field_method_set("flipped", |_, this, flipped: bool| {
+            // println!("flipped it {}", flipped);
+            Ok(this.flipped = flipped)
+        });
+
         fields.add_field_method_get("id", |_, this| Ok(this.id));
     }
 }
@@ -131,6 +142,7 @@ impl LuaEnt {
             dirty: false,
             anim: false,
             dead: false,
+            flipped: false,
         }
     }
 
@@ -153,6 +165,7 @@ impl LuaEnt {
             dirty: false,
             anim: false,
             dead: false,
+            flipped: false,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -208,6 +221,7 @@ impl Clone for LuaEnt {
             dirty: false,
             anim: self.anim,
             dead: false,
+            flipped: self.flipped,
         }
     }
 }
