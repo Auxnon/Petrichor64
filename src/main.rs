@@ -804,24 +804,29 @@ impl Core {
                                 // println!("this far3");
                             }
                         }
-                        MainCommmand::Spawn(asset, x, y, z, s, count, tx) => {
-                            let mut v = vec![];
-                            for i in 0..count {
-                                let index = self.ent_manager.id_counter;
-                                self.ent_manager.id_counter += 1;
-                                let ent =
-                                    crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
-                                // // Rc<RefCell
-                                let wrapped = Arc::new(std::sync::Mutex::new(ent));
-                                v.push(Arc::clone(&wrapped));
+                        MainCommmand::Spawn(lent) => {
+                            //asset, x, y, z, s, count, tx) => {
+                            // let mut v = vec![];
+                            // for i in 0..count {
+                            //     let index = self.ent_manager.id_counter;
+                            //     self.ent_manager.id_counter += 1;
+                            //     let ent =
+                            //         crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
+                            //     // // Rc<RefCell
+                            //     let wrapped = Arc::new(std::sync::Mutex::new(ent));
+                            //     v.push(Arc::clone(&wrapped));
+                            //     self.ent_manager.create_from_lua(
+                            //         &self.tex_manager,
+                            //         &self.model_manager,
+                            //         wrapped,
+                            //     );
+                            // }
                                 self.ent_manager.create_from_lua(
                                     &self.tex_manager,
                                     &self.model_manager,
-                                    wrapped,
+                                lent,
                                 );
-                            }
-
-                            tx.send(v);
+                            // tx.send(v);
                         }
                         MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
                         MainCommmand::Globals(table) => {

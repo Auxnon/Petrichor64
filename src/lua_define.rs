@@ -287,6 +287,7 @@ fn start(
 
         let keys_mutex = Rc::new(Mutex::new(keys));
         let mice_mutex = Rc::new(Mutex::new(mice));
+        let ent_counter = Rc::new(Mutex::new(2u64));
 
         let lua_ctx = if true {
             unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
@@ -320,6 +321,7 @@ fn start(
             Rc::clone(&keys_mutex),
             Rc::clone(&mice_mutex),
             Rc::clone(&pads),
+            Rc::clone(&ent_counter),
         ) {
             Err(err) => {
                 log(format!("lua command injection failed: {}", err));

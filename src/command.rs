@@ -182,6 +182,7 @@ pub fn init_lua_sys(
     keys: Rc<Mutex<[bool; 256]>>,
     mice: Rc<Mutex<[f32; 4]>>,
     gamepad: Rc<Mutex<Pad>>,
+    ent_counter: Rc<Mutex<u64>>,
 ) -> Result<(), Error> {
     println!("init lua sys");
 
@@ -478,29 +479,51 @@ pub fn init_lua_sys(
         move |_, button: String| { Ok(gamepad.lock().check(button)) },
         "Check how much a button is pressed, axis gives value between -1 and 1"
     );
-
+    let ent_counter2 = Rc::clone(&ent_counter);
     let pitcher = main_pitcher.clone();
     lua!(
         "batch_spawn",
         move |_, (count, asset, x, y, z, s): (u64, String, f64, f64, f64, Option<f64>,)| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
-            match pitcher.send(MainCommmand::Spawn(
-                asset,
-                x,
-                y,
-                z,
-                s.unwrap_or(1.),
-                count,
-                tx,
-            )) {
-                Ok(_) => {}
-                Err(er) => log(format!("error sending spawn {}", er)),
-            }
+            // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
+            // match pitcher.send(MainCommmand::Spawn(
+            //     asset,
+            //     x,
+            //     y,
+            //     z,
+            //     s.unwrap_or(1.),
+            //     count,
+            //     tx,
+            // )) {
+            //     Ok(_) => {}
+            //     Err(er) => log(format!("error sending spawn {}", er)),
+            // }
 
-            Ok(match rx.recv() {
-                Ok(e) => e,
-                Err(e) => vec![Arc::new(std::sync::Mutex::new(LuaEnt::empty()))],
-            })
+            // Ok(match rx.recv() {
+            //     Ok(e) => e,
+            //     Err(e) => vec![Arc::new(std::sync::Mutex::new(LuaEnt::empty()))],
+            // })
+
+            let mut v = vec![];
+            for i in 1..count {
+                let ent = crate::lua_ent::LuaEnt::new(
+                    *ent_counter2.lock(),
+                    asset.clone(),
+                    x,
+                    y,
+                    z,
+                    s.unwrap_or(1.),
+                );
+                let wrapped = Arc::new(std::sync::Mutex::new(ent));
+                *ent_counter2.lock() += 1;
+                // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
+
+                match pitcher.send(MainCommmand::Spawn(Arc::clone(&wrapped))) {
+                    Ok(_) => {}
+                    Err(er) => log(format!("error sending spawn {}", er)),
+                }
+                v.push(wrapped)
+            }
+            Ok(v)
         },
         "Spawns multiple entities"
     );
@@ -509,18 +532,23 @@ pub fn init_lua_sys(
     lua!(
         "spawn",
         move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
-            // let ent = crate::lua_ent::LuaEnt::new(asset, x, y, z, s.unwrap_or(1.));
-            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
-            match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
+            // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
+            let ent =
+                crate::lua_ent::LuaEnt::new(*ent_counter.lock(), asset, x, y, z, s.unwrap_or(1.));
+            let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            *ent_counter.lock() += 1;
+            // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
+
+            match pitcher.send(MainCommmand::Spawn(Arc::clone(&wrapped))) {
                 Ok(_) => {}
                 Err(er) => log(format!("error sending spawn {}", er)),
             }
 
-            Ok(match rx.recv() {
-                Ok(mut e) => e.remove(0),
-                Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
-            })
+            // Ok(match rx.recv() {
+            //     Ok(mut e) => e.remove(0),
+            //     Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
+            // })
+            Ok(wrapped)
         },
         "Spawn an entity"
     );
@@ -1131,15 +1159,16 @@ pub enum MainCommmand {
     Clear(),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
-    Spawn(
-        String,
-        f64,
-        f64,
-        f64,
-        f64,
-        u64,
-        SyncSender<Vec<Arc<std::sync::Mutex<LuaEnt>>>>,
-    ),
+    // Spawn(
+    //     String,
+    //     f64,
+    //     f64,
+    //     f64,
+    //     f64,
+    //     u64,
+    //     SyncSender<Vec<Arc<std::sync::Mutex<LuaEnt>>>>,
+    // ),
+    Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Kill(u64),
     Globals(HashMap<String, f32>),
     AsyncError(String),
