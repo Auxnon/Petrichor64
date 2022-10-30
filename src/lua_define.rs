@@ -117,6 +117,8 @@ impl LuaCore {
     pub fn call_main(&self) {
         const empty: ControlState = ([false; 256], [0f32; 4]);
         self.async_func(&"main()".to_string(), empty);
+
+        log("called main method of main script".to_string());
     }
 
     pub fn call_loop(&self, bits: ControlState) {
@@ -125,7 +127,8 @@ impl LuaCore {
 
     pub fn die(&self) {
         log("lua go bye bye".to_string());
-        self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
+        self.async_inject(&"_self_destruct".to_string(), None);
+        // self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
     }
 }
 fn lua_load(lua: &Lua, st: &String) {
@@ -255,18 +258,22 @@ fn start(
 
     let mut online = false;
     let mut closer = None;
-    let net = match crate::online::init() {
-        Ok((nout, nin)) => {
-            match nout.send(vec![0f32; 3]) {
-                Ok(s) => {
-                    closer = Some(nout.clone());
-                    online = true;
+    let net = if false {
+        match crate::online::init() {
+            Ok((nout, nin)) => {
+                match nout.send(vec![0f32; 3]) {
+                    Ok(s) => {
+                        closer = Some(nout.clone());
+                        online = true;
+                    }
+                    Err(e) => println!("pre send failed at {}", e),
                 }
-                Err(e) => println!("pre send failed at {}", e),
+                Some((nout, nin))
             }
-            Some((nout, nin))
+            _ => None,
         }
-        _ => None,
+    } else {
+        None
     };
 
     // let pitchers = Arc::new(pitcher);
@@ -405,6 +412,17 @@ fn start(
                 }
             } else {
                 //MARK if loop() then path string is the keyboard keys
+
+                if s1 == "_self_destruct" {
+                    match closer {
+                        Some(n) => {
+                            n.send(vec![-99., 0., 0.]);
+                        }
+                        _ => {}
+                    }
+                    break;
+                }
+
                 // TODO load's chunk should call set_name to "main" etc, for better error handling
                 let res = lua_ctx.load(&s1).eval::<mlua::Value>();
                 match channel {

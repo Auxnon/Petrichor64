@@ -335,7 +335,10 @@ pub fn init_lua_sys(
                 ],
                 tx,
             ));
-            // rx.recv();
+            // match rx.recv() {
+            //     Ok(_) => {}
+            //     Err(_) => {}
+            // }
             // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
             // mutex.dirty = true;
             // drop(mutex);
@@ -871,11 +874,11 @@ fn res(target: &str, r: Result<(), Error>) {
 
 /** core game reset, drop all resources including lua */
 pub fn reset(core: &mut Core) {
+    core.lua_master.die();
     core.tex_manager.reset();
     core.model_manager.reset();
     core.gui.clean();
 
-    core.lua_master.die();
     core.world.destroy_it_all();
     core.global.clean();
 
