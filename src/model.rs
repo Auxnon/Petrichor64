@@ -7,13 +7,10 @@ use wgpu::{util::DeviceExt, Device};
 use crate::{texture::TexManager, world::World};
 
 pub struct ModelManager {
-    //static ref controls: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     pub CUBE: Rc<Model>,
     pub PLANE: Rc<Model>,
     // pub CUSTOM: Rc<Model>,
     pub DICTIONARY: HashMap<String, Rc<Model>>,
-    // pub static ref INT_DICTIONARY:RwLock<HashMap<String,u32>> = RwLock::new(HashMap::new());
-    // pub static ref INT_MAP:RwLock<FxHashMap<u32,Arc<OnceCell<Model>> >> = RwLock::new(FxHashMap::default());
 }
 
 impl ModelManager {
@@ -368,15 +365,10 @@ impl ModelManager {
         //TODO is this mapped at some point?
         let model_index = world.index_model(name.clone(), Rc::clone(&rced_model));
         self.DICTIONARY.insert(name.clone(), rced_model);
-        // log(format!(
-        //     "created new model cube {} with index {}",
-        //     name, model_index
-        // ));
+        log(format!("created new model cube {}", name));
     }
 
     pub fn reset(&mut self) {
-        // INT_DICTIONARY.write().clear();
-        // INT_MAP.write().clear();
         self.DICTIONARY.clear();
         self.DICTIONARY
             .insert("cube".to_string(), self.cube_model());
