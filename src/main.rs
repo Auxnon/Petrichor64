@@ -278,22 +278,6 @@ impl Core {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
-                    // wgpu::BindGroupLayoutEntry {
-                    //     binding: 3,
-                    //     visibility: wgpu::ShaderStages::FRAGMENT,
-                    //     ty: wgpu::BindingType::Texture {
-                    //         multisampled: false,
-                    //         sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
-                    //         view_dimension: wgpu::TextureViewDimension::D2,
-                    //     },
-                    //     count: None,
-                    // },
-                    // wgpu::BindGroupLayoutEntry {
-                    //     binding: 4,
-                    //     visibility: wgpu::ShaderStages::FRAGMENT,
-                    //     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    //     count: None,
-                    // },
                 ],
             });
 
@@ -500,18 +484,6 @@ impl Core {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
                 },
-                // wgpu::BindGroupEntry {
-                //     binding: 3,
-                //     resource: wgpu::BindingResource::TextureView(&sky_texture_view),
-                // },
-                // wgpu::BindGroupEntry {
-                //     binding: 4,
-                //     resource: wgpu::BindingResource::Sampler(&sky_sampler),
-                // },
-                // wgpu::BindGroupEntry {
-                //     binding: 3,
-                //     resource: wgpu::BindingResource::Sampler(&post_sampler),
-                // },
             ],
             label: None,
         });
@@ -522,7 +494,6 @@ impl Core {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "gui_vs_main",
-                //targets:&[wgpu::],
                 buffers: &[], //&vertex_buffers, //,
             },
 
@@ -634,7 +605,7 @@ impl Core {
         let stream_result = match stream {
             Ok(stream) => Some(stream),
             Err(e) => {
-                crate::log::log(format!("sound steam error, continuing in silence!: {}", e));
+                crate::log::log(format!("sound stream error, continuing in silence!: {}", e));
                 None
             }
         };
@@ -692,42 +663,6 @@ impl Core {
     // }
 
     fn update(&mut self) {
-        // match self.switch_board.try_read() {
-        //     Some(r) => {
-        //         println!("try_read");
-        //         if r.dirty {
-        //             drop(r);
-        //             let mut mutex = self.switch_board.write();
-
-        //             if mutex.remaps.len() > 0 {
-        //                 for item in mutex.remaps.drain(0..) {
-        //                     if item.0 == "globals" {
-        //                         match item.1.as_str() {
-        //                             "resolution" => {
-        //                                 self.global.screen_effects.crt_resolution = item.2
-        //                             }
-        //                             "curvature" => {
-        //                                 self.global.screen_effects.corner_harshness = item.2
-        //                             }
-        //                             "flatness" => self.global.screen_effects.corner_ease = item.2,
-        //                             "dark" => self.global.screen_effects.dark_factor = item.2,
-        //                             "bleed" => self.global.screen_effects.lumen_threshold = item.2,
-        //                             "glitch" => self.global.screen_effects.glitchiness = item.2,
-        //                             "high" => self.global.screen_effects.high_range = item.2,
-        //                             "low" => self.global.screen_effects.low_range = item.2,
-        //                             "modernize" => self.global.screen_effects.modernize = item.2,
-        //                             _ => {}
-        //                         }
-        //                     }
-        //                 }
-        //                 mutex.remaps.clear();
-        //             }
-        //             mutex.dirty = false;
-        //             // r.dirty = false;
-        //         }
-        //     }
-        //     None => {}
-        // }
         match self.catcher {
             Some(ref mut c) => {
                 for p in c.try_iter() {
@@ -877,15 +812,6 @@ impl Core {
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        // match self.loop_helper.report_rate() {
-        //     Some(fps)=>{
-
-        //     }
-        //     _=>{
-
-        //     }
-        // }
-
         let _delta = self.loop_helper.loop_start();
 
         // or .loop_start_s() for f64 seconds
@@ -897,14 +823,6 @@ impl Core {
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
-            // println!(
-            //     " we have {} ents and {} luaents",
-            //     self.ent_manager.entities.len(),
-            //     self.ent_manager.ent_table.len()
-            // );
-            // for e in self.ent_manager.entities.values() {
-            //     println!("iter text {}", e.tex);
-            // }
         }
 
         let s = render::render_loop(self, self.global.iteration);
