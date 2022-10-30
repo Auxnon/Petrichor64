@@ -6,7 +6,7 @@ use image::{ImageBuffer, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
-const LETTER_SIZE: u32 = 6;
+const LETTER_SIZE: u32 = 8;
 const GUI_DIM: u32 = 320;
 
 pub struct Gui {
@@ -48,7 +48,7 @@ impl Gui {
     ) -> Gui {
         let d = gui_img.dimensions();
 
-        let letters = match crate::texture::load_img(&"6x6unicode.png".to_string()) {
+        let letters = match crate::texture::load_img(&"6x6-8unicode.png".to_string()) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {
                 #[cfg(not(windows))]
