@@ -40,9 +40,9 @@ function Dict.new(self, t)
 
     ---@type fun(self:table,i:integer):table|nil
     function dict:get(i)
-        print("get it " .. i)
+        -- print("get it " .. i)
         local e = self.hash[i]
-        print("we got " .. type(e))
+        -- print("we got " .. type(e))
         return e
     end
 
