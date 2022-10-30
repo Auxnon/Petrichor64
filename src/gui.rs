@@ -153,7 +153,7 @@ impl Gui {
             }
         }
     }
-    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: i64, y: i64) {
+    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
         let targ = if onto_console {
             &mut self.console
         } else {
@@ -165,10 +165,12 @@ impl Gui {
                 &mut self.main
             }
         };
+        let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
+        let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
 
         for (i, line) in txt.lines().enumerate() {
-            let ly = y + i as i64 * (LETTER_SIZE as i64 + 2);
-            let mut lx = x + (LETTER_SIZE) as i64;
+            let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
+            let mut lx = xx + (LETTER_SIZE) as i64;
             for c in line.chars() {
                 let mut ind = c as u32;
                 if ind > 255 {
@@ -197,8 +199,8 @@ impl Gui {
         tex_manager: &mut TexManager,
         image: &String,
         onto_console: bool,
-        x: i64,
-        y: i64,
+        x: NumCouple,
+        y: NumCouple,
     ) {
         let targ = if onto_console {
             &mut self.console
@@ -222,7 +224,9 @@ impl Gui {
             (source.z * w as f32) as u32,
             (source.w * h as f32) as u32,
         );
-        image::imageops::overlay(targ, &mut sub.to_image(), x, y);
+        let xx = if x.0 { x.1 } else { x.1 * self.size[0] as f32 };
+        let yy = if y.0 { y.1 } else { y.1 * self.size[1] as f32 };
+        image::imageops::overlay(targ, &mut sub.to_image(), xx as i64, yy as i64);
 
         // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
         // self.dirty = true;
@@ -335,9 +339,9 @@ impl Gui {
         let height = self.size[1];
 
         let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
-        let yy = y.max(0.) * height as f32;
-        let ww = (w.max(0.) * width as f32).max(1.);
-        let hh = (h.max(0.) * height as f32).max(1.);
+        let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
+        let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
+        let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
         // let mut im = RgbaImage::new(w, h);
         // image::imageops::overlay(&mut self.main, &mut im, x, y);
         draw_filled_rect_mut(
@@ -355,14 +359,14 @@ impl Gui {
         ];
     }
 
-    pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32) {
+    pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple) {
         let width = self.size[0];
         let height = self.size[1];
 
-        let xx1 = x1.max(0.) * width as f32;
-        let yy1 = y1.max(0.) * height as f32;
-        let xx2 = x2.max(0.) * width as f32;
-        let yy2 = y2.max(0.) * height as f32;
+        let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
+        let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
+        let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
+        let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
         // let mut im = RgbaImage::new(w, h);
         // image::imageops::overlay(&mut self.main, &mut im, x, y);
 
@@ -495,6 +499,7 @@ impl Gui {
         // //let out = crate::texture::make_tex(device, queue, &self.img);
     }
 }
+
 pub fn init_image(
     device: &Device,
     queue: &Queue,

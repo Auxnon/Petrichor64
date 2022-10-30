@@ -755,16 +755,10 @@ impl Core {
                         MainCommmand::Line(x, y, x2, y2) => {
                             self.gui.line(x, y, x2, y2);
                         }
-                        MainCommmand::Text(s, x, y) => {
-                            self.gui.direct_text(&s, false, x as i64, y as i64)
+                        MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
+                        MainCommmand::DrawImg(s, x, y) => {
+                            self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
                         }
-                        MainCommmand::DrawImg(s, x, y) => self.gui.draw_image(
-                            &mut self.tex_manager,
-                            &s,
-                            false,
-                            x as i64,
-                            y as i64,
-                        ),
                         MainCommmand::GetImg(s, tx) => {
                             tx.send(self.tex_manager.get_img(&s));
                         }
