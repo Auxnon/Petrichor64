@@ -5,6 +5,7 @@ local cloud
 local dirt_z = 0
 pi = 3.1457
 tau = pi * 2
+TITLE_UP = false
 function logo()
     local top = room_pos.z
     campos(0, 0, top)
@@ -32,9 +33,11 @@ function logo()
 end
 
 function logo_loop()
-    if key("a") or key("x") or key("c") or key("space") then
+    if key("z") or key("x") or key("c") or key("space") then
         logo_delay = 0
+        -- reload()
     end
+
     local top = room_pos.z
     if dirt.rot_z < (tau / 8) then
         dirt.rot_z = dirt.rot_z + 00.08
@@ -44,9 +47,9 @@ function logo_loop()
             end
 
             for i = 0, 5 do
-                local lo = spawn("logo" .. i, i + -1.75, 6, -2.25 + top)
+                local lo = spawn("logo" .. i, i + -1.75, 6, -2.0 + top)
             end
-            text("Interpreted Game System", 40, 200)
+            text("Interpreted Game System", 40, 220)
         end
 
     end

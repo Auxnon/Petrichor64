@@ -19,9 +19,13 @@ function Dict.new(self, t)
         end
 
         table.insert(self._list, 1, e2)
-        self.hash[self.iterator] = e2
-        e2.id = self.iterator
-        self.iterator = self.iterator + 1
+
+        -- only add id if we don't have one
+        if not e2.id then
+            e2.id = self.iterator
+            self.iterator = self.iterator + 1
+        end
+        self.hash[e2.id] = e2
         return e2
     end
 

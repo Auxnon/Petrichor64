@@ -3,25 +3,28 @@ Guys = {}
 Tools = {}
 Fires = {}
 
-ZOM_SPEED = { 240, 120 }
+
 
 function zombie()
-    local z = spawn("zom", -DISTANCE + (rnd() * 6) - 9, 12, -0.5)
-    z:anim("zom.rise")
-    local e = { delay = 90, ent = z }
-    Zoms:add(e)
+    if not ZOM_BAN then
+        local z = spawn("zom", -DISTANCE + (rnd() * 6) - 9, 12, -0.5)
+        z:anim("zom.rise")
+        local e = { delay = 90, ent = z }
+        Zoms:add(e)
+    end
 end
 
 function guy()
-    local z = spawn("guy", DISTANCE * 2, 0, -0.5)
-    z.flipped = true
-    z:anim("guy.walk")
+    if not GUY_STINK then
+        local z = spawn("guy", DISTANCE * 2, 0, -0.5)
+        z.flipped = true
+        z:anim("guy.walk")
 
-    local tool = spawn("mob-tools" .. flr(rnd() * 3), DISTANCE * 2, 0, -0.5)
+        local tool = spawn("mob-tools" .. flr(rnd() * 3), DISTANCE * 2, 0, -0.5)
 
-    local e = { delay = 90, ent = z, fighting = false, stopat = 8 + (rnd() * 4), tool = tool }
-    Guys:add(e)
-
+        local e = { delay = 90, ent = z, fighting = false, stopat = 8 + (rnd() * 4), tool = tool }
+        Guys:add(e)
+    end
 
 end
 
@@ -49,12 +52,12 @@ local delay = 0
 local gdelay = 0
 function enemy_loop()
     -- zoom.y = zoom.y + 0.02
-    if delay > 240 then
+    if delay > ZOM_RATE then
         zombie()
         delay = 0
     end
 
-    if gdelay > 480 then
+    if gdelay > GUY_RATE then
         guy()
         gdelay = 0
     end
@@ -118,17 +121,32 @@ function enemy_loop()
                 move(f, e, 1)
             end
         else
+            if GUY_STINK then
+                e.flipped = false
+            else
+                e.flipped = true
+            end
             if e.y < MID then
-                e.y = e.y + 0.015
+                if GUY_STINK then
+                    e.y = e.y - 0.03
+                else
+                    e.y = e.y + 0.015
+                end
             elseif e.x > g.stopat then
-                e.x = e.x - 0.01
+                if GUY_STINK then
+                    e.x = e.x + 0.02
+                else
+                    e.x = e.x - 0.01
+                end
             elseif not g.fighting then
                 g.fighting = true
                 e:anim("guy.angry")
+            elseif GUY_STINK then
+                e:anim("guy.walk")
+                e.x = e.x + 0.02
             end
 
             if g.tool then
-                -- print("tool")
                 g.tool.x = e.x - 0.375
                 g.tool.y = e.y + 0.1
                 g.tool.z = e.z
@@ -137,7 +155,7 @@ function enemy_loop()
     end
 
     local changed_burn = BURNING
-    BURNING = fighters > 0
+    BURNING = fighters > 10
 
     if changed_burn and not BURNING then
         for i = 1, 10 do
@@ -146,7 +164,7 @@ function enemy_loop()
     end
 
     if not BURNING then
-        BURN_DELAY = 100
+        BURN_DELAY = 600
     end
 
     if BURNING then

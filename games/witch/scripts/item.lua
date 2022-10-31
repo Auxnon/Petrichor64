@@ -32,6 +32,8 @@ function init_items()
     -- make_bottle(3, 0)
     -- make_bottle(-3, 0)
     make_shroom(-8, 0)
+    -- make_bottle(-3, 0, true)
+
 end
 
 function item_loop()
@@ -59,6 +61,7 @@ function item_loop()
             end
             local carried = carry:list()
             -- print("p" .. gottem)
+            -- if not picked any more up, drop all our carried
             if not gottem then
                 for i = #carried, 1, -1 do
                     local c = carried[i]
@@ -68,7 +71,21 @@ function item_loop()
                         c.ent.x = 0
                         mix_in(c)
                     else
+
                         c.ent.z = player.z + (i - 1)
+
+                        -- print("stink" .. c.stink)
+
+                        if c.stinky ~= nil then
+                            if c.stinky then
+                                anti_guy(move_pos.x)
+                            else
+                                anti_zom(move_pos.x)
+                            end
+                            print "droppy"
+                            kill(c.ent)
+                            items:remove(c)
+                        end
                     end
                     carry:remove(c)
                     print(i)
@@ -110,7 +127,7 @@ function item_loop()
         if x_timer == 0 and x_dialog then
             kill(x_dialog)
             x_dialog = nil
-            print("kill dialog")
+            -- print("kill dialog")
         end
     end
     -- local ilist = items:list()

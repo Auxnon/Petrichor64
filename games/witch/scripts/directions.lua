@@ -11,8 +11,8 @@ function init_directions()
     -- spawn("banner1", 0, MID + 0.5, 4)
     -- spawn("banner2", 1, MID + 0.5, 4)
 
-    banner({ "mushroom0", "mushroom0", "mushroom2", "equals", "potions1" }, -3, MID, 4)
-    banner({ "mushroom1", "mushroom2", "mushroom2", "equals", "potions0" }, -3, MID, 5.5)
+    banner({ "mushroom0", "mushroom0", "mushroom2", "equals", "potions1", "anti1" }, -3.5, MID, 4)
+    banner({ "mushroom1", "mushroom2", "mushroom2", "equals", "potions0", "anti0" }, -3.5, MID, 5.5)
 
 
 end

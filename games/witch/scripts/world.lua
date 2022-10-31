@@ -61,7 +61,7 @@ end
 function roadup(x)
     for i = 4, 16 do
         tile("witch-grass1", x - 5 + i, MID + 1, -1, 2)
-        tile("witch-grass" .. (flr(rnd() * 2) + 7), x - 5 + i, MID, -1, flr(rnd() * 4))
+        tile("path", x - 5 + i, MID, -1, flr(rnd() * 4))
         tile("witch-grass1", x - 5 + i, MID - 1, -1, 4)
     end
     tile("witch-grass4", x + 11, MID - 1, -1, 1)
@@ -80,7 +80,7 @@ end
 function roadin(x)
     for i = 1, 12 do
         tile("witch-grass1", x - 1, i, -1, 3)
-        tile("witch-grass" .. (flr(rnd() * 2) + 7), x, i, -1, flr(rnd() * 4))
+        tile("path", x, i, -1, flr(rnd() * 4))
         tile("witch-grass1", x + 1, i, -1, 1)
     end
 end

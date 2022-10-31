@@ -1,10 +1,11 @@
 MIXER = {}
 x_timer = 0
 x_dialog = nil
+FIRST_POTION = true
 
 function mix_in(p)
     MIXER[#MIXER + 1] = p
-    print("mixin" .. #MIXER)
+    -- print("mixin" .. #MIXER)
     if #MIXER >= 3 then
         local stinks = 0
         local darks = 0
@@ -23,14 +24,23 @@ function mix_in(p)
             end
         end
         if brights == 1 and darks == 2 then
+            first_potion_check()
             make_bottle(tern(rnd() > 0.5, 3, -3), 0, false)
             make_check()
         elseif stinks == 2 and darks == 1 then
+            first_potion_check()
             make_bottle(tern(rnd() > 0.5, 3, -3), 0, true)
             make_check()
         else
             make_x()
         end
+    end
+end
+
+function first_potion_check()
+    if FIRST_POTION then
+        FIRST_POTION = false
+        hint_text "Drop specific potion outside to ward off"
     end
 end
 

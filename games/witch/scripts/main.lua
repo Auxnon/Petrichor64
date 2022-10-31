@@ -39,6 +39,7 @@ local l = {
 }
 
 function first_load()
+    TITLE_UP = true
     DISTANCE = 12
     cam_pos = {
         x = 0,
@@ -111,6 +112,7 @@ function first_load()
     Particle_Init()
     init_items()
     init_directions()
+    init_stinks()
     survive_timer = 0
     second_timer = 0
 end
@@ -140,7 +142,7 @@ function reset()
     ldoor.rot_x = 0
     cauldron.rot_y = 0
     current_text_timer = 0
-    hint_text "Pick up mushrooms with Z, X, C"
+    hint_text "Move with A,D"
 end
 
 function hint_text(t)
@@ -216,7 +218,6 @@ local function clamp(before)
 
 end
 
-local tile_delay = 0
 door_delay = 60
 ldoor_dest = 3 * 3.14 / 2
 rdoor_dest = 3 * 3.14 / 2
@@ -224,87 +225,26 @@ local text_timer = 0
 function loop()
     -- door.rot_z = -3.14 / 2
     if player then
-        tile_delay = tile_delay + 1
         enemy_loop()
         Particle_Loop()
         item_loop()
         door_check()
-        if key_delay > 10 then
-            if key("a") then
+        stink_loop()
+        difficulty_loop()
 
-                -- room_pos.x = room_pos.x - DISTANCE
-                -- if move_index == 4 then
-                --     move_index = 3
-                -- else
-                --     move_index = 1
-                -- end
-                local before = move_index
-                if move_index > 1 then
-                    move_index = move_index - 1
-                end
-                move_pos.x = move_spots[move_index]
-
-
-                -- room_pos.x = (move_index / 2) * DISTANCE
-                clamp(before)
-                key_delay = 0
-
-            elseif key("d") then
-                -- room_pos.x = room_pos.x + DISTANCE
-                -- if move_index == 1 then
-                --     move_index = 2
-                -- else
-                --     move_index = 4
-                -- end
-
-                local before = move_index
-                if move_index < #move_spots then
-                    move_index = move_index + 1
-                end
-                move_pos.x = move_spots[move_index]
-                -- room_pos.x = ((move_index-#move_spots) / 2) * DISTANCE
-
-                clamp(before)
-                key_delay = 0
-            end
-        else
-            key_delay = key_delay + 1
-        end
-        local player_diff = (move_pos.x - player.x) / 6.
-        player.x = player.x + player_diff
-        cam_pos.x = cam_pos.x + (room_pos.x - cam_pos.x) / 4.
-        cam_pos.y = cam_pos.y + (room_pos.y - cam_pos.y) / 20.
-
-        local logo_dist = (cam_pos.z - room_pos.z)
-        if logo_dist > 0 then
-            cam_pos.z = cam_pos.z - 0.1
-        end
-
-        if player_diff > 0 then
-            player.flipped = false;
-        else
-            player.flipped = true;
-        end
-        if abs(player_diff) > 0.01 then
-            player:tex("witchy2")
-        else
-            if CARRYING then
-                player:tex("witchy6")
-            else
-                player:tex("witchy3")
-            end
-
-        end
-
-        -- sky()
         if LOST then
             sqr(60, 100, 200, 16)
             text("Ya got unwitched :\\ ", 60, 100)
+            player:tex("witchy1")
 
             sqr(60, 190, 200, 16)
             text("Survived  " .. survive_timer .. " seconds", 60, 190)
-        else
 
+            if key("z") or key("x") or key("c") or key("space") or key("a") or key("d") then
+                reload()
+            end
+        else
+            player_move_loop()
             clr()
             m = mouse()
 
@@ -334,8 +274,6 @@ function loop()
 
 
 
-            -- sqr(20, 190, 200, 16)
-
 
 
             local txt = ""
@@ -360,9 +298,10 @@ function loop()
                 -- print(t)
             end
             text_timer = text_timer + 1
-            -- print(string.len(txt))
-            -- text("test", 20, 200)
-            -- text("test", 20, 210)
+
+            if TITLE_UP then
+                img("title", 96, 128)
+            end
 
             campos(cam_pos.x, cam_pos.y, cam_pos.z)
 
@@ -389,4 +328,67 @@ function loop()
             first_load()
         end
     end
+end
+
+function first_check()
+    if TITLE_UP then
+        TITLE_UP = false
+        hint_text "Pick up mushrooms with Z, X, C. Spell space."
+    end
+end
+
+function player_move_loop()
+    if key_delay > 10 then
+        if key("a") then
+            first_check()
+            local before = move_index
+            if move_index > 1 then
+                move_index = move_index - 1
+            end
+            move_pos.x = move_spots[move_index]
+
+
+            clamp(before)
+            key_delay = 0
+
+        elseif key("d") then
+            first_check()
+            local before = move_index
+            if move_index < #move_spots then
+                move_index = move_index + 1
+            end
+            move_pos.x = move_spots[move_index]
+
+            clamp(before)
+            key_delay = 0
+        end
+    else
+        key_delay = key_delay + 1
+    end
+    local player_diff = (move_pos.x - player.x) / 6.
+    player.x = player.x + player_diff
+    cam_pos.x = cam_pos.x + (room_pos.x - cam_pos.x) / 4.
+    cam_pos.y = cam_pos.y + (room_pos.y - cam_pos.y) / 20.
+
+    local logo_dist = (cam_pos.z - room_pos.z)
+    if logo_dist > 0 then
+        cam_pos.z = cam_pos.z - 0.1
+    end
+
+    if player_diff > 0 then
+        player.flipped = false;
+    else
+        player.flipped = true;
+    end
+    if abs(player_diff) > 0.01 then
+        player:tex("witchy2")
+    else
+        if CARRYING then
+            player:tex("witchy6")
+        else
+            player:tex("witchy3")
+        end
+
+    end
+
 end

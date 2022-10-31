@@ -23,21 +23,27 @@ function Particle_Init()
     --     local s = spawn("spark", i, 0, 0)
     --     sparks[#sparks + 1] = s
     -- end
+
 end
 
-function make_missile(target)
+function make_missile(target, is_guy)
     if target then
         local sparkles = batch_spawn(10, "sparkles1", player.x, player.y, player.z)
-        for i = 1, #sparkles do
-            sparkles[i]:anim("sparkler", i)
+        sparkles[1]:anim("sparkler")
+        for i = 2, #sparkles do
+            sparkles[i]:anim("sparkler")
         end
+
 
         local m = {
             state = 0,
             sparkles = sparkles,
             target = target,
             current = { x = player.x, y = player.y, z = player.z + 2 },
-            delay = 0
+            spark_index = 2,
+            spark_delay = 0,
+            delay = 0,
+            is_guy = is_guy
         }
 
         Missiles:add(m)
@@ -53,9 +59,23 @@ end
 function move_missile(m)
     -- log("move to " .. m.sparkles[1].x .. " 2 " .. m.current.x)
     local r = orbit(m.sparkles[1], m.current, 0.1)
-    for s = 2, #m.sparkles do
-        follow(m.sparkles[s], m.sparkles[s - 1], 2., 0.)
+
+    m.spark_delay = m.spark_delay + 1
+    if m.spark_delay > 4 then
+        -- print "this far"
+        local sprk = m.sparkles[m.spark_index]
+        -- print("we have" .. sprk == nil)
+        move(sprk, m.sparkles[1])
+        sprk:anim("sparkler", true)
+        m.spark_index = m.spark_index + 1
+        if m.spark_index >= 10 then
+            m.spark_index = 2
+        end
+        m.spark_delay = 0
     end
+    -- for s = 2, #m.sparkles do
+    --     follow(m.sparkles[s], m.sparkles[s - 1], 2., 0.)
+    -- end
     return r
 
 end
@@ -106,6 +126,7 @@ function Particle_Loop()
         local zlist = Zoms:list()
         local cap = nil
         local shortest = 10
+        local is_guy = false
         for i = 1, #zlist do
             local z = zlist[i]
             local dist = abs(z.ent.x - player.x)
@@ -114,16 +135,34 @@ function Particle_Loop()
                 cap = z
             end
         end
+        if not cap then
+            is_guy = true
+            local glist = Guys:list()
+            for i = 1, #glist do
+                local z = glist[i]
+                local dist = abs(z.ent.x - player.x)
+                if dist < shortest then
+                    shortest = dist
+                    cap = z
+                end
+            end
+        end
 
         if cap then
-            missile_delay = 30
+            missile_delay = 200
 
-            make_missile(cap)
+            make_missile(cap, is_guy)
         end
     end
 
     if missile_delay > 0 then
         missile_delay = missile_delay - 1
+        if missile_delay <= 0 then
+            if not current_text then
+                current_text_timer = 100
+                current_text = "Spell recharged"
+            end
+        end
     end
 
     local mlist = Missiles:list()
@@ -136,13 +175,17 @@ function Particle_Loop()
 
                 -- print("target was " .. m.target.id)
                 -- print("is " .. type(Zoms:get(m.target.id)) .. " size " .. #Zoms:list())
-                Zoms:remove(m.target)
+                if m.is_guy then
+                    Guys:remove(m.target)
+                else
+                    Zoms:remove(m.target)
+                end
                 kill(m.target.ent)
 
-                print("this far")
+                -- print("this far")
                 Missiles:remove(m)
                 kill_missile(m)
-                print("done")
+                -- print("done")
                 -- print("is " .. type(Zoms:get(m.target.id)) .. " size " .. #Zoms:list())
                 i = i - 1
             end
