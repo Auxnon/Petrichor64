@@ -65,7 +65,7 @@ impl Gui {
                     };
                 }
 
-                let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "6x6unicode.png"));
+                let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "6x6-8unicode.png"));
                 crate::texture::load_img_from_buffer(d)
                     .unwrap()
                     .into_rgba8()
