@@ -663,6 +663,7 @@ impl Core {
     // }
 
     fn update(&mut self) {
+        let mut resetter = false;
         match self.catcher {
             Some(ref mut c) => {
                 for p in c.try_iter() {
@@ -756,11 +757,11 @@ impl Core {
                             //         wrapped,
                             //     );
                             // }
-                                self.ent_manager.create_from_lua(
-                                    &self.tex_manager,
-                                    &self.model_manager,
+                            self.ent_manager.create_from_lua(
+                                &self.tex_manager,
+                                &self.model_manager,
                                 lent,
-                                );
+                            );
                             // tx.send(v);
                         }
                         MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
@@ -795,12 +796,22 @@ impl Core {
                             println!("{}", s);
                             crate::log::log(s);
                         }
+                        MainCommmand::Reload() => {
+                            // println!("resetttt");
+                            resetter = true
+                        }
                         _ => {}
                     };
                     // p.5.send(true);
                 }
             }
             None => {}
+        }
+
+        if resetter {
+            // println!("trigger etst");
+            // println!("trigger etst");
+            crate::command::reload(self);
         }
         self.ent_manager.check_ents(
             self.global.iteration,
@@ -845,16 +856,6 @@ fn main() {
         .build(&event_loop)
         .unwrap();
     window.set_title("Petrichor");
-    // let s = window.inner_size();
-
-    // window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
-    //     window.current_monitor(),
-    // )));
-
-    // window.set_simple_fullscreen(true);
-    // if false {
-    // window.set_cursor_grab(true);
-    // }
 
     // State::new uses async code, so we're going to wait for it to finish
 

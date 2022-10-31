@@ -578,6 +578,19 @@ pub fn init_lua_sys(
         },
         "Kills an entity"
     );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "reload",
+        move |_, (): ()| {
+            // println!("hit reset");
+            match pitcher.send(MainCommmand::Reload()) {
+                Ok(_) => {}
+                Err(er) => {}
+            }
+            Ok(())
+        },
+        "Reset lua context"
+    );
 
     // lua!(
     //     "add",
@@ -1172,6 +1185,7 @@ pub enum MainCommmand {
     Kill(u64),
     Globals(HashMap<String, f32>),
     AsyncError(String),
+    Reload(),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {

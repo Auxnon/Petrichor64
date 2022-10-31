@@ -54,14 +54,18 @@ impl UserData for LuaEnt {
 
             Ok(true)
         });
-        methods.add_method_mut("anim", |_, this, tex: String| {
+        methods.add_method_mut("anim", |_, this, (tex, force): (String, Option<bool>)| {
             let t = this.tex.clone();
             this.tex = tex;
             this.anim = true;
-
-            if t != this.tex {
-                this.dirty = true;
-                // println!("lua current anim {} and is now {}", this.tex, this.dirty);
+            match force {
+                Some(f) => this.dirty = f,
+                None => {
+                    if t != this.tex {
+                        this.dirty = true;
+                        // println!("lua current anim {} and is now {}", this.tex, this.dirty);
+                    }
+                }
             }
 
             Ok(true)
