@@ -257,7 +257,11 @@ fn start(
     let (pitcher, catcher) = channel::<MainPacket>();
 
     let mut online = false;
+    #[cfg(feature = "online_capable")]
     let mut closer = None;
+    #[cfg(not(feature = "online_capable"))]
+    let mut closer: Option<bool> = None;
+    #[cfg(feature = "online_capable")]
     let net = if false {
         match crate::online::init() {
             Ok((nout, nin)) => {
@@ -275,6 +279,9 @@ fn start(
     } else {
         None
     };
+
+    #[cfg(not(feature = "online_capable"))]
+    let net: Option<bool> = None;
 
     // let pitchers = Arc::new(pitcher);
     // let pitch_lusa = Arc::clone(&pitchers);
@@ -401,6 +408,7 @@ fn start(
                 // println!("load 1{}", s2);
                 if s2 == "_self_destruct" {
                     // println!("closing 1");
+                    #[cfg(feature = "online_capable")]
                     match closer {
                         Some(n) => {
                             // println!("closing 2");
@@ -416,6 +424,7 @@ fn start(
                 //MARK if loop() then path string is the keyboard keys
 
                 if s1 == "_self_destruct" {
+                    #[cfg(feature = "online_capable")]
                     match closer {
                         Some(n) => {
                             n.send(vec![-99., 0., 0.]);

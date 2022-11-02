@@ -20,11 +20,11 @@ use texture::TexManager;
 use world::World;
 
 use ent::Ent;
-use glam::{vec2, vec3};
+use glam::{vec2, vec3, Mat4};
 use parking_lot::RwLock;
 
 use switch_board::SwitchBoard;
-use wgpu::{util::DeviceExt, BindGroup, Buffer, Texture};
+use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, Texture};
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
@@ -46,6 +46,7 @@ mod log;
 mod lua_define;
 mod lua_ent;
 mod model;
+#[cfg(feature = "online_capable")]
 mod online;
 mod pad;
 mod parse;
@@ -98,7 +99,7 @@ pub struct Core {
 struct GlobalUniforms {
     view: [[f32; 4]; 4],
     persp: [[f32; 4]; 4],
-    adjustments: [f32; 12],
+    adjustments: [[f32; 4]; 4],
 }
 
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
@@ -195,6 +196,7 @@ impl Core {
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: CompositeAlphaMode::Opaque,
         };
 
         surface.configure(&device, &config);
@@ -241,7 +243,7 @@ impl Core {
             label: Some("entity bind group"),
         });
 
-        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
         });
@@ -324,7 +326,7 @@ impl Core {
         let render_uniforms = GlobalUniforms {
             view: mx_view.to_cols_array_2d(),
             persp: mx_persp.to_cols_array_2d(),
-            adjustments: [0f32; 12],
+            adjustments: Mat4::ZERO.to_cols_array_2d(),
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };
 
@@ -375,7 +377,7 @@ impl Core {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     // blend: Some(wgpu::BlendState {
                     //     color: wgpu::BlendComponent::OVER,
@@ -389,7 +391,7 @@ impl Core {
                     // }),
                     // write_mask: wgpu::ColorWrites::ALL,
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -500,11 +502,11 @@ impl Core {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "gui_fs_main",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -545,11 +547,11 @@ impl Core {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "sky_fs_main",
-                targets: &[wgpu::ColorTargetState {
+                targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
-                }],
+                })],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -852,7 +854,7 @@ fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_inner_size(winit::dpi::LogicalSize::new(640, 480))
+        .with_inner_size(winit::dpi::LogicalSize::new(640i32, 480i32))
         .build(&event_loop)
         .unwrap();
     window.set_title("Petrichor");

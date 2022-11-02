@@ -182,7 +182,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
-    let time_ref: [f32; 12] = [
+    let time_ref: [f32; 16] = [
         core.global.iteration as f32 / 30.,
         core.size.width as f32,
         core.size.height as f32,
@@ -195,6 +195,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         core.global.screen_effects.low_range,
         core.global.screen_effects.high_range,
         core.global.screen_effects.modernize,
+        0.,
+        0.,
+        0.,
+        0.,
     ];
 
     // let iTime=adj[0];
@@ -214,8 +218,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
     core.queue.write_buffer(&core.uniform_buf, 0, size1);
     core.queue.write_buffer(&core.uniform_buf, 64, size2);
-
-    // TODO should use offset of mat4 buffer size, 64 by deffault, is it always?
     core.queue.write_buffer(&core.uniform_buf, 128, size3);
 
     let mut encoder = core
@@ -230,7 +232,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         let bg = switch.background;
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
-            color_attachments: &[wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 //MARK view
                 view: &core.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
@@ -243,7 +245,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
                     }),
                     store: true,
                 },
-            }],
+            })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &core.depth_texture,
                 depth_ops: Some(wgpu::Operations {
@@ -350,14 +352,14 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     {
         let mut post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Post Pass"),
-            color_attachments: &[wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: true,
                 },
-            }],
+            })],
             depth_stencil_attachment: None,
         });
 

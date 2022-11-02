@@ -70,9 +70,9 @@ impl EntManager {
         })
     }
 
-    pub fn get_uuid() -> String {
-        uuid::Uuid::new_v4().to_simple().to_string()
-    }
+    // pub fn get_uuid() -> String {
+    //     uuid::Uuid::new_v4().to_simple().to_string()
+    // }
     // pub fn get_ents(self){
     //     self.entities.update()
     // }

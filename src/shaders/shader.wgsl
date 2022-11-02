@@ -1,35 +1,38 @@
 struct VertexOutput {
-    [[builtin(position)]] proj_position: vec4<f32>;
-    [[location(0)]] world_normal: vec3<f32>;
-    [[location(1)]] world_position: vec4<f32>;
-    [[location(2)]] tex_coords: vec2<f32>;
-    [[location(3)]] vpos:vec4<f32>;
+    @builtin(position) proj_position: vec4<f32>,
+    @location(0) world_normal: vec3<f32>,
+    @location(1) world_position: vec4<f32>,
+    @location(2) tex_coords: vec2<f32>,
+    @location(3) vpos:vec4<f32>,
 };
 
 struct InstanceInput {
-    [[location(4)]] uv_mod: vec4<f32>;
-    [[location(5)]] color: vec4<f32>;
-    [[location(6)]] effects: vec4<u32>;
-    [[location(7)]] model_matrix_0: vec4<f32>;
-    [[location(8)]] model_matrix_1: vec4<f32>;
-    [[location(9)]] model_matrix_2: vec4<f32>;
-    [[location(10)]] model_matrix_3: vec4<f32>;
+    @location(4) uv_mod: vec4<f32>,
+    @location(5) color: vec4<f32>,
+    @location(6) effects: vec4<u32>,
+    @location(7) model_matrix_0: vec4<f32>,
+    @location(8) model_matrix_1: vec4<f32>,
+    @location(9) model_matrix_2: vec4<f32>,
+    @location(10) model_matrix_3: vec4<f32>,
 };
 
 
 struct Globals {
-    view_mat: mat4x4<f32>;
-    proj_mat: mat4x4<f32>;
-    adjustments: array<f32,12>;
-    //num_lights: vec4<u32>;
+    view_mat: mat4x4<f32>,
+    proj_mat: mat4x4<f32>,
+    adjustments: mat4x4<f32>,
+    //num_lights: vec4<u32>,
 };
 
 
-[[group(0), binding(0)]]
+@group(0)
+@binding(0)
 var<uniform> globals: Globals;
-[[group(0), binding(1)]]
+@group(0) 
+@binding(1)
 var t_diffuse: texture_2d<f32>;
-[[group(0), binding(2)]]
+@group(0)
+@binding(2)
 var s_diffuse: sampler;
 
 
@@ -40,14 +43,14 @@ var s_diffuse: sampler;
 //     effects:vec4<u32>;
 // };
 
-// [[group(1), binding(0)]]
+// @group(1), binding(0)
 // var<uniform> ent: Entity;
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] position: vec4<i32>,
-    [[location(1)]] normal: vec4<i32>,
-    [[location(2)]] tex_coords: vec2<f32>,
+    @location(0) position: vec4<i32>,
+    @location(1) normal: vec4<i32>,
+    @location(2) tex_coords: vec2<f32>,
 
     
     instance: InstanceInput
@@ -84,28 +87,28 @@ fn vs_main(
     out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
   
-    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0],world_pos.w);
+    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0][0],world_pos.w);
     return out;
 }
 
 struct GuiFrag {
-    [[builtin(position)]] pos: vec4<f32>; 
-    [[location(1)]] screen: vec2<f32>;
-    // [[location(2)]] eh: array<f32>;
-    // [[location(2)]] adjustments: array<f32,12>;
+    @builtin(position) pos: vec4<f32>, 
+    @location(1) screen: vec2<f32>,
+    // @location(2) eh: array<f32>,
+    // @location(2) adjustments: array<f32,12>,
 };
 
 struct PostFrag {
-    [[builtin(position)]] pos: vec4<f32>; 
-    [[location(1)]] screen: vec2<f32>;
-    // [[location(2)]] adjustments: array<f32,12>;
+    @builtin(position) pos: vec4<f32>, 
+    @location(1) screen: vec2<f32>,
+    // @location(2) adjustments: array<f32,12>,
 };
 
 
-[[stage(vertex)]]
-fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
-    // [[location(0)]] position: vec4<i32>,
-    // [[location(1)]] normal: vec4<i32>,
+@vertex
+fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
+    // @location(0) position: vec4<i32>,
+    // @location(1) normal: vec4<i32>,
     //) -> VertexOutput {
     
 
@@ -126,14 +129,14 @@ fn gui_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
     
-    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
+    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
     // out.eh=vec2<f32>(globals.adjustments[3],globals.adjustments[4]);
     //out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);
     return out;
 }
 
 struct FragmentOutput {
-    [[location(0)]] f_color: vec4<f32>;
+    @location(0) f_color: vec4<f32>,
 };
 
 
@@ -148,7 +151,7 @@ fn main_2(in:VertexOutput) {
     return;
 }
 
-[[stage(fragment)]]
+@fragment
 fn fs_main( in: VertexOutput) -> FragmentOutput {
     main_2(in); 
     let e3: vec4<f32> = f_color;
@@ -158,8 +161,8 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
     return FragmentOutput(e3);
 }
 
-[[stage(fragment)]]
-fn gui_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
+@fragment
+fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
   
     // let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
     // if (e3.a < 0.5) {
@@ -171,8 +174,8 @@ fn gui_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }
 
-[[stage(vertex)]]
-fn sky_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
+@vertex
+fn sky_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     var out: GuiFrag;
     if (in_vertex_index==0u){
         out.pos=vec4<f32>(-1.,-1., 0.0, 1.0);
@@ -183,20 +186,20 @@ fn sky_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
     }else{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
-    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
+    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
     return out;
 }
 
-[[stage(fragment)]]
-fn sky_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
+@fragment
+fn sky_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
     f_color=textureSample(t_diffuse, s_diffuse, p);
    return f_color;
 }
 
 
-[[stage(vertex)]]
-fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
+@vertex
+fn post_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     var out: GuiFrag;
     if (in_vertex_index==0u){
         out.pos=vec4<f32>(-1.,-1., 0.0, 1.0);
@@ -212,14 +215,14 @@ fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
      //globals.adjustments;
     //  out.adjustments=globals.adjustments;
     //  out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);//globals.adjustments;
-    out.screen=vec2<f32>(globals.adjustments[1],globals.adjustments[2]);
+    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
     
 
     return out;
 }
 
-// [[stage(vertex)]]
-// fn post_vs_main([[builtin(vertex_index)]] vertex_index: u32) -> VertexOutput {
+// @stage(vertex)
+// fn post_vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 //     let x: f32 = f32(i32(vertex_index & 1u) << 2u) - 1.0;
 //     let y: f32 = f32(i32(vertex_index & 2u) << 1u) - 1.0;
 //     var result: VertexOutput;
@@ -230,17 +233,17 @@ fn post_vs_main([[builtin(vertex_index)]] in_vertex_index: u32) ->GuiFrag{
 
 // 0:iTime, 1:native_res.0,2:native_res.1, 3:res,4:corner_harshness,5:corner_ease,6:glitchy,7:lumen_threshold,8:dark,9:low,10:high
 // native_res, res,corner_harshness,corner_ease, glitchy,lumen_threshold,dark,low,high
-fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f32,12>)-> vec4<f32>  {
-    let iTime=adj[0]; 
-    let dark_factor:f32=adj[8]; //0.4
-    let low_range:f32=adj[9]; //.05
-    let high_range:f32=adj[10]; //0.6
-    let resolution=vec2<f32>(adj[1],adj[2]);
-    let corner_harshness: f32 =adj[4]; // 1.2
-    let corner_ease: f32 = adj[5]; // 4.0
-    let res: f32 =adj[3]; //  320.0
-    let glitchy: f32 =adj[6]; // 3.0  
-    let lumen_threshold:f32=adj[7]; //0.2
+fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f32>)-> vec4<f32>  {
+    let iTime=adj[0][0]; 
+    let dark_factor:f32=adj[2][0]; //0.4
+    let low_range:f32=adj[2][1]; //.05
+    let high_range:f32=adj[2][2]; //0.6
+    let resolution=vec2<f32>(adj[0][1],adj[0][2]);
+    let corner_harshness: f32 =adj[1][0]; // 1.2
+    let corner_ease: f32 = adj[1][1]; // 4.0
+    let res: f32 =adj[0][3]; //  320.0
+    let glitchy: f32 =adj[1][2]; // 3.0  
+    let lumen_threshold:f32=adj[1][3]; //0.2
 
     var AR: f32;
     var uv: vec2<f32>;
@@ -362,14 +365,14 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
             tex= textureSample(t_diffuse,s_diffuse, i);
             lum = (((0.2125999927520752 * tex.x) + (0.7152000069618225 * tex.y)) + (0.0722000002861023 * tex.z));
          
-            value = smoothStep(low_range,high_range, (1.0 - lum));
+            value = smoothstep(low_range,high_range, (1.0 - lum));
             v = min(value, 1.0);
             tiny = cos(((6.28 * (((uv.y + (iTime* 0.1)) * 0.2) % 0.01)) * 300.0));
             L = (0.0 + (0.01 * cos(((uv.x * 1.200) + (iTime * 20.0)))));
 
 
     
-            wave = (cos((6.28000020980835 * smoothStep(i.y, L, (L + 0.05000000074505806)))) / 5.0);
+            wave = (cos((6.28000020980835 * smoothstep(i.y, L, (L + 0.05000000074505806)))) / 5.0);
             scan = cos((1.5700000524520874 + ((3.140000104904175 * (0.20000000298023224 - wave)) * tiny)));
 
             split = max(0.33000001311302185, v);
@@ -433,11 +436,11 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:array<f3
         
 }
 
-[[stage(fragment)]]
-fn post_fs_main(in: GuiFrag) ->  [[location(0)]] vec4<f32> {
+@fragment
+fn post_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
 
-    if (globals.adjustments[11]>0.){
+    if (globals.adjustments[2][3]>0.){
         f_color=textureSample(t_diffuse, s_diffuse, p);
     }else{
         f_color=monitor(t_diffuse, s_diffuse,p,globals.adjustments);//array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.0));

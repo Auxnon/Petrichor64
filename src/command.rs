@@ -1,25 +1,25 @@
 use crate::{
-    controls::ControlState,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
-    online::MovePacket,
     pad::Pad,
     sound::SoundPacket,
-    switch_board::SwitchBoard,
     world::{TileCommand, TileResponse, World},
     Core,
 };
 
+#[cfg(feature = "online_capable")]
+use crate::online::MovePacket;
+
 use glam::{vec4, Vec4};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table, Value};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     path::Path,
     rc::Rc,
     sync::{
-        mpsc::{Receiver, SendError, Sender, SyncSender},
+        mpsc::{Sender, SyncSender},
         Arc,
     },
 };
@@ -171,25 +171,39 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
     true
 }
 
+#[cfg(feature = "online_capable")]
+type OnlineType = Option<(Sender<MovePacket>, Receiver<MovePacket>)>;
+#[cfg(not(feature = "online_capable"))]
+type OnlineType = Option<bool>;
+
 pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
     // switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    net_sender: Option<(Sender<MovePacket>, Receiver<MovePacket>)>,
+    net_sender: OnlineType,
     singer: Sender<SoundPacket>,
     keys: Rc<Mutex<[bool; 256]>>,
     mice: Rc<Mutex<[f32; 4]>>,
     gamepad: Rc<Mutex<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
-) -> Result<(), Error> {
+) -> Result<(), Error>
+// where N: 
+// #[cfg(feature = "online_capable")]
+// Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
+// #[cfg(not(feature = "online_capable"))]
+// Option<bool>
+{
     println!("init lua sys");
 
-    let (netout, netin) = match net_sender {
-        Some((nout, nin)) => (Some(nout), Some(nin)),
-        _ => (None, None),
-    };
+    #[cfg(feature = "online_capable")]
+    {
+        let (netout, netin) = match net_sender {
+            Some((nout, nin)) => (Some(nout), Some(nin)),
+            _ => (None, None),
+        };
+    }
 
     let default_func = lua_ctx
         .create_function(|_, _: f32| Ok("placeholder func uwu"))
@@ -847,19 +861,21 @@ pub fn init_lua_sys(
     lua!(
         "send",
         move |_, (x, y, z): (f32, f32, f32)| {
-            // crate::lg!("net");
-            match &netout {
-                Some(nout) => {
-                    // crate::lg!("send from com {},{}", x, y);
-                    match nout.send(vec![x, y, z]) {
-                        Ok(d) => {}
-                        Err(e) => {
-                            // println!("damn we got {}", e);
+            #[cfg(feature = "online_capable")]
+            {
+                match &netout {
+                    Some(nout) => {
+                        // crate::lg!("send from com {},{}", x, y);
+                        match nout.send(vec![x, y, z]) {
+                            Ok(d) => {}
+                            Err(e) => {
+                                // println!("damn we got {}", e);
+                            }
                         }
                     }
-                }
-                _ => {
-                    // crate::lg!("ain't got no online");
+                    _ => {
+                        // crate::lg!("ain't got no online");
+                    }
                 }
             }
             Ok(())
@@ -869,18 +885,21 @@ pub fn init_lua_sys(
     lua!(
         "recv",
         move |_, _: ()| {
-            match &netin {
-                Some(nin) => {
-                    match nin.try_recv() {
-                        Ok(r) => {
-                            return Ok(r);
-                            // crate::lg!("udp {:?}", r);
+            #[cfg(feature = "online_capable")]
+            {
+                match &netin {
+                    Some(nin) => {
+                        match nin.try_recv() {
+                            Ok(r) => {
+                                return Ok(r);
+                                // crate::lg!("udp {:?}", r);
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
-                }
-                _ => {
-                    // crate::lg!("ain't got no online");
+                    _ => {
+                        // crate::lg!("ain't got no online");
+                    }
                 }
             }
             Ok(vec![0., 0., 0.])

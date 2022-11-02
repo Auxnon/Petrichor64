@@ -107,7 +107,7 @@ impl Post {
                         module: &shader,
                         entry_point: "post_fs_main",
                         // targets: &[RENDER_TARGET_FORMAT.into()],
-                        targets: &[wgpu::ColorTargetState {
+                        targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
                             // blend: Some(wgpu::BlendState {
                             //     color: wgpu::BlendComponent::OVER,
@@ -121,11 +121,11 @@ impl Post {
                             // }),
                             // write_mask: wgpu::ColorWrites::ALL,
                             write_mask: wgpu::ColorWrites::ALL,
-                        }], // &[wgpu::ColorTargetState {
-                            //     format: config.format,
-                            //     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            //     write_mask: wgpu::ColorWrites::ALL,
-                            // }],
+                        })], // &[wgpu::ColorTargetState {
+                             //     format: config.format,
+                             //     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                             //     write_mask: wgpu::ColorWrites::ALL,
+                             // }],
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleStrip,
