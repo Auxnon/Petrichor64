@@ -1,0 +1,1 @@
+cargo build --relase --features=include_auto
