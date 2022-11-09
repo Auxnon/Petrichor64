@@ -7,17 +7,15 @@ text("MakeAvoy", 0, 180)
 -- line(.85, .85, 1, 1)
 gui()
 cube("xub", "witch0", "witch1", "witch0", "witch1", "witch2", "witch2")
-crt({
-    -- dark = 0.
-    -- low = 0.9,
-    -- high = .6
-    modernize = 1
-})
+
 
 MID = 12
 
 LOST = false
-
+crt {
+    modernize = 0,
+    resolution = 720
+}
 
 
 function tern(cond, T, F)
@@ -118,6 +116,7 @@ function first_load()
 end
 
 function main()
+
     room_pos = {
         x = 0,
         y = 0,

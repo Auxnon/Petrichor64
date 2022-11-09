@@ -24,8 +24,8 @@ function logo()
 
 
 
-    cloud = spawn("pcloud", -0.25, 3, 4 + top)
-    cloud.rot_z = 0 * tau / 16
+    cloud = spawn("pcloud", -0.25, 4, 1.5 + top)
+    cloud.rot_z = tau / 16
     cloud.rot_x = tau / 16
 
 
@@ -61,7 +61,9 @@ function logo_loop()
         dirt.y = dirt.y + 0.1
     end
     if cloud.z > (0.75 + top) then
-        cloud.z = cloud.z - 0.05
+        cloud.z = cloud.z - 0.01
     end
+
+    -- sqr(0, 0, 200, 200)
     -- dir  t.rot_z = dirt.rot_z + (tau / 8) / 20.
 end

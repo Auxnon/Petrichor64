@@ -221,15 +221,63 @@ fn post_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     return out;
 }
 
-// @stage(vertex)
-// fn post_vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-//     let x: f32 = f32(i32(vertex_index & 1u) << 2u) - 1.0;
-//     let y: f32 = f32(i32(vertex_index & 2u) << 1u) - 1.0;
-//     var result: VertexOutput;
-//     result.proj_position = vec4<f32>(x, -y, 0.0, 1.0);
-//     result.tex_coords = vec2<f32>(x + 1.0, y + 1.0) * 0.5;
-//     return result;
-// }
+fn findSplit(uv: vec2<f32>, res2: vec2<f32>, offset: vec2<f32>,low_range:f32,high_range:f32,t:texture_2d<f32>,s:sampler) -> vec4<f32> {
+    let i: vec2<f32> =(offset+floor(uv*res2))/res2;
+    let tex= textureSampleLevel(t,s, i,0.);
+    if(i.x<0. || i.x>1.){
+    return vec4<f32>(0.,0.,0.,1.);
+    }
+    
+    let lum:f32=(0.2126*tex.r + 0.7152*tex.g + 0.0722*tex.b);
+    let value=smoothstep(low_range,high_range,1.-lum);
+    let v=min(value,1.);
+    
+    //first factor to determine how much rgb pixels split up
+    //1. is complete seperation, 0. is merged
+        let split=max(.33,v);
+    return vec4<f32>(tex.xyz,split);
+}
+type vec2f = vec2<f32>;
+type vec3f = vec3<f32>;
+
+fn path(uv:vec2f, res:vec2f, mask:vec3f, shift:vec2f,low_range:f32,high_range:f32,dark:f32,lumen:f32,t:texture_2d<f32>,s:sampler)->vec2f{
+    let v=findSplit(uv,res,vec2f(0.,0.),low_range,high_range,t,s);
+    let vl=findSplit(uv,res,vec2f(-1.,0.),low_range,high_range,t,s);
+    let vr=findSplit(uv,res,vec2f(1.,0.),low_range,high_range,t,s);
+    let split=v.w;
+    let split_l=vl.w;
+    let split_r=vr.w;
+    
+    let c:vec2f=(uv+shift)%(1./res)*res;
+    
+    var full=mask.x*v.x+mask.y*v.y+mask.z*v.z;
+    
+    var total_split=split;
+    if(c.x>0.75){
+        let f=(1.-(c.x- 0.75)/.5);
+        total_split=split*f+split_r*(1.-f);
+        let side=mask.x*vr.x+mask.y*vr.y+mask.z*vr.z;
+        full=full*f+side*(1.-f);
+    }else if(c.x<0.25){
+        let f=(c.x/.5)+0.5;
+        //total_split=smoothstep(split_l,split,);
+        let side=mask.x*vl.x+mask.y*vl.y+mask.z*vl.z;
+        total_split=split*(f)+split_l*(1.-f);
+        full=full*f+side*(1.-f);
+    }
+    
+    let pixel_size=(dark+1.-total_split)*1. ;
+    
+    var a=1.;
+    if(total_split>lumen){
+     a=(0.5- abs(c.y- 0.5))*pixel_size*.2; //.2
+    }
+    a*=16.;
+    return vec2(a,full);     
+}
+
+
+
 
 // 0:iTime, 1:native_res.0,2:native_res.1, 3:res,4:corner_harshness,5:corner_ease,6:glitchy,7:lumen_threshold,8:dark,9:low,10:high
 // native_res, res,corner_harshness,corner_ease, glitchy,lumen_threshold,dark,low,high
@@ -241,11 +289,11 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
     let resolution=vec2<f32>(adj[0][1],adj[0][2]);
     let corner_harshness: f32 =adj[1][0]; // 1.2
     let corner_ease: f32 = adj[1][1]; // 4.0
-    let res: f32 =adj[0][3]; //  320.0
+    let resi: f32 =adj[0][3]; //  320.0
     let glitchy: f32 =adj[1][2]; // 3.0  
     let lumen_threshold:f32=adj[1][3]; //0.2
 
-    var AR: f32;
+
     var uv: vec2<f32>;
     var output: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     
@@ -257,182 +305,102 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
     var tuv: vec2<f32>;
     var limit: vec2<f32>;
     
-    var res2_: vec2<f32>;
-    var res3_: vec2<f32>;
-    var res4_: vec2<f32>;
-    var pre_i: vec2<f32>;
-    var i: vec2<f32>;
-    var even: f32 = 0.0;
-    var pre_y: f32;
-    var tex: vec4<f32>;
-    var lum: f32;
-    var value: f32;
-    var v: f32;
-    var tiny: f32;
-    var L: f32;
-    var wave: f32;
-    var scan: f32;
-    var split: f32;
-    var uv2_: vec2<f32>;
-    var uv3_: vec2<f32>;
-    var cr: vec2<f32>;
-    var cg: vec2<f32>;
-    var cb: vec2<f32>;
-    var i2_: vec2<f32>;
-    var i3_: vec2<f32>;
-    var tex2_: vec4<f32>;
-    var tex3_: vec4<f32>;
-    var ar: f32 = 1.0;
-    var ag: f32 = 1.0;
-    var ab: f32 = 1.0;
-    var pixel_size: f32;
-    var col: vec3<f32>;
-    var backup: vec3<f32>;
+  
 
 
-    AR=resolution.x/resolution.y;
+    var AR=resolution.x/resolution.y;
 
     var coords=in_coords;//(in_coords+1.)/2.;//vec2<f32>(in_coords.x,in_coords.y*resolution.y);
 
-    uv = (coords );
-    vv = (2.0 - min(((iTime) ), 2.0)); //%10.
+    var uv:vec2<f32> = (coords );
+    let vv:f32 = (2.0 - min(((iTime) ), 2.0)); //%10.
 
-    fade = max(pow(vv, 16.0), 1.0);
-    let _e58 = uv;
-    let _e62 = uv;
-    let _e67 = corner_harshness;
-    xx = (abs((_e62.x - 0.5)) * _e67);
-    let _e70 = uv;
-    let _e74 = uv;
-    let _e79 = corner_harshness;
-    let _e81 = fade;
-    yy = ((abs((_e74.y - 0.5)) * _e79) * _e81);
+   let fade = max(pow(vv, 16.0), 1.0);
+    let xx:f32 = (abs(uv.x - 0.5)*corner_harshness);
+    var yy:f32  = (abs(uv.y - 0.5)*corner_harshness);
+    var rr:f32=(1.+pow((xx*xx+yy*yy),corner_ease));
+    var tuv:vec2<f32> =clamp((uv-vec2(0.5))*rr+0.5,vec2(0.),vec2(1.));
+    uv=tuv;
 
-    rr = (1.0 + pow(((xx * xx) + (yy * yy)), corner_ease));
 
-    tuv = (((uv - vec2<f32>(0.5)) * rr) + vec2<f32>(0.5));
-    tuv = clamp(tuv, vec2<f32>(0.0), vec2<f32>(1.0));
-    let _e123 = tuv;
-    uv = _e123;
-    let _e131 = uv;
-    let _e137 = uv;
-    limit = (step(vec2<f32>(0.0, 0.0), _e131) * step(_e137, vec2<f32>(1.0, 1.0)));
-    let _e144 = uv;
-    let _e148 = uv;
-    let _e153 = uv;
-    let _e158 = uv;
+     //========END=========================
     
-            res2_ = vec2<f32>(res, (res / AR));
-            let _e171 = res2_;
-            res3_ = _e171;
-            let _e173 = res2_;
-            res4_ = _e173;
-            let _e175 = uv;
-            let _e176 = res2_;
-            let _e178 = uv;
-            let _e179 = res2_;
-            pre_i = floor((_e178 * _e179));
-            let _e183 = pre_i;
-            let _e184 = res2_;
-            i = (_e183 / _e184);
-            let _e189 = pre_i;
-            let _e192 = pre_i;
-            if (((_e192.y % 2.0) == 0.0)) {
-                {
-                    let _e199 = res2_;
-                    even = (0.5 / _e199.x);
-                    let _e203 = uv;
-                    let _e205 = even;
-                    uv.x = (_e203.x + _e205);
-                    let _e207 = uv;
-                    let _e209 = res2_;
-                    let _e212 = uv;
-                    let _e214 = res2_;
-                    pre_y = floor((_e212.x * _e214.x));
-                    let _e220 = pre_y;
-                    let _e221 = res2_;
-                    i.y = (_e220 / _e221.x);
-                    let _e224 = uv;
-                    let _e225 = res2_;
-                    let _e227 = uv;
-                    let _e228 = res2_;
-                    let _e231 = res2_;
-                    i = (floor((_e227 * _e228)) / _e231);
-                }
-            }
-            
-            //MARK 
-            tex= textureSample(t_diffuse,s_diffuse, i);
-            lum = (((0.2125999927520752 * tex.x) + (0.7152000069618225 * tex.y)) + (0.0722000002861023 * tex.z));
-         
-            value = smoothstep(low_range,high_range, (1.0 - lum));
-            v = min(value, 1.0);
-            tiny = cos(((6.28 * (((uv.y + (iTime* 0.1)) * 0.2) % 0.01)) * 300.0));
-            L = (0.0 + (0.01 * cos(((uv.x * 1.200) + (iTime * 20.0)))));
-
-
+    if(  uv.x>0. && uv.x<1. && uv.y>0. && uv.y<1.){
     
-            wave = (cos((6.28000020980835 * smoothstep(i.y, L, (L + 0.05000000074505806)))) / 5.0);
-            scan = cos((1.5700000524520874 + ((3.140000104904175 * (0.20000000298023224 - wave)) * tiny)));
-
-            split = max(0.33000001311302185, v);
-            uv2_ = (uv + vec2<f32>(((-(split) * 0.2) / res), 0.0));
-            uv3_ = (uv + vec2<f32>(((-(split) * 0.4)/ res), 0.0));
-            uv2_.x = (uv2_.x + ((glitchy * scan) / res));
-            uv3_.y = (uv3_.y - ((glitchy * scan) / res));
-            cr = ((uv % (vec2<f32>(1.0) / res2_)) * res2_);
-            let _e458 = res3_;
-            let _e461 = uv2_;
-            let _e463 = res3_;
-            let _e467 = res3_;
-            cg = ((_e461 % (vec2<f32>(1.0) / _e463)) * _e467);
-            let _e472 = res4_;
-            let _e475 = uv3_;
-            let _e477 = res4_;
-            let _e481 = res4_;
-            cb = ((_e475 % (vec2<f32>(1.0) / _e477)) * _e481);
-            let _e484 = uv2_;
-            let _e485 = res3_;
-            let _e487 = uv2_;
-            let _e488 = res3_;
-            let _e491 = res3_;
-            i2_ = (floor((_e487 * _e488)) / _e491);
-            let _e494 = uv3_;
-            let _e495 = res4_;
-            let _e497 = uv3_;
-            let _e498 = res4_;
-            let _e501 = res4_;
-            i3_ = (floor((_e497 * _e498)) / _e501);
-
-            tex2_ = textureSample(texture,samp, i2_);
-            tex3_ = textureSample(texture,samp, i3_);
-
-            pixel_size = (((dark_factor + 1.0) - split) * 2.0);
-            cr.x = (cr.x * (0.6600000262260437 + split));
-            cg.x = (cg.x * (0.6600000262260437 + split));
-            cb.x = (cb.x * (0.6600000262260437 + split));
-            if ((split > lumen_threshold)) {
-                {
-                    ar = (((0.5 - abs((cr.x - 0.5))) * (0.5 - abs((cr.y - 0.5)))) * pixel_size);
-                    ag = (((0.5 - abs((cg.x - 0.5))) * (0.5 - abs((cg.y - 0.5)))) * pixel_size);
-                    ab = (((0.5 - abs((cb.x - 0.5))) * (0.5 - abs((cb.y - 0.5)))) * pixel_size);
-                }
-            }
-         
-            ar = min(floor((ar + 0.9700000286102295)), 1.0);
-            ag = min(floor((ag + 0.9700000286102295)), 1.0);
-            ab = min(floor((ab + 0.9700000286102295)), 1.0);
-            col = vec3<f32>((tex.x * ar), (tex2_.y * ag), (tex3_.z * ab));
-            //,col.z, col.y, col.x,
-            output = vec4<f32>(col.x,col.y,col.z,1.);
+        //===== START additional curvature for glass to allow fade in out but keep glass background
+        yy=(abs(uv.y - 0.5)*corner_harshness)*fade;
+        rr=(1.+pow((xx*xx+yy*yy),corner_ease));
+        tuv=(uv-vec2(0.5))*rr+0.5;
+        tuv=clamp(tuv,vec2(0.),vec2(1.));
+        uv=tuv;
+        //===END==========================
         
-    
-    if (((((uv.x > 0.002) && (uv.x < 1.0)) && (uv.y > 0.0)) && (uv.y < 1.0))) {
-        {
-    return output;
+        if(  uv.x>0. && uv.x<1. && uv.y>0. && uv.y<1.){
+            
+            //flicker
+            uv+=sin(min((iTime%1.),2.)*2000.)/10000.;
+
+            //resolution factor
+            let res=min(resi,resolution.x);
+            let res2=vec2<f32>(res,res/AR);
+            let res3=res2;
+            let res4=res2;
+            
+            
+            let shift=1./res;
+
+            let i=floor(uv*res2)/res2;
+            let tex = textureSampleLevel(t_diffuse,s_diffuse, i,0.);
+            let lum=(0.2126*tex.r + 0.7152*tex.g + 0.0722*tex.b);
+            let value=smoothstep(low_range,high_range,1.-lum);
+            let v=min(value,1.);
+
+
+            //first factor to determine how much rgb pixels split up
+            //1. is complete seperation, 0. is merged
+            let split=max(.33,v);
+            
+            ////===== START scan lines
+            let L=0.01*cos(uv.x*1.2+iTime*20.);
+            let wave=cos(6.28*smoothstep(i.y,L,L+0.05))/5.;
+            
+           
+            let scanny=cos(1.57+3.14*(.2-wave));
+            let vvv=2.*scanny*cos(uv.x*16.+iTime*16.)/res;
+            //========== END
+
+           let r=path(uv,res2,vec3f(1.,0.,0.),vec2f(0.,vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+           let red=r.y;
+           let ar=r.x;
+
+            let uv2=uv;
+            let uv3=uv;
+            
+            let g=path(uv2,res3,vec3f(0.,1.,0.),vec2f(0.,0.),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+            let b=path(uv3,res4,vec3f(0.,0.,1.),vec2f(0.,-vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+            
+            let ag=g.x;
+            let green=g.y;
+            let ab=b.x;
+            let blue=b.y;
+             
+            // Time varying pixel color
+            let col = vec3<f32>(red*ar,green*ag,blue*ab); 
+
+            return vec4<f32>(col,1.);
+          
+        }else{
+            let tex= textureSampleLevel(t_diffuse,s_diffuse, vec2f(0.,0.),0.);
+           return vec4<f32>(0.,0.,0.,1.);
         }
+    }else{
+        let tex=textureSampleLevel(t_diffuse,s_diffuse, vec2f(0.,0.),0.);
+        let vx=abs(uv.x- 0.5);
+        let vy=abs(uv.y- 0.5);
+        let r=min(abs(vx- vy),0.25);
+        return vec4<f32>(r,r,r,1.);
     }
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    // return vec4<f32>(0.,0.,0.,1.);
         
 }
 
