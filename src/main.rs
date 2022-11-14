@@ -766,6 +766,10 @@ impl Core {
                             );
                             // tx.send(v);
                         }
+                        MainCommmand::Group(parent, child, tx) => {
+                            self.ent_manager.group(parent, child);
+                            tx.send(true);
+                        }
                         MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
                         MainCommmand::Globals(table) => {
                             println!("global remap");

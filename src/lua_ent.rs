@@ -21,6 +21,7 @@ pub struct LuaEnt {
     dirty: bool,
     pub flipped: bool,
     pub dead: bool,
+    pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
 }
 
 impl UserData for LuaEnt {
@@ -147,6 +148,7 @@ impl LuaEnt {
             anim: false,
             dead: false,
             flipped: false,
+            parent: None, // children: None,
         }
     }
 
@@ -170,6 +172,7 @@ impl LuaEnt {
             anim: false,
             dead: false,
             flipped: false,
+            parent: None, // children: None,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -226,6 +229,7 @@ impl Clone for LuaEnt {
             anim: self.anim,
             dead: false,
             flipped: self.flipped,
+            parent: self.parent, // children,
         }
     }
 }
