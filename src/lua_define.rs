@@ -114,6 +114,17 @@ impl LuaCore {
         self.inject(&"load".to_string(), file, None);
     }
 
+    pub fn async_load(&self, file: &String) {
+        log("loading script".to_string());
+        match self
+            .to_lua_tx
+            .send(("load".to_string(), file.to_string(), None, None))
+        {
+            Ok(_) => {}
+            _ => {}
+        }
+    }
+
     pub fn call_main(&self) {
         const empty: ControlState = ([false; 256], [0f32; 4]);
         self.async_func(&"main()".to_string(), empty);

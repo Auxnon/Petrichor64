@@ -131,7 +131,7 @@ pub fn unpack(
 // fn asset_sort() {}
 
 fn handle_script(buffer: &str, lua_master: &LuaCore) {
-    lua_master.load(&buffer.to_string());
+    lua_master.async_load(&buffer.to_string());
 }
 
 pub fn is_valid_type(s: &String) -> bool {
