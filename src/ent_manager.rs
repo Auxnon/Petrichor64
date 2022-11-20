@@ -354,6 +354,20 @@ impl EntManager {
         self.specks.clear();
         // self.uniform_alignment = 0;
     }
+    pub fn reset_by_bundle(&mut self, bundle_id: u8) {
+        println!("ent count before bundle purge {}", self.ent_array.len());
+        self.ent_array.retain(|(le, e, u)| match le.lock() {
+            Ok(lent) => {
+                if lent.bundle_id == bundle_id {
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        });
+        println!("ent count after bundle purge {}", self.ent_array.len());
+    }
 
     pub fn check_ents(&mut self, iteration: u64, tm: &TexManager, mm: &ModelManager) {
         let mut v: Vec<LuaEnt> = vec![];
@@ -367,7 +381,7 @@ impl EntManager {
 
                         if l.is_anim() {
                             // println!("anim {}", l.get_tex());
-                            match tm.ANIMATIONS.get(l.get_tex()) {
+                            match tm.animations.get(l.get_tex()) {
                                 Some(t) => {
                                     // println!("we found {} with {:?}", l.get_tex(), t);
                                     ent.set_anim(t.clone(), iteration);

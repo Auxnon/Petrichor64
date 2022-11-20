@@ -1,4 +1,6 @@
 use crate::{
+    bundle::{Bundle, BundleResources},
+    gui::GuiMorsel,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
     pad::Pad,
@@ -14,7 +16,9 @@ use glam::{vec4, Vec4};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table, Value};
 use parking_lot::Mutex;
+
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
     path::Path,
     rc::Rc,
@@ -26,6 +30,8 @@ use std::{
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
+    let bundle_id = core.bundle_manager.console_bundle_target;
+    let lua = core.bundle_manager.get_lua();
     if s.len() <= 0 {
         return false;
     }
@@ -33,22 +39,30 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
 
     match segments[0] {
         "q" => {
-            reset(core);
-            load(core, Some("games/witch".to_string()), None);
+            hard_reset(core);
+            load(core, Some("games/witch".to_string()), None, None, None);
+        }
+        "e" => {
+            hard_reset(core);
+            load(core, Some("test/group".to_string()), None, None, None);
         }
         "m" => {
-            core.lua_master.func(&"crt({modernize=1})".to_string());
+            lua.func(&"crt({modernize=1})".to_string());
         }
         "die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
-            core.lua_master.die();
+            lua.die();
+        }
+        "bundles" => {
+            crate::lg!("{}", core.bundle_manager.list_bundles());
         }
         "pack" => {
             crate::asset::pack(
                 &mut core.tex_manager,
                 &mut core.model_manager,
                 &mut core.world,
-                &core.lua_master,
+                bundle_id,
+                lua,
                 &if segments.len() > 1 {
                     format!("{}.game.png", segments[1])
                 } else {
@@ -86,7 +100,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             }
         }
         "load" => {
-            reset(core);
+            hard_reset(core);
             load(
                 core,
                 if segments.len() > 1 {
@@ -97,10 +111,12 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                     None
                 },
                 None,
+                None,
+                None,
             );
         }
-        "reset" => reset(core),
-        "reload" => reload(core),
+        "reset" => hard_reset(core),
+        "reload" => reload(core, bundle_id),
         "atlas" => {
             core.tex_manager.save_atlas();
         }
@@ -179,15 +195,18 @@ type OnlineType = Option<bool>;
 pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
+    bundle_id: u8,
     // switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    gui: Rc<RefCell<GuiMorsel>>,
     net_sender: OnlineType,
     singer: Sender<SoundPacket>,
-    keys: Rc<Mutex<[bool; 256]>>,
-    mice: Rc<Mutex<[f32; 4]>>,
-    gamepad: Rc<Mutex<Pad>>,
+    keys: Rc<RefCell<[bool; 256]>>,
+    mice: Rc<RefCell<[f32; 4]>>,
+    gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
+    // ent_tracker: Rc<RefCell<FxHashMap<u64,bool>
 ) -> Result<(), Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -297,13 +316,12 @@ pub fn init_lua_sys(
     lua!(
         "fill",
         move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
-            pitcher.send(MainCommmand::Fill(get_color(r, g, b, a)));
+            pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
             Ok(1)
         },
         "Set background color"
     );
 
-    let pitcher = main_pitcher.clone();
     lua!(
         "pixel",
         move |_,
@@ -315,7 +333,9 @@ pub fn init_lua_sys(
             Option<f32>,
             Option<f32>
         )| {
-            pitcher.send(MainCommmand::Pixel(x, y, get_color(r, g, b, a)));
+            let c = get_color(r, g, b, a);
+            gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
+            // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
             Ok(1)
         },
         "Set color of pixel at x,y"
@@ -338,17 +358,20 @@ pub fn init_lua_sys(
             let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
             // println!("this far-1");
 
-            pitcher.send(MainCommmand::Make(
-                vec![
-                    name,
-                    t.clone(),
-                    b.unwrap_or(t.clone()),
-                    e.unwrap_or(t.clone()),
-                    w.unwrap_or(t.clone()),
-                    s.unwrap_or(t.clone()),
-                    n.unwrap_or(t),
-                ],
-                tx,
+            pitcher.send((
+                bundle_id,
+                MainCommmand::Make(
+                    vec![
+                        name,
+                        t.clone(),
+                        b.unwrap_or(t.clone()),
+                        e.unwrap_or(t.clone()),
+                        w.unwrap_or(t.clone()),
+                        s.unwrap_or(t.clone()),
+                        n.unwrap_or(t),
+                    ],
+                    tx,
+                ),
             ));
             // match rx.recv() {
             //     Ok(_) => {}
@@ -416,40 +439,12 @@ pub fn init_lua_sys(
         "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes"
     );
 
-    // let switch = Arc::clone(&switch_board);
-    // lua!(
-    //     "tile_quick",
-    //     move |_, (t, x, y, z): (String, f32, f32, f32)| {
-    //         // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-    //         let mut mutex = &mut switch.write();
-    //         mutex.tile_queue.push((t, vec4(0., x, y, z)));
-    //         mutex.dirty = true;
-    //         Ok(1)
-    //     },
-    //     "Set a tile within 3d space and immediately trigger a redraw."
-    // );
-
     // MARK
     // BLUE TODO this function is expensive? if called twice in one cycle it ruins key press checks??
     let sender = world_sender.clone();
     lua!(
         "is_tile",
-        move |_, (x, y, z): (i32, i32, i32)| {
-            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-            // let mut mutex = &mut switch.read();
-            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
-            // mutex.dirty = true;
-
-            // let (tx, rx) = sync_channel::<i32>(0);
-            // pitcher.send((1, String::new(), x as i32, y as i32, z as i32, tx));
-            // Ok(match rx.recv() {
-            //     Ok(n) => n == 1,
-            //     Err(e) => {
-            //         false
-            //     }
-            // })
-            Ok(World::is_tile(&sender, x, y, z))
-        },
+        move |_, (x, y, z): (i32, i32, i32)| { Ok(World::is_tile(&sender, x, y, z)) },
         "Set a tile within 3d space and immediately trigger a redraw."
     );
 
@@ -462,7 +457,7 @@ pub fn init_lua_sys(
                 Some(s) => s as u32,
                 None => 16,
             };
-            pitcher.send(MainCommmand::Anim(name, items, anim_speed));
+            pitcher.send((bundle_id, MainCommmand::Anim(name, items, anim_speed)));
             Ok(true)
         },
         "Set an animation"
@@ -471,89 +466,43 @@ pub fn init_lua_sys(
     // let pitchy = Arc::new(pitcher);
     lua!(
         "key",
-        move |_, key: String| { Ok(keys.lock()[key_match(key)]) },
+        move |_, key: String| { Ok(keys.borrow()[key_match(key)]) },
         "Check if key is held down"
     );
 
     lua!(
         "mouse",
-        move |_, (): ()| { Ok(mice.lock().clone()) },
+        move |_, (): ()| { Ok(mice.borrow().clone()) },
         " Get mouse position from 0.-1."
     );
 
     let gam = Rc::clone(&gamepad);
     lua!(
         "button",
-        move |_, button: String| { Ok(gam.lock().check(button) != 0.) },
+        move |_, button: String| { Ok(gam.borrow().check(button) != 0.) },
         "Check if button is held down"
     );
 
     lua!(
         "analog",
-        move |_, button: String| { Ok(gamepad.lock().check(button)) },
+        move |_, button: String| { Ok(gamepad.borrow().check(button)) },
         "Check how much a button is pressed, axis gives value between -1 and 1"
-    );
-    let ent_counter2 = Rc::clone(&ent_counter);
-    let pitcher = main_pitcher.clone();
-    lua!(
-        "batch_spawn",
-        move |_, (count, asset, x, y, z, s): (u64, String, f64, f64, f64, Option<f64>,)| {
-            // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
-            // match pitcher.send(MainCommmand::Spawn(
-            //     asset,
-            //     x,
-            //     y,
-            //     z,
-            //     s.unwrap_or(1.),
-            //     count,
-            //     tx,
-            // )) {
-            //     Ok(_) => {}
-            //     Err(er) => log(format!("error sending spawn {}", er)),
-            // }
-
-            // Ok(match rx.recv() {
-            //     Ok(e) => e,
-            //     Err(e) => vec![Arc::new(std::sync::Mutex::new(LuaEnt::empty()))],
-            // })
-
-            let mut v = vec![];
-            for i in 1..count {
-                let ent = crate::lua_ent::LuaEnt::new(
-                    *ent_counter2.lock(),
-                    asset.clone(),
-                    x,
-                    y,
-                    z,
-                    s.unwrap_or(1.),
-                );
-                let wrapped = Arc::new(std::sync::Mutex::new(ent));
-                *ent_counter2.lock() += 1;
-                // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
-
-                match pitcher.send(MainCommmand::Spawn(Arc::clone(&wrapped))) {
-                    Ok(_) => {}
-                    Err(er) => log(format!("error sending spawn {}", er)),
-                }
-                v.push(wrapped)
-            }
-            Ok(v)
-        },
-        "Spawns multiple entities"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
         "spawn",
-        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
+        move |lua, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
             // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
-            let ent =
-                crate::lua_ent::LuaEnt::new(*ent_counter.lock(), asset, x, y, z, s.unwrap_or(1.));
-            let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
+
+            let ent = crate::lua_ent::LuaEnt::new(id, asset, x, y, z, s.unwrap_or(1.));
+            let wrapped = Arc::new(std::sync::Mutex::new(ent));
+
             // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
 
-            match pitcher.send(MainCommmand::Spawn(Arc::clone(&wrapped))) {
+            match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
                 Err(er) => log(format!("error sending spawn {}", er)),
             }
@@ -566,22 +515,32 @@ pub fn init_lua_sys(
         },
         "Spawn an entity"
     );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "group",
+        move |_, (parent,child ): (Arc<std::sync::Mutex<LuaEnt>>,Arc<std::sync::Mutex<LuaEnt>>)| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
+            let parentId=parent.lock().unwrap().get_id();
+            let childId=child.lock().unwrap().get_id();
+            match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
+                Ok(_) => {}
+                Err(er) => log(format!("error sending spawn {}", er)),
+            };
+            match rx.recv(){
+                Ok(_) => {},
+                Err(_) => {}
+            };
+
+            Ok(())
+        },
+        "Groups an entity onto another entity"
+    );
 
     let pitcher = main_pitcher.clone();
     lua!(
         "kill",
         move |lu, (ent): (Arc<std::sync::Mutex<LuaEnt>>)| {
-            // ent.
-            // match ent.get("id") {
-            //     Ok(id) => match pitcher.send(MainCommmand::Kill(id)) {
-            //         Ok(_) => {}
-            //         Err(er) => log(format!("error sending spawn {}", er)),
-            //     },
-            //     _ => {}
-            // }
-            // lu.remove_registry_value(ent);
-
-            match pitcher.send(MainCommmand::Kill(ent.lock().unwrap().get_id())) {
+            match pitcher.send((bundle_id, MainCommmand::Kill(ent.lock().unwrap().get_id()))) {
                 Ok(_) => {}
                 Err(er) => log(format!("error sending spawn {}", er)),
             }
@@ -597,7 +556,7 @@ pub fn init_lua_sys(
         "reload",
         move |_, (): ()| {
             // println!("hit reset");
-            match pitcher.send(MainCommmand::Reload()) {
+            match pitcher.send((bundle_id, MainCommmand::Reload())) {
                 Ok(_) => {}
                 Err(er) => {}
             }
@@ -605,16 +564,6 @@ pub fn init_lua_sys(
         },
         "Reset lua context"
     );
-
-    // lua!(
-    //     "add",
-    //     move |lua, e: LuaEnt| {
-    //         let ents = lua.globals().get::<&str, Table>("_ents")?;
-    //         ents.set(e.get_id(), e);
-    //         Ok(())
-    //     },
-    //     "Add an entity to our global render table"
-    // );
 
     /**
      * // YELLOW
@@ -642,7 +591,7 @@ pub fn init_lua_sys(
                 }
             }
             println!("crt {:?}", hash);
-            pitcher.send(MainCommmand::Globals(hash));
+            pitcher.send((bundle_id, MainCommmand::Globals(hash)));
 
             // switch.write().dirty = true;
             Ok(())
@@ -657,7 +606,7 @@ pub fn init_lua_sys(
         move |_, (x, y, z): (f32, f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
             // println!("🧲 eyup send pos");
-            pitcher.send(MainCommmand::CamPos(glam::vec3(x, y, z)));
+            pitcher.send((bundle_id, MainCommmand::CamPos(glam::vec3(x, y, z))));
             // Ok(match rx.recv() {
             //     Ok(v) => (true),
             //     _ => (false),
@@ -673,7 +622,7 @@ pub fn init_lua_sys(
         move |_, (x, y): (f32, f32)| {
             // let (tx, rx) = sync_channel::<bool>(0);
 
-            pitcher.send(MainCommmand::CamRot(glam::vec2(x, y)));
+            pitcher.send((bundle_id, MainCommmand::CamRot(glam::vec2(x, y))));
             // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
             // println!("🧲 eyup send rot");
 
@@ -725,7 +674,7 @@ pub fn init_lua_sys(
     lua!(
         "sky",
         move |_, (): ()| {
-            pitcher.send(MainCommmand::Sky());
+            pitcher.send((bundle_id, MainCommmand::Sky()));
             Ok(())
         },
         "Set skybox as draw target"
@@ -734,7 +683,7 @@ pub fn init_lua_sys(
     lua!(
         "gui",
         move |_, (): ()| {
-            pitcher.send(MainCommmand::Gui());
+            pitcher.send((bundle_id, MainCommmand::Gui()));
             Ok(())
         },
         "Set gui as draw target"
@@ -744,7 +693,10 @@ pub fn init_lua_sys(
     lua!(
         "sqr",
         move |_, (x, y, w, h): (Value, Value, Value, Value)| {
-            pitcher.send(MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)));
+            pitcher.send((
+                bundle_id,
+                MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)),
+            ));
             Ok(())
         },
         "Draw a square on the gui"
@@ -754,7 +706,10 @@ pub fn init_lua_sys(
     lua!(
         "line",
         move |_, (x, y, x2, y2): (Value, Value, Value, Value)| {
-            pitcher.send(MainCommmand::Line(numm(x), numm(y), numm(x2), numm(y2)));
+            pitcher.send((
+                bundle_id,
+                MainCommmand::Line(numm(x), numm(y), numm(x2), numm(y2)),
+            ));
             Ok(())
         },
         "Draw a line on the gui"
@@ -763,16 +718,19 @@ pub fn init_lua_sys(
     lua!(
         "text",
         move |_, (txt, x, y): (String, Option<Value>, Option<Value>)| {
-            pitcher.send(MainCommmand::Text(
-                txt,
-                match x {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
-                },
-                match y {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
-                },
+            pitcher.send((
+                bundle_id,
+                MainCommmand::Text(
+                    txt,
+                    match x {
+                        Some(o) => numm(o),
+                        _ => (false, 0.),
+                    },
+                    match y {
+                        Some(o) => numm(o),
+                        _ => (false, 0.),
+                    },
+                ),
             ));
             Ok(())
         },
@@ -783,16 +741,19 @@ pub fn init_lua_sys(
     lua!(
         "img",
         move |_, (im, x, y): (String, Option<Value>, Option<Value>)| {
-            pitcher.send(MainCommmand::DrawImg(
-                im,
-                match x {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
-                },
-                match y {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
-                },
+            pitcher.send((
+                bundle_id,
+                MainCommmand::DrawImg(
+                    im,
+                    match x {
+                        Some(o) => numm(o),
+                        _ => (false, 0.),
+                    },
+                    match y {
+                        Some(o) => numm(o),
+                        _ => (false, 0.),
+                    },
+                ),
             ));
             Ok(())
         },
@@ -805,7 +766,7 @@ pub fn init_lua_sys(
             match lu.create_table() {
                 Ok(table) => {
                     let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, Vec<u8>)>(0);
-                    match pitcher.send(MainCommmand::GetImg(im, tx)) {
+                    match pitcher.send((bundle_id, MainCommmand::GetImg(im, tx))) {
                         Ok(o) => match rx.recv() {
                             Ok(d) => {
                                 table.set("w", d.0)?;
@@ -828,7 +789,7 @@ pub fn init_lua_sys(
     lua!(
         "clr",
         move |_, _: ()| {
-            pitcher.send(MainCommmand::Clear());
+            pitcher.send((bundle_id, MainCommmand::Clear()));
             Ok(())
         },
         "Clear the gui"
@@ -856,6 +817,26 @@ pub fn init_lua_sys(
         "sqrt",
         move |_, f: f32| { Ok(f.sqrt()) },
         "Squareroot value"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "subload",
+        move |_, str: String| {
+            pitcher.send((bundle_id, MainCommmand::Subload(str, false)));
+            Ok(())
+        },
+        "load a sub bundle"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "overload",
+        move |_, str: String| {
+            pitcher.send((bundle_id, MainCommmand::Subload(str, true)));
+            Ok(())
+        },
+        "load an overlaying bundle"
     );
 
     lua!(
@@ -933,8 +914,9 @@ fn res(target: &str, r: Result<(), Error>) {
 }
 
 /** core game reset, drop all resources including lua */
-pub fn reset(core: &mut Core) {
-    core.lua_master.die();
+pub fn hard_reset(core: &mut Core) {
+    core.bundle_manager.hard_reset();
+
     core.tex_manager.reset();
     core.model_manager.reset();
     core.gui.clean();
@@ -946,37 +928,87 @@ pub fn reset(core: &mut Core) {
     core.ent_manager.reset();
 }
 
+/** purge resources related to a specific bundle by id, returns true if the bundle existed */
+pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
+    if core.bundle_manager.soft_reset(bundle_id) {
+        core.tex_manager.reset();
+        core.model_manager.reset();
+        core.gui.clean();
+        core.world.destroy_it_all();
+        core.global.clean();
+        core.ent_manager.reset_by_bundle(bundle_id);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
-    // let sub = match sub_command {
-    //     Some(s) => {
-    //         // log(format!("load from string {}", s));
-    //         Some((
-    //             s.clone(),
-    //             crate::zip_pal::get_file_buffer(&format!("{}.game.png", s)),
-    //         ))
-    //     }
-    //     None => None,
-    // };
-    load(core, sub_command, None);
+    load(core, sub_command, None, None, None);
+}
+
+/** Load an empty game state or bundle for issuing commands */
+pub fn load_empty(core: &mut Core) {
+    let bundle = core.bundle_manager.make_bundle(None, None);
+    let resources = core.gui.make_morsel();
+    bundle.lua.start(
+        bundle.id,
+        resources,
+        core.world.sender.clone(),
+        core.pitcher.clone(),
+        core.singer.clone(),
+        false,
+    );
+    let default = "function main() end function loop() end";
+    bundle.lua.async_load(&default.to_string());
 }
 
 /**
  * Load a game from a zip file, directory, or included bytes
  * @param core
- * @param game_path: path to either a directory of game files or a single game file
+ * @param [game_path]: optional, path to either a directory of game files or a single game file
  * @param payload: included bytes, only used as part of build process
+ * @param [bundle_in]: optional, if based on an existing bundle, reuse it's resources and game_path. Will ignore the game_path param
+ * @param [bundle_relations]: optional, if it's attached to another bundle, either as a a sub or overlay
  */
-pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>) {
-    // let mut mutex = crate::lua_master.lock();
-    let catcher = core.lua_master.start(
-        Arc::clone(&core.switch_board),
+pub fn load(
+    core: &mut Core,
+    game_path_in: Option<String>,
+    payload: Option<Vec<u8>>,
+    bundle_in: Option<u8>,
+    bundle_relations: Option<(u8, bool)>,
+) {
+    let (game_path, bundle) = match bundle_in {
+        Some(b) => {
+            let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();
+            (bun.directory.clone(), bun)
+        }
+        None => (
+            game_path_in.clone(),
+            core.bundle_manager
+                .make_bundle(game_path_in, bundle_relations),
+        ),
+    };
+    let bundle_id = bundle.id;
+    let resources = core.gui.make_morsel();
+    bundle.lua.start(
+        bundle_id,
+        resources,
         core.world.sender.clone(),
+        core.pitcher.clone(),
         core.singer.clone(),
         false,
     );
+    // let (catcher, lua_handle) = bundle.lua.start(
+    //     bundle.id,
+    //     resources,
+    //     core.world.sender.clone(),
+    //     core.singer.clone(),
+    //     false,
+    // );
 
-    core.catcher = Some(catcher);
-    core.tex_manager.reset();
+    // TODO ensure this is reset before load
+    // core.tex_manager.reset();
 
     // if we get a path and it's a file, it needs to be unpacked, if it's a custom directoty we walk it, otherwise walk the local directory
     match game_path {
@@ -986,7 +1018,8 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
                     &mut core.tex_manager,
                     &mut core.model_manager,
                     &mut core.world,
-                    &core.lua_master,
+                    bundle_id,
+                    &bundle.lua,
                     &core.device,
                     &s,
                     p,
@@ -995,14 +1028,15 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
             }
             None => {
                 let mut path = crate::asset::determine_path(Some(s.clone()));
-                core.global.loaded_directory = Some(s.clone());
+                bundle.directory = Some(s.clone());
                 if path.is_dir() {
                     crate::asset::walk_files(
                         &mut core.tex_manager,
                         &mut core.model_manager,
                         &mut core.world,
+                        bundle_id,
                         Some(&core.device),
-                        &core.lua_master,
+                        &bundle.lua,
                         path,
                     );
                 } else {
@@ -1021,7 +1055,8 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
                                     &mut core.tex_manager,
                                     &mut core.model_manager,
                                     &mut core.world,
-                                    &core.lua_master,
+                                    bundle_id,
+                                    &bundle.lua,
                                     &core.device,
                                     &s,
                                     buff,
@@ -1043,8 +1078,9 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
                 &mut core.tex_manager,
                 &mut core.model_manager,
                 &mut core.world,
+                bundle_id,
                 Some(&core.device),
-                &core.lua_master,
+                &bundle.lua,
                 path,
             );
         }
@@ -1056,36 +1092,33 @@ pub fn load(core: &mut Core, game_path: Option<String>, payload: Option<Vec<u8>>
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
     // }
-    let dir = match &core.global.loaded_directory {
+    let dir = match &bundle.directory {
         Some(s) => s.clone(),
         None => "_".to_string(),
     };
     log("=================================================".to_string());
     log(format!("loaded into game {}", dir));
     log("-------------------------------------------------".to_string());
+    drop(bundle);
     core.update();
-    core.lua_master.call_main();
+    core.bundle_manager.call_main(bundle_id);
 }
 
-/** reset and load previously loaded gamer, OR reload the binary binded game if compiled with it*/
-pub fn reload(core: &mut Core) {
-    reset(core);
-    #[cfg(feature = "include_auto")]
-    {
-        log("auto loading included bytes".to_string());
-        let payload = include_bytes!("../auto.game.png").to_vec();
-        load(core, Some("INCLUDE_AUTO".to_string()), Some(payload));
-    }
-    #[cfg(not(feature = "include_auto"))]
-    {
-        load(
-            core,
-            match core.global.loaded_directory {
-                Some(ref s) => Some(s.clone()),
-                None => None,
-            },
-            None,
-        );
+/** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
+pub fn reload(core: &mut Core, bundle_id: u8) {
+    if soft_reset(core, bundle_id) {
+        load(core, None, None, Some(bundle_id), None);
+    } else {
+        #[cfg(feature = "include_auto")]
+        {
+            log("auto loading included bytes".to_string());
+            let payload = include_bytes!("../auto.game.png").to_vec();
+            load(core, Some("INCLUDE_AUTO".to_string()), Some(payload));
+        }
+        #[cfg(not(feature = "include_auto"))]
+        {
+            load(core, None, None, None, None);
+        }
     }
 }
 
@@ -1191,20 +1224,16 @@ pub enum MainCommmand {
     Clear(),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
-    // Spawn(
-    //     String,
-    //     f64,
-    //     f64,
-    //     f64,
-    //     f64,
-    //     u64,
-    //     SyncSender<Vec<Arc<std::sync::Mutex<LuaEnt>>>>,
-    // ),
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
+    Group(u64, u64, SyncSender<bool>),
     Kill(u64),
     Globals(HashMap<String, f32>),
     AsyncError(String),
+    AsyncGui(image::RgbaImage, bool),
     Reload(),
+    BundleDropped(BundleResources),
+    Subload(String, bool),
+    Null(),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
@@ -1278,13 +1307,14 @@ fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> 
     }
 }
 
-macro_rules! lg{
-    ($($arg:tt)*) => {{
-           {
-            let st=format!("command::{}",format!($($arg)*));
-            println!("{}",st);
-            crate::log::log(st);
-           }
-       }
-   }
-}
+// #[macro_export]
+// macro_rules! lg{
+//     ($($arg:tt)*) => {{
+//            {
+//             let st=format!($($arg)*);
+//             println!("{}",st);
+//             crate::log::log(st);
+//            }
+//        }
+//    }
+// }

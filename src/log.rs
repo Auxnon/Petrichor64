@@ -215,7 +215,7 @@ pub fn clean() {
 macro_rules! lg{
     ($($arg:tt)*) => {{
            {
-            let st=format!("::{}",format!($($arg)*));
+            let st=format!($($arg)*);
             println!("{}",st);
             crate::log::log(st);
            }

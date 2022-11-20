@@ -215,10 +215,10 @@ impl Gui {
         };
         let source = tex_manager.get_tex(image);
 
-        let w = tex_manager.MASTER.width();
-        let h = tex_manager.MASTER.height();
+        let w = tex_manager.atlas.width();
+        let h = tex_manager.atlas.height();
         let sub = image::imageops::crop_imm(
-            &mut tex_manager.MASTER,
+            &mut tex_manager.atlas,
             (source.x * w as f32) as u32,
             (source.y * h as f32) as u32,
             (source.z * w as f32) as u32,
@@ -409,6 +409,15 @@ impl Gui {
         self.output = false;
         self.apply_console_out_text();
     }
+    pub fn replace_image(&mut self, img: RgbaImage, is_sky: bool) {
+        if is_sky {
+            self.sky = img;
+            self.dirty_sky = true;
+        } else {
+            self.main = img;
+            self.dirty = true;
+        }
+    }
     // pub fn toggle_output(&mut self) {
     //     if self.output {
     //         self.disable_output();
@@ -498,8 +507,71 @@ impl Gui {
 
         // //let out = crate::texture::make_tex(device, queue, &self.img);
     }
+
+    pub fn make_morsel(&self) -> GuiMorsel {
+        let morsel = GuiMorsel::new(self.letters.clone(), self.main.clone(), self.sky.clone());
+        morsel
+    }
 }
 
+pub struct GuiMorsel {
+    pub letters: RgbaImage,
+    dirty: bool,
+    dirty_sky: bool,
+    pub main: RgbaImage,
+    pub sky: RgbaImage,
+    target_sky: bool,
+}
+
+impl GuiMorsel {
+    pub fn new(letters: RgbaImage, main: RgbaImage, sky: RgbaImage) -> Self {
+        Self {
+            letters,
+            dirty: true,
+            dirty_sky: true,
+            main,
+            sky,
+            target_sky: false,
+        }
+    }
+
+    pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
+        self.get_targ().get_pixel_mut(x, y).0 = [
+            (r * 255.) as u8,
+            (g * 255.) as u8,
+            (b * 255.) as u8,
+            (a * 255.) as u8,
+        ];
+    }
+
+    pub fn target_gui(&mut self) {
+        self.target_sky = false;
+    }
+    pub fn target_sky(&mut self) {
+        self.target_sky = true;
+    }
+
+    fn get_targ(&mut self) -> &mut RgbaImage {
+        if self.target_sky {
+            self.dirty_sky = true;
+            &mut self.sky
+        } else {
+            self.dirty = true;
+            &mut self.main
+        }
+    }
+
+    pub fn send_state(&mut self) -> Option<(RgbaImage, bool)> {
+        if self.dirty {
+            self.dirty = false;
+            return Some((self.main.clone(), false));
+        } else if self.dirty_sky {
+            self.dirty_sky = false;
+            return Some((self.sky.clone(), true));
+        }
+        None
+    }
+}
 pub fn init_image(
     device: &Device,
     queue: &Queue,

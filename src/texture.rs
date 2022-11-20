@@ -3,10 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{template::AssetTemplate, world::World};
+use crate::{bundle, template::AssetTemplate, world::World};
 use glam::{vec4, UVec2, UVec4, Vec4};
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
+use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use wgpu::{Queue, Sampler, Texture, TextureView};
 
 #[cfg(target_os = "windows")]
@@ -15,19 +17,20 @@ const SLASH: char = '\\';
 const SLASH: char = '/';
 
 pub struct TexManager {
-    pub MASTER: RgbaImage,
+    pub atlas: RgbaImage,
     /** Last position of a locatated section for a texture, x y, the last   */
-    pub ATLAS_POS: UVec4,
+    pub atlas_pos: UVec4,
     /** Current dimensions of the atlas image, likely stays the same in most cases */
-    pub ATLAS_DIM: UVec2,
+    pub atlas_dim: UVec2,
     /** Our wonderful string to uv coordinate map, give us a texture name and we'll give you a position on the atlas of that texture! */
-    pub DICTIONARY: HashMap<String, Vec4>,
+    pub dictionary: HashMap<String, Vec4>,
     // /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
     // pub COUNTER: u32,
     // /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
     // pub INT_DICTIONARY: HashMap<String, u32>,
     // pub INT_MAP: FxHashMap<u32, Vec4>,
-    pub ANIMATIONS: HashMap<String, Anim>,
+    pub animations: HashMap<String, Anim>,
+    pub bundle_lookup: FxHashMap<u8, Vec<(String, glam::Vec4)>>,
 }
 pub struct Anim {
     pub frames: Vec<Vec4>,
@@ -44,11 +47,6 @@ impl Anim {
     }
 }
 impl Clone for Anim {
-    // pub fn new(frames:Vec<Vec4>,){
-    //     Anim{
-    //         frames
-    //     }
-    // }
     fn clone(&self) -> Anim {
         Anim {
             frames: self.frames.clone(),
@@ -57,36 +55,35 @@ impl Clone for Anim {
         }
     }
 }
+
 impl TexManager {
     pub fn new() -> TexManager {
         TexManager {
-            MASTER: ImageBuffer::new(1024, 1024),
-            ATLAS_POS: UVec4::new(0, 0, 0, 0),
-            ATLAS_DIM: UVec2::new(1024, 1024),
-            DICTIONARY: HashMap::new(),
-            // COUNTER: 2,
-            // INT_DICTIONARY: HashMap::new(),
-            // INT_MAP: FxHashMap::default(),
-            ANIMATIONS: HashMap::default(),
+            atlas: ImageBuffer::new(1024, 1024),
+            atlas_pos: UVec4::new(0, 0, 0, 0),
+            atlas_dim: UVec2::new(1024, 1024),
+            dictionary: HashMap::new(),
+            animations: HashMap::default(),
+            bundle_lookup: FxHashMap::default(),
         }
     }
     pub fn reset(&mut self) {
         let img: RgbaImage = ImageBuffer::new(1024, 1024);
-        self.ATLAS_DIM.x = 1024;
-        self.ATLAS_DIM.y = 1024;
-        self.ATLAS_POS.x = 0;
-        self.ATLAS_POS.y = 0;
-        self.ATLAS_POS.z = 0;
-        self.ATLAS_POS.w = 0;
-        self.DICTIONARY.clear();
-        image::imageops::replace(&mut self.MASTER, &img, 0, 0);
+        self.atlas_dim.x = 1024;
+        self.atlas_dim.y = 1024;
+        self.atlas_pos.x = 0;
+        self.atlas_pos.y = 0;
+        self.atlas_pos.z = 0;
+        self.atlas_pos.w = 0;
+        self.dictionary.clear();
+        image::imageops::replace(&mut self.atlas, &img, 0, 0);
     }
 
     pub fn save_atlas(&mut self) {
-        let dim = self.MASTER.dimensions();
+        let dim = self.atlas.dimensions();
         match image::save_buffer_with_format(
             "atlas.png",
-            &self.MASTER,
+            &self.atlas,
             1024,
             1024,
             image::ColorType::Rgba8,
@@ -102,49 +99,49 @@ impl TexManager {
         device: &wgpu::Device,
         queue: &Queue,
     ) -> (TextureView, Sampler, Texture) {
-        make_tex(device, queue, &self.MASTER)
+        make_tex(device, queue, &self.atlas)
     }
 
     pub fn refinalize(&self, queue: &Queue, texture: &Texture) {
-        for (k, v) in self.DICTIONARY.iter() {
+        for (k, v) in self.dictionary.iter() {
             println!("tex>>{}>>{}", k, v);
         }
-        write_tex(queue, texture, &self.MASTER);
+        write_tex(queue, texture, &self.atlas);
     }
 
     /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
     pub fn locate(&mut self, source: RgbaImage) -> Vec4 {
         assert!(
-            source.width() < self.MASTER.width() && source.height() < self.MASTER.height(),
+            source.width() < self.atlas.width() && source.height() < self.atlas.height(),
             "Texture atlas isnt big enough for this image :("
         );
         let mut found = false;
-        let mut cpos = self.ATLAS_POS.clone();
-        let adim = self.ATLAS_DIM;
+        let mut cpos = self.atlas_pos.clone();
+        let adim = self.atlas_dim;
         let w = source.width();
         let h = source.height();
 
-        if self.ATLAS_POS.x + w <= adim.x && self.ATLAS_POS.y + h <= adim.y {
+        if self.atlas_pos.x + w <= adim.x && self.atlas_pos.y + h <= adim.y {
             found = true;
-            self.ATLAS_POS.x += w;
+            self.atlas_pos.x += w;
         } else {
-            if self.ATLAS_POS.x + w > adim.x {
-                self.ATLAS_POS.x = w;
-                self.ATLAS_POS.y += self.ATLAS_POS.w;
+            if self.atlas_pos.x + w > adim.x {
+                self.atlas_pos.x = w;
+                self.atlas_pos.y += self.atlas_pos.w;
                 cpos.x = 0;
-                cpos.y = self.ATLAS_POS.y;
+                cpos.y = self.atlas_pos.y;
                 found = true;
-            } else if self.ATLAS_POS.y + h < adim.y {
+            } else if self.atlas_pos.y + h < adim.y {
                 panic!("Texture atlas couldnt find an empty spot?");
             }
         }
-        if found && self.ATLAS_POS.w < h {
-            self.ATLAS_POS.w = h;
+        if found && self.atlas_pos.w < h {
+            self.atlas_pos.w = h;
         }
 
         assert!(found, "Texture atlas couldnt find an empty spot?");
         // lg!("found position ({},{}) and ({},{}) ", cpos.x, cpos.y, w, h);
-        stich(&mut self.MASTER, source, cpos.x, cpos.y);
+        stich(&mut self.atlas, source, cpos.x, cpos.y);
         Vec4::new(
             cpos.x as f32 / adim.x as f32,
             cpos.y as f32 / adim.y as f32,
@@ -213,13 +210,13 @@ impl TexManager {
                 //     "made tile tex {} at {} {} {} {}",
                 //     key, p.x, p.y, p.z, p.w
                 // ));
-                self.DICTIONARY.insert(key, p);
+                self.dictionary.insert(key, p);
                 if can_rename {
                     match rename {
                         Some(ref r) => {
                             match r.get(&n) {
                                 Some(name) => {
-                                    self.DICTIONARY.insert(name.clone(), p);
+                                    self.dictionary.insert(name.clone(), p);
                                     if index_key > 0 {
                                         world.index_texture_alias(name.clone(), index_key);
                                     }
@@ -239,12 +236,13 @@ impl TexManager {
     fn sort_image(
         &mut self,
         world: &mut World,
-        str: &String,
-        img: DynamicImage,
+        name_like: &String,
+        img: RgbaImage,
+        bundle_id: u8,
         template: Option<&AssetTemplate>,
         from_unpack: bool,
     ) {
-        let (name, mut is_tile) = get_name(str.clone(), from_unpack);
+        let (name, mut is_tile) = get_name(name_like.clone(), from_unpack);
         let mut rename = None;
         let mut tile_dim = if is_tile > 0 { is_tile } else { 16u32 };
         match template {
@@ -259,35 +257,70 @@ impl TexManager {
         }
         let pos = if is_tile > 0 {
             let dim = (img.width(), img.height());
-            let pos = self.locate(img.into_rgba8());
+            let pos = self.locate(img);
             self.tile_locate(world, &name, dim, pos, tile_dim, rename)
         } else {
-            self.locate(img.into_rgba8())
+            self.locate(img)
         };
+        // TODO
+        match self.bundle_lookup.get_mut(&bundle_id) {
+            Some(b) => {
+                b.push((name.clone(), pos));
+            }
+            None => {
+                let mut b = vec![(name.clone(), pos)];
+                self.bundle_lookup.insert(bundle_id, b);
+            }
+        }
+
         // lg!("sort_image name {} pos {}", name, pos);
-        self.DICTIONARY.insert(name.clone(), pos);
+        self.dictionary.insert(name.clone(), pos);
         world.index_texture(name, pos);
     }
+
+    /** Load image from a buffer, likely from a game bin, zip or game image zip */
     pub fn load_tex_from_buffer(
         &mut self,
         world: &mut World,
-        str: &String,
+        name_like: &String,
         buffer: &Vec<u8>,
+        bundle_id: u8,
         template: Option<&AssetTemplate>,
     ) {
         // println!("🟢load_tex_from_buffer{} is {}", str, buffer.len());
         match image::load_from_memory(buffer.as_slice()) {
-            Ok(img) => self.sort_image(world, str, img, template, true),
+            Ok(img) => self.sort_image(
+                world,
+                name_like,
+                img.into_rgba8(),
+                bundle_id,
+                template,
+                true,
+            ),
             Err(err) => err!("failed to load texture {}", err),
         }
     }
 
-    pub fn load_tex(&mut self, world: &mut World, str: &String, template: Option<&AssetTemplate>) {
+    /** Load image directly from file system and apply to atlas */
+    pub fn load_tex(
+        &mut self,
+        world: &mut World,
+        name_like: &String,
+        bundle_id: u8,
+        template: Option<&AssetTemplate>,
+    ) {
         // println!("🟢load_tex{}", str);
-        lg!("apply texture {}", str);
+        lg!("apply texture {}", name_like);
 
-        match load_img_nopath(str) {
-            Ok(img) => self.sort_image(world, str, img, template, false),
+        match load_img_nopath(name_like) {
+            Ok(img) => self.sort_image(
+                world,
+                name_like,
+                img.into_rgba8(),
+                bundle_id,
+                template,
+                false,
+            ),
             Err(err) => {
                 err!("failed to load texture {}", err);
                 // dictionary
@@ -317,7 +350,7 @@ impl TexManager {
                     }
                 };
 
-                self.DICTIONARY.insert(short_name.clone(), pos);
+                self.dictionary.insert(short_name.clone(), pos);
                 pos
             })
             .collect::<Vec<Vec4>>()
@@ -325,13 +358,13 @@ impl TexManager {
 
     /** return texture uv coordinates from a given texture name */
     pub fn get_tex(&self, str: &String) -> Vec4 {
-        match self.DICTIONARY.get(str) {
+        match self.dictionary.get(str) {
             Some(v) => v.clone(),
             None => Vec4::new(0., 0., 0., 0.),
         }
     }
     pub fn get_tex_or_not(&self, str: &String) -> Option<Vec4> {
-        match self.DICTIONARY.get(str) {
+        match self.dictionary.get(str) {
             Some(v) => Some(v.clone()),
             None => None,
         }
@@ -339,26 +372,34 @@ impl TexManager {
 
     /** return the actual image buffer data from a given texture name */
     pub fn get_img(&self, str: &String) -> (u32, u32, Vec<u8>) {
-        let im = match self.DICTIONARY.get(str) {
+        let im = match self.dictionary.get(str) {
             Some(v) => image::imageops::crop_imm(
-                &self.MASTER,
-                (v.x * self.ATLAS_DIM.x as f32) as u32,
-                (v.y * self.ATLAS_DIM.y as f32) as u32,
-                (v.z * self.ATLAS_DIM.x as f32) as u32,
-                (v.w * self.ATLAS_DIM.y as f32) as u32,
+                &self.atlas,
+                (v.x * self.atlas_dim.x as f32) as u32,
+                (v.y * self.atlas_dim.y as f32) as u32,
+                (v.z * self.atlas_dim.x as f32) as u32,
+                (v.w * self.atlas_dim.y as f32) as u32,
             )
             .to_image(),
-            None => self.MASTER.clone(),
+            None => self.atlas.clone(),
         };
-        // let w = im.width();
-        // let h = im.height();
-        // let v = im.into_vec();
 
         (im.width(), im.height(), im.into_vec())
     }
 
+    fn get_img_from_pos(&self, pos: &Vec4) -> RgbaImage {
+        image::imageops::crop_imm(
+            &self.atlas,
+            (pos.x * self.atlas_dim.x as f32) as u32,
+            (pos.y * self.atlas_dim.y as f32) as u32,
+            (pos.z * self.atlas_dim.x as f32) as u32,
+            (pos.w * self.atlas_dim.y as f32) as u32,
+        )
+        .to_image()
+    }
+
     pub fn _list_keys(&self) -> String {
-        self.DICTIONARY
+        self.dictionary
             .keys()
             .map(|k| k.clone())
             .collect::<Vec<String>>()
@@ -373,7 +414,7 @@ impl TexManager {
         once: bool,
     ) {
         println!("set anims {} {:?}", name, frames);
-        self.ANIMATIONS.insert(
+        self.animations.insert(
             name.clone(),
             Anim {
                 frames,
@@ -381,6 +422,36 @@ impl TexManager {
                 once,
             },
         );
+    }
+    pub fn remove_bundle_content(&mut self, bundle_id: u8) {
+        self.bundle_lookup.remove(&bundle_id);
+    }
+
+    pub fn rebuild_atlas(&mut self, world: &mut World) {
+        self.atlas = image::RgbaImage::new(self.atlas_dim.x, self.atlas_dim.y);
+        self.dictionary = HashMap::new();
+        let hash = self.bundle_lookup.drain().collect_vec();
+        let images = hash
+            .iter()
+            .map(|(k, v)| {
+                let vv = v
+                    .iter()
+                    .map(|(s, pos)| {
+                        let im = self.get_img_from_pos(pos);
+                        (s, im)
+                    })
+                    .collect_vec();
+                (k, vv)
+            })
+            .collect_vec();
+        // let im2 = images.iter().cloned();
+        self.reset();
+        for (bundle_id, v) in images {
+            for (name, img) in v {
+                self.sort_image(world, &name, img, *bundle_id, None, true);
+            }
+        }
+        //
     }
 }
 

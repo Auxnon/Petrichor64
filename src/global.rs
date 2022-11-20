@@ -22,7 +22,7 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
-    pub loaded_directory: Option<String>,
+    // pub loaded_directory: Option<String>,
 }
 impl Global {
     pub fn new() -> Global {
@@ -43,7 +43,7 @@ impl Global {
             iteration: 0,
             scroll_delta: 0.,
             screen_effects: ScreenBinds::new(),
-            loaded_directory: None,
+            // loaded_directory: None,
         }
     }
 

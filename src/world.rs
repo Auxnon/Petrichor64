@@ -11,7 +11,6 @@ use wgpu::Device;
 use crate::{
     model::{Model, ModelManager},
     tile::{Chunk, ChunkModel, Layer, LayerModel},
-    Core,
 };
 
 /*
@@ -105,85 +104,34 @@ impl WorldInstance {
 }
 pub struct World {
     layer: LayerModel,
-    pub sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+    pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
     pub local_tex_map: FxHashMap<u32, Vec4>,
     pub local_model_map: FxHashMap<u32, Rc<Model>>,
 }
 
 impl World {
     pub fn new() -> World {
-        // let path = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
-        // let h = path.len();
-        // let w = path[0].len();
-        // let mut hash = FxHashMap::default();
-        // hash.insert(4, 3);
-        // hash.insert(2, 33);
-        // hash.insert(13, 52);
-        // hash.insert(1, 25);
-
-        // for yi in 0..path.len() {
-        //     let row = path[yi];
-        //     for xi in 0..row.len() {
-        //         let c = row[xi];
-        //         let x = xi as i32 * 16;
-        //         let y = yi as i32 * -16;
-        //         if c == 1 {
-        //             let u = if yi > 0 { path[yi - 1][xi] } else { 0 };
-        //             let d = if yi < h - 1 { path[yi + 1][xi] } else { 0 };
-        //             let l = if xi > 0 { path[yi][xi - 1] } else { 0 };
-        //             let r = if xi < w - 1 { path[yi][xi + 1] } else { 0 };
-        //             let bit = u | r << 1 | d << 2 | l << 3;
-        //             let h = match hash.get(&bit) {
-        //                 Some(n) => n.clone(),
-        //                 _ => 34,
-        //             };
-        //             println!("x{} y{} b{}", xi, yi, bit);
-        //             world.set_tile(&format!("map{}", h), x, y, 0);
-        //         } else {
-        //             world.set_tile(&format!("map{}", 44), x, y, 0); //36
-        //         }
-        //     }
-        // }
-
-        // for i in 0..16 {
-        //     for j in 0..16 {
-        //         world.set_tile(&format!("fatty"), (i - 8) * 16, (j - 8) * 16, -32 * 3)
-        //     }
-        // }
-        // for i in 0..16 {
-        //     for j in 0..16 {
-        //         world.set_tile(&format!("grid"), 16 * 16, (i - 8) * 16, (j - 8) * 16)
-        //     }
-        // }
-
-        // world.set_tile(&format!("grid"), 0, 0, 16 * 0);
-
-        // world.get_chunk_mut(100, 100, 100).cook(device);
-
+        // let senders = FxHashMap::default();
+        // senders.insert(k, v)
         World {
             layer: LayerModel::new(),
-            sender: World::init(),
+            senders: FxHashMap::default(),
             local_tex_map: FxHashMap::default(),
             local_model_map: FxHashMap::default(),
         }
     }
 
-    pub fn start(&mut self) {
-        self.sender = World::init();
+    pub fn make(&mut self, bundle_id: u8) {
+        self.senders.insert(bundle_id, World::init(bundle_id));
     }
 
-    pub fn init() -> Sender<(TileCommand, SyncSender<TileResponse>)> {
+    pub fn init(bundle_id: u8) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
         // add block
         // check block
         // get chunks near point
-
         // if is dirty, rebuild
-        let (sender, reciever) = channel::<(TileCommand, SyncSender<TileResponse>)>();
-        // log("init lua core".to_string());
 
-        // let world_thread =
-        let mut model_map_dirty = false;
-        let mut tex_map_dirty = false;
+        let (sender, reciever) = channel::<(TileCommand, SyncSender<TileResponse>)>();
 
         std::thread::spawn(move || {
             let mut layer = Layer::new();
@@ -218,35 +166,6 @@ impl World {
                             println!("triggerd drop");
                             layer.dropped = false;
                         }
-
-                        // if dropped && chunks.is_empty() {
-                        // } else {
-                        //     for chunk in chunks {
-                        //         // let key = chunk.key.clone();
-                        //         match self.layer.chunks.entry(chunk.key.clone()) {
-                        //             Entry::Occupied(o) => {
-                        //                 let c = o.into_mut();
-                        //                 // println!("rebuild model chunk {}", chunk.key);
-                        //                 c.build_chunk(instance, chunk);
-                        //                 c.cook(device);
-                        //             }
-                        //             Entry::Vacant(v) => {
-                        //                 let ix = chunk.pos.x.div_euclid(16) * 16;
-                        //                 let iy = chunk.pos.y.div_euclid(16) * 16;
-                        //                 let iz = chunk.pos.z.div_euclid(16) * 16;
-                        //                 // println!(
-                        //                 //     "populate new model chunk {} {} {} {}",
-                        //                 //     chunk.key, ix, iy, iz
-                        //                 // );
-                        //                 let mut model =
-                        //                     ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
-                        //                 model.build_chunk(instance, chunk);
-                        //                 model.cook(device);
-                        //                 v.insert(model);
-                        //             }
-                        //         }
-                        //     }
-                        // }
 
                         res_handle(response.send(TileResponse::Chunks(chunks, dropped)))
                     }
@@ -287,7 +206,15 @@ impl World {
         device: &Device,
     ) -> std::collections::hash_map::Values<String, ChunkModel> {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-
+        // let empty=vec![];
+        // self.senders.values().for_each(|sender| {
+        //     match sender.send((TileCommand::Check(empty), tx.clone())){
+        //         Ok(_) => {}
+        //         Err(e) => {
+        //             println!("error sending check command: {}", e);
+        //         }
+        //     }
+        // });
         match self.sender.send((TileCommand::Check(vec![]), tx)) {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Chunks(chunks, dropped)) => {

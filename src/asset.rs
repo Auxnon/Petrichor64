@@ -12,6 +12,7 @@ pub fn pack(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
+    bundle_id: u8,
     lua_master: &LuaCore,
     name: &String,
     directory: Option<String>,
@@ -22,6 +23,7 @@ pub fn pack(
         tex_manager,
         model_manager,
         world,
+        bundle_id,
         None,
         lua_master,
         path.clone(),
@@ -43,6 +45,7 @@ pub fn unpack(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
+    bundle_id: u8,
     lua_master: &LuaCore,
     device: &Device,
     name: &String,
@@ -88,6 +91,7 @@ pub fn unpack(
         tex_manager,
         model_manager,
         world,
+        bundle_id,
         Some(device),
         configs,
         sources,
@@ -210,6 +214,7 @@ pub fn walk_files(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
+    bundle_id: u8,
     device: Option<&Device>,
     lua_master: &LuaCore,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
@@ -268,7 +273,15 @@ pub fn walk_files(
             log("assets directory cannot be located".to_string());
         }
     }
-    parse_assets(tex_manager, model_manager, world, device, configs, sources);
+    parse_assets(
+        tex_manager,
+        model_manager,
+        world,
+        bundle_id,
+        device,
+        configs,
+        sources,
+    );
 
     log(format!("scripts dir is {}", scripts_path.display()));
     match read_dir(&scripts_path) {
@@ -321,6 +334,7 @@ fn parse_assets(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
+    bundle_id: u8,
     device: Option<&Device>,
     configs: Vec<(String, String, String, Option<&Vec<u8>>)>,
     mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)>,
@@ -392,10 +406,16 @@ fn parse_assets(
                                     world,
                                     &resource.0,
                                     &resource.3.unwrap(),
+                                    bundle_id,
                                     Some(&template),
                                 );
                             } else if device.is_some() {
-                                tex_manager.load_tex(world, &resource.2, Some(&template));
+                                tex_manager.load_tex(
+                                    world,
+                                    &resource.2,
+                                    bundle_id,
+                                    Some(&template),
+                                );
                             }
 
                             if template.anims.len() > 0 {
@@ -446,9 +466,10 @@ fn parse_assets(
                             world,
                             &file_name.to_string(),
                             &b,
+                            bundle_id,
                             None,
                         ),
-                        _ => tex_manager.load_tex(world, &path, None),
+                        _ => tex_manager.load_tex(world, &path, bundle_id, None),
                     }
                 }
                 _ => {}

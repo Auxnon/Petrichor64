@@ -1,4 +1,4 @@
-use crate::Core;
+use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use winit::{
@@ -160,7 +160,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
-                    let result = core.lua_master.func(&com);
+                    let result = core.bundle_manager.get_lua().func(&com);
+
                     crate::log::log(result.clone());
 
                     // crate::log::next_line();
@@ -185,7 +186,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                     _ => {}
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
-                crate::command::reload(core);
+                crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
                 *control_flow = ControlFlow::Exit;
             }
@@ -243,7 +244,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     } else {
         if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::R) {
-                crate::command::reload(core);
+                crate::command::reload(core, core.bundle_manager.console_bundle_target);
             }
         }
     }
@@ -322,6 +323,10 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
 //         _ => return None,
 //     })
 // }
+
+fn bundle_missing(bm: &BundleManager) -> String {
+    format!("please switch to target {} instead", bm.list_bundles())
+}
 
 fn log(str: String) {
     crate::log::log(format!("controls::{}", str));
