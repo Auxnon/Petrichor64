@@ -1,3 +1,4 @@
+use glam::Vec4;
 use rand::Rng;
 // use tracy::frame;
 
@@ -138,21 +139,13 @@ impl Gui {
                         //image::imageops::overlay(&mut self.img, &sub, x, y);
                     }
                 }
-
-                // image::save_buffer_with_format(
-                //     "tile.png",
-                //     &im,
-                //     im.width(),
-                //     im.height(),
-                //     image::ColorType::Rgba8,
-                //     image::ImageFormat::Png,
-                // );
             }
             Err(e) => {
                 log(format!("{}", e));
             }
         }
     }
+
     pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
         let targ = if onto_console {
             &mut self.console
@@ -189,9 +182,6 @@ impl Gui {
                 lx += (LETTER_SIZE + 1) as i64;
             }
         }
-
-        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
-        // self.dirty = true;
     }
 
     pub fn draw_image(
@@ -234,29 +224,7 @@ impl Gui {
 
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
-        // image::imageops::horizontal_gradient(
-        //     &mut im,
-        //     &image::Rgba([255, 255, 0, 255]),
-        //     &image::Rgba([0, 0, 0, 0]),
-        // );
-        // self.img = RgbaImage::new(self.size[0], self.size[1]);
         image::imageops::replace(&mut self.console, &im, 0, 0);
-        // struct col {};
-        // impl image::imageops::colorops::ColorMap for col {
-        //     type Color = image::Rgba<u8>;
-
-        //     fn index_of(&self, color: &Self::Color) -> usize {
-        //         // todo!()
-        //         0
-        //     }
-
-        //     fn map_color(&self, color: &mut Self::Color) {
-        //         //todo!()
-        //         color.0[0] = 255;
-        //         color.0[1] = 0;
-        //     }
-        // };
-        // image::imageops::dither(&mut self.img, &col {});
 
         const WHITE: image::Rgba<u8> = image::Rgba([255, 255, 0, 100]);
 
@@ -265,21 +233,7 @@ impl Gui {
             let mut x = (LETTER_SIZE) as i64;
             for c in line.chars() {
                 let mut ind = c as u32;
-                // let res = c.to_digit(36);
-                // let ind = match res {
-                //     Some(u) => {
-                //         //match v.get(&u) {
-                //         // Some(o) => *o,
-                //         // None => u,
-                //         if u < 10 {
-                //             u
-                //         } else {
-                //             u + 16
-                //         }
-                //     }
 
-                //     None => 3 * 26 + 25,
-                // };
                 if ind > 255 {
                     ind = 255;
                 }
@@ -367,17 +321,9 @@ impl Gui {
         let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
         let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
         let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
-        // let mut im = RgbaImage::new(w, h);
-        // image::imageops::overlay(&mut self.main, &mut im, x, y);
 
         let white = image::Rgba([255, 255, 255, 255]);
         imageproc::drawing::draw_line_segment_mut(self.get_targ(), (xx1, yy1), (xx2, yy2), white);
-        // draw_line_mut(
-        //     &mut self.main,
-        //     imageproc::point::Point::new(xx1 as i32, yy1 as i32),
-        //     imageproc::point::Point::new(xx2 as i32, yy2 as i32),
-        //     image::Rgba([255, 255, 255, 255]),
-        // );
     }
 
     fn get_targ(&mut self) -> &mut RgbaImage {
@@ -409,6 +355,10 @@ impl Gui {
         self.output = false;
         self.apply_console_out_text();
     }
+    // pub fn overlay_image(&mut self, image: &RgbaImage) {
+    //     image::imageops::overlay(&mut self.main, image, 0, 0);
+    //     self.dirty = true;
+    // }
     pub fn replace_image(&mut self, img: RgbaImage, is_sky: bool) {
         if is_sky {
             self.sky = img;
@@ -457,59 +407,15 @@ impl Gui {
             //self.img = image::imageops::huerotate(&mut self.img, (time * 360.) as i32);
             //crate::texture::write_tex(device, queue, &self.texture, &self.img);
         }
-
-        // frame!("gui end");
-
-        // let mut x: u32 = (rng.gen_range(0..self.size[0]) / 4) * 4;
-        // let y: u32 = (rng.gen_range(0..self.size[1]) / 4) * 4;
-        // let mut x: u32 = ((((self.time * 7.4).cos() * 128. + 128.) / 4.).ceil() * 4.) as u32;
-        // let mut y: u32 = (((self.time.sin() * 128. + 128.) / 4.).ceil() * 4.) as u32;
-
-        // let test = "01234567 Sup Thar 76543210";
-
-        // for c in test.chars() {
-        //     let res = c.to_digit(36);
-        //     let ind = match res {
-        //         Some(u) => {
-        //             //match v.get(&u) {
-        //             // Some(o) => *o,
-        //             // None => u,
-        //             if u < 10 {
-        //                 u
-        //             } else {
-        //                 u + 16
-        //             }
-        //         }
-
-        //         None => 3 * 26 + 25,
-        //     };
-
-        //     let index_x = (ind % 26);
-        //     let index_y = (ind / 26);
-        //     //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
-        //     let sub = image::imageops::crop_imm(&self.letters, index_x * 3, index_y * 3, 3, 3);
-        //     //sub.to_image().
-        //     image::imageops::replace(&mut self.img, &sub, x, y);
-        //     crate::texture::write_tex(device, queue, &self.texture, &self.img);
-        //     x += 4;
-        // }
-        // // println!("");
-        // // let rgb = image::Rgba([
-        // //     rng.gen_range(0..255) as u8,
-        // //     rng.gen_range(0..255) as u8,
-        // //     rng.gen_range(0..255) as u8,
-        // //     255u8,
-        // // ]);
-        // // image::imageops::
-        // // self.img.put_pixel(x, y, rgb);
-        // //image::imageops::overlay_bounds((3, 3), (3u32, 3u32), x, y);
-        // //image::imageops::overlay(&mut self.img, &self.letters, x, y);
-
-        // //let out = crate::texture::make_tex(device, queue, &self.img);
     }
 
     pub fn make_morsel(&self) -> GuiMorsel {
-        let morsel = GuiMorsel::new(self.letters.clone(), self.main.clone(), self.sky.clone());
+        let morsel = GuiMorsel::new(
+            self.letters.clone(),
+            self.main.clone(),
+            self.sky.clone(),
+            self.size,
+        );
         morsel
     }
 }
@@ -521,10 +427,11 @@ pub struct GuiMorsel {
     pub main: RgbaImage,
     pub sky: RgbaImage,
     target_sky: bool,
+    pub size: [u32; 2],
 }
 
 impl GuiMorsel {
-    pub fn new(letters: RgbaImage, main: RgbaImage, sky: RgbaImage) -> Self {
+    pub fn new(letters: RgbaImage, main: RgbaImage, sky: RgbaImage, size: [u32; 2]) -> Self {
         Self {
             letters,
             dirty: true,
@@ -532,6 +439,90 @@ impl GuiMorsel {
             main,
             sky,
             target_sky: false,
+            size,
+        }
+    }
+
+    pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
+        let width = self.size[0];
+        let height = self.size[1];
+
+        draw_filled_rect_mut(
+            self.get_targ(),
+            imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
+            image::Rgba([
+                (r * 255.) as u8,
+                (g * 255.) as u8,
+                (b * 255.) as u8,
+                (a * 255.) as u8,
+            ]),
+        );
+    }
+
+    pub fn rect(&mut self, x: NumCouple, y: NumCouple, w: NumCouple, h: NumCouple, c: Vec4) {
+        let width = self.size[0];
+        let height = self.size[1];
+
+        let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
+        let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
+        let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
+        let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
+        draw_filled_rect_mut(
+            self.get_targ(),
+            imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
+            image::Rgba([
+                (c.x * 255.).floor() as u8,
+                (c.y * 255.).floor() as u8,
+                (c.z * 255.).floor() as u8,
+                (c.w * 255.).floor() as u8,
+            ]),
+        );
+    }
+    pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple) {
+        let width = self.size[0];
+        let height = self.size[1];
+
+        let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
+        let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
+        let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
+        let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
+
+        let white = image::Rgba([255, 255, 255, 255]);
+        imageproc::drawing::draw_line_segment_mut(self.get_targ(), (xx1, yy1), (xx2, yy2), white);
+    }
+
+    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
+        let targ = if self.target_sky {
+            self.dirty_sky = true;
+            &mut self.sky
+        } else {
+            self.dirty = true;
+            &mut self.main
+        };
+
+        let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
+        let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
+
+        for (i, line) in txt.lines().enumerate() {
+            let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
+            let mut lx = xx + (LETTER_SIZE) as i64;
+            for c in line.chars() {
+                let mut ind = c as u32;
+                if ind > 255 {
+                    ind = 255;
+                }
+                let index_x = ind % 16;
+                let index_y = ind / 16;
+                let sub = image::imageops::crop_imm(
+                    &self.letters,
+                    index_x * LETTER_SIZE,
+                    index_y * LETTER_SIZE,
+                    LETTER_SIZE,
+                    LETTER_SIZE,
+                );
+                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
+                lx += (LETTER_SIZE + 1) as i64;
+            }
         }
     }
 
@@ -542,6 +533,22 @@ impl GuiMorsel {
             (b * 255.) as u8,
             (a * 255.) as u8,
         ];
+    }
+
+    pub fn draw_image(&mut self, image: &RgbaImage, x: NumCouple, y: NumCouple) {
+        let xx = if x.0 { x.1 } else { x.1 * self.size[0] as f32 };
+        let yy = if y.0 { y.1 } else { y.1 * self.size[1] as f32 };
+        image::imageops::overlay(self.get_targ(), image, xx as i64, yy as i64);
+
+        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        // self.dirty = true;
+    }
+
+    /* Clean off the main raster */
+    pub fn clean(&mut self) {
+        // self.main.
+        self.main = RgbaImage::new(self.size[0], self.size[1]);
+        self.dirty = true;
     }
 
     pub fn target_gui(&mut self) {
@@ -572,6 +579,7 @@ impl GuiMorsel {
         None
     }
 }
+
 pub fn init_image(
     device: &Device,
     queue: &Queue,

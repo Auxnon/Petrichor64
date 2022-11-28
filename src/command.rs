@@ -5,6 +5,7 @@ use crate::{
     lua_ent::LuaEnt,
     pad::Pad,
     sound::SoundPacket,
+    tile::Chunk,
     world::{TileCommand, TileResponse, World},
     Core,
 };
@@ -13,6 +14,7 @@ use crate::{
 use crate::online::MovePacket;
 
 use glam::{vec4, Vec4};
+use image::{ImageBuffer, RgbaImage};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table, Value};
 use parking_lot::Mutex;
@@ -44,7 +46,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         }
         "e" => {
             hard_reset(core);
-            load(core, Some("test/group".to_string()), None, None, None);
+            load(core, Some("test/edit".to_string()), None, None, None);
         }
         "m" => {
             lua.func(&"crt({modernize=1})".to_string());
@@ -199,7 +201,7 @@ pub fn init_lua_sys(
     // switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    gui: Rc<RefCell<GuiMorsel>>,
+    gui_in: Rc<RefCell<GuiMorsel>>,
     net_sender: OnlineType,
     singer: Sender<SoundPacket>,
     keys: Rc<RefCell<[bool; 256]>>,
@@ -670,58 +672,131 @@ pub fn init_lua_sys(
         "Make sound"
     );
 
-    let pitcher = main_pitcher.clone();
+    lua!(
+        "bg",
+        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
+        ""
+    );
+
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
+    lua!(
+        "fill",
+        move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
+            // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
+            let c = get_color(r, g, b, a);
+            gui.borrow_mut().fill(c.x, c.y, c.z, c.w);
+            Ok(1)
+        },
+        "Set background color"
+    );
+
+    let gui = gui_in.clone();
+    lua!(
+        "pixel",
+        move |_,
+              (x, y, r, g, b, a): (
+            u32,
+            u32,
+            mlua::Value,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            let c = get_color(r, g, b, a);
+            gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
+            // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
+            Ok(1)
+        },
+        "Set color of pixel at x,y"
+    );
+
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "sky",
         move |_, (): ()| {
-            pitcher.send((bundle_id, MainCommmand::Sky()));
+            // pitcher.send((bundle_id, MainCommmand::Sky()));
+            gui.borrow_mut().target_sky();
             Ok(())
         },
         "Set skybox as draw target"
     );
-    let pitcher = main_pitcher.clone();
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "gui",
         move |_, (): ()| {
-            pitcher.send((bundle_id, MainCommmand::Gui()));
+            // pitcher.send((bundle_id, MainCommmand::Gui()));
+            gui.borrow_mut().target_gui();
             Ok(())
         },
         "Set gui as draw target"
     );
 
-    let pitcher = main_pitcher.clone();
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
-        "sqr",
-        move |_, (x, y, w, h): (Value, Value, Value, Value)| {
-            pitcher.send((
-                bundle_id,
-                MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)),
-            ));
+        "rect",
+        move |_,
+              (x, y, w, h, r, g, b, a): (
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            // pitcher.send((
+            //     bundle_id,
+            //     MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)),
+            // ));
+            let c = get_color(r, g, b, a);
+            gui.borrow_mut().rect(numm(x), numm(y), numm(w), numm(h), c);
             Ok(())
         },
-        "Draw a square on the gui"
+        "Draw a rectangle on the gui"
     );
 
-    let pitcher = main_pitcher.clone();
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "line",
         move |_, (x, y, x2, y2): (Value, Value, Value, Value)| {
-            pitcher.send((
-                bundle_id,
-                MainCommmand::Line(numm(x), numm(y), numm(x2), numm(y2)),
-            ));
+            // pitcher.send((
+            //     bundle_id,
+            //     MainCommmand::Line(numm(x), numm(y), numm(x2), numm(y2)),
+            // ));
+            gui.borrow_mut().line(numm(x), numm(y), numm(x2), numm(y2));
+
             Ok(())
         },
         "Draw a line on the gui"
     );
-    let pitcher = main_pitcher.clone();
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "text",
         move |_, (txt, x, y): (String, Option<Value>, Option<Value>)| {
-            pitcher.send((
-                bundle_id,
-                MainCommmand::Text(
-                    txt,
+            // pitcher.send((
+            //     bundle_id,
+            //     MainCommmand::Text(
+            //         txt,
+            // match x {
+            //     Some(o) => numm(o),
+            //     _ => (false, 0.),
+            // },
+            // match y {
+            //     Some(o) => numm(o),
+            //     _ => (false, 0.),
+            // },
+            //     ),
+            // ));
+            gui.borrow_mut().direct_text(
+                &txt,
+                false,
                     match x {
                         Some(o) => numm(o),
                         _ => (false, 0.),
@@ -730,21 +805,27 @@ pub fn init_lua_sys(
                         Some(o) => numm(o),
                         _ => (false, 0.),
                     },
-                ),
-            ));
+            );
+
+            // let c = get_color(r, g, b, a);
+            // gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
             Ok(())
         },
         "Draw text on the gui at position"
     );
-    let pitcher = main_pitcher.clone();
-
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "img",
-        move |_, (im, x, y): (String, Option<Value>, Option<Value>)| {
-            pitcher.send((
-                bundle_id,
-                MainCommmand::DrawImg(
-                    im,
+        move |_, (im, x, y): (Table, Option<Value>, Option<Value>)| {
+            if let Ok(img) = im.get::<_, Vec<u8>>("data") {
+                if let Ok(w) = im.get::<_, u32>("w") {
+                    if let Ok(h) = im.get::<_, u32>("h") {
+                        let len = img.len();
+                        if let Some(rgba) = RgbaImage::from_raw(w, h, img) {
+                            // println!("got image {}x{} w len {}", w, h, len);
+                            gui.borrow_mut().draw_image(
+                                &rgba,
                     match x {
                         Some(o) => numm(o),
                         _ => (false, 0.),
@@ -753,12 +834,30 @@ pub fn init_lua_sys(
                         Some(o) => numm(o),
                         _ => (false, 0.),
                     },
-                ),
-            ));
+                            );
+                        }
+                    }
+                }
+            }
+            // pitcher.send((
+            //     bundle_id,
+            //     MainCommmand::DrawImg(
+            //         im,
+            //         match x {
+            //             Some(o) => numm(o),
+            //             _ => (false, 0.),
+            //         },
+            //         match y {
+            //             Some(o) => numm(o),
+            //             _ => (false, 0.),
+            //         },
+            //     ),
+            // ));
             Ok(())
         },
         "Draw text on the gui at position"
     );
+
     let pitcher = main_pitcher.clone();
     lua!(
         "gimg",
@@ -785,11 +884,13 @@ pub fn init_lua_sys(
         "Get image data"
     );
 
-    let pitcher = main_pitcher.clone();
+    // let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
     lua!(
         "clr",
         move |_, _: ()| {
-            pitcher.send((bundle_id, MainCommmand::Clear()));
+            // pitcher.send((bundle_id, MainCommmand::Clear()));
+            gui.borrow_mut().clean();
             Ok(())
         },
         "Clear the gui"
@@ -930,13 +1031,19 @@ pub fn hard_reset(core: &mut Core) {
 
 /** purge resources related to a specific bundle by id, returns true if the bundle existed */
 pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
-    if core.bundle_manager.soft_reset(bundle_id) {
-        core.tex_manager.reset();
+    let (exists, children) = core.bundle_manager.soft_reset(bundle_id);
+    if exists {
+        core.tex_manager.remove_bundle_content(bundle_id);
+        core.tex_manager.rebuild_atlas(&mut core.world);
+        // core.tex_manager.reset();
         core.model_manager.reset();
         core.gui.clean();
-        core.world.destroy_it_all();
+        core.world.destroy(bundle_id);
         core.global.clean();
         core.ent_manager.reset_by_bundle(bundle_id);
+        children.iter().for_each(|c| {
+            soft_reset(core, *c);
+        });
         true
     } else {
         false
@@ -951,10 +1058,12 @@ pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
 pub fn load_empty(core: &mut Core) {
     let bundle = core.bundle_manager.make_bundle(None, None);
     let resources = core.gui.make_morsel();
+    let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+
     bundle.lua.start(
         bundle.id,
         resources,
-        core.world.sender.clone(),
+        world_sender,
         core.pitcher.clone(),
         core.singer.clone(),
         false,
@@ -991,10 +1100,11 @@ pub fn load(
     };
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
+    let world_sender = core.world.make(bundle.id, core.pitcher.clone());
     bundle.lua.start(
         bundle_id,
         resources,
-        core.world.sender.clone(),
+        world_sender,
         core.pitcher.clone(),
         core.singer.clone(),
         false,
@@ -1215,7 +1325,7 @@ pub enum MainCommmand {
     Fill(glam::Vec4),
     Line(NumCouple, NumCouple, NumCouple, NumCouple),
     Square(NumCouple, NumCouple, NumCouple, NumCouple),
-    Text(String, NumCouple, NumCouple),
+    // Text(String, NumCouple, NumCouple),
     DrawImg(String, NumCouple, NumCouple),
     GetImg(String, SyncSender<(u32, u32, Vec<u8>)>),
     Pixel(u32, u32, glam::Vec4),
@@ -1233,7 +1343,10 @@ pub enum MainCommmand {
     Reload(),
     BundleDropped(BundleResources),
     Subload(String, bool),
+    WorldSync(Vec<Chunk>, bool),
     Null(),
+    //for testing
+    Meta(usize),
 }
 
 fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
