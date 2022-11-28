@@ -205,6 +205,7 @@ pub fn init_lua_sys(
     net_sender: OnlineType,
     singer: Sender<SoundPacket>,
     keys: Rc<RefCell<[bool; 256]>>,
+    diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 4]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
@@ -466,9 +467,33 @@ pub fn init_lua_sys(
     );
 
     // let pitchy = Arc::new(pitcher);
+    let dkeys = diff_keys.clone();
     lua!(
         "key",
-        move |_, key: String| { Ok(keys.borrow()[key_match(key)]) },
+        move |_, (key, volatile): (String, Option<bool>)| {
+            match volatile {
+                Some(true) => Ok(dkeys.borrow()[key_match(key)]),
+                _ => Ok(keys.borrow()[key_match(key)]),
+            }
+        },
+        "Check if key is held down"
+    );
+
+    lua!(
+        "type",
+        move |_, _: ()| {
+            let h: String = diff_keys
+                .borrow()
+                .iter()
+                .enumerate()
+                .filter_map(|(i, k)| if *k { key_unmatch(i) } else { None })
+                .collect();
+
+            // .filter(|(k, v)| **v)
+            // .map(|(k, v)| char::from_u32((87 + k) as u32).unwrap())
+            // .join("");
+            Ok(h)
+        },
         "Check if key is held down"
     );
 
@@ -1231,8 +1256,12 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
         }
     }
 }
-
+// static KEYS: [String; 256] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "a", "b",
+// "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
+// "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
+// "f10", "f11", "f12", "f13","f14","f15", "snap","snapshot","dele"];
 fn key_match(key: String) -> usize {
+    // VirtualKeyCode::from_str(&key).unwrap() as usize
     match key.to_lowercase().as_str() {
         "1" => 0,
         "2" => 1,
@@ -1270,40 +1299,176 @@ fn key_match(key: String) -> usize {
         "x" => 33,
         "y" => 34,
         "z" => 35,
-        "escape" => 35,
-        "f1" => 36,
-        "f2" => 37,
-        "f3" => 38,
-        "f4" => 39,
-        "f5" => 40,
-        "f6" => 41,
-        "f7" => 42,
-        "f8" => 43,
-        "f9" => 44,
-        "f10" => 45,
-        "f11" => 46,
-        "f12" => 47,
-        "f13" => 48,
-        "f14" => 49,
-        "f15" => 50,
-        "snapshot" => 51,
-        "delete" => 56,
+        "escape" => 36,
+        "f1" => 37,
+        "f2" => 38,
+        "f3" => 39,
+        "f4" => 40,
+        "f5" => 41,
+        "f6" => 42,
+        "f7" => 43,
+        "f8" => 44,
+        "f9" => 45,
+        "f10" => 46,
+        "f11" => 47,
+        "f12" => 48,
+        "f13" => 49,
+        "f14" => 50,
+        "f15" => 51,
+        "f16" => 52,
+        "f17" => 53,
+        "f18" => 54,
+        "f19" => 55,
+        "f20" => 56,
+        "f21" => 57,
+        "f22" => 58,
+        "f23" => 59,
+        "f24" => 60,
+        "snapshot" => 61,
+        "del" => 66,
+        "end" => 67,
+        "pagedown" => 68,
+        "pageup" => 69,
         "left" => 70,
         "up" => 71,
         "right" => 72,
         "down" => 73,
-        "back" => 64,
-        "return" => 65,
+        "back" => 74,
+        "return" => 55,
         // "space" => {
         //     println!("space");
         //     return 66;
         // }
         "space" => 76,
+        "'" => 100,
+        "apps" => 101,
+        "*" => 102,
+        "@" => 103,
+        "ax" => 104,
+        "\\" => 105,
+        "calculator" => 106,
+        "capital" => 107,
+        ":" => 108,
+        "," => 109,
+        "convert" => 110,
+        "=" => 111,
+        "`" => 112,
+        "kana" => 113,
+        "kanji" => 114,
+        "lalt" => 115,
+        "lbracket" => 116,
+        "lctrl" => 117,
+        "lshift" => 118,
+        "lwin" => 119,
+        "mail" => 120,
+        "mediaselect" => 121,
+        "mediastop" => 122,
+        "-" => 123,
+        "mute" => 124,
+        "mycomputer" => 125,
+        "navigateforward" => 126,
+        "navigateback" => 127,
+        "nexttrack" => 128,
+        "noconvert" => 129,
+        "oem102" => 130,
+        "." => 131,
+        "playpause" => 132,
+        "+" => 133,
+        "power" => 134,
+        "prevtrack" => 135,
+        "ralt" => 136,
+        "rbracket" => 137,
+        "rctrl" => 138,
+        "rshift" => 139,
+        "rwin" => 140,
+        ";" => 141,
+        "/" => 142,
+        "sleep" => 143,
+        "stop" => 144,
+        "sysrq" => 145,
+        "tab" => 146,
+        "_" => 147,
+        "unlabeled" => 148,
+        "volumedown" => 149,
+        "volumeup" => 150,
+        "wake" => 151,
+        "webback" => 152,
+        "webfavorites" => 153,
+        "webforward" => 154,
+        "webhome" => 155,
+        "webrefresh" => 156,
+        "websearch" => 157,
+        "webstop" => 158,
+        "yen" => 159,
+        "copy" => 160,
+        "paste" => 161,
+        "cut" => 162,
 
         // "space" => VirtualKeyCode::Space,
         // "lctrl" => VirtualKeyCode::LControl,
         // "rctrl" => VirtualKeyCode::RControl,
         _ => 255,
+    }
+}
+pub fn key_unmatch(u: usize) -> Option<char> {
+    match u {
+        0 => Some('1'),
+        1 => Some('2'),
+        2 => Some('3'),
+        3 => Some('4'),
+        4 => Some('5'),
+        5 => Some('6'),
+        6 => Some('7'),
+        7 => Some('8'),
+        8 => Some('9'),
+        9 => Some('0'),
+        10 => Some('a'),
+        11 => Some('b'),
+        12 => Some('c'),
+        13 => Some('d'),
+        14 => Some('e'),
+        15 => Some('f'),
+        16 => Some('g'),
+        17 => Some('h'),
+        18 => Some('i'),
+        19 => Some('j'),
+        20 => Some('k'),
+        21 => Some('l'),
+        22 => Some('m'),
+        23 => Some('n'),
+        24 => Some('o'),
+        25 => Some('p'),
+        26 => Some('q'),
+        27 => Some('r'),
+        28 => Some('s'),
+        29 => Some('t'),
+        30 => Some('u'),
+        31 => Some('v'),
+        32 => Some('w'),
+        33 => Some('x'),
+        34 => Some('y'),
+        35 => Some('z'),
+        55 => Some('e'),
+        76 => Some(' '),
+        100 => Some('\''),
+        102 => Some('*'),
+        103 => Some('@'),
+        // 104=>Some("ax"),
+        105 => Some('\\'),
+        108 => Some(':'),
+        109 => Some(','),
+        111 => Some('='),
+        112 => Some('`'),
+        116 => Some('['),
+        123 => Some('-'),
+        131 => Some('.'),
+        133 => Some('+'),
+        137 => Some(']'),
+        141 => Some(';'),
+        142 => Some('/'),
+        146 => Some('\t'),
+        147 => Some('_'),
+        _ => None,
     }
 }
 

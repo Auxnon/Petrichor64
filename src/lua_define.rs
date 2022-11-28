@@ -328,6 +328,7 @@ fn start(
         let mice = [0.; 4];
 
         let keys_mutex = Rc::new(RefCell::new(keys));
+        let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
         let mice_mutex = Rc::new(RefCell::new(mice));
         let ent_counter = Rc::new(Mutex::new(2u64));
         let gui_handle = Rc::new(RefCell::new(resources));
@@ -363,6 +364,7 @@ fn start(
             net,
             singer,
             Rc::clone(&keys_mutex),
+            Rc::clone(&diff_keys_mutex),
             Rc::clone(&mice_mutex),
             Rc::clone(&pads),
             Rc::clone(&ent_counter),
@@ -521,9 +523,24 @@ fn start(
                 // updated with our input information, as this is only provided within the game loop, also send out a gui update
                 match bit_in {
                     Some(b) => {
+                        let mut h = diff_keys_mutex.borrow_mut();
+
+                        keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
+                            h[i] = !k && b.0[i];
+                        });
+                        drop(h);
+
+                        // en.for_each(|k| {
+                        //     if !k && b.0[{
+
+                        //     }
+                        //     b.0
+                        // });
                         *keys_mutex.borrow_mut() = b.0;
                         *mice_mutex.borrow_mut() = b.1;
+
                         match gui_handle.borrow_mut().send_state() {
+                            // only send if a change was made, otherwise the old image is cached on the main thread
                             Some((im, b)) => {
                                 async_sender
                                     .send((bundle_id, crate::MainCommmand::AsyncGui(im, b)));
