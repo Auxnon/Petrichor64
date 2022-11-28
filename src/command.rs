@@ -235,8 +235,7 @@ pub fn init_lua_sys(
         lua_globals.set("_default_func", default_func),
     );
 
-    let multi = lua_ctx.create_function(|_, (x, y): (f32, f32)| Ok(x * y));
-    lua_globals.set("multi", multi.unwrap());
+    let mut command_map: Vec<(String, String)> = vec![];
 
     // lua_globals.set("_ents", lua_ctx.create_table()?);
 
@@ -248,6 +247,7 @@ pub fn init_lua_sys(
     #[macro_export]
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr) => {
+            command_map.push(($name.to_string(), $desc.to_string()));
             res(
                 $name,
                 lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
@@ -308,41 +308,6 @@ pub fn init_lua_sys(
     // );
 
     // let switch = Arc::clone(&switch_board);
-
-    lua!(
-        "bg",
-        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
-        ""
-    );
-
-    let pitcher = main_pitcher.clone();
-    lua!(
-        "fill",
-        move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
-            pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
-            Ok(1)
-        },
-        "Set background color"
-    );
-
-    lua!(
-        "pixel",
-        move |_,
-              (x, y, r, g, b, a): (
-            u32,
-            u32,
-            mlua::Value,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>
-        )| {
-            let c = get_color(r, g, b, a);
-            gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
-            // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
-            Ok(1)
-        },
-        "Set color of pixel at x,y"
-    );
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -822,14 +787,14 @@ pub fn init_lua_sys(
             gui.borrow_mut().direct_text(
                 &txt,
                 false,
-                    match x {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
-                    match y {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
+                match x {
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
+                },
+                match y {
+                    Some(o) => numm(o),
+                    _ => (false, 0.),
+                },
             );
 
             // let c = get_color(r, g, b, a);
@@ -851,14 +816,14 @@ pub fn init_lua_sys(
                             // println!("got image {}x{} w len {}", w, h, len);
                             gui.borrow_mut().draw_image(
                                 &rgba,
-                    match x {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
-                    match y {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
+                                match x {
+                                    Some(o) => numm(o),
+                                    _ => (false, 0.),
+                                },
+                                match y {
+                                    Some(o) => numm(o),
+                                    _ => (false, 0.),
+                                },
                             );
                         }
                     }
@@ -1021,6 +986,23 @@ pub fn init_lua_sys(
             //
         },
         "I guess blow up the lua core?"
+    );
+
+    let command_map_clone = command_map.clone();
+    lua!(
+        "help",
+        move |lu, (): ()| {
+            if let Ok(t) = lu.create_table() {
+                t.set("help", "list all lua commands. In fact, the command used by this program to list this very command")?;
+                for (k, v) in command_map_clone.iter() {
+                    t.set(k.to_string(), v.to_string())?;
+                }
+                Ok(t)
+            } else {
+                Err(mlua::Error::RuntimeError("no table".to_string()))
+            }
+        },
+        "List all commands"
     );
 
     Ok(())
