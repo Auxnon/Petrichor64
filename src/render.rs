@@ -268,10 +268,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
             render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
-            let chunks = core
-                .world
-                .get_chunk_models(&core.model_manager, &core.device);
-            // // println!("------chunks {} ------", chunks.len());
+            let chunks = core.world.get_chunk_models();
+            // println!("------chunks {} ------", chunks.len());
 
             for c in chunks {
                 if c.buffers.is_some() {

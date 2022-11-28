@@ -450,10 +450,15 @@ fn parse_assets(
             log(format!("loading {} as glb/gltf model", file_name));
             match device {
                 Some(d) => match buffer {
-                    Some(b) => {
-                        model_manager.load_from_buffer(world, tex_manager, &file_name, &b, d)
-                    }
-                    _ => model_manager.load_from_string(world, tex_manager, &path, d),
+                    Some(b) => model_manager.load_from_buffer(
+                        world,
+                        bundle_id,
+                        tex_manager,
+                        &file_name,
+                        &b,
+                        d,
+                    ),
+                    _ => model_manager.load_from_string(world, bundle_id, tex_manager, &path, d),
                 },
                 _ => {}
             };

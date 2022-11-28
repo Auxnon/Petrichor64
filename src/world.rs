@@ -9,6 +9,8 @@ use rustc_hash::FxHashMap;
 use wgpu::Device;
 
 use crate::{
+    bundle,
+    command::MainCommmand,
     model::{Model, ModelManager},
     tile::{Chunk, ChunkModel, Layer, LayerModel},
 };
@@ -23,14 +25,15 @@ pub enum TileCommand {
     // Make((String, String, String, String, String, String, String)),
     Set(Vec<(String, IVec4)>),
     Drop(IVec3),
-    Check(Vec<String>),
+    Check(),
     /** Simply get whether a tile is present at position or not */
     Is(IVec3),
     /** Apply a texture string and it's vector uv map to our hash and create new index within the world if it doesn't exist*/
     MapTex(String, u32),
     /** Apply a model string and it's arc<model> to our hash and create new index within the world if it doesn't exist*/
     MapModel(String),
-    Reset(),
+    Clear(),
+    Destroy(),
 }
 
 pub enum TileResponse {
@@ -103,7 +106,7 @@ impl WorldInstance {
     }
 }
 pub struct World {
-    layer: LayerModel,
+    layers: FxHashMap<u8, LayerModel>,
     pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
     pub local_tex_map: FxHashMap<u32, Vec4>,
     pub local_model_map: FxHashMap<u32, Rc<Model>>,
@@ -114,18 +117,29 @@ impl World {
         // let senders = FxHashMap::default();
         // senders.insert(k, v)
         World {
-            layer: LayerModel::new(),
+            layers: FxHashMap::default(),
             senders: FxHashMap::default(),
             local_tex_map: FxHashMap::default(),
             local_model_map: FxHashMap::default(),
         }
     }
 
-    pub fn make(&mut self, bundle_id: u8) {
-        self.senders.insert(bundle_id, World::init(bundle_id));
+    pub fn make(
+        &mut self,
+        bundle_id: u8,
+        pitcher: Sender<(u8, MainCommmand)>,
+    ) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
+        println!("🟢World::make");
+        let sender = World::init(bundle_id, pitcher);
+        self.senders.insert(bundle_id, sender.clone());
+        self.layers.insert(bundle_id, LayerModel::new());
+        sender
     }
 
-    pub fn init(bundle_id: u8) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
+    pub fn init(
+        bundle_id: u8,
+        pitcher: Sender<(u8, MainCommmand)>,
+    ) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
         // add block
         // check block
         // get chunks near point
@@ -158,16 +172,16 @@ impl World {
                         );
                         res_handle(response.send(TileResponse::Success(true)))
                     }
-                    (TileCommand::Check(_), response) => {
+                    (TileCommand::Check(), response) => {
                         let chunks = layer.get_dirty();
-                        // log(format!("chunks returned is {}", chunks.len()));
                         let dropped = layer.dropped;
                         if dropped {
                             println!("triggerd drop");
                             layer.dropped = false;
                         }
-
-                        res_handle(response.send(TileResponse::Chunks(chunks, dropped)))
+                        if !chunks.is_empty() || dropped {
+                            pitcher.send((bundle_id, MainCommmand::WorldSync(chunks, dropped)));
+                        }
                     }
                     (TileCommand::Is(tile), response) => res_handle(
                         response.send(TileResponse::Success(layer.is_tile(tile.x, tile.y, tile.z))),
@@ -176,7 +190,12 @@ impl World {
                         layer.drop_chunk(v.x as i32, v.y as i32, v.z as i32);
                         res_handle(response.send(TileResponse::Success(true)))
                     }
-                    (TileCommand::Reset(), response) => {
+                    (TileCommand::Destroy(), response) => {
+                        layer.destroy_it_all();
+                        res_handle(response.send(TileResponse::Success(true)));
+                        break;
+                    }
+                    (TileCommand::Clear(), response) => {
                         layer.destroy_it_all();
                         res_handle(response.send(TileResponse::Success(true)));
                     }
@@ -200,72 +219,75 @@ impl World {
         sender
     }
 
-    pub fn get_chunk_models(
+    pub fn process_sync(
         &mut self,
+        bundle_id: u8,
+        chunks: Vec<Chunk>,
+        dropped: bool,
         model_manager: &ModelManager,
         device: &Device,
-    ) -> std::collections::hash_map::Values<String, ChunkModel> {
-        let (tx, rx) = sync_channel::<TileResponse>(0);
-        // let empty=vec![];
-        // self.senders.values().for_each(|sender| {
-        //     match sender.send((TileCommand::Check(empty), tx.clone())){
-        //         Ok(_) => {}
-        //         Err(e) => {
-        //             println!("error sending check command: {}", e);
-        //         }
-        //     }
-        // });
-        match self.sender.send((TileCommand::Check(vec![]), tx)) {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Chunks(chunks, dropped)) => {
-                    if dropped && chunks.is_empty() {
-                        self.layer.chunks.clear()
-                    } else {
-                        for chunk in chunks {
-                            // let key = chunk.key.clone();
-                            match self.layer.chunks.entry(chunk.key.clone()) {
-                                Entry::Occupied(o) => {
-                                    let c = o.into_mut();
-                                    // println!("rebuild model chunk {}", chunk.key);
-                                    c.build_chunk(
-                                        &self.local_tex_map,
-                                        &self.local_model_map,
-                                        model_manager,
-                                        chunk,
-                                    );
-                                    c.cook(device);
-                                }
-                                Entry::Vacant(v) => {
-                                    let ix = chunk.pos.x.div_euclid(16) * 16;
-                                    let iy = chunk.pos.y.div_euclid(16) * 16;
-                                    let iz = chunk.pos.z.div_euclid(16) * 16;
-                                    // println!(
-                                    //     "populate new model chunk {} {} {} {}",
-                                    //     chunk.key, ix, iy, iz
-                                    // );
-                                    let mut model =
-                                        ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
-                                    model.build_chunk(
-                                        &self.local_tex_map,
-                                        &self.local_model_map,
-                                        model_manager,
-                                        chunk,
-                                    );
-                                    model.cook(device);
-                                    v.insert(model);
-                                }
-                            }
+    ) {
+        if let Some(layer) = self.layers.get_mut(&bundle_id) {
+            if dropped && chunks.is_empty() {
+                layer.chunks.clear();
+            } else {
+                for chunk in chunks {
+                    // let key = chunk.key.clone();
+                    match layer.chunks.entry(chunk.key.clone()) {
+                        Entry::Occupied(o) => {
+                            let c = o.into_mut();
+                            // println!("rebuild model chunk {}", chunk.key);
+                            c.build_chunk(
+                                &self.local_tex_map,
+                                &self.local_model_map,
+                                model_manager,
+                                chunk,
+                            );
+                            c.cook(device);
+                        }
+                        Entry::Vacant(v) => {
+                            let ix = chunk.pos.x.div_euclid(16) * 16;
+                            let iy = chunk.pos.y.div_euclid(16) * 16;
+                            let iz = chunk.pos.z.div_euclid(16) * 16;
+                            // println!(
+                            //     "populate new model chunk {} {} {} {}",
+                            //     chunk.key, ix, iy, iz
+                            // );
+                            let mut model = ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
+                            model.build_chunk(
+                                &self.local_tex_map,
+                                &self.local_model_map,
+                                model_manager,
+                                chunk,
+                            );
+                            model.cook(device);
+                            v.insert(model);
                         }
                     }
                 }
-                _ => {}
-            },
-            _ => {}
+            }
         }
+    }
 
-        //MutexGuard::unlock_fair(guard);
+    pub fn get_chunk_models(&mut self) -> Vec<&ChunkModel> {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
 
-        self.layer.chunks.values()
+        // ping all instances asyncronously
+        self.senders.values().for_each(|sender| {
+            match sender.send((TileCommand::Check(), tx.clone())) {
+                Ok(_) => {}
+                Err(e) => {
+                    // println!("error sending check command: {}", e);
+                }
+            }
+        });
+        // println!("layers #{}", self.layers.len());
+        // return the current layer layout
+        self.layers
+            .values()
+            .flat_map(|l| l.chunks.values())
+            .collect::<Vec<&ChunkModel>>()
+        // self.layer.chunks.values()
     }
 
     pub fn set_tile(
@@ -330,9 +352,10 @@ impl World {
     // ) {
     // }
 
+    /** Clear a world instance of it's tiles and models but keep active */
     pub fn clear_tiles(sender: &Sender<(TileCommand, SyncSender<TileResponse>)>) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match sender.send((TileCommand::Reset(), tx)) {
+        match sender.send((TileCommand::Clear(), tx)) {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Success(true)) => {
                     crate::lg!("cleared tiles")
@@ -343,17 +366,68 @@ impl World {
         }
     }
 
-    pub fn destroy_it_all(&mut self) {
-        let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self.sender.send((TileCommand::Reset(), tx)) {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Success(true)) => {}
-                _ => {}
-            },
+    // pub fn clear(&mut self, bundle_id: u8) {
+    //     match self.senders.remove(&bundle_id) {
+    //         Some(sender) => {
+    //             let (tx, rx) = sync_channel::<TileResponse>(0);
+    //             match sender.send((TileCommand::Clear(), tx)) {
+    //                 Ok(_) => match rx.recv() {
+    //                     Ok(TileResponse::Success(true)) => {
+    //                         crate::lg!("destroyed world instance {}", bundle_id)
+    //                     }
+    //                     _ => {}
+    //                 },
+    //                 _ => {}
+    //             }
+    //         }
+    //         _ => {}
+    //     }
+    //     if let Some(layer) = self.layers.get(&bundle_id) {
+    //         layer.chunks.clear();
+    //     }
+    // }
+
+    /** Destroy a world instance and clear models as well as end the instance thread*/
+    pub fn destroy(&mut self, bundle_id: u8) {
+        match self.senders.remove(&bundle_id) {
+            Some(sender) => {
+                let (tx, rx) = sync_channel::<TileResponse>(0);
+                match sender.send((TileCommand::Destroy(), tx)) {
+                    Ok(_) => match rx.recv() {
+                        Ok(TileResponse::Success(true)) => {
+                            crate::lg!("destroyed world instance {}", bundle_id)
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
             _ => {}
         }
+        self.layers.remove(&bundle_id);
+    }
 
-        self.layer.destroy_it_all();
+    /** Destroy all world instances and clear all models. End all threads*/
+    pub fn destroy_it_all(&mut self) {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+        let mut remaining = self.senders.len();
+        for (b, sender) in self.senders.drain() {
+            match sender.send((TileCommand::Destroy(), tx.clone())) {
+                Ok(_) => {}
+                Err(e) => {
+                    remaining -= 1;
+                    // println!("error sending destroy command: {}", e);
+                }
+            }
+        }
+        // wait for all threads to end before completing function syncronously
+        for r in rx {
+            remaining -= 1;
+            if remaining == 0 {
+                break;
+            }
+        }
+        self.layers.clear()
     }
 
     // pub fn build_chunk_from_pos(&mut self, ix: i32, iy: i32, iz: i32) {
@@ -386,52 +460,50 @@ impl World {
     // }
 
     /** index the texture uv by name  within the world, and the world instance generates an index by name to store on it's own thread*/
-    pub fn index_texture(&mut self, name: String, uv: Vec4) -> u32 {
-        let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self
-            .sender
-            .send((TileCommand::MapTex(name.to_lowercase(), 0), tx))
-        {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Mapped(i)) => {
-                    // println!("mapped tex {} to {}", name, i);
-                    self.local_tex_map.insert(i, uv);
-                    i
+    pub fn index_texture(&mut self, bundle_id: u8, name: String, uv: Vec4) -> u32 {
+        match self.senders.get(&bundle_id) {
+            Some(sender) => {
+                let (tx, rx) = sync_channel::<TileResponse>(0);
+                match sender.send((TileCommand::MapTex(name.to_lowercase(), 0), tx)) {
+                    Ok(_) => match rx.recv() {
+                        Ok(TileResponse::Mapped(i)) => {
+                            // println!("mapped tex {} to {}", name, i);
+                            self.local_tex_map.insert(i, uv);
+                            i
+                        }
+                        _ => 0,
+                    },
+                    _ => 0,
                 }
-                _ => 0,
-            },
+            }
             _ => 0,
         }
     }
+
     /** We already have an index for a texture we're just providing a string alias */
-    pub fn index_texture_alias(&self, name: String, direct: u32) {
-        let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self
-            .sender
-            .send((TileCommand::MapTex(name.to_lowercase(), direct), tx))
-        {
-            Ok(_) => match rx.recv() {
-                _ => {}
-            },
-            _ => {}
+    pub fn index_texture_alias(&mut self, bundle_id: u8, name: String, direct: u32) {
+        if let Some(sender) = self.senders.get(&bundle_id) {
+            let (tx, rx) = sync_channel::<TileResponse>(0);
+            if let Ok(_) = sender.send((TileCommand::MapTex(name.to_lowercase(), direct), tx)) {
+                if let Ok(TileResponse::Mapped(i)) = rx.recv() {
+                    // println!("mapped tex {} to {}", name, i);
+                    self.local_tex_map
+                        .insert(i, self.local_tex_map.get(&direct).unwrap().clone());
+                }
+            }
         }
     }
 
     /** index the model by name within the world, and the world instance generates an index by name to store on it's own thread*/
-    pub fn index_model(&mut self, name: String, model: Rc<Model>) {
+    pub fn index_model(&mut self, bundle_id: u8, name: String, model: Rc<Model>) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
-        match self
-            .sender
-            .send((TileCommand::MapModel(name.to_lowercase()), tx))
-        {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Mapped(i)) => {
-                    // self.local_tex_map.insert(k, v)
+        if let Some(sender) = self.senders.get(&bundle_id) {
+            if let Ok(_) = sender.send((TileCommand::MapModel(name.to_lowercase()), tx)) {
+                if let Ok(TileResponse::Mapped(i)) = rx.recv() {
+                    // println!("mapped model {} to {}", name, i);
                     self.local_model_map.insert(i, model);
                 }
-                _ => {}
-            },
-            _ => {}
+            }
         }
     }
 

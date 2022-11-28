@@ -116,6 +116,7 @@ impl ModelManager {
     fn load(
         &mut self,
         world: &mut World,
+        bundle_id: u8,
         tex_manager: &mut TexManager,
         str: &String,
         nodes: gltf::Document,
@@ -239,7 +240,7 @@ impl ModelManager {
                         let lower = name.to_lowercase();
                         log(format!("single model stored as {}", name));
                         //TODO is this mapped at some point?`
-                        world.index_model(lower.clone(), Rc::clone(&mesh.1));
+                        world.index_model(bundle_id, lower.clone(), Rc::clone(&mesh.1));
                         self.DICTIONARY
                             .insert(lower.to_string(), Rc::clone(&mesh.1));
                         let compound_name = format!("{}.{}", lower, mesh.0).to_lowercase();
@@ -250,7 +251,7 @@ impl ModelManager {
                             log(format!("multi-model stored as {}", m.1.name));
                             // m.1.name = compound_name;
                             //TODO is this mapped at some point?
-                            world.index_model(m.1.name.clone(), Rc::clone(&m.1));
+                            world.index_model(bundle_id, m.1.name.clone(), Rc::clone(&m.1));
                             self.DICTIONARY.insert(m.1.name.clone(), m.1);
                         }
                     }
@@ -265,6 +266,7 @@ impl ModelManager {
     pub fn load_from_buffer(
         &mut self,
         world: &mut World,
+        bundle_id: u8,
         tex_manager: &mut TexManager,
         str: &String,
         slice: &Vec<u8>,
@@ -272,7 +274,16 @@ impl ModelManager {
     ) {
         match gltf::import_slice(slice) {
             Ok((nodes, buffers, image_data)) => {
-                self.load(world, tex_manager, str, nodes, buffers, image_data, device);
+                self.load(
+                    world,
+                    bundle_id,
+                    tex_manager,
+                    str,
+                    nodes,
+                    buffers,
+                    image_data,
+                    device,
+                );
             }
             _ => {}
         }
@@ -282,6 +293,7 @@ impl ModelManager {
     pub fn load_from_string(
         &mut self,
         world: &mut World,
+        bundle_id: u8,
         tex_manager: &mut TexManager,
         str: &String,
         device: &Device,
@@ -290,7 +302,16 @@ impl ModelManager {
 
         match gltf::import(&target) {
             Ok((nodes, buffers, image_data)) => {
-                self.load(world, tex_manager, str, nodes, buffers, image_data, device);
+                self.load(
+                    world,
+                    bundle_id,
+                    tex_manager,
+                    str,
+                    nodes,
+                    buffers,
+                    image_data,
+                    device,
+                );
             }
             Err(err) => {
                 log(format!("gltf err for {} -> {}", &target, err));
@@ -302,6 +323,7 @@ impl ModelManager {
     pub fn edit_cube(
         &mut self,
         world: &mut World,
+        bundle_id: u8,
         tex_manager: &TexManager,
         name: String,
         textures: Vec<String>,
@@ -363,7 +385,7 @@ impl ModelManager {
 
         let rced_model = Rc::new(model);
         //TODO is this mapped at some point?
-        let model_index = world.index_model(name.clone(), Rc::clone(&rced_model));
+        let model_index = world.index_model(bundle_id, name.clone(), Rc::clone(&rced_model));
         self.DICTIONARY.insert(name.clone(), rced_model);
         log(format!("created new model cube {}", name));
     }

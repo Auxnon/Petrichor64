@@ -1,3 +1,6 @@
+use std::{cell::RefCell, rc::Rc};
+
+use image::RgbaImage;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
@@ -15,6 +18,7 @@ pub struct Bundle {
     pub directory: Option<String>,
     pub lua: LuaCore,
     pub children: Vec<u8>,
+    pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
 }
 
 pub type BundleResources = GuiMorsel;
@@ -27,6 +31,7 @@ impl Bundle {
             directory: None,
             lua,
             children: Vec::new(),
+            rasters: FxHashMap::default(),
         }
     }
 
@@ -48,6 +53,8 @@ pub struct BundleManager {
     pub open_tex_managers: Vec<TexManager>,
     pub open_lua_box: Vec<LuaCore>,
     pub call_order: Vec<u8>,
+    main_rasters: Vec<Rc<RefCell<RgbaImage>>>,
+    sky_rasters: Vec<Rc<RefCell<RgbaImage>>>,
 }
 
 impl BundleManager {
@@ -59,7 +66,13 @@ impl BundleManager {
             open_tex_managers: Vec::new(),
             open_lua_box: Vec::new(),
             call_order: Vec::new(),
+            main_rasters: Vec::new(),
+            sky_rasters: Vec::new(),
         }
+    }
+
+    pub fn is_single(&self) -> bool {
+        self.bundles.len() == 1
     }
 
     pub fn call_loop(&mut self, bits: ControlState) {
@@ -159,9 +172,74 @@ impl BundleManager {
                 self.call_order.extend(b.children.iter().cloned());
             }
         }
+        // self.call_order.reverse();
         println!("bundles listed {}", self.list_bundles());
         println!("call order: {:?}", self.call_order);
+        self.main_rasters.clear();
+        self.sky_rasters.clear();
+        for bi in self.call_order.iter() {
+            if let Some(b) = self.bundles.get(bi) {
+                println!("bundle {} has {} rasters", b.name, b.rasters.len());
+                if let Some(r) = b.rasters.get(&0) {
+                    self.main_rasters.push(r.clone());
+                }
+                if let Some(r) = b.rasters.get(&1) {
+                    self.sky_rasters.push(r.clone());
+                }
+            }
+        }
     }
+
+    pub fn set_raster(&mut self, bundle_id: u8, raster: usize, im: RgbaImage) {
+        // println!("set raster {} {}", bundle_id, raster);
+        if let Some(b) = self.bundles.get_mut(&bundle_id) {
+            match b.rasters.get_mut(&raster) {
+                Some(r) => {
+                    *r.borrow_mut() = im;
+                }
+                _ => {
+                    b.rasters.insert(raster, Rc::new(RefCell::new(im)));
+                    self.rebuild_call_order();
+                }
+            }
+        }
+    }
+
+    pub fn get_rasters(&self, raster_id: usize) -> Option<RgbaImage> {
+        if raster_id == 0 {
+            // println!("1main raster {}", self.main_rasters.len());
+            if self.main_rasters.len() > 0 {
+                let mut im = self.main_rasters[0].borrow().clone();
+                for r in self.main_rasters.iter().skip(1) {
+                    // image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
+                }
+                // println!("2main raster {}", self.main_rasters.len());
+                Some(im)
+            } else {
+                None
+            }
+        } else {
+            if self.sky_rasters.len() > 0 {
+                let mut im = self.sky_rasters[0].borrow().clone();
+                for r in self.sky_rasters.iter().skip(1) {
+                    image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
+                }
+                Some(im)
+            } else {
+                None
+            }
+        }
+    }
+
+    // pub fn get_bundle_raster(&self, bundle_id: u8, raster: usize) -> Option<&RgbaImage> {
+    //     match self.bundles.get(&bundle_id) {
+    //         Some(bundle) => match bundle.rasters.get(raster) {
+    //             Some(raster) => Some(raster),
+    //             None => None,
+    //         },
+    //         None => None,
+    //     }
+    // }
 
     pub fn get_lua(&mut self) -> &LuaCore {
         match self.bundles.get(&self.console_bundle_target) {
@@ -187,14 +265,14 @@ impl BundleManager {
             .join(",")
     }
 
-    /** Reset a specific bundle, returns true if it exists */
-    pub fn soft_reset(&self, id: u8) -> bool {
+    /** Reset a specific bundle, returns true if it exists, and returns any possible children instances */
+    pub fn soft_reset(&self, id: u8) -> (bool, Vec<u8>) {
         match self.bundles.get(&id) {
             Some(bundle) => {
                 bundle.shutdown();
-                true
+                (true, bundle.children.clone())
             }
-            None => false,
+            None => (false, vec![]),
         }
     }
 

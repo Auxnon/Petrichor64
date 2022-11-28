@@ -156,6 +156,7 @@ impl TexManager {
     fn tile_locate(
         &mut self,
         world: &mut World,
+        bundle_id: u8,
         name: &String,
         dim: (u32, u32),
         pos: Vec4,
@@ -204,7 +205,7 @@ impl TexManager {
                     first = p.clone();
                     first_complete = true;
                 }
-                let index_key = world.index_texture(key.clone(), p);
+                let index_key = world.index_texture(bundle_id, key.clone(), p);
 
                 // log(format!(
                 //     "made tile tex {} at {} {} {} {}",
@@ -218,7 +219,11 @@ impl TexManager {
                                 Some(name) => {
                                     self.dictionary.insert(name.clone(), p);
                                     if index_key > 0 {
-                                        world.index_texture_alias(name.clone(), index_key);
+                                        world.index_texture_alias(
+                                            bundle_id,
+                                            name.clone(),
+                                            index_key,
+                                        );
                                     }
                                 }
                                 _ => {}
@@ -258,7 +263,7 @@ impl TexManager {
         let pos = if is_tile > 0 {
             let dim = (img.width(), img.height());
             let pos = self.locate(img);
-            self.tile_locate(world, &name, dim, pos, tile_dim, rename)
+            self.tile_locate(world, bundle_id, &name, dim, pos, tile_dim, rename)
         } else {
             self.locate(img)
         };
@@ -275,7 +280,7 @@ impl TexManager {
 
         // lg!("sort_image name {} pos {}", name, pos);
         self.dictionary.insert(name.clone(), pos);
-        world.index_texture(name, pos);
+        world.index_texture(bundle_id, name, pos);
     }
 
     /** Load image from a buffer, likely from a game bin, zip or game image zip */

@@ -355,7 +355,11 @@ impl EntManager {
         // self.uniform_alignment = 0;
     }
     pub fn reset_by_bundle(&mut self, bundle_id: u8) {
-        println!("ent count before bundle purge {}", self.ent_array.len());
+        println!(
+            "looking for {}, ent count before bundle purge {}",
+            bundle_id,
+            self.ent_array.len()
+        );
         self.ent_array.retain(|(le, e, u)| match le.lock() {
             Ok(lent) => {
                 if lent.bundle_id == bundle_id {

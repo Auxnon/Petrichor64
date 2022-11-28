@@ -276,7 +276,7 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
             match state {
                 winit::event::ElementState::Pressed => {
                     // VirtualKeycode is an enum with a defined representation
-                    // println!("newkey is {}", i);
+                    println!("newkey is {}", *keycode as u32);
                     bits.0[*keycode as usize] = true;
                 }
                 winit::event::ElementState::Released => {

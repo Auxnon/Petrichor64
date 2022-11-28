@@ -600,7 +600,7 @@ impl Core {
 
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
-            .build_with_target_rate(60.0); // limit to X FPS if possible
+            .build_with_target_rate(240.0); // limit to X FPS if possible
 
         let (stream, singer) = sound::init();
         let stream_result = match stream {
@@ -694,7 +694,7 @@ impl Core {
                 MainCommmand::Line(x, y, x2, y2) => {
                     self.gui.line(x, y, x2, y2);
                 }
-                MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
+                // MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
                 MainCommmand::DrawImg(s, x, y) => {
                     self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
                 }
@@ -731,6 +731,7 @@ impl Core {
                         ];
                         self.model_manager.edit_cube(
                             &mut self.world,
+                            id,
                             &self.tex_manager,
                             m[0].clone(),
                             m2,
@@ -807,19 +808,43 @@ impl Core {
                     // println!("resetttt");
                     mutations.push((id, MainCommmand::Reload()));
                 }
-                MainCommmand::AsyncGui(g, b) => {
-                    self.gui.replace_image(g, b);
+                MainCommmand::AsyncGui(img, is_sky) => {
+                    let raster_id = if is_sky { 1 } else { 0 };
+
+                    if !self.bundle_manager.is_single() {
+                        // println!("async gui");
+                        self.bundle_manager.set_raster(id, raster_id, img);
+                        mutations.push((id, MainCommmand::Meta(raster_id)));
+                    } else {
+                        self.gui.replace_image(img, is_sky);
+                    }
+                }
+                MainCommmand::WorldSync(chunks, dropped) => {
+                    self.world
+                        .process_sync(id, chunks, dropped, &self.model_manager, &self.device);
                 }
                 _ => {}
             };
         }
 
         if !mutations.is_empty() {
+            let mut only_one_gui_sync = true;
             for (id, m) in mutations {
                 match m {
                     MainCommmand::Reload() => crate::command::reload(self, id),
                     MainCommmand::Subload(file, is_overlay) => {
                         crate::command::load(self, Some(file), None, None, Some((id, is_overlay)));
+                    }
+                    MainCommmand::Meta(d) => {
+                        if only_one_gui_sync {
+                            match self.bundle_manager.get_rasters(d) {
+                                Some(rasters) => {
+                                    self.gui.replace_image(rasters, d == 0);
+                                }
+                                None => {}
+                            }
+                            only_one_gui_sync = false;
+                        }
                     }
                     _ => {}
                 }
