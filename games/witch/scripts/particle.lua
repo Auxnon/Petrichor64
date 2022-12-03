@@ -6,10 +6,9 @@ function Particle_Init()
     for i = 0, 7 do sprk[i + 1] = "sparkles" .. i end
     anim("sparkler", sprk, 2)
     Missiles = Dict:new()
-    local leaves = batch_spawn(100, "leaf", 0, 12, 4, 50)
-    for i = 1, #leaves do
-        local p = leaves[i]
-        p.x = (rnd() * 20) - 10
+    -- local leaves = batch_spawn(100, "leaf", 0, 12, 4, 50)
+    for i = 1, 100 do
+        local p = spawn("leaf", (rnd() * 20) - 10, 12, 4)
         local leaf = {
             ent = p,
             vx = rnd() * 0.05,

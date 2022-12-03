@@ -10,6 +10,8 @@ crt({
     high = .8,
     bleed = .3
 })
+sky()
+fill(0., .6, .9)
 
 -- top west north east south bottom
 cube("block1", "ground9", "ground7", "ground7", "ground7", "ground7", "ground15")
@@ -23,7 +25,7 @@ cube("east", "ground9", "ground7", "ground7", "compass2", "ground7", "ground14")
 cube("west", "ground9", "compass0", "ground7", "ground7", "ground7", "ground14")
 cube("north", "ground9", "ground7", "compass1", "ground7", "ground7", "ground14")
 cube("south", "ground9", "ground7", "ground7", "ground7", "compass3", "ground14")
-anim("dog idle", {"dog0", "dog1", "dog2"}, 2)
+anim("dog idle", { "dog0", "dog1", "dog2" }, 2)
 
 e2 = {
     frame = 0,
@@ -80,8 +82,8 @@ function tiler()
 end
 
 function main()
-    log("heya")
-    bg(0, .6, .9, 1)
+    -- log("heya")
+
 
     tiler()
 
@@ -183,4 +185,3 @@ function loop()
     end
 
 end
-
