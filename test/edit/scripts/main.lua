@@ -1,4 +1,4 @@
-example = spawn('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
+example = spawn('example', rando() * 3. - 1.5, 12, rando() * 3. - 1.5)
 buffer = ""
 text_cursor = { x = 0, y = 0 }
 cursor = { x = 0, y = 0 }
@@ -23,8 +23,8 @@ end
 
 function loop()
     if key("a") then
-        example.x = example.x + rnd() * 0.1 - 0.05
-        example.z = example.z + rnd() * 0.1 - 0.05
+        example.x = example.x + rando() * 0.1 - 0.05
+        example.z = example.z + rando() * 0.1 - 0.05
     end
     if key("del", true) or key("back", true) then
         -- print(buffer:sub(1, -2))
@@ -56,7 +56,7 @@ function loop()
         buffer = buffer:sub(1, range[1] - 1) .. suggestions[1] .. buffer:sub(range[2], -1)
         refresh()
     else
-        h = type()
+        h = input()
         if #h > 0 then
             -- insert string
             local ind = get_ind()
@@ -140,13 +140,30 @@ end
 
 function get_word_range()
     local ind = get_ind()
-    local bb = buffer:sub(1, ind)
-    local bb = bb:reverse()
-    -- get last space
-    local start = (bb:find(" ", 1, true) or 0) + 1
+    local start = buffer:sub(1, ind)
+    local start_ind = start:find("%w+$")
+    if start_ind then
+        start = start:sub(start_ind)
+    else
+        start = ""
+    end
+    local endd = buffer:sub(ind)
+    local end_ind = endd:find("%W")
+    if end_ind then
+        endd = endd:sub(1, end_ind - 1)
+    else
+        endd = ""
+    end
+    return { ind - #start, ind + #endd }
+
+    -- local bb = buffer:sub(1, ind)
+    -- local bb = bb:reverse()
+    -- local start = (bb:find(" ", 1, true) or 0) + 1
+    -- local endd = (buffer:find(" ", ind, true) or #buffer + 1) - 1
     -- start = ind - start
     -- local l = buffer:sub(start, ind)
-    return { start, ind }
+    -- print("start is " .. start .. " end is " .. endd)
+    -- return { start, ind }
 end
 
 -- convert string characters to shifted characters
@@ -224,10 +241,11 @@ function compare(str)
 end
 
 function list_suggestions(list)
-    local x = cursor.x * 9
+    local x = text_cursor.x * 9
     for i = 1, #list do
-        local y = (cursor.y + i) * 16
-        rect(x, y, 10, 10, 0, 0, 0)
-        text(list[i], x, y)
+        local y = (text_cursor.y + i) * 16
+        local word = list[i]
+        rect(x + 8, y, #word * 9, 16, 1., 0, 0.8)
+        text(word, x, y)
     end
 end
