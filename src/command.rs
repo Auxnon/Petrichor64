@@ -4,7 +4,7 @@ use crate::{
     lua_define::MainPacket,
     lua_ent::LuaEnt,
     pad::Pad,
-    sound::SoundPacket,
+    sound::{Instrument, Note, SoundCommand, SoundPacket},
     tile::Chunk,
     world::{TileCommand, TileResponse, World},
     Core,
@@ -18,6 +18,7 @@ use image::{ImageBuffer, RgbaImage};
 use itertools::Itertools;
 use mlua::{Error, Lua, Table, Value};
 use parking_lot::Mutex;
+use serde_json::map;
 
 use std::{
     cell::{Cell, RefCell},
@@ -48,6 +49,10 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             hard_reset(core);
             load(core, Some("test/edit".to_string()), None, None, None);
         }
+        "n" => {
+            hard_reset(core);
+            load(core, Some("test/sound".to_string()), None, None, None);
+        }
         "m" => {
             lua.func(&"crt({modernize=1})".to_string());
         }
@@ -59,6 +64,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             crate::lg!("{}", core.bundle_manager.list_bundles());
         }
         "pack" => {
+            // name, path, cartridge pic
             crate::asset::pack(
                 &mut core.tex_manager,
                 &mut core.model_manager,
@@ -203,10 +209,10 @@ pub fn init_lua_sys(
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
     net_sender: OnlineType,
-    singer: Sender<SoundPacket>,
+    singer: Sender<SoundCommand>,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
-    mice: Rc<RefCell<[f32; 4]>>,
+    mice: Rc<RefCell<[f32; 8]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     // ent_tracker: Rc<RefCell<FxHashMap<u64,bool>
@@ -445,7 +451,7 @@ pub fn init_lua_sys(
     );
 
     lua!(
-        "type",
+        "input",
         move |_, _: ()| {
             let h: String = diff_keys
                 .borrow()
@@ -646,28 +652,91 @@ pub fn init_lua_sys(
                 None => 1.,
             };
 
-            println!("freq {}", freq);
-
-            sing.send((freq, len, vec![], vec![]));
+            // println!("freq {}", freq);
+            sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
+            // sing.send((freq, len, vec![], vec![]));
             Ok(())
         },
         "Make sound"
     );
+    let sing = singer.clone();
+    lua!(
+        "song",
+        move |_, (notes): (Vec<Value>)| {
+            // println!("sent chain {}", converted.len());
+            let converted = notes
+                .iter()
+                .filter_map(|v| {
+                    // to vector
+                    match v {
+                        Value::Table(t) => {
+                            // let mut vec = Vec::new();
+
+                            // for it in t.pairs() {
+                            //     match it {
+                            //         Ok(pair) => {
+                            //             vec.push(pair.1);
+                            //         }
+                            //         _ => {}
+                            //     }
+                            // }
+
+                            if t.raw_len() > 0 {
+                                Some(Note::new(
+                                    0,
+                                    t.get::<usize, f32>(1).unwrap_or(440.),
+                                    t.get::<usize, f32>(2).unwrap_or(1.),
+                                    1.,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<Note>>();
+
+            // for n in converted.iter() {
+            //     println!("note {} {}", n.frequency, n.duration);
+            // }
+
+            println!("sent chain {}", converted.len());
+            sing.send(SoundCommand::Chain(converted, None));
+            // sing.send((freq, len, vec![], vec![]));
+            Ok(())
+        },
+        "Make song"
+    );
+
+    let sing = singer.clone();
+    lua!(
+        "silence",
+        move |_, (channel): (Option<usize>)| {
+            // println!("freqs {:?}", notes);
+
+            sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
+
+            Ok(())
+        },
+        "Stop sounds on channel"
+    );
 
     lua!(
         "instr",
-        move |_, (length, notes, amps): (f32, Vec<f32>, Option<Vec<f32>>)| {
+        move |_, (notes, half): (Vec<f32>, Option<bool>)| {
             // println!("freqs {:?}", notes);
 
-            singer.send((
-                -2.,
-                length,
+            singer.send(SoundCommand::MakeInstrument(Instrument::new(
+                0,
                 notes,
-                match amps {
-                    Some(a) => a,
-                    None => vec![],
+                match half {
+                    Some(h) => h,
+                    None => false,
                 },
-            ));
+            )));
+
             Ok(())
         },
         "Make sound"
@@ -686,6 +755,7 @@ pub fn init_lua_sys(
         move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
             // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
             let c = get_color(r, g, b, a);
+            println!("fill");
             gui.borrow_mut().fill(c.x, c.y, c.z, c.w);
             Ok(1)
         },

@@ -3,12 +3,13 @@
 use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
+use controls::ControlState;
 use ent_manager::EntManager;
 use global::Global;
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
 use model::ModelManager;
-use sound::SoundPacket;
+use sound::{SoundCommand, SoundPacket};
 use std::{
     mem,
     sync::{
@@ -72,7 +73,7 @@ pub struct Core {
     global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     _stream: Option<cpal::Stream>,
-    singer: Sender<SoundPacket>,
+    singer: Sender<SoundCommand>,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
@@ -600,7 +601,7 @@ impl Core {
 
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
-            .build_with_target_rate(240.0); // limit to X FPS if possible
+            .build_with_target_rate(120.0); // limit to X FPS if possible
 
         let (stream, singer) = sound::init();
         let stream_result = match stream {
@@ -868,7 +869,7 @@ impl Core {
             self.global.fps = fps;
         }
         self.global.delayed += 1;
-        if self.global.delayed >= 128 {
+        if self.global.delayed >= 512 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
         }
@@ -901,7 +902,7 @@ fn main() {
     // unsafe {
     //     tracy::startup_tracy();
     // }
-    let mut bits = ([false; 256], [0.; 4]);
+    let mut bits: ControlState = ([false; 256], [0.; 8]);
 
     match crate::asset::check_for_auto() {
         Some(s) => {

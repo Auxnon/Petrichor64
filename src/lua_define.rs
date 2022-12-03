@@ -4,7 +4,7 @@ use crate::{
     controls::ControlState,
     gui::GuiMorsel,
     pad::Pad,
-    sound::SoundPacket,
+    sound::{SoundCommand, SoundPacket},
     switch_board::SwitchBoard,
     texture::TexManager,
     world::{TileCommand, TileResponse},
@@ -65,7 +65,7 @@ impl LuaCore {
         resources: BundleResources,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         pitcher: Sender<MainPacket>,
-        singer: Sender<SoundPacket>,
+        singer: Sender<SoundCommand>,
         dangerous: bool,
     ) -> LuaHandle {
         let (rec, lua_handle) = start(
@@ -148,7 +148,7 @@ impl LuaCore {
     }
 
     pub fn call_main(&self) {
-        const empty: ControlState = ([false; 256], [0f32; 4]);
+        const empty: ControlState = ([false; 256], [0f32; 8]);
         self.async_func(&"main()".to_string(), empty);
 
         log("called main method of main script".to_string());
@@ -273,7 +273,7 @@ fn start(
     resources: BundleResources,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     pitcher: Sender<MainPacket>,
-    singer: Sender<SoundPacket>,
+    singer: Sender<SoundCommand>,
     dangerous: bool,
 ) -> (
     Sender<(
@@ -325,7 +325,7 @@ fn start(
     // let lua_thread =
     let thread_join = thread::spawn(move || {
         let keys = [false; 256];
-        let mice = [0.; 4];
+        let mice = [0.; 8];
 
         let keys_mutex = Rc::new(RefCell::new(keys));
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
