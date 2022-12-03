@@ -1,6 +1,6 @@
 sky()
 fill("544e68")
-img("twilight")
+img(gimg("twilight"))
 text("MakeAvoy", 0, 180)
 -- line(.85, .85, 1, .85)
 -- line(.85, .85, .85, 1)
@@ -16,6 +16,7 @@ crt {
     modernize = 0,
     resolution = 720
 }
+local title = gimg("title")
 
 
 function tern(cond, T, F)
@@ -299,7 +300,7 @@ function loop()
             text_timer = text_timer + 1
 
             if TITLE_UP then
-                img("title", 96, 128)
+                img(title, 96, 128)
             end
 
             campos(cam_pos.x, cam_pos.y, cam_pos.z)

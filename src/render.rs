@@ -80,8 +80,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // frame!("Render");
     let output = core.surface.get_current_texture()?;
 
-    // output.texture.
-    // output.texture.
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
@@ -89,78 +87,72 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // TODO is this expensive? only sometimes?
     core.gui
         .render(&core.queue, core.global.get("value2".to_string()));
-    // frame!("rendered gui texture");
-    let entity_manager = &core.ent_manager;
-    let ents = &entity_manager.ent_table;
-    // let (entity_manager,ents)=match crate::ent_master.try_read(){
-    //     Some(guar)=>{
-    //         let entity_manager = mutex.get().unwrap();
-    //         entity_manager,
+
+    let instance_buffers = core.ent_manager.render_ents(iteration, &core.device);
+    // .iter()
+    // .map(|(m, b, s)| (Rc::clone(&m), b, s))
+    // .collect::<Vec<(Rc<Model>, &wgpu::Buffer, &usize)>>();
+
+    // let entity_manager = &core.ent_manager;
+    // let ents = &entity_manager.ent_array;
+    // let lua_ent_array = ents
+    //     .iter()
+    //     .filter_map(|a| match a.lock() {
+    //         Ok(g) => Some(g.clone()),
+    //         _ => None,
+    //     })
+    //     .collect::<Vec<_>>();
+
+    // let mut cur = &"".to_string();
+    // let mut model_array: Vec<Rc<Model>> = vec![];
+    // let mut transforms = vec![];
+    // let mut instance_buffers = vec![];
+    // for entity in &mut lua_ent_array.iter() {
+    //     match entity_manager.get_from_id(entity.get_id()) {
+    //         Some(o) => {
+    //             if cur != &o.model.name {
+    //                 cur = &o.model.name;
+    //                 if model_array.len() > 0 {
+    //                     instance_buffers.push((
+    //                         crate::ent_manager::EntManager::build_instance_buffer(
+    //                             &transforms,
+    //                             &core.device,
+    //                         ),
+    //                         transforms.len(),
+    //                     ));
+    //                     transforms = vec![];
+    //                 }
+    //                 model_array.push(Rc::clone(&o.model));
+    //             }
+    //             let data = o.get_uniform(&entity, iteration);
+    //             // let instance = data; //InstanceRaw { model: data.model,uv: data.};
+    //             // instances.push(instance);
+    //             transforms.push(data);
+    //             // let instance=
+    //             // let e = o.clone();
+    //             // ent_array.push(model);
+    //         }
+    //         _ => {}
     //     }
     // }
 
-    // MARK PRE
-    // frame!("ent build::start");
-    let lua_ent_array = ents
-        .iter()
-        .filter_map(|a| match a.lock() {
-            Ok(g) => Some(g.clone()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    // instance_buffers.push((
+    //     crate::ent_manager::EntManager::build_instance_buffer(&transforms, &core.device),
+    //     transforms.len(),
+    // ));
 
-    let mut cur = &"".to_string();
-    let mut model_array: Vec<Rc<Model>> = vec![];
-    let mut transforms = vec![];
-    let mut instance_buffers = vec![];
-    for entity in &mut lua_ent_array.iter() {
-        match entity_manager.get_from_id(entity.get_id()) {
-            Some(o) => {
-                if cur != &o.model.name {
-                    cur = &o.model.name;
-                    if model_array.len() > 0 {
-                        instance_buffers.push((
-                            crate::ent_manager::EntManager::build_instance_buffer(
-                                &transforms,
-                                &core.device,
-                            ),
-                            transforms.len(),
-                        ));
-                        transforms = vec![];
-                    }
-                    model_array.push(Rc::clone(&o.model));
-                }
-                let data = o.get_uniform(&entity, iteration);
-                // let instance = data; //InstanceRaw { model: data.model,uv: data.};
-                // instances.push(instance);
-                transforms.push(data);
-                // let instance=
-                // let e = o.clone();
-                // ent_array.push(model);
-            }
-            _ => {}
-        }
-    }
-
-    instance_buffers.push((
-        crate::ent_manager::EntManager::build_instance_buffer(&transforms, &core.device),
-        transforms.len(),
-    ));
-
-    // crate::ent_manager::EntManager::build_instance_buffer(&instances, &core.device);
-
-    if false {
-        let speck_instances = core
-            .ent_manager
-            .specks
-            .iter()
-            .map(|m| m.simple_unfiforms(0))
-            .collect();
-        let speck_buffer =
-            crate::ent_manager::EntManager::build_instance_buffer(&speck_instances, &core.device);
-    }
-    drop(ents);
-    drop(entity_manager);
+    // if false {
+    //     let speck_instances = core
+    //         .ent_manager
+    //         .specks
+    //         .iter()
+    //         .map(|m| m.simple_unfiforms(0))
+    //         .collect();
+    //     let speck_buffer =
+    //         crate::ent_manager::EntManager::build_instance_buffer(&speck_instances, &core.device);
+    // }
+    // drop(ents);
+    // drop(entity_manager);
 
     // frame!("ent build::end");
 
@@ -233,7 +225,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                //MARK view
                 view: &core.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -277,10 +268,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
             render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
-            let chunks = core
-                .world
-                .get_chunk_models(&core.model_manager, &core.device);
-            // // println!("------chunks {} ------", chunks.len());
+            let chunks = core.world.get_chunk_models();
+            // println!("------chunks {} ------", chunks.len());
 
             for c in chunks {
                 if c.buffers.is_some() {
@@ -293,17 +282,24 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
                 }
             }
 
-            if model_array.len() > 0 {
-                for (i, m) in model_array.iter().enumerate() {
-                    let (instance_buffer, size) = instance_buffers.get(i).unwrap();
-                    render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
-                    render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                    render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
+            for (model, instance_buffer, size) in instance_buffers.iter() {
+                render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
 
-                    render_pass.draw_indexed(0..m.index_count as u32, 0, 0..*size as _);
-                }
-                // let m = &ent_array.get(0).unwrap();
+                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
             }
+
+            // if model_array.len() > 0 {
+            //     for (i, m) in model_array.iter().enumerate() {
+            //         let (instance_buffer, size) = instance_buffers.get(i).unwrap();
+            //         render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
+            //         render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+            //         render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
+
+            //         render_pass.draw_indexed(0..m.index_count as u32, 0, 0..*size as _);
+            //     }
+            // }
 
             if core.ent_manager.specks.len() > 0 {
                 // let m = &core.model_manager.PLANE;

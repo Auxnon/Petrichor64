@@ -82,7 +82,8 @@ pub struct Ent {
     // pub brain_name: Option<String>,
  anim: Option<Anim>,
      anim_it:u64,
-    pub pos:Option<Vec3>
+    pub pos:Option<Vec3>,
+   
 }
 
 impl<'lua> Ent {
@@ -166,7 +167,7 @@ impl<'lua> Ent {
             effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
             anim: None,
             anim_it:0,
-            pos:None
+            pos:None,
         }
     }
 
@@ -178,50 +179,31 @@ impl<'lua> Ent {
 
     pub fn reparse(_lua: LuaEnt) {}
 
-    pub fn build_meta(&self, lua: &LuaEnt) -> Mat4 {
-        // let rotation = Mat4::from_rotation_z(self.rotation);
+    pub fn build_meta(&self, lua: &LuaEnt,parent:Option<&Mat4>) -> Mat4 {
         let quat = Quat::from_euler(glam::EulerRot::XYZ, lua.rot_x as f32,lua.rot_y as f32,lua.rot_z as f32);
-
-        // let transform = cgmath::De composed {
-        //     disp: entity.pos.mul(16.),
-        //     rot: ),
-        //     //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-        //     scale: entity.scale * 16.,
-        // };
-
+        // println!("build {} {:?}",self.model.name,parent);
         let s:f32 = 1.*(lua.scale as f32);
-        // println!("scale {}",s);
         let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
-        Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos)
-        // DEV i32
-        /*
-                let rotation = cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation));
-
-                let v = entity.pos.mul(16.).cast::<i32>().unwrap();
-                let rot = cgmath::Quaternion::<i32>::from_sv(
-                    entity.rotation as i32,
-                    cgmath::Vector3::<i32>::new(0, 0, 1),
-                );
-                let transform = cgmath::Decomposed::<cgmath::Vector3<i32>, cgmath::Quaternion<i32>> {
-                    disp: v,
-                    rot: rot,
-                    //rot: cgmath::Matrix4::from_angle_z(cgmath::Deg(entity.rotation)),
-        <<<<<<< Updated upstream
-                    scale: (entity.scale * 16.) as i32,
-        =======
-                    scale: entity.scale,
-        >>>>>>> Stashed changes
-                };
-                let matrix = cgmath::Matrix4::<i32>::from(transform);
-                */
+        let m=Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos);
+        match parent{
+            Some(p)=>*p*m,
+            None=>m
+        }
     }
 
     /**
      * provide iteration to determine how to animate if applicable
      */
-    pub fn get_uniform(&self, lua: &LuaEnt, iteration: u64) -> EntityUniforms {
+    pub fn get_uniform(&self, lua: &LuaEnt, iteration: u64,parent:Option<&Mat4>) -> EntityUniforms {
+        let model = self.build_meta(lua,parent);
+        self.get_uniforms_with_mat(lua,iteration,model)
+    }
+
+    /**
+     * second half of get uniform, callable directly if matrix already available
+     */
+    pub fn get_uniforms_with_mat(&self,lua: &LuaEnt, iteration: u64,model:Mat4)->EntityUniforms{
         let flipped=lua.flipped;
-        let model = self.build_meta(lua);
         // self.matrix = model;
         let effects = [
             self.effects.x,
@@ -231,10 +213,12 @@ impl<'lua> Ent {
         ];
         let uv_mod = match &self.anim {
             Some(anim)=>{
-            let a = if anim.once{
-                let iteratee=(((iteration-self.anim_it as u64)/anim.speed as u64) as usize).min(anim.frames.len()-1);
+                // println!("len {} and {}",anim.frames.len(),(iteration.checked_sub(rhs)-self.anim_it) % (anim.frames.len() as u32 * anim.speed) as u64);
+            let diff=match iteration.checked_sub(self.anim_it){Some(u)=>u,_=>0};
+                let a = if anim.once{
+                let iteratee=((diff/anim.speed as u64) as usize).min(anim.frames.len()-1);
                 anim.frames[iteratee]
-             }else{ anim.frames[(((iteration-self.anim_it) % (anim.frames.len() as u32 * anim.speed) as u64)
+             }else{ anim.frames[((diff % (anim.frames.len() as u32 * anim.speed) as u64)
                 / anim.speed as u64) as usize]
              };
 

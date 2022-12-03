@@ -1,52 +1,57 @@
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
 use crate::{
     ent::EntityUniforms,
-    model::{Instance, ModelManager},
+    model::{Instance, Model, ModelManager},
     texture::TexManager,
 };
 use glam::vec3;
 use mlua::{UserData, UserDataMethods};
+use rustc_hash::FxHashMap;
 use wgpu::util::DeviceExt;
+use wgpu::Buffer;
 
 use crate::{ent::Ent, lua_ent::LuaEnt};
-// use serde::Deserialize;
-// use std::{
-//     collections::HashMap,
-//     fs::{read_dir, File},
-//     path::PathBuf,
-//     sync::Arc,
-// };
 
 pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
-    pub entities: HashMap<u64, Ent>,
+    // pub entities: HashMap<u64, Rc<RefCell<Ent>>>,
     pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
-    pub ent_table: Vec<Arc<Mutex<LuaEnt>>>,
+    pub ent_array: Vec<(Arc<Mutex<LuaEnt>>, Ent, Rc<RefCell<EntityUniforms>>)>,
     pub uniform_alignment: u32,
     pub instances: Vec<Instance>,
-    pub instance_buffer: wgpu::Buffer,
+    pub instance_buffer: Buffer,
     pub id_counter: u64,
+    pub render_hash: FxHashMap<String, (Rc<Model>, Vec<Rc<RefCell<EntityUniforms>>>)>,
+    // pub render_pairs: Vec<(Arc<Mutex<LuaEnt>>, Rc<RefCell<Ent>>)>,
+    pub hash_dirty: bool,
 }
+
+// (lua, ent)
 impl EntManager {
     pub fn new(device: &wgpu::Device) -> EntManager {
         EntManager {
             // ent_table: Mutex::new(),
             specks: vec![],
-            ent_table: vec![],
-            entities: HashMap::new(),
+            ent_array: vec![],
+            // entities: HashMap::new(),
             instances: vec![],
             instance_buffer: EntManager::build_buffer(&vec![], device),
             uniform_alignment: 0,
             id_counter: 2,
+            render_hash: FxHashMap::default(),
+            // render_pairs: vec![],
+            hash_dirty: false,
         }
     }
 
-    pub fn build_buffer(instances: &Vec<Instance>, device: &wgpu::Device) -> wgpu::Buffer {
+    pub fn build_buffer(instances: &Vec<Instance>, device: &wgpu::Device) -> Buffer {
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -62,7 +67,7 @@ impl EntManager {
     pub fn build_instance_buffer(
         instance_data: &Vec<EntityUniforms>,
         device: &wgpu::Device,
-    ) -> wgpu::Buffer {
+    ) -> Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(instance_data),
@@ -101,18 +106,198 @@ impl EntManager {
             asset,
             self.uniform_alignment * (id + 1) as u32,
         );
+        let uni = Rc::new(RefCell::new(ent.get_uniform(&lua, 0, None)));
 
-        self.entities.insert(id, ent);
+        // self.entities.insert(id, Rc::new(RefCell::new(ent)));
         drop(lua);
-        self.ent_table.push(wrapped_lua);
+        self.ent_array.push((wrapped_lua, ent, uni));
+        self.hash_dirty = true
     }
 
     pub fn kill_ent(&mut self, id: u64) {
-        self.ent_table.retain(|e| {
-            let ee = e.lock().unwrap();
+        self.ent_array.retain(|e| {
+            let ee = e.0.lock().unwrap();
             !(ee.get_id() == id || ee.dead)
         });
-        self.entities.remove(&id);
+        // self.entities.remove(&id);
+        self.hash_dirty = true
+    }
+
+    /** Set child as having parent.
+     * Locate and lock the lua ent in iteration, then ensure the parent is located earlier on the array.
+     *  Will reorder by placing the parent earlier on the array, just before the child.
+     * Any existing children of that parent will still process correctly as they should already be further down the array having checked the order before.
+     * It is possible to get some bad ordering if a user decides not to group in some sensible hiearchical order */
+    pub fn group(&mut self, targetId: u64, childId: u64) {
+        let mut parentIndex = -1;
+        let mut childIndex = -1;
+        for (i, lent) in self.ent_array.iter().enumerate() {
+            match lent.0.lock() {
+                Ok(mut l) => {
+                    let id = l.get_id();
+                    if id == childId {
+                        childIndex = i as i64;
+                        if parentIndex != -1 {
+                            l.parent = Some(targetId);
+                            break;
+                        }
+                    } else if id == targetId {
+                        parentIndex = i as i64;
+                        if childIndex != -1 {
+                            self.ent_array[childIndex as usize].0.lock().unwrap().parent =
+                                Some(targetId);
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if parentIndex != -1 && childIndex != -1 {
+            if childIndex < parentIndex {
+                let parent = self.ent_array.remove(parentIndex as usize);
+                self.ent_array.insert(childIndex as usize, parent);
+            }
+        }
+    }
+
+    fn rebuild_render_hash(&mut self) {
+        self.render_hash.clear();
+        // let mut hash: FxHashMap<String, (Rc<Model>, Vec<&Ent>)> = FxHashMap::default();
+        // self.render_pairs.clear();
+        for (lent, ent, uni_ref) in &mut self.ent_array.iter() {
+            match self.render_hash.get_mut(&ent.model.name) {
+                Some((_, vec)) => {
+                    vec.push(Rc::clone(uni_ref));
+                }
+                _ => {
+                    self.render_hash.insert(
+                        ent.model.name.clone(),
+                        (Rc::clone(&ent.model), vec![Rc::clone(uni_ref)]),
+                    );
+                }
+            }
+        }
+        println!("rebuild")
+    }
+
+    pub fn render_ents(
+        &self,
+        iteration: u64,
+        device: &wgpu::Device,
+    ) -> Vec<(Rc<Model>, Buffer, usize)> {
+        let lua_ent_array = self
+            .ent_array
+            .iter()
+            .filter_map(|a| match a.0.lock() {
+                Ok(g) => Some((g.clone(), &a.1, &a.2)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
+        // let mut instance_buffers = vec![];
+
+        // let h = Vec::from_iter(self.render_hash.iter());
+
+        // let hash: FxHashMap<String, (Rc<Model>, Vec<EntityUniforms>)> = FxHashMap::default();
+
+        for (lent, ent, uni_ref) in lua_ent_array.iter() {
+            let parent = match lent.parent {
+                Some(u) => mats.get(&u),
+                None => None,
+            };
+
+            let mat = ent.build_meta(&lent, parent);
+            let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
+            uni_ref.replace(uni);
+            mats.insert(lent.get_id(), mat);
+            // match hash.get_mut(&ent.model.name) {
+            //     Some(b) => b.1.push(uni),
+            //     None => {
+            //         hash.insert(
+            //             ent.borrow().model.name.clone(),
+            //             (Rc::clone(&ent.borrow().model), vec![uni]),
+            //         );
+            //     }
+            // }
+        }
+
+        let instance_buffers = self
+            .render_hash
+            .iter()
+            .map(|(name, (m, unis))| {
+                let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
+                let sz = u.len();
+                (
+                    Rc::clone(m),
+                    crate::ent_manager::EntManager::build_instance_buffer(&u, device),
+                    sz,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        // for (_, (model, pairs)) in self.render_hash.iter() {
+        //     let mut transforms = vec![];
+        //     let epairs = pairs
+        //         .iter()
+        //         .filter_map(|(l, e)| match l.lock() {
+        //             Ok(lent) => Some((lent.clone(), e)),
+        //             _ => None,
+        //         })
+        //         .collect::<Vec<_>>();
+
+        //     for (lent, ent) in epairs {
+        //         let parent = match lent.parent {
+        //             Some(u) => mats.get(&u),
+        //             None => None,
+        //         };
+
+        //         let mat = ent.borrow().build_meta(&lent, parent);
+        //         let uni = ent.borrow().get_uniforms_with_mat(&lent, iteration, mat);
+        //         mats.insert(lent.get_id(), mat);
+        //         transforms.push(uni);
+        //     }
+
+        //     instance_buffers.push((
+        //         Rc::clone(&model),
+        //         crate::ent_manager::EntManager::build_instance_buffer(&transforms, device),
+        //         transforms.len(),
+        //     ));
+        // }
+
+        // for lent in &mut self.ent_array.iter() {
+        //     match lent.lock() {}
+        //     match entity_manager.get_from_id(entity.get_id()) {
+        //         Some(o) => {
+        //             if cur != &o.model.name {
+        //                 cur = &o.model.name;
+        //                 if model_array.len() > 0 {
+        //                     instance_buffers.push((
+        //                         crate::ent_manager::EntManager::build_instance_buffer(
+        //                             &transforms,
+        //                             &core.device,
+        //                         ),
+        //                         transforms.len(),
+        //                     ));
+        //                     transforms = vec![];
+        //                 }
+        //                 model_array.push(Rc::clone(&o.model));
+        //             }
+        //             let data = o.get_uniform(&entity, iteration);
+        //             // let instance = data; //InstanceRaw { model: data.model,uv: data.};
+        //             // instances.push(instance);
+        //             transforms.push(data);
+        //             // let instance=
+        //             // let e = o.clone();
+        //             // ent_array.push(model);
+        //         }
+        //         _ => {}
+        //     }
+        // }
+
+        // self.render_hash
+
+        instance_buffers
     }
 
     // pub fn awful_test(&mut self, tex_manager: &TexManager, model_manager: &ModelManager) {
@@ -140,45 +325,77 @@ impl EntManager {
     //     println!("awful test run {}", self.entities.len());
     // }
 
-    pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Ent> {
-        let id = lua.get_id();
+    // pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Rc<RefCell<Ent>>> {
+    //     let id = lua.get_id();
 
-        self.entities.get(&id)
-    }
-    pub fn get_from_id(&self, id: u64) -> Option<&Ent> {
-        self.entities.get(&id)
-    }
-    pub fn get_from_id_mut(&mut self, id: u64) -> Option<&mut Ent> {
-        self.entities.get_mut(&id)
-    }
-    pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: u64) {
-        match self.entities.get_mut(&ent_id) {
-            Some(e) => {
-                e.tex = tm.get_tex(tex);
-            }
-            _ => {}
-        }
-    }
+    //     self.entities.get(&id)
+    // }
+    // pub fn get_from_id(&self, id: u64) -> Option<&Rc<RefCell<Ent>>> {
+    //     self.entities.get(&id)
+    // }
+    // pub fn get_from_id_mut(&mut self, id: u64) -> Option<&mut Rc<RefCell<Ent>>> {
+    //     self.entities.get_mut(&id)
+    // }
+    // pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: u64) {
+    //     match self.entities.get_mut(&ent_id) {
+    //         Some(e) => {
+    //             e.borrow_mut().tex = tm.get_tex(tex);
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
-    pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
-        self.entities.remove(&lua.get_id());
-    }
+    // pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
+    //     self.entities.remove(&lua.get_id());
+    // }
     pub fn reset(&mut self) {
-        self.entities.clear();
-        self.ent_table.clear();
+        // self.entities.clear();
+        self.ent_array.clear();
         self.specks.clear();
         // self.uniform_alignment = 0;
+    }
+    pub fn reset_by_bundle(&mut self, bundle_id: u8) {
+        println!(
+            "looking for {}, ent count before bundle purge {}",
+            bundle_id,
+            self.ent_array.len()
+        );
+        self.ent_array.retain(|(le, e, u)| match le.lock() {
+            Ok(lent) => {
+                if lent.bundle_id == bundle_id {
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        });
+        println!("ent count after bundle purge {}", self.ent_array.len());
     }
 
     pub fn check_ents(&mut self, iteration: u64, tm: &TexManager, mm: &ModelManager) {
         let mut v: Vec<LuaEnt> = vec![];
-        for lua_ent in self.ent_table.iter_mut() {
-            match lua_ent.try_lock() {
+        for (lent, ent, uni_ref) in self.ent_array.iter_mut() {
+            match lent.try_lock() {
                 Ok(mut l) => {
                     if l.is_dirty() {
                         l.clear_dirt();
                         // println!("pre dirty in array {}", l.get_tex());
-                        v.push(l.clone());
+                        // v.push(l.clone());
+
+                        if l.is_anim() {
+                            // println!("anim {}", l.get_tex());
+                            match tm.animations.get(l.get_tex()) {
+                                Some(t) => {
+                                    // println!("we found {} with {:?}", l.get_tex(), t);
+                                    ent.set_anim(t.clone(), iteration);
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            ent.tex = tm.get_tex(l.get_tex());
+                            ent.remove_anim();
+                        }
                     } else {
                         // println!("not dirty");
                     }
@@ -186,28 +403,10 @@ impl EntManager {
                 _ => {}
             }
         }
-        if v.len() > 0 {
-            for l in v {
-                // println!("we have in array ");
-                match self.get_from_id_mut(l.get_id()) {
-                    Some(e) => {
-                        if l.is_anim() {
-                            // println!("anim {}", l.get_tex());
-                            match tm.ANIMATIONS.get(l.get_tex()) {
-                                Some(t) => {
-                                    // println!("we found {} with {:?}", l.get_tex(), t);
-                                    e.set_anim(t.clone(), iteration);
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            e.tex = tm.get_tex(l.get_tex());
-                            e.remove_anim();
-                        }
-                    }
-                    _ => {}
-                }
-            }
+
+        if self.hash_dirty {
+            self.rebuild_render_hash();
+            self.hash_dirty = false;
         }
 
         // if (self.specks.len() == 0 && self.specks.len() < 10000) {

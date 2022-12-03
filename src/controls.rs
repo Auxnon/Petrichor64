@@ -1,4 +1,4 @@
-use crate::Core;
+use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use winit::{
@@ -16,7 +16,7 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 
-pub type ControlState = ([bool; 256], [f32; 4]);
+pub type ControlState = ([bool; 256], [f32; 8]);
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {
@@ -109,7 +109,29 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
 
     // core.input_helper.key_pressed(check_key_code)
-    if input_helper.mouse_held(0) {}
+    core.global.mouse_buttons = [
+        if core.input_manager.mouse_held(0) {
+            1.
+        } else {
+            0.
+        },
+        if core.input_manager.mouse_held(1) {
+            1.
+        } else {
+            0.
+        },
+        if core.input_manager.mouse_held(2) {
+            1.
+        } else {
+            0.
+        },
+        if core.input_manager.mouse_held(3) {
+            1.
+        } else {
+            0.
+        },
+    ];
+    // println!("{:?}", core.global.mouse_buttons);
     // if input_helper.mouse_pressed(0) {
     //     core.global.mouse_click_pos = core.global.mouse_active_pos.clone();
     //     let i = (core.global.cursor_projected_pos / 1.).floor() * 16.;
@@ -119,27 +141,23 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     //         .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
     //         .cook(&core.device);
     // }
-    if input_helper.key_pressed(VirtualKeyCode::Left) {
-        core.global.camera_pos.x += 10.;
-        println!("x {}", core.global.camera_pos.x)
-    } else if input_helper.key_pressed(VirtualKeyCode::Right) {
-        core.global.camera_pos.x -= 10.;
-        println!("x {}", core.global.camera_pos.x)
-    } else if input_helper.key_pressed(VirtualKeyCode::Up) {
-        if input_helper.held_shift() {
-            core.global.camera_pos.z += 10.;
-            println!("z {}", core.global.camera_pos.z)
-        } else {
-            core.global.camera_pos.y += 10.;
-            println!("y {}", core.global.camera_pos.y)
-        }
-    } else if input_helper.key_pressed(VirtualKeyCode::Down) {
-        if input_helper.held_shift() {
-            core.global.camera_pos.z -= 10.;
-            println!("z {}", core.global.camera_pos.z)
-        } else {
-            core.global.camera_pos.y -= 10.;
-            println!("y {}", core.global.camera_pos.y)
+    if core.global.test {
+        if input_helper.key_pressed(VirtualKeyCode::Left) {
+            core.global.camera_pos.x += 10.;
+        } else if input_helper.key_pressed(VirtualKeyCode::Right) {
+            core.global.camera_pos.x -= 10.;
+        } else if input_helper.key_pressed(VirtualKeyCode::Up) {
+            if input_helper.held_shift() {
+                core.global.camera_pos.z += 10.;
+            } else {
+                core.global.camera_pos.y += 10.;
+            }
+        } else if input_helper.key_pressed(VirtualKeyCode::Down) {
+            if input_helper.held_shift() {
+                core.global.camera_pos.z -= 10.;
+            } else {
+                core.global.camera_pos.y -= 10.;
+            }
         }
     }
 
@@ -160,7 +178,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
-                    let result = core.lua_master.func(&com);
+                    let result = core.bundle_manager.get_lua().func(&com);
+
                     crate::log::log(result.clone());
 
                     // crate::log::next_line();
@@ -185,7 +204,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                     _ => {}
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
-                crate::command::reload(core);
+                crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
                 *control_flow = ControlFlow::Exit;
             }
@@ -243,7 +262,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     } else {
         if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::R) {
-                crate::command::reload(core);
+                crate::command::reload(core, core.bundle_manager.console_bundle_target);
             }
         }
     }
@@ -275,7 +294,7 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
             match state {
                 winit::event::ElementState::Pressed => {
                     // VirtualKeycode is an enum with a defined representation
-                    // println!("newkey is {}", i);
+                    println!("newkey is {}", *keycode as u32);
                     bits.0[*keycode as usize] = true;
                 }
                 winit::event::ElementState::Released => {
@@ -322,6 +341,10 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
 //         _ => return None,
 //     })
 // }
+
+fn bundle_missing(bm: &BundleManager) -> String {
+    format!("please switch to target {} instead", bm.list_bundles())
+}
 
 fn log(str: String) {
     crate::log::log(format!("controls::{}", str));

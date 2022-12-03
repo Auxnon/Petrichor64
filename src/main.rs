@@ -1,28 +1,28 @@
 #![windows_subsystem = "windows"]
 
+use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
+use controls::ControlState;
 use ent_manager::EntManager;
 use global::Global;
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
 use model::ModelManager;
-use sound::SoundPacket;
+use sound::{SoundCommand, SoundPacket};
 use std::{
     mem,
     sync::{
-        mpsc::{Receiver, Sender},
+        mpsc::{channel, Receiver, Sender},
         Arc,
     },
 };
 use texture::TexManager;
 // use tracy::frame;
-use world::World;
-
-use ent::Ent;
+use crate::gui::Gui;
+use crate::{ent::EntityUniforms, post::Post};
 use glam::{vec2, vec3, Mat4};
 use parking_lot::RwLock;
-
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, Texture};
 use winit::{
@@ -31,11 +31,10 @@ use winit::{
     // platform::macos::WindowExtMacOS,
     window::{Window, WindowBuilder},
 };
-
-use crate::gui::Gui;
-use crate::{ent::EntityUniforms, post::Post};
+use world::World;
 
 mod asset;
+mod bundle;
 mod command;
 mod controls;
 mod ent;
@@ -74,12 +73,13 @@ pub struct Core {
     global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     _stream: Option<cpal::Stream>,
-    singer: Sender<SoundPacket>,
+    singer: Sender<SoundCommand>,
     uniform_buf: Buffer,
     uniform_alignment: u64,
     render_pipeline: wgpu::RenderPipeline,
     world: World,
-    catcher: Option<Receiver<MainPacket>>,
+    pitcher: Sender<MainPacket>,
+    catcher: Receiver<MainPacket>,
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     main_bind_group: BindGroup,
@@ -87,11 +87,12 @@ pub struct Core {
     gui: Gui,
     post: Post,
     loop_helper: spin_sleep::LoopHelper,
-    lua_master: LuaCore,
+    // lua_master: LuaCore,
     tex_manager: TexManager,
     model_manager: ModelManager,
     ent_manager: EntManager,
     input_manager: winit_input_helper::WinitInputHelper,
+    bundle_manager: BundleManager,
 }
 
 #[repr(C)]
@@ -597,11 +598,10 @@ impl Core {
         let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
 
         let world = World::new();
-        let world_sender = world.sender.clone();
 
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
-            .build_with_target_rate(60.0); // limit to X FPS if possible
+            .build_with_target_rate(120.0); // limit to X FPS if possible
 
         let (stream, singer) = sound::init();
         let stream_result = match stream {
@@ -613,6 +613,7 @@ impl Core {
         };
         ent_manager.uniform_alignment = uniform_alignment as u32;
         let input_manager = winit_input_helper::WinitInputHelper::new();
+        let (pitcher, catcher) = channel::<MainPacket>();
         Self {
             surface,
             device,
@@ -633,16 +634,18 @@ impl Core {
             entity_bind_group,
             entity_uniform_buf,
             _stream: stream_result,
-            singer: singer.clone(),
+            singer,
             world,
             master_texture: diff_tex,
             loop_helper,
-            lua_master: LuaCore::new(switch_board, world_sender, singer, false),
+            //
             tex_manager,
             model_manager,
             ent_manager,
-            catcher: None,
+            pitcher,
+            catcher,
             input_manager,
+            bundle_manager: BundleManager::new(),
         }
     }
 
@@ -665,155 +668,188 @@ impl Core {
     // }
 
     fn update(&mut self) {
-        let mut resetter = false;
-        match self.catcher {
-            Some(ref mut c) => {
-                for p in c.try_iter() {
-                    match p {
-                        MainCommmand::CamPos(v) => {
-                            self.global.camera_pos = v;
-                            // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
-                        }
-                        MainCommmand::CamRot(v) => {
-                            self.global.simple_cam_rot = v;
-                            // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
-                        }
-                        MainCommmand::Sky() => {
-                            self.gui.target_sky();
-                        }
-                        MainCommmand::Gui() => {
-                            self.gui.target_gui();
-                        }
-                        MainCommmand::Fill(v) => {
-                            self.gui.fill(v.x, v.y, v.z, v.w);
-                        }
-                        MainCommmand::Square(x, y, w, h) => {
-                            self.gui.square(x, y, w, h);
-                        }
-                        MainCommmand::Line(x, y, x2, y2) => {
-                            self.gui.line(x, y, x2, y2);
-                        }
-                        MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
-                        MainCommmand::DrawImg(s, x, y) => {
-                            self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
-                        }
-                        MainCommmand::GetImg(s, tx) => {
-                            tx.send(self.tex_manager.get_img(&s));
-                        }
-                        MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
-                        MainCommmand::Anim(name, items, speed) => {
-                            let frames = items
-                                .iter()
-                                .map(|i| self.tex_manager.get_tex(i))
-                                .collect_vec();
-                            self.tex_manager.ANIMATIONS.insert(
-                                name,
-                                crate::texture::Anim {
-                                    frames,
-                                    speed,
-                                    once: false,
-                                },
-                            );
-                        }
-                        MainCommmand::Clear() => self.gui.clean(),
-                        MainCommmand::Make(m, tx) => {
-                            // self.gui.draw_image(&s, false, x as i64, y as i64)
-                            // println!("this far");
-                            if m.len() == 7 {
-                                //MARK - add entity
-                                let m2 = vec![
-                                    m[1].clone(),
-                                    m[2].clone(),
-                                    m[3].clone(),
-                                    m[4].clone(),
-                                    m[5].clone(),
-                                    m[6].clone(),
-                                ];
-                                self.model_manager.edit_cube(
-                                    &mut self.world,
-                                    &self.tex_manager,
-                                    m[0].clone(),
-                                    m2,
-                                    &self.device,
-                                );
-                                // println!("this far2");
+        let mut mutations = vec![];
 
-                                tx.send(0);
-                                // println!("this far3");
-                            }
-                        }
-                        MainCommmand::Spawn(lent) => {
-                            //asset, x, y, z, s, count, tx) => {
-                            // let mut v = vec![];
-                            // for i in 0..count {
-                            //     let index = self.ent_manager.id_counter;
-                            //     self.ent_manager.id_counter += 1;
-                            //     let ent =
-                            //         crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
-                            //     // // Rc<RefCell
-                            //     let wrapped = Arc::new(std::sync::Mutex::new(ent));
-                            //     v.push(Arc::clone(&wrapped));
-                            //     self.ent_manager.create_from_lua(
-                            //         &self.tex_manager,
-                            //         &self.model_manager,
-                            //         wrapped,
-                            //     );
-                            // }
-                            self.ent_manager.create_from_lua(
-                                &self.tex_manager,
-                                &self.model_manager,
-                                lent,
-                            );
-                            // tx.send(v);
-                        }
-                        MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
-                        MainCommmand::Globals(table) => {
-                            println!("global remap");
-                            for (k, v) in table.iter() {
-                                println!("global map {} {}", k, v);
-                                match k.as_str() {
-                                    "resolution" => self.global.screen_effects.crt_resolution = *v,
-                                    "curvature" => self.global.screen_effects.corner_harshness = *v,
-                                    "flatness" => self.global.screen_effects.corner_ease = *v,
-                                    "dark" => self.global.screen_effects.dark_factor = *v,
-                                    "bleed" => self.global.screen_effects.lumen_threshold = *v,
-                                    "glitch" => self.global.screen_effects.glitchiness = *v,
-                                    "high" => self.global.screen_effects.high_range = *v,
-                                    "low" => self.global.screen_effects.low_range = *v,
-                                    "modernize" => self.global.screen_effects.modernize = *v,
-                                    _ => {}
-                                }
-                            }
-                        }
-                        MainCommmand::AsyncError(e) => {
-                            let ee = e
-                                .split_inclusive(|c| c == '[' || c == ']')
-                                .enumerate()
-                                .filter(|(i, s)| i % 2 == 0)
-                                .map(|x| x.1)
-                                .join("...]");
-                            // .collect::<Vec<String>>();
-                            // s = re.sub(r'\(.*?\)', '', s)
-                            let s = format!("async error: {}", ee);
-                            println!("{}", s);
-                            crate::log::log(s);
-                        }
-                        MainCommmand::Reload() => {
-                            // println!("resetttt");
-                            resetter = true
-                        }
-                        _ => {}
-                    };
-                    // p.5.send(true);
+        for (id, p) in self.catcher.try_iter() {
+            match p {
+                MainCommmand::CamPos(v) => {
+                    self.global.camera_pos = v;
+                    // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                 }
-            }
-            None => {}
+                MainCommmand::CamRot(v) => {
+                    self.global.simple_cam_rot = v;
+                    // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
+                }
+                MainCommmand::Sky() => {
+                    self.gui.target_sky();
+                }
+                MainCommmand::Gui() => {
+                    self.gui.target_gui();
+                }
+                MainCommmand::Fill(v) => {
+                    self.gui.fill(v.x, v.y, v.z, v.w);
+                }
+                MainCommmand::Square(x, y, w, h) => {
+                    self.gui.square(x, y, w, h);
+                }
+                MainCommmand::Line(x, y, x2, y2) => {
+                    self.gui.line(x, y, x2, y2);
+                }
+                // MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
+                MainCommmand::DrawImg(s, x, y) => {
+                    self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
+                }
+                MainCommmand::GetImg(s, tx) => {
+                    tx.send(self.tex_manager.get_img(&s));
+                }
+                MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
+                MainCommmand::Anim(name, items, speed) => {
+                    let frames = items
+                        .iter()
+                        .map(|i| self.tex_manager.get_tex(i))
+                        .collect_vec();
+                    self.tex_manager.animations.insert(
+                        name,
+                        crate::texture::Anim {
+                            frames,
+                            speed,
+                            once: false,
+                        },
+                    );
+                }
+                MainCommmand::Clear() => self.gui.clean(),
+                MainCommmand::Make(m, tx) => {
+                    // self.gui.draw_image(&s, false, x as i64, y as i64)
+                    // println!("this far");
+                    if m.len() == 7 {
+                        let m2 = vec![
+                            m[1].clone(),
+                            m[2].clone(),
+                            m[3].clone(),
+                            m[4].clone(),
+                            m[5].clone(),
+                            m[6].clone(),
+                        ];
+                        self.model_manager.edit_cube(
+                            &mut self.world,
+                            id,
+                            &self.tex_manager,
+                            m[0].clone(),
+                            m2,
+                            &self.device,
+                        );
+                        // println!("this far2");
+
+                        tx.send(0);
+                        // println!("this far3");
+                    }
+                }
+                MainCommmand::Spawn(lent) => {
+                    //asset, x, y, z, s, count, tx) => {
+                    // let mut v = vec![];
+                    // for i in 0..count {
+                    //     let index = self.ent_manager.id_counter;
+                    //     self.ent_manager.id_counter += 1;
+                    //     let ent =
+                    //         crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
+                    //     // // Rc<RefCell
+                    //     let wrapped = Arc::new(std::sync::Mutex::new(ent));
+                    //     v.push(Arc::clone(&wrapped));
+                    //     self.ent_manager.create_from_lua(
+                    //         &self.tex_manager,
+                    //         &self.model_manager,
+                    //         wrapped,
+                    //     );
+                    // }
+                    self.ent_manager
+                        .create_from_lua(&self.tex_manager, &self.model_manager, lent);
+                    // tx.send(v);
+                }
+                MainCommmand::Group(parent, child, tx) => {
+                    self.ent_manager.group(parent, child);
+                    tx.send(true);
+                }
+                MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
+                MainCommmand::Globals(table) => {
+                    println!("global remap");
+                    for (k, v) in table.iter() {
+                        println!("global map {} {}", k, v);
+                        match k.as_str() {
+                            "resolution" => self.global.screen_effects.crt_resolution = *v,
+                            "curvature" => self.global.screen_effects.corner_harshness = *v,
+                            "flatness" => self.global.screen_effects.corner_ease = *v,
+                            "dark" => self.global.screen_effects.dark_factor = *v,
+                            "bleed" => self.global.screen_effects.lumen_threshold = *v,
+                            "glitch" => self.global.screen_effects.glitchiness = *v,
+                            "high" => self.global.screen_effects.high_range = *v,
+                            "low" => self.global.screen_effects.low_range = *v,
+                            "modernize" => self.global.screen_effects.modernize = *v,
+                            _ => {}
+                        }
+                    }
+                }
+                MainCommmand::AsyncError(e) => {
+                    let ee = e
+                        .split_inclusive(|c| c == '[' || c == ']')
+                        .enumerate()
+                        .filter(|(i, s)| i % 2 == 0)
+                        .map(|x| x.1)
+                        .join("...]");
+                    // .collect::<Vec<String>>();
+                    // s = re.sub(r'\(.*?\)', '', s)
+                    let s = format!("async error: {}", ee);
+                    println!("{}", s);
+                    crate::log::log(s);
+                }
+                MainCommmand::BundleDropped(b) => self.bundle_manager.reclaim_resources(b),
+                MainCommmand::Subload(file, is_overlay) => {
+                    mutations.push((id, MainCommmand::Subload(file, is_overlay)));
+                }
+                MainCommmand::Reload() => {
+                    // println!("resetttt");
+                    mutations.push((id, MainCommmand::Reload()));
+                }
+                MainCommmand::AsyncGui(img, is_sky) => {
+                    let raster_id = if is_sky { 1 } else { 0 };
+
+                    if !self.bundle_manager.is_single() {
+                        // println!("async gui");
+                        self.bundle_manager.set_raster(id, raster_id, img);
+                        mutations.push((id, MainCommmand::Meta(raster_id)));
+                    } else {
+                        self.gui.replace_image(img, is_sky);
+                    }
+                }
+                MainCommmand::WorldSync(chunks, dropped) => {
+                    self.world
+                        .process_sync(id, chunks, dropped, &self.model_manager, &self.device);
+                }
+                _ => {}
+            };
         }
 
-        if resetter {
-            // println!("trigger etst");
-            // println!("trigger etst");
-            crate::command::reload(self);
+        if !mutations.is_empty() {
+            let mut only_one_gui_sync = true;
+            for (id, m) in mutations {
+                match m {
+                    MainCommmand::Reload() => crate::command::reload(self, id),
+                    MainCommmand::Subload(file, is_overlay) => {
+                        crate::command::load(self, Some(file), None, None, Some((id, is_overlay)));
+                    }
+                    MainCommmand::Meta(d) => {
+                        if only_one_gui_sync {
+                            match self.bundle_manager.get_rasters(d) {
+                                Some(rasters) => {
+                                    self.gui.replace_image(rasters, d == 0);
+                                }
+                                None => {}
+                            }
+                            only_one_gui_sync = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
         self.ent_manager.check_ents(
             self.global.iteration,
@@ -833,7 +869,7 @@ impl Core {
             self.global.fps = fps;
         }
         self.global.delayed += 1;
-        if self.global.delayed >= 128 {
+        if self.global.delayed >= 512 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
         }
@@ -866,13 +902,13 @@ fn main() {
     // unsafe {
     //     tracy::startup_tracy();
     // }
-    let mut bits = ([false; 256], [0.; 4]);
+    let mut bits: ControlState = ([false; 256], [0.; 8]);
 
     match crate::asset::check_for_auto() {
         Some(s) => {
             core.global.console = false;
             core.gui.disable_console();
-            crate::command::reset(&mut core);
+            crate::command::hard_reset(&mut core);
             crate::command::load_from_string(&mut core, Some(s));
         }
         _ => {
@@ -880,7 +916,13 @@ fn main() {
             {
                 core.global.console = false;
                 core.gui.disable_console();
-                crate::command::reload(&mut core);
+                let id = core.bundle_manager.console_bundle_target;
+                crate::command::reload(&mut core, id);
+            }
+
+            #[cfg(not(feature = "include_auto"))]
+            {
+                crate::command::load_empty(&mut core);
             }
         }
     }
@@ -891,14 +933,16 @@ fn main() {
         controls::bit_check(&event, &mut bits);
         bits.1[0] = core.global.mouse_pos.x;
         bits.1[1] = core.global.mouse_pos.y;
+        bits.1[3] = core.global.mouse_buttons[0];
+        bits.1[4] = core.global.mouse_buttons[1];
+        bits.1[5] = core.global.mouse_buttons[2];
         // println!("bits {:?}", bits.0);
 
         if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
             core.update();
-
-            core.lua_master.call_loop(bits);
+            core.bundle_manager.call_loop(bits);
 
             match core.render() {
                 Ok(_) => {}

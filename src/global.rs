@@ -9,6 +9,7 @@ pub struct Global {
     pub test: bool,
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
+    pub mouse_buttons: [f32; 4],
     pub simple_cam_rot: Vec2,
     pub mouse_delta: Vec2,
     pub scroll_delta: f32,
@@ -22,7 +23,7 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
-    pub loaded_directory: Option<String>,
+    // pub loaded_directory: Option<String>,
 }
 impl Global {
     pub fn new() -> Global {
@@ -33,6 +34,7 @@ impl Global {
             simple_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
             mouse_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
+            mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
             camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
@@ -43,7 +45,7 @@ impl Global {
             iteration: 0,
             scroll_delta: 0.,
             screen_effects: ScreenBinds::new(),
-            loaded_directory: None,
+            // loaded_directory: None,
         }
     }
 

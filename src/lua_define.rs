@@ -1,15 +1,19 @@
 use crate::{
+    bundle::BundleResources,
     command::MainCommmand,
     controls::ControlState,
+    gui::GuiMorsel,
     pad::Pad,
-    sound::SoundPacket,
+    sound::{SoundCommand, SoundPacket},
     switch_board::SwitchBoard,
+    texture::TexManager,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use mlua::Lua;
 use parking_lot::{Mutex, RwLock};
 use std::{
+    cell::RefCell,
     rc::Rc,
     sync::{
         mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
@@ -18,7 +22,9 @@ use std::{
     thread,
 };
 
-pub type MainPacket = MainCommmand;
+pub type MainPacket = (u8, MainCommmand);
+
+pub type LuaHandle = thread::JoinHandle<()>;
 
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
@@ -31,33 +37,49 @@ pub struct LuaCore {
 }
 
 impl LuaCore {
-    pub fn new(
-        switch_board: Arc<RwLock<SwitchBoard>>,
-        world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-        singer: Sender<SoundPacket>,
-        dangerous: bool,
+    /** create new but do not start yet. Channel acts as a placeholder */
+    pub fn new(// bundle_id: u8,
+        // gui: GuiMorsel,
+        // world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
+        // singer: Sender<SoundPacket>,
+        // dangerous: bool,
     ) -> LuaCore {
-        log("lua core thread started".to_string());
+        let (sender, reciever) = channel::<(
+            String,
+            String,
+            Option<ControlState>,
+            Option<SyncSender<(Option<String>, Option<ControlState>)>>,
+        )>();
+        // log("lua core thread started".to_string());
 
-        let (rec, _catcher) = start(switch_board, world_sender, singer, dangerous);
+        // let (rec, _catcher, lua_handle) = start(bundle_id, gui, world_sender, singer, dangerous);
         LuaCore {
-            to_lua_tx: rec,
+            to_lua_tx: sender,
             // catcher,
         }
     }
 
     pub fn start(
         &mut self,
-        switch_board: Arc<RwLock<SwitchBoard>>,
+        bundle_id: u8,
+        resources: BundleResources,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-        singer: Sender<SoundPacket>,
+        pitcher: Sender<MainPacket>,
+        singer: Sender<SoundCommand>,
         dangerous: bool,
-    ) -> Receiver<MainPacket> {
-        let (rec, catcher) = start(switch_board, world_sender, singer, dangerous);
+    ) -> LuaHandle {
+        let (rec, lua_handle) = start(
+            bundle_id,
+            resources,
+            world_sender,
+            pitcher,
+            singer,
+            dangerous,
+        );
         self.to_lua_tx = rec;
         // self.catcher = catcher;
         // reset()
-        catcher
+        lua_handle
     }
 
     pub fn func(&self, func: &String) -> String {
@@ -114,8 +136,19 @@ impl LuaCore {
         self.inject(&"load".to_string(), file, None);
     }
 
+    pub fn async_load(&self, file: &String) {
+        log("loading script".to_string());
+        match self
+            .to_lua_tx
+            .send(("load".to_string(), file.to_string(), None, None))
+        {
+            Ok(_) => {}
+            _ => {}
+        }
+    }
+
     pub fn call_main(&self) {
-        const empty: ControlState = ([false; 256], [0f32; 4]);
+        const empty: ControlState = ([false; 256], [0f32; 8]);
         self.async_func(&"main()".to_string(), empty);
 
         log("called main method of main script".to_string());
@@ -125,6 +158,7 @@ impl LuaCore {
         self.async_func(&"loop()".to_string(), bits);
     }
 
+    /** sends kill signal to this lua context thread */
     pub fn die(&self) {
         log("lua go bye bye".to_string());
         self.async_inject(&"_self_destruct".to_string(), None);
@@ -234,9 +268,12 @@ fn lua_load(lua: &Lua, st: &String) {
 // }
 
 fn start(
-    switch_board: Arc<RwLock<SwitchBoard>>,
+    // switch_board: Arc<RwLock<SwitchBoard>>,
+    bundle_id: u8,
+    resources: BundleResources,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    singer: Sender<SoundPacket>,
+    pitcher: Sender<MainPacket>,
+    singer: Sender<SoundCommand>,
     dangerous: bool,
 ) -> (
     Sender<(
@@ -245,7 +282,7 @@ fn start(
         Option<ControlState>,
         Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>,
-    Receiver<MainPacket>,
+    LuaHandle,
 ) {
     let (sender, reciever) = channel::<(
         String,
@@ -253,8 +290,6 @@ fn start(
         Option<ControlState>,
         Option<SyncSender<(Option<String>, Option<ControlState>)>>,
     )>();
-
-    let (pitcher, catcher) = channel::<MainPacket>();
 
     let mut online = false;
     #[cfg(feature = "online_capable")]
@@ -288,13 +323,15 @@ fn start(
 
     log("init lua core".to_string());
     // let lua_thread =
-    thread::spawn(move || {
+    let thread_join = thread::spawn(move || {
         let keys = [false; 256];
-        let mice = [0.; 4];
+        let mice = [0.; 8];
 
-        let keys_mutex = Rc::new(Mutex::new(keys));
-        let mice_mutex = Rc::new(Mutex::new(mice));
+        let keys_mutex = Rc::new(RefCell::new(keys));
+        let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
+        let mice_mutex = Rc::new(RefCell::new(mice));
         let ent_counter = Rc::new(Mutex::new(2u64));
+        let gui_handle = Rc::new(RefCell::new(resources));
 
         let lua_ctx = if true {
             unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
@@ -312,20 +349,22 @@ fn start(
             log(format!("{} is {:?}", gamepad.name(), gamepad.power_info()));
         }
 
-        let pads = Rc::new(Mutex::new(Pad::new()));
+        let pads = Rc::new(RefCell::new(Pad::new()));
 
-        let error_sender = pitcher.clone();
+        let async_sender = pitcher.clone();
         let mut debounce_error_string = "".to_string();
         let mut debounce_error_counter = 60;
         match crate::command::init_lua_sys(
             &lua_ctx,
             &globals,
-            // switch_board,
+            bundle_id,
             pitcher,
             world_sender,
+            Rc::clone(&gui_handle),
             net,
             singer,
             Rc::clone(&keys_mutex),
+            Rc::clone(&diff_keys_mutex),
             Rc::clone(&mice_mutex),
             Rc::clone(&pads),
             Rc::clone(&ent_counter),
@@ -351,42 +390,42 @@ fn start(
                 match event {
                     EventType::ButtonPressed(button, _) => {
                         match button {
-                            Button::Start => pads.lock().start = 1.0,
-                            Button::South => pads.lock().south = 1.0,
-                            Button::East => pads.lock().east = 1.0,
-                            Button::West => pads.lock().west = 1.0,
-                            Button::North => pads.lock().north = 1.0,
+                            Button::Start => pads.borrow_mut().start = 1.0,
+                            Button::South => pads.borrow_mut().south = 1.0,
+                            Button::East => pads.borrow_mut().east = 1.0,
+                            Button::West => pads.borrow_mut().west = 1.0,
+                            Button::North => pads.borrow_mut().north = 1.0,
 
-                            // Button::Z => pads.lock().z = 1.0,
-                            // Button::C => pads.lock().c = 1.0,
-                            Button::DPadUp => pads.lock().dup = 1.0,
-                            Button::DPadDown => pads.lock().ddown = 1.0,
-                            Button::DPadLeft => pads.lock().dleft = 1.0,
-                            Button::DPadRight => pads.lock().dright = 1.0,
+                            // Button::Z => pads.borrow_mut().z = 1.0,
+                            // Button::C => pads.borrow_mut().c = 1.0,
+                            Button::DPadUp => pads.borrow_mut().dup = 1.0,
+                            Button::DPadDown => pads.borrow_mut().ddown = 1.0,
+                            Button::DPadLeft => pads.borrow_mut().dleft = 1.0,
+                            Button::DPadRight => pads.borrow_mut().dright = 1.0,
                             _ => {}
                         }
                     }
                     EventType::ButtonReleased(button, _) => match button {
-                        Button::Start => pads.lock().start = 0.,
-                        Button::South => pads.lock().south = 0.,
-                        Button::East => pads.lock().east = 0.,
-                        Button::West => pads.lock().west = 0.,
-                        Button::North => pads.lock().north = 0.,
-                        // Button::Z => pads.lock().z = 0.,
-                        // Button::C => pads.lock().c = 0.,
-                        Button::DPadUp => pads.lock().dup = 0.,
-                        Button::DPadDown => pads.lock().ddown = 0.,
-                        Button::DPadLeft => pads.lock().dleft = 0.,
-                        Button::DPadRight => pads.lock().dright = 0.,
+                        Button::Start => pads.borrow_mut().start = 0.,
+                        Button::South => pads.borrow_mut().south = 0.,
+                        Button::East => pads.borrow_mut().east = 0.,
+                        Button::West => pads.borrow_mut().west = 0.,
+                        Button::North => pads.borrow_mut().north = 0.,
+                        // Button::Z => pads.borrow_mut().z = 0.,
+                        // Button::C => pads.borrow_mut().c = 0.,
+                        Button::DPadUp => pads.borrow_mut().dup = 0.,
+                        Button::DPadDown => pads.borrow_mut().ddown = 0.,
+                        Button::DPadLeft => pads.borrow_mut().dleft = 0.,
+                        Button::DPadRight => pads.borrow_mut().dright = 0.,
 
                         _ => {}
                     },
                     EventType::AxisChanged(axis, value, _) => match axis {
-                        Axis::LeftStickX => pads.lock().laxisx = value,
-                        Axis::LeftStickY => pads.lock().laxisy = value,
+                        Axis::LeftStickX => pads.borrow_mut().laxisx = value,
+                        Axis::LeftStickY => pads.borrow_mut().laxisy = value,
                         //         Axis::LeftZ => todo!(),
-                                Axis::RightStickX => pads.lock().raxisx = value,
-                                Axis::RightStickY => pads.lock().raxisy = value,
+                                Axis::RightStickX => pads.borrow_mut().raxisx = value,
+                                Axis::RightStickY => pads.borrow_mut().raxisy = value,
                         //         Axis::RightZ => todo!(),
                         //         Axis::DPadX => todo!(),
                         //         Axis::DPadY => todo!(),
@@ -470,8 +509,9 @@ fn start(
                                         }
                                         _ => {}
                                     };
-                                    error_sender.send(crate::MainCommmand::AsyncError(
-                                        debounce_error_string,
+                                    async_sender.send((
+                                        bundle_id,
+                                        crate::MainCommmand::AsyncError(debounce_error_string),
                                     ));
                                 }
                             }
@@ -480,18 +520,33 @@ fn start(
                     }
                 }
 
-                // {
-                //     Err(e) => {
-                //         if !s1.starts_with("loop") {
-                //             err(format!("lua server communication error occured -> {}", e))
-                //         }
-                //     }
-                //     _ => {}
-                // }
+                // updated with our input information, as this is only provided within the game loop, also send out a gui update
                 match bit_in {
                     Some(b) => {
-                        *keys_mutex.lock() = b.0;
-                        *mice_mutex.lock() = b.1;
+                        let mut h = diff_keys_mutex.borrow_mut();
+
+                        keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
+                            h[i] = !k && b.0[i];
+                        });
+                        drop(h);
+
+                        // en.for_each(|k| {
+                        //     if !k && b.0[{
+
+                        //     }
+                        //     b.0
+                        // });
+                        *keys_mutex.borrow_mut() = b.0;
+                        *mice_mutex.borrow_mut() = b.1;
+
+                        match gui_handle.borrow_mut().send_state() {
+                            // only send if a change was made, otherwise the old image is cached on the main thread
+                            Some((im, b)) => {
+                                async_sender
+                                    .send((bundle_id, crate::MainCommmand::AsyncGui(im, b)));
+                            }
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
@@ -530,7 +585,7 @@ fn start(
             //channel.send(res).unwrap()
         }
     });
-    (sender, catcher)
+    (sender, thread_join)
 }
 
 fn log(str: String) {

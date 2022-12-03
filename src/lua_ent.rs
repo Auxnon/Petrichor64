@@ -1,5 +1,3 @@
-use crate::Ent;
-
 use mlua::{UserData, UserDataFields, UserDataMethods};
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -21,6 +19,8 @@ pub struct LuaEnt {
     dirty: bool,
     pub flipped: bool,
     pub dead: bool,
+    pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
+    pub bundle_id: u8,
 }
 
 impl UserData for LuaEnt {
@@ -147,6 +147,8 @@ impl LuaEnt {
             anim: false,
             dead: false,
             flipped: false,
+            parent: None, // children: None,
+            bundle_id: 0,
         }
     }
 
@@ -170,6 +172,8 @@ impl LuaEnt {
             anim: false,
             dead: false,
             flipped: false,
+            parent: None, // children: None,
+            bundle_id: 0,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -226,6 +230,8 @@ impl Clone for LuaEnt {
             anim: self.anim,
             dead: false,
             flipped: self.flipped,
+            parent: self.parent, // children,
+            bundle_id: self.bundle_id,
         }
     }
 }

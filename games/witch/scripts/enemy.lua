@@ -62,6 +62,15 @@ function enemy_loop()
         gdelay = 0
     end
 
+    zom_loop()
+
+    guy_loop()
+    delay = delay + 1
+    gdelay = gdelay + 1
+
+end
+
+function zom_loop()
     local zlist = Zoms:list()
     for i = 1, #zlist do
         local z = zlist[i]
@@ -104,7 +113,9 @@ function enemy_loop()
 
         end
     end
+end
 
+function guy_loop()
     local glist = Guys:list()
     local fighters = 0
     for i = 1, #glist do
@@ -150,6 +161,9 @@ function enemy_loop()
                 g.tool.x = e.x - 0.375
                 g.tool.y = e.y + 0.1
                 g.tool.z = e.z
+                g.tool.rot_z = g.tool.rot_z + 0.1
+                g.tool.rot_y = g.tool.rot_y + 0.1
+                g.tool.rot_x = g.tool.rot_x + 0.1
             end
         end
     end
@@ -181,8 +195,5 @@ function enemy_loop()
             TORCHED = true
         end
     end
-
-    delay = delay + 1
-    gdelay = gdelay + 1
 
 end
