@@ -132,8 +132,14 @@ impl ModelManager {
             Some(p) => {
                 let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
                                                                     // println!("the friggin width {} and height {}",image_data.width())
-                let uv_adjust =
+                let uv_arr =
                     tex_manager.load_tex_from_data(name.clone(), str.to_string(), &image_data);
+
+                let uv_adjust = if uv_arr.len() == 0 {
+                    vec![vec4(0., 0., 1., 1.)]
+                } else {
+                    uv_arr
+                };
 
                 //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
                 //tex.set_filter(FilterMode::Nearest);

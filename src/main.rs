@@ -916,7 +916,8 @@ fn main() {
             {
                 core.global.console = false;
                 core.gui.disable_console();
-                crate::command::reload(&mut core);
+                let id = core.bundle_manager.console_bundle_target;
+                crate::command::reload(&mut core, id);
             }
 
             #[cfg(not(feature = "include_auto"))]

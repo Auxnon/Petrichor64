@@ -378,7 +378,7 @@ where
     audience_countdown+=1;
 
         let mut all_waves = 0.;
-        let mut master_volume = 1.;
+        let mut master_volume = 0.1;
 
         // sample rate is 44100
 
@@ -470,7 +470,7 @@ where
 
         let abs = all_waves.abs();
         if abs > 1. {
-            master_volume = 1. / abs;
+            master_volume = 0.1 / abs;
             all_waves /= abs;
         }
         // all_waves = all_waves.clamp(-1., 1.);

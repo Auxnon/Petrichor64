@@ -38,7 +38,7 @@ imageproc="0.23.0"
 gltf="1.0.0"
 itertools="0.10.5"
 serde="1.0.147"
-mlua={version= "0.8.5", features=["lua54","vendored"]}
+mlua={version= "0.8.6", features=["lua54","vendored"]}
 rand="0.8.5"
 glam="0.22.0"
 
@@ -62,14 +62,26 @@ futures="0.3.25"
 # default-features = false
 # features = ["enable","system-tracing", "context-switch-tracing", "sampling", "code-transfer", "broadcast","wgpu"]
 
+# [package.metadata.bundle]
+# name = "PotionCommotion"
+# identifier = "com.makeavoy.potioncommotion"
+# icon = ["witch-icon32x32.png", "witch-icon128x128.png"]
+# version = "0.1.1"
+# resources = []
+# copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2022. All rights reserved."
+# category = "Game"
+# short_description = "Make witch potions."
+# deb_depends = []
+# sx_frameworks = []
+
 [package.metadata.bundle]
-name = "PotionCommotion"
-identifier = "com.makeavoy.potioncommotion"
-icon = ["witch-icon32x32.png", "witch-icon128x128.png"]
-version = "0.1.1"
+name = "SoundMaker"
+identifier = "com.makeavoy.soundmaker"
+icon = ["jumper_icon.png"]
+version = "0.1"
 resources = []
 copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2022. All rights reserved."
 category = "Game"
-short_description = "Make witch potions."
+short_description = "Sound editor"
 deb_depends = []
 osx_frameworks = []

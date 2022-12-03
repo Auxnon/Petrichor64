@@ -1305,16 +1305,25 @@ pub fn load(
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
 pub fn reload(core: &mut Core, bundle_id: u8) {
     if soft_reset(core, bundle_id) {
+        println!("reload from current bundle");
         load(core, None, None, Some(bundle_id), None);
     } else {
         #[cfg(feature = "include_auto")]
         {
             log("auto loading included bytes".to_string());
             let payload = include_bytes!("../auto.game.png").to_vec();
-            load(core, Some("INCLUDE_AUTO".to_string()), Some(payload));
+            println!("auto load bin from reload command");
+            load(
+                core,
+                Some("INCLUDE_AUTO".to_string()),
+                Some(payload),
+                None,
+                None,
+            );
         }
         #[cfg(not(feature = "include_auto"))]
         {
+            println!("reload into empty bundle");
             load(core, None, None, None, None);
         }
     }
