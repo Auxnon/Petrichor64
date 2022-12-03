@@ -931,6 +931,9 @@ fn main() {
         controls::bit_check(&event, &mut bits);
         bits.1[0] = core.global.mouse_pos.x;
         bits.1[1] = core.global.mouse_pos.y;
+        bits.1[3] = core.global.mouse_buttons[0];
+        bits.1[4] = core.global.mouse_buttons[1];
+        bits.1[5] = core.global.mouse_buttons[2];
         // println!("bits {:?}", bits.0);
 
         if core.input_manager.update(&event) {
