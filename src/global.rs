@@ -6,7 +6,7 @@ use crate::post::ScreenBinds;
 /** Global variable container intended for main thread only */
 pub struct Global {
     pub values: HashMap<String, f32>,
-    pub test: bool,
+    pub debug: bool,
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
     pub mouse_buttons: [f32; 4],
@@ -16,6 +16,7 @@ pub struct Global {
     pub game_controller: bool,
     pub console: bool,
     pub camera_pos: Vec3,
+    pub debug_camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
     pub delayed: i32,
@@ -37,8 +38,9 @@ impl Global {
             mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
             camera_pos: vec3(0., 0., 0.),
+            debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
-            test: false,
+            debug: false,
             fps: 0.,
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,

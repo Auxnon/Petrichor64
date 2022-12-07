@@ -1,3 +1,4 @@
+use crate::lg;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
@@ -48,50 +49,6 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         Some(path) => println!("dropped file {}", path.as_os_str().to_string_lossy()),
         _ => {}
     }
-    let space_down = input_helper.key_held(VirtualKeyCode::Space);
-    core.switch_board.write().space = space_down;
-    if space_down {
-
-        // Some(d) => {}
-        // None => {
-        //     match lua_master.try_lock() {
-        //         Some(lua_guard) => {
-        //             println!("yr");
-        //             let lua_core = lua_guard.get_or_init();
-        //             parking_lot::MutexGuard::unlock_fair(lua_guard);
-        //             crate::asset::init(&state.device);
-        //         }
-        //         _ => {
-        //             println!("naw");
-        //         }
-        //     }
-        //     //
-        // }
-    }
-
-    // DeviceEvent::MouseMotion { delta } => {
-    //             core.global.mouse_active_pos.x += (delta.0 / 1000.) as f32;
-    //             core.global.mouse_active_pos.x %= 1.;
-    //             if core.global.mouse_active_pos.x < 0. {
-    //                 core.global.mouse_active_pos.x += 1.;
-    //             }
-    //             core.global.mouse_active_pos.y += (delta.1 / 1000.) as f32;
-    //             let pi = std::f32::consts::PI / 8.;
-    //             if core.global.mouse_active_pos.y > 0.72 {
-    //                 core.global.mouse_active_pos.y = 0.72
-    //             } else if core.global.mouse_active_pos.y < 0.4 {
-    //                 core.global.mouse_active_pos.y = 0.4;
-    //             }
-    //         }
-    //         _ => {}
-
-    // let diff = input_helper.mouse_diff();
-
-    // core.global.mouse_delta.x = diff.0;
-    // core.global.mouse_delta.y = diff.1;
-    // println!("mouse {} {}", diff.0, diff.1);
-    // core.global.mouse_active_pos.x += diff.0 / 100.;
-    // core.global.mouse_active_pos.y += diff.1 / 100.;
 
     // TODO mouse inputs
     match input_helper.mouse() {
@@ -141,25 +98,6 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     //         .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
     //         .cook(&core.device);
     // }
-    if core.global.test {
-        if input_helper.key_pressed(VirtualKeyCode::Left) {
-            core.global.camera_pos.x += 10.;
-        } else if input_helper.key_pressed(VirtualKeyCode::Right) {
-            core.global.camera_pos.x -= 10.;
-        } else if input_helper.key_pressed(VirtualKeyCode::Up) {
-            if input_helper.held_shift() {
-                core.global.camera_pos.z += 10.;
-            } else {
-                core.global.camera_pos.y += 10.;
-            }
-        } else if input_helper.key_pressed(VirtualKeyCode::Down) {
-            if input_helper.held_shift() {
-                core.global.camera_pos.z -= 10.;
-            } else {
-                core.global.camera_pos.y -= 10.;
-            }
-        }
-    }
 
     if input_helper.key_released(VirtualKeyCode::Grave) {
         core.global.console = !core.global.console;
@@ -260,6 +198,31 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             }
         }
     } else {
+        if core.global.debug {
+            if input_helper.key_pressed(VirtualKeyCode::Left) {
+                core.global.debug_camera_pos.x += 10.;
+                lg!("x {}", core.global.debug_camera_pos.x)
+            } else if input_helper.key_pressed(VirtualKeyCode::Right) {
+                core.global.debug_camera_pos.x -= 10.;
+            } else if input_helper.key_pressed(VirtualKeyCode::Up) {
+                if input_helper.held_shift() {
+                    core.global.debug_camera_pos.z += 10.;
+                    lg!("z {}", core.global.debug_camera_pos.z)
+                } else {
+                    core.global.debug_camera_pos.y += 10.;
+                    lg!("y {}", core.global.debug_camera_pos.y)
+                }
+            } else if input_helper.key_pressed(VirtualKeyCode::Down) {
+                if input_helper.held_shift() {
+                    core.global.debug_camera_pos.z -= 10.;
+                    lg!("z {}", core.global.debug_camera_pos.z)
+                } else {
+                    core.global.debug_camera_pos.y -= 10.;
+                    lg!("y {}", core.global.debug_camera_pos.y)
+                }
+            }
+        }
+
         if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::R) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);

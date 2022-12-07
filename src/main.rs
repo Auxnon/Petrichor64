@@ -319,7 +319,7 @@ impl Core {
 
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
-            0.,
+            // 0.,
             vec3(0., 0., 0.),
             vec2(0., 0.),
         );
@@ -718,6 +718,10 @@ impl Core {
                     );
                 }
                 MainCommmand::Clear() => self.gui.clean(),
+                MainCommmand::ListModel(s, bundles, tx) => {
+                    let list = self.model_manager.search_model(&s, bundles);
+                    tx.send(list);
+                }
                 MainCommmand::Make(m, tx) => {
                     // self.gui.draw_image(&s, false, x as i64, y as i64)
                     // println!("this far");
@@ -930,12 +934,14 @@ fn main() {
     // :reload(core);
 
     event_loop.run(move |event, _, control_flow| {
-        controls::bit_check(&event, &mut bits);
-        bits.1[0] = core.global.mouse_pos.x;
-        bits.1[1] = core.global.mouse_pos.y;
-        bits.1[3] = core.global.mouse_buttons[0];
-        bits.1[4] = core.global.mouse_buttons[1];
-        bits.1[5] = core.global.mouse_buttons[2];
+        if !core.global.console {
+            controls::bit_check(&event, &mut bits);
+            bits.1[0] = core.global.mouse_pos.x;
+            bits.1[1] = core.global.mouse_pos.y;
+            bits.1[3] = core.global.mouse_buttons[0];
+            bits.1[4] = core.global.mouse_buttons[1];
+            bits.1[5] = core.global.mouse_buttons[2];
+        }
         // println!("bits {:?}", bits.0);
 
         if core.input_manager.update(&event) {

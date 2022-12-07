@@ -101,7 +101,7 @@ impl ModelManager {
         }
     }
 
-    pub fn search_model(&self, str: &String) -> Vec<String> {
+    pub fn search_model(&self, str: &String, bundle: Option<u8>) -> Vec<String> {
         let searcher = str.to_lowercase();
         let mut v = vec![];
         for i in self.DICTIONARY.keys() {
@@ -123,6 +123,7 @@ impl ModelManager {
         buffers: Vec<gltf::buffer::Data>,
         image_data: Vec<gltf::image::Data>,
         device: &Device,
+        debug: bool,
     ) {
         //let mut meshes: Vec<Mesh> = vec![];
         //let im1 = image_data.get(0).unwrap();
@@ -277,6 +278,7 @@ impl ModelManager {
         str: &String,
         slice: &Vec<u8>,
         device: &Device,
+        debug: bool,
     ) {
         match gltf::import_slice(slice) {
             Ok((nodes, buffers, image_data)) => {
@@ -289,6 +291,7 @@ impl ModelManager {
                     buffers,
                     image_data,
                     device,
+                    debug,
                 );
             }
             _ => {}
@@ -303,6 +306,7 @@ impl ModelManager {
         tex_manager: &mut TexManager,
         str: &String,
         device: &Device,
+        debug: bool,
     ) {
         let target = str; //format!("assets/{}", str);
 
@@ -317,6 +321,7 @@ impl ModelManager {
                     buffers,
                     image_data,
                     device,
+                    debug,
                 );
             }
             Err(err) => {

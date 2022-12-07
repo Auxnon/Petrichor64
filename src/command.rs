@@ -86,6 +86,7 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
                 } else {
                     None
                 },
+                core.global.debug,
             );
         }
         "superpack" => {
@@ -128,6 +129,10 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
         "atlas" => {
             core.tex_manager.save_atlas();
         }
+        "dev" => {
+            core.global.debug = !core.global.debug;
+            log(format!("debug is {}", core.global.debug));
+        }
         "ls" => {
             let s = if segments.len() > 1 {
                 segments[1].to_string().clone()
@@ -169,7 +174,9 @@ pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
             if segments.len() > 2 {
                 match segments[1] {
                     "model" => {
-                        let v = core.model_manager.search_model(&segments[2].to_string());
+                        let v = core
+                            .model_manager
+                            .search_model(&segments[2].to_string(), None);
                         if v.len() > 0 {
                             log(format!("models -> {}", v.join(",")));
                         } else {
@@ -954,6 +961,19 @@ pub fn init_lua_sys(
         },
         "Get image data"
     );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "lmodel",
+        move |lu, (model, bundle): (String, Option<u8>)| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(0);
+            pitcher.send(MainCommmand::ListModel(model, bundle, tx));
+            match rx.recv() {
+                Ok(d) => Ok(d),
+                _ => Ok(vec![]),
+            }
+        },
+        "List models by search"
+    );
 
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
@@ -1197,13 +1217,7 @@ pub fn load(
         core.singer.clone(),
         false,
     );
-    // let (catcher, lua_handle) = bundle.lua.start(
-    //     bundle.id,
-    //     resources,
-    //     core.world.sender.clone(),
-    //     core.singer.clone(),
-    //     false,
-    // );
+    let debug = core.global.debug;
 
     // TODO ensure this is reset before load
     // core.tex_manager.reset();
@@ -1221,6 +1235,7 @@ pub fn load(
                     &core.device,
                     &s,
                     p,
+                    debug,
                 );
                 // println!("unpacked");
             }
@@ -1236,6 +1251,7 @@ pub fn load(
                         Some(&core.device),
                         &bundle.lua,
                         path,
+                        debug,
                     );
                 } else {
                     match path.file_name() {
@@ -1258,6 +1274,7 @@ pub fn load(
                                     &core.device,
                                     &s,
                                     buff,
+                                    debug,
                                 );
                             } else {
                                 err(format!("{:?} ({}) is not a file or directory (1)", path, s));
@@ -1280,6 +1297,7 @@ pub fn load(
                 Some(&core.device),
                 &bundle.lua,
                 path,
+                debug,
             );
         }
     };
@@ -1574,6 +1592,7 @@ pub enum MainCommmand {
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Group(u64, u64, SyncSender<bool>),
     Kill(u64),
+    ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(HashMap<String, f32>),
     AsyncError(String),
     AsyncGui(image::RgbaImage, bool),

@@ -9,12 +9,7 @@ use crate::{
 };
 
 /** create rotation matrix from camera position and simple rotation */
-pub fn generate_matrix(
-    aspect_ratio: f32,
-    _rot: f32,
-    mut camera_pos: Vec3,
-    mouse: Vec2,
-) -> (Mat4, Mat4, Mat4) {
+pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
     let pi = std::f32::consts::PI;
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
 
@@ -155,17 +150,22 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // drop(entity_manager);
 
     // frame!("ent build::end");
+    let cam_pos = if core.global.debug {
+        core.global.camera_pos + core.global.debug_camera_pos
+    } else {
+        core.global.camera_pos
+    };
 
-    let v = core.global.get_mut("value".to_string());
-    *v += 0.002;
-    if *v > 1. {
-        *v = 0.
-    }
+    // let v = core.global.get_mut("value".to_string());
+    // *v += 0.002;
+    // if *v > 1. {
+    //     *v = 0.
+    // }
 
     let (mx_view, mx_persp, _mx_model) = generate_matrix(
         core.size.width as f32 / core.size.height as f32,
-        *v * 2. * std::f32::consts::PI,
-        core.global.camera_pos,
+        // *v * 2. * std::f32::consts::PI,
+        cam_pos,
         core.global.simple_cam_rot,
     );
 

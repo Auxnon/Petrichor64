@@ -17,6 +17,7 @@ pub fn pack(
     name: &String,
     directory: Option<String>,
     cart_pic: Option<String>,
+    debug: bool,
 ) {
     let path = determine_path(directory);
     let sources = walk_files(
@@ -27,6 +28,7 @@ pub fn pack(
         None,
         lua_master,
         path.clone(),
+        debug,
     );
     let icon = path.join(match cart_pic {
         Some(pic) => pic,
@@ -50,6 +52,7 @@ pub fn unpack(
     device: &Device,
     name: &String,
     file: Vec<u8>,
+    debug: bool,
 ) {
     println!("unpack {}", name);
     let map =
@@ -95,6 +98,7 @@ pub fn unpack(
         Some(device),
         configs,
         sources,
+        debug,
     );
 
     match map.get("scripts") {
@@ -136,6 +140,10 @@ pub fn unpack(
 
 fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.async_load(&buffer.to_string());
+}
+
+pub fn parse_config(lua_master: &LuaCore) {
+    lua_master.load(&buffer.to_string());
 }
 
 pub fn is_valid_type(s: &String) -> bool {
@@ -219,6 +227,7 @@ pub fn walk_files(
     lua_master: &LuaCore,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
     current_path: PathBuf,
+    debug: bool,
 ) -> Vec<String> {
     log(format!("current dir is {}", current_path.display()));
     let assets_path = current_path.join(Path::new("assets"));
@@ -281,6 +290,7 @@ pub fn walk_files(
         device,
         configs,
         sources,
+        debug,
     );
 
     log(format!("scripts dir is {}", scripts_path.display()));
@@ -338,6 +348,7 @@ fn parse_assets(
     device: Option<&Device>,
     configs: Vec<(String, String, String, Option<&Vec<u8>>)>,
     mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)>,
+    debug: bool,
 ) {
     crate::lg!("found {} template(s)", configs.len());
     for con in configs {
@@ -457,8 +468,16 @@ fn parse_assets(
                         &file_name,
                         &b,
                         d,
+                        debug,
                     ),
-                    _ => model_manager.load_from_string(world, bundle_id, tex_manager, &path, d),
+                    _ => model_manager.load_from_string(
+                        world,
+                        bundle_id,
+                        tex_manager,
+                        &path,
+                        d,
+                        debug,
+                    ),
                 },
                 _ => {}
             };
