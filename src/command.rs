@@ -966,7 +966,7 @@ pub fn init_lua_sys(
         "lmodel",
         move |lu, (model, bundle): (String, Option<u8>)| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(0);
-            pitcher.send(MainCommmand::ListModel(model, bundle, tx));
+            pitcher.send((bundle_id, MainCommmand::ListModel(model, bundle, tx)));
             match rx.recv() {
                 Ok(d) => Ok(d),
                 _ => Ok(vec![]),

@@ -10,7 +10,10 @@ use crate::{
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
-use mlua::Lua;
+use mlua::{
+    Lua,
+    Value::{self, Nil},
+};
 use parking_lot::{Mutex, RwLock};
 use std::{
     cell::RefCell,
@@ -26,13 +29,21 @@ pub type MainPacket = (u8, MainCommmand);
 
 pub type LuaHandle = thread::JoinHandle<()>;
 
+pub enum LuaResponse {
+    String(String),
+    Number(f64),
+    Integer(i64),
+    Boolean(bool),
+    Nil,
+}
+
 pub struct LuaCore {
     // pub lua: Mutex<mlua::Lua>,
     to_lua_tx: Sender<(
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
+        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
     )>,
 }
 
@@ -48,7 +59,7 @@ impl LuaCore {
             String,
             String,
             Option<ControlState>,
-            Option<SyncSender<(Option<String>, Option<ControlState>)>>,
+            Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
         )>();
         // log("lua core thread started".to_string());
 
@@ -82,10 +93,10 @@ impl LuaCore {
         lua_handle
     }
 
-    pub fn func(&self, func: &String) -> String {
-        match self.inject(func, &"0".to_string(), None).0 {
-            Some(str) => str,
-            None => "".to_string(),
+    pub fn func(&self, func: &str) -> LuaResponse {
+        match self.inject(func, &"0", None).0 {
+            Some(res) => res,
+            None => LuaResponse::Nil,
         }
     }
 
@@ -95,15 +106,15 @@ impl LuaCore {
 
     fn inject(
         &self,
-        func: &String,
-        path: &String,
+        func: &str,
+        path: &str,
         ent: Option<ControlState>,
-    ) -> (Option<String>, Option<ControlState>) {
-        let (tx, rx) = sync_channel::<(Option<String>, Option<ControlState>)>(0);
+    ) -> (Option<LuaResponse>, Option<ControlState>) {
+        let (tx, rx) = sync_channel::<(Option<LuaResponse>, Option<ControlState>)>(0);
         // println!("xxx {} :: {}", func, path);
         match self
             .to_lua_tx
-            .send((func.clone(), path.clone(), ent, Some(tx)))
+            .send((func.to_string(), path.to_string(), ent, Some(tx)))
         {
             Ok(_) => match rx.recv() {
                 Ok(lua_out) => lua_out,
@@ -131,9 +142,9 @@ impl LuaCore {
         }
     }
 
-    pub fn load(&self, file: &String) {
+    pub fn load(&self, file: &String) -> (Option<LuaResponse>, Option<ControlState>) {
         log("loading script".to_string());
-        self.inject(&"load".to_string(), file, None);
+        self.inject(&"load".to_string(), file, None)
     }
 
     pub fn async_load(&self, file: &String) {
@@ -280,7 +291,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
+        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
     )>,
     LuaHandle,
 ) {
@@ -288,7 +299,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<String>, Option<ControlState>)>>,
+        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
     )>();
 
     let mut online = false;
@@ -479,10 +490,39 @@ fn start(
                     Some(sync) => {
                         match match res {
                             Ok(o) => {
-                                let output = format!("{:?}", o);
+                                // let output = format!("{:?}", o);
+                                let output = match o {
+                                    mlua::Value::String(str) => {
+                                        LuaResponse::String(format!("{:?}", str))
+                                    }
+                                    mlua::Value::Integer(i) => LuaResponse::Integer(i),
+                                    mlua::Value::Number(n) => LuaResponse::Number(n),
+                                    mlua::Value::Boolean(b) => LuaResponse::Boolean(b),
+                                    // mlua::Value::Table(t) => {
+                                    //     let mut v = Vec::new();
+                                    //     for pair in t.pairs::<mlua::Value, mlua::Value>() {
+                                    //         let (k, v) = pair.unwrap();
+                                    //         v.push((k., v));
+                                    //     }
+                                    //     LuaResponse::Table(v)
+                                    // }
+                                    mlua::Value::Function(_) => {
+                                        LuaResponse::String("[function]".to_string())
+                                    }
+                                    mlua::Value::Thread(_) => {
+                                        LuaResponse::String("[thread]".to_string())
+                                    }
+                                    mlua::Value::UserData(_) => {
+                                        LuaResponse::String("[userdata]".to_string())
+                                    }
+                                    mlua::Value::LightUserData(_) => {
+                                        LuaResponse::String("[lightuserdata]".to_string())
+                                    }
+                                    _ => LuaResponse::Nil,
+                                };
                                 sync.send((Some(output), None))
                             }
-                            Err(er) => sync.send((Some(er.to_string()), None)),
+                            Err(er) => sync.send((Some(LuaResponse::String(er.to_string())), None)),
                         } {
                             Err(e) => {
                                 // println!("loop err: {}", e);

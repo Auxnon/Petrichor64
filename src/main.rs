@@ -903,6 +903,9 @@ fn main() {
 
     let mut core = pollster::block_on(Core::new(&window));
 
+    crate::command::load_empty(&mut core);
+    crate::asset::parse_config(&mut core.global, core.bundle_manager.get_lua());
+
     // unsafe {
     //     tracy::startup_tracy();
     // }
@@ -926,7 +929,7 @@ fn main() {
 
             #[cfg(not(feature = "include_auto"))]
             {
-                crate::command::load_empty(&mut core);
+                // crate::command::load_empty(&mut core);
             }
         }
     }

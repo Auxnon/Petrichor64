@@ -1,4 +1,5 @@
 use crate::lg;
+use crate::lua_define::LuaResponse;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
@@ -116,12 +117,15 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 println!("command isss {}", com);
 
                 if !crate::command::init_con_sys(core, &com) {
-                    let result = core.bundle_manager.get_lua().func(&com);
+                    let result = match core.bundle_manager.get_lua().func(&com) {
+                        LuaResponse::String(s) => s,
+                        LuaResponse::Number(n) => n.to_string(),
+                        LuaResponse::Integer(i) => i.to_string(),
+                        LuaResponse::Boolean(b) => b.to_string(),
+                        LuaResponse::Nil => "nil".to_string(),
+                    };
 
-                    crate::log::log(result.clone());
-
-                    // crate::log::next_line();
-                    println!("command was {}, result was {}", com, result);
+                    crate::lg!("{}", result);
                 }
                 // } else {
                 //     core.global.test = true;

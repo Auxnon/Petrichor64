@@ -6,7 +6,14 @@ use std::{
 
 use wgpu::Device;
 
-use crate::{lua_define::LuaCore, model::ModelManager, texture::TexManager, world::World, Core};
+use crate::{
+    global::Global,
+    lua_define::{LuaCore, LuaResponse},
+    model::ModelManager,
+    texture::TexManager,
+    world::World,
+    Core,
+};
 
 pub fn pack(
     tex_manager: &mut TexManager,
@@ -142,8 +149,26 @@ fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.async_load(&buffer.to_string());
 }
 
-pub fn parse_config(lua_master: &LuaCore) {
-    lua_master.load(&buffer.to_string());
+pub fn parse_config(globals: &mut Global, lua: &LuaCore) {
+    let p = PathBuf::new().join("config.lua");
+    if p.exists() {
+        if let Ok(buffer) = std::fs::read_to_string(p) {
+            lua.load(&buffer.to_string());
+
+            globals.debug = eval_bool(lua.func("dev"));
+            crate::lg!("dev is {}", globals.debug);
+        };
+    }
+}
+
+fn eval_bool(res: LuaResponse) -> bool {
+    match res {
+        LuaResponse::String(s) => s == "true",
+        LuaResponse::Number(n) => n == 1.0,
+        LuaResponse::Integer(i) => i != 0,
+        LuaResponse::Boolean(b) => b,
+        _ => false,
+    }
 }
 
 pub fn is_valid_type(s: &String) -> bool {
