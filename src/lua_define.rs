@@ -17,6 +17,7 @@ use mlua::{
 use parking_lot::{Mutex, RwLock};
 use std::{
     cell::RefCell,
+    collections::HashMap,
     rc::Rc,
     sync::{
         mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
@@ -34,6 +35,7 @@ pub enum LuaResponse {
     Number(f64),
     Integer(i64),
     Boolean(bool),
+    Table(HashMap<String, String>),
     Nil,
 }
 
@@ -498,14 +500,31 @@ fn start(
                                     mlua::Value::Integer(i) => LuaResponse::Integer(i),
                                     mlua::Value::Number(n) => LuaResponse::Number(n),
                                     mlua::Value::Boolean(b) => LuaResponse::Boolean(b),
-                                    // mlua::Value::Table(t) => {
-                                    //     let mut v = Vec::new();
-                                    //     for pair in t.pairs::<mlua::Value, mlua::Value>() {
-                                    //         let (k, v) = pair.unwrap();
-                                    //         v.push((k., v));
-                                    //     }
-                                    //     LuaResponse::Table(v)
-                                    // }
+                                    mlua::Value::Table(t) => {
+                                        let mut hash: HashMap<String, String> = HashMap::new();
+                                        for (i, pair) in
+                                            t.pairs::<mlua::Value, mlua::Value>().enumerate()
+                                        {
+                                            if let Ok((k, v)) = pair {
+                                                if let mlua::Value::String(key) = k {
+                                                    if let mlua::Value::String(val) = v {
+                                                        hash.insert(
+                                                            format!(
+                                                                "{}",
+                                                                key.to_str()
+                                                                    .unwrap_or(&i.to_string())
+                                                            ),
+                                                            format!(
+                                                                "{}",
+                                                                val.to_str().unwrap_or("")
+                                                            ),
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        LuaResponse::Table(hash)
+                                    }
                                     mlua::Value::Function(_) => {
                                         LuaResponse::String("[function]".to_string())
                                     }
