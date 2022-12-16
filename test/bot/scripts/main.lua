@@ -5,12 +5,16 @@ rot = { x = 0, y = 0 }
 srot = { x = 0, y = 0 }
 m = { x = 0, y = 0 }
 bg(1, 1, .4, 1)
--- attr { mouse_grab = 1, fullscreen = 1 }
+attr { mouse_grab = 1, fullscreen = 1 }
 absolute_speed = 0
 
-the_size = 10
+aim = spawn("square", 0, 0, 0)
+
+the_size = 6
 ni = -the_size
 nj = -the_size
+fire_delay = 0
+bullets = {}
 -- for ni = -12, 12 do
 --     local ii = ni * 40
 --     for nj = -12, 12 do
@@ -41,13 +45,13 @@ function doot(ii, jj)
 
     for zz = 6, 34, 4 do
         for i = -10, 10 do
-            tile("square", i + ii, -10 + jj, zz)
-            tile("square", i + ii, 10 + jj, zz)
+            tile("square", i + ii, -10 + jj, zz + rnd() * 10)
+            tile("square", i + ii, 10 + jj, zz + rnd() * 10)
         end
 
         for i = -9, 9 do
-            tile("square", -10 + ii, i + jj, zz)
-            tile("square", 10 + ii, i + jj, zz)
+            tile("square", -10 + ii, i + jj, zz + rnd() * 10)
+            tile("square", 10 + ii, i + jj, zz + rnd() * 10)
         end
     end
 
@@ -112,7 +116,7 @@ function loop()
     rot.x = rot.x - ang / 240.
     rot.y = rot.y - azi / 240.
 
-    rot.y = clamp(rot.y, -pi / 2 + 0.0001, pi / 2)
+    rot.y = clamp(rot.y, -pi / 2 + 0.0001, pi / 2 - 0.0001)
 
     srot.x = rot.x --srot.x + (rot.x - srot.x) / 2.
     srot.y = rot.y --srot.y + (rot.y - srot.y) / 2.
@@ -159,6 +163,43 @@ function loop()
     cam.z = cam.z + (player.z - cam.z) / 2.
 
     make_thing()
+
+    aim.z = player.z + math.sin(srot.y) * 10
+    local xz = math.cos(srot.y) * 10
+    aim.x = player.x + math.cos(srot.x) * xz
+    aim.y = player.y + math.sin(srot.x) * xz
+
+    if fire_delay <= 0 then
+        fire_delay = 3
+        local b = spawn("example", player.x, player.y, player.z)
+        local bb = { ent = b,
+            vx = aim.x - player.x,
+            vy = aim.y - player.y,
+            vz = aim.z - player.z,
+        }
+        local speed = 1
+        bb.vx = bb.vx * speed
+        bb.vy = bb.vy * speed
+        bb.vz = bb.vz * speed
+        table.insert(bullets, bb)
+    else
+        fire_delay = fire_delay - 1
+    end
+
+    for i = #bullets, 1, -1 do
+        local b = bullets[i]
+        b.ent.x = b.ent.x + b.vx
+        b.ent.y = b.ent.y + b.vy
+        b.ent.z = b.ent.z + b.vz
+        b.vz = b.vz - 0.01
+        if b.ent.z < -2 then
+            b.ent:kill()
+            table.remove(bullets, i)
+        end
+        -- return b.ent.z > 0
+    end
+
+
 
     camrot(srot.x, srot.y)
     campos(cam.x, cam.y, cam.z)
