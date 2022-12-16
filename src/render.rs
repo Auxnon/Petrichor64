@@ -11,7 +11,7 @@ use crate::{
 /** create rotation matrix from camera position and simple rotation */
 pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
     let pi = std::f32::consts::PI;
-    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 6400.0);
+    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
 
     camera_pos *= 16.;
     // println!("mouse {:?}", mouse);
