@@ -591,7 +591,7 @@ pub fn init_lua_sys(
     // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
     lua!(
-        "crt",
+        "attr",
         move |_, table: Table| {
             // pitcher.send(MainCommmand::Globals(table));
 
