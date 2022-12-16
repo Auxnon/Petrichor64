@@ -1413,7 +1413,8 @@ fn key_match(key: String) -> usize {
         "right" => 72,
         "down" => 73,
         "back" => 74,
-        "return" => 55,
+
+        "return" => 75,
         // "space" => {
         //     println!("space");
         //     return 66;
