@@ -173,7 +173,7 @@ impl Core {
                         ..wgpu::Limits::default()
                     },
                 },
-                None, // Trace path
+                None,
             )
             .await
             .unwrap();
@@ -182,11 +182,6 @@ impl Core {
         let tex_manager = crate::texture::TexManager::new();
         let model_manager = ModelManager::init(&device);
         let mut ent_manager = EntManager::new(&device);
-
-        // crate::texture::load_tex("gameboy".to_string());
-        // crate::texture::load_tex("guy3".to_string());
-        // crate::texture::load_tex("chicken".to_string());
-        // crate::texture::load_tex("grass_down".to_string());
 
         let (diffuse_texture_view, diffuse_sampler, diff_tex) =
             tex_manager.finalize(&device, &queue);
@@ -749,25 +744,8 @@ impl Core {
                     }
                 }
                 MainCommmand::Spawn(lent) => {
-                    //asset, x, y, z, s, count, tx) => {
-                    // let mut v = vec![];
-                    // for i in 0..count {
-                    //     let index = self.ent_manager.id_counter;
-                    //     self.ent_manager.id_counter += 1;
-                    //     let ent =
-                    //         crate::lua_ent::LuaEnt::new(index, asset.clone(), x, y, z, s);
-                    //     // // Rc<RefCell
-                    //     let wrapped = Arc::new(std::sync::Mutex::new(ent));
-                    //     v.push(Arc::clone(&wrapped));
-                    //     self.ent_manager.create_from_lua(
-                    //         &self.tex_manager,
-                    //         &self.model_manager,
-                    //         wrapped,
-                    //     );
-                    // }
                     self.ent_manager
                         .create_from_lua(&self.tex_manager, &self.model_manager, lent);
-                    // tx.send(v);
                 }
                 MainCommmand::Group(parent, child, tx) => {
                     self.ent_manager.group(parent, child);
@@ -880,7 +858,7 @@ impl Core {
             self.global.fps = fps;
         }
         self.global.delayed += 1;
-        if self.global.delayed >= 512 {
+        if self.global.delayed >= 128 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
         }
