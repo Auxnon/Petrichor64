@@ -57,10 +57,17 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             core.global.game_controller = false;
             core.global.mouse_pos.x = x / core.size.width as f32;
             core.global.mouse_pos.y = y / core.size.height as f32;
+            // TODO test if this is not needed on WinOS
+            // let diff = input_helper.mouse_diff();
+            // core.global.mouse_delta.x = diff.0;
+            // core.global.mouse_delta.y = diff.1;
+
             // println!(core.global.)
+            // input_helper.
         }
         _ => {}
     }
+    // input_helper.mouse
     core.global.scroll_delta = input_helper.scroll_diff();
     if core.global.scroll_delta != 0. {
         crate::log::scroll(core.global.scroll_delta);
@@ -113,19 +120,32 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             let command = crate::log::carriage();
             if command.is_some() {
                 // if core.global.test {
-                let com = command.unwrap(); //.to_lowercase();
+                let mut com = command.unwrap(); //.to_lowercase();
                 println!("command isss {}", com);
+                if let Some(alias) = core.global.aliases.get(&com) {
+                    com = alias.to_string();
+                }
+                for c in com.split("&&") {
+                    if !crate::command::init_con_sys(core, c) {
+                        let result = match core.bundle_manager.get_lua().func(c) {
+                            LuaResponse::String(s) => s,
+                            LuaResponse::Number(n) => n.to_string(),
+                            LuaResponse::Integer(i) => i.to_string(),
+                            LuaResponse::Boolean(b) => b.to_string(),
+                            LuaResponse::Nil => "nil".to_string(),
+                            LuaResponse::Table(t) => {
+                                let mut s = String::new();
+                                s.push_str("{");
+                                for (k, v) in t {
+                                    s.push_str(&format!("{}: {}, ", k, v));
+                                }
+                                s.push_str("}");
+                                s
+                            }
+                        };
 
-                if !crate::command::init_con_sys(core, &com) {
-                    let result = match core.bundle_manager.get_lua().func(&com) {
-                        LuaResponse::String(s) => s,
-                        LuaResponse::Number(n) => n.to_string(),
-                        LuaResponse::Integer(i) => i.to_string(),
-                        LuaResponse::Boolean(b) => b.to_string(),
-                        LuaResponse::Nil => "nil".to_string(),
-                    };
-
-                    crate::lg!("{}", result);
+                        crate::lg!("{}", result);
+                    }
                 }
                 // } else {
                 //     core.global.test = true;
@@ -149,6 +169,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
                 *control_flow = ControlFlow::Exit;
+            } else if input_helper.key_pressed(VirtualKeyCode::Return) {
+                core.global.fullscreen = !core.global.fullscreen;
             }
         } else {
             let t = input_helper.text();
@@ -230,6 +252,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::R) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
+            } else if input_helper.key_pressed(VirtualKeyCode::Return) {
+                core.global.fullscreen = !core.global.fullscreen;
+                println!("fullscreen {}", core.global.fullscreen);
             }
         }
     }

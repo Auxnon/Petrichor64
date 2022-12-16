@@ -161,12 +161,15 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     // if *v > 1. {
     //     *v = 0.
     // }
+    // core.global.smooth_cam_rot =
+    //     core.global.smooth_cam_rot * 0.1 + core.global.simple_cam_rot * 0.9;
+    core.global.smooth_cam_rot = core.global.simple_cam_rot;
 
     let (mx_view, mx_persp, _mx_model) = generate_matrix(
         core.size.width as f32 / core.size.height as f32,
         // *v * 2. * std::f32::consts::PI,
         cam_pos,
-        core.global.simple_cam_rot,
+        core.global.smooth_cam_rot,
     );
 
     crate::ray::trace(core, mx_persp, mx_view);

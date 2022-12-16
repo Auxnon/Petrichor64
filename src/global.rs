@@ -10,7 +10,14 @@ pub struct Global {
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
     pub mouse_buttons: [f32; 4],
+    pub fullscreen: bool,
+    pub fullscreen_state: bool,
+    /** whether to attempt to grab the mouse or not, does not indicate actual grabbed state or not */
+    pub mouse_grab: bool,
+    /** tracks whether the mouse is actively grabbed or not, the intent to grab can be different then the active grab, such as if a menu or console is open */
+    pub mouse_grabbed_state: bool,
     pub simple_cam_rot: Vec2,
+    pub smooth_cam_rot: Vec2,
     pub mouse_delta: Vec2,
     pub scroll_delta: f32,
     pub game_controller: bool,
@@ -24,6 +31,7 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
+    pub aliases: HashMap<String, String>,
     // pub loaded_directory: Option<String>,
 }
 impl Global {
@@ -33,6 +41,7 @@ impl Global {
             console: true,
             game_controller: false,
             simple_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
+            smooth_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
             mouse_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
             mouse_buttons: [0.; 4],
@@ -42,11 +51,16 @@ impl Global {
             cursor_projected_pos: vec3(0., 0., 0.),
             debug: false,
             fps: 0.,
+            fullscreen: false,
+            fullscreen_state: false,
+            mouse_grab: false,
+            mouse_grabbed_state: false,
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,
             iteration: 0,
             scroll_delta: 0.,
             screen_effects: ScreenBinds::new(),
+            aliases: HashMap::new(),
             // loaded_directory: None,
         }
     }
@@ -55,8 +69,12 @@ impl Global {
     pub fn clean(&mut self) {
         self.mouse_pos.x = 0.;
         self.mouse_pos.y = 0.;
+        self.mouse_grab = false;
+        // self.fullscreen
         self.simple_cam_rot.x = std::f32::consts::FRAC_PI_2;
         self.simple_cam_rot.y = 0.;
+        self.smooth_cam_rot.x = self.simple_cam_rot.x;
+        self.smooth_cam_rot.y = self.simple_cam_rot.y;
         self.camera_pos.x = 0.;
         self.camera_pos.y = 0.;
         self.camera_pos.z = 0.;

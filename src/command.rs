@@ -482,10 +482,12 @@ pub fn init_lua_sys(
             let m = mice.borrow();
             t.set("x", m[0])?;
             t.set("y", m[1])?;
+            t.set("dx", m[2])?;
+            t.set("dy", m[3])?;
             // t.set("z",m[2])?;
-            t.set("m1", m[3] > 0.)?;
-            t.set("m2", m[4] > 0.)?;
-            t.set("m3", m[5] > 0.)?;
+            t.set("m1", m[4] > 0.)?;
+            t.set("m2", m[5] > 0.)?;
+            t.set("m3", m[6] > 0.)?;
 
             Ok(t)
         },

@@ -29,7 +29,7 @@ use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
-    window::{Window, WindowBuilder},
+    window::{CursorGrabMode, Window, WindowBuilder},
 };
 use world::World;
 
@@ -777,7 +777,7 @@ impl Core {
                 MainCommmand::Globals(table) => {
                     println!("global remap");
                     for (k, v) in table.iter() {
-                        println!("global map {} {}", k, v);
+                        // println!("global map {} {}", k, v);
                         match k.as_str() {
                             "resolution" => self.global.screen_effects.crt_resolution = *v,
                             "curvature" => self.global.screen_effects.corner_harshness = *v,
@@ -788,6 +788,13 @@ impl Core {
                             "high" => self.global.screen_effects.high_range = *v,
                             "low" => self.global.screen_effects.low_range = *v,
                             "modernize" => self.global.screen_effects.modernize = *v,
+                            "fullscreen" => {
+                                self.global.fullscreen = if *v != 0.0 { true } else { false }
+                            }
+                            "mouse_grab" => {
+                                println!("mouse grab {}", *v);
+                                self.global.mouse_grab = if *v != 0.0 { true } else { false }
+                            }
                             _ => {}
                         }
                     }
@@ -898,6 +905,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
     window.set_title("Petrichor");
+    let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
 
     // State::new uses async code, so we're going to wait for it to finish
 
@@ -941,9 +949,44 @@ fn main() {
             controls::bit_check(&event, &mut bits);
             bits.1[0] = core.global.mouse_pos.x;
             bits.1[1] = core.global.mouse_pos.y;
-            bits.1[3] = core.global.mouse_buttons[0];
-            bits.1[4] = core.global.mouse_buttons[1];
-            bits.1[5] = core.global.mouse_buttons[2];
+            bits.1[2] = core.global.mouse_delta.x;
+            bits.1[3] = core.global.mouse_delta.y;
+            // println!("bits {:?}", bits.1);
+            // core.global.
+            bits.1[4] = core.global.mouse_buttons[0];
+            bits.1[5] = core.global.mouse_buttons[1];
+            bits.1[6] = core.global.mouse_buttons[2];
+
+            if core.global.mouse_grab {
+                if !core.global.mouse_grabbed_state {
+                    window.set_cursor_visible(false);
+                    window.set_cursor_position(center).unwrap();
+                    window
+                        .set_cursor_grab(CursorGrabMode::Confined)
+                        .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+                    core.global.mouse_grabbed_state = true;
+                }
+            } else {
+                if core.global.mouse_grabbed_state {
+                    window.set_cursor_visible(true);
+                    window.set_cursor_grab(CursorGrabMode::None);
+                    core.global.mouse_grabbed_state = false;
+                }
+            }
+            // window.set_cursor_position(center).unwrap();
+        } else if core.global.mouse_grabbed_state {
+            window.set_cursor_visible(true);
+            window.set_cursor_grab(CursorGrabMode::None);
+            core.global.mouse_grabbed_state = false;
+        }
+        if core.global.fullscreen != core.global.fullscreen_state {
+            if core.global.fullscreen {
+                // TODO windows;; macos use Fullscreen::Borderless
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            } else {
+                window.set_fullscreen(None)
+            }
+            core.global.fullscreen_state = core.global.fullscreen;
         }
         // println!("bits {:?}", bits.0);
 
@@ -962,9 +1005,11 @@ fn main() {
                 // All other errors (Outdated, Timeout) should be resolved by the next frame
                 Err(e) => eprintln!("{:?}", e),
             }
+            core.global.mouse_delta = vec2(0., 0.);
             // frame!("END");
             // frame!();
         }
+
         match event {
             Event::WindowEvent {
                 ref event,
@@ -977,6 +1022,13 @@ fn main() {
                     // new_inner_size is &&mut so we have to dereference it twice
                     core.resize(**new_inner_size);
                 }
+                _ => {}
+            },
+            Event::DeviceEvent { device_id, event } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
+                }
+
                 _ => {}
             },
             _ => {}
