@@ -125,14 +125,11 @@ impl ModelManager {
         device: &Device,
         debug: bool,
     ) {
-        //let mut meshes: Vec<Mesh> = vec![];
-        //let im1 = image_data.get(0).unwrap();
-        // let bits = str.split(".").collect::<Vec<_>>();
         let p = std::path::PathBuf::from(&str);
         match p.file_stem() {
             Some(p) => {
-                let name = p.to_os_string().into_string().unwrap(); //p.into_string().unwrap();
-                                                                    // println!("the friggin width {} and height {}",image_data.width())
+                let name = p.to_os_string().into_string().unwrap();
+
                 let uv_arr =
                     tex_manager.load_tex_from_data(name.clone(), str.to_string(), &image_data);
 
@@ -147,9 +144,6 @@ impl ModelManager {
                 let mut first_instance = true;
                 let mut meshes = vec![];
 
-                // for node in nodes.nodes(){
-                //     node.name()
-                // }
                 for mesh in nodes.meshes() {
                     let mesh_name = match mesh.name() {
                         Some(n) => n,
@@ -166,10 +160,7 @@ impl ModelManager {
 
                         let verts_interleaved = izip!(
                             reader.read_positions().unwrap(),
-                            //reader.read_normals().unwrap(),
-                            //reader.read_colors(0).unwrap().into_rgb_f32().into_iter(),
                             reader.read_tex_coords(0).unwrap().into_f32(),
-                            //reader.read_indices().unwrap()
                         );
 
                         let vertices = verts_interleaved
@@ -183,17 +174,6 @@ impl ModelManager {
                                 vv
                             })
                             .collect::<Vec<Vertex>>();
-
-                        //         let verts = data
-                        // .0
-                        // .iter()
-                        // .map(|v| {
-                        //     let mut v2 = v.clone();
-                        //     v2.trans(offset);
-                        //     // v2.texture(uv);
-                        //     v2
-                        // })
-                        // .collect::<Vec<Vertex>>();
 
                         if let Some(inds) = reader.read_indices() {
                             let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
@@ -211,6 +191,7 @@ impl ModelManager {
                                     contents: bytemuck::cast_slice(&indices),
                                     usage: wgpu::BufferUsages::INDEX,
                                 });
+
                             println!("Load mesh {} with {} verts", name, vertices.len());
                             println!("ind #{} verts #{}", indices.len(), vertices.len());
 

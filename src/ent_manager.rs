@@ -178,7 +178,7 @@ impl EntManager {
                 }
             }
         }
-        println!("rebuild")
+        // println!("rebuild")
     }
 
     pub fn render_ents(
