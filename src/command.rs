@@ -32,30 +32,15 @@ use std::{
 };
 
 /** Private commands not reachable by lua code, but also works without lua being loaded */
-pub fn init_con_sys(core: &mut Core, s: &String) -> bool {
+pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let lua = core.bundle_manager.get_lua();
     if s.len() <= 0 {
         return false;
     }
-    let segments = s.split(" ").collect::<Vec<&str>>();
+    let segments = s.trim().split(" ").collect::<Vec<&str>>();
 
     match segments[0] {
-        "q" => {
-            hard_reset(core);
-            load(core, Some("games/witch".to_string()), None, None, None);
-        }
-        "e" => {
-            hard_reset(core);
-            load(core, Some("test/edit".to_string()), None, None, None);
-        }
-        "n" => {
-            hard_reset(core);
-            load(core, Some("test/sound".to_string()), None, None, None);
-        }
-        "m" => {
-            lua.func(&"crt({modernize=1})".to_string());
-        }
         "die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             lua.die();
