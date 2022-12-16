@@ -236,6 +236,8 @@ pub fn init_lua_sys(
     let mut command_map: Vec<(String, String)> = vec![];
 
     // lua_globals.set("_ents", lua_ctx.create_table()?);
+    lua_globals.set("pi", std::f64::consts::PI);
+    lua_globals.set("tau", std::f64::consts::PI * 2.0);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
