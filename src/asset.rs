@@ -156,7 +156,17 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore) {
             lua.load(&buffer.to_string());
 
             globals.debug = eval_bool(lua.func("dev"));
-            crate::lg!("dev is {}", globals.debug);
+            if let LuaResponse::Table(t) = lua.func("alias") {
+                crate::lg!("{} aliases", t.len());
+                // crate::lg!("{:?} aliases", t);
+                for (k, v) in t {
+                    crate::lg!("{} -> {}", k, v);
+                    globals.aliases.insert(k, v);
+                }
+            }
+            if globals.debug {
+                crate::lg!("dev is enabled");
+            }
         };
     }
 }
