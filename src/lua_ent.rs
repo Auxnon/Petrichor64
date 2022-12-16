@@ -1,4 +1,4 @@
-use mlua::{UserData, UserDataFields, UserDataMethods};
+use mlua::{UserData, UserDataFields, UserDataMethods, Value::Nil};
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
     pub x: f64,
@@ -33,17 +33,8 @@ impl UserData for LuaEnt {
 
             Ok(())
         });
-        // methods.add_method_mut("fix", |lua, this, ()| Ok(()));
 
         methods.add_method_mut("tex", |_, this, tex: String| {
-            // match ent_master.try_write_for(std::time::Duration::from_millis(45)) {
-            //     Some(mut guar) => {
-            //         guar.get_mut()
-            //             .unwrap()
-            //             .swap_tex(&tex.clone(), this.get_id());
-            //     }
-            //     _ => {}
-            // }
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;
@@ -74,13 +65,27 @@ impl UserData for LuaEnt {
         methods.add_method("is_dirty", |_, this, ()| Ok(this.dirty));
         methods.add_method("get_tex", |_, this, ()| Ok(this.tex.clone()));
 
-        // methods.add_method("add", |lu, this, ()| {
-        //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
-        //     ents.set(this.get_id(), this);
-        //     // this.get_id();
-        //     Ok(())
-        // });
         methods.add_method("get_y", |_, this, ()| Ok(this.y));
+        methods.add_method("kill", |lu, this, ()| {
+            // lu.call_function::<_, ()>("kill_ent", (this.get_id(),))?;
+
+            //             lua.load(r#"
+            //     assert(myobject.val == 123)
+            //     myobject:add(7)
+            //     assert(myobject.val == 130)
+            //     assert(myobject + 10 == 140)
+            // "#).exec()?;
+            // lu.load(&format!("kill(1)", this.get_id())).exec()?;
+            match lu.globals().get::<&str, mlua::Function>("kill") {
+                Ok(kill) => {
+                    kill.call::<_, ()>((this.get_id(),))?;
+                }
+                Err(e) => {
+                    println!("kill error: {}", e);
+                }
+            }
+            Ok(Nil)
+        });
     }
 
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
@@ -200,15 +205,6 @@ impl LuaEnt {
     }
 }
 
-// pub fn new() -> LuaEnt {
-//     return LuaEnt { x: 10., y: 12. };
-// }
-//methods.add_method("add_x", |_, this, ()| Ok(Self.ent.set_x(10.)));
-
-// methods.add_meta_function(MetaMethod::Add, |_, (vec1, vec2): (Vec2, Vec2)| {
-//     Ok(Vec2(vec1.0 + vec2.0, vec1.1 + vec2.1))
-// });
-
 impl Clone for LuaEnt {
     fn clone(&self) -> LuaEnt {
         LuaEnt {
@@ -235,54 +231,3 @@ impl Clone for LuaEnt {
         }
     }
 }
-
-// impl LuaEnt {
-// fn new(ent: Ent) -> LuaEnt {
-//     LuaEnt {
-//         x: ent.pos.x,
-//         y: ent.pos.y,
-//         z: ent.pos.z,
-//         vel_x: ent.vel.x,
-//         vel_y: ent.vel.y,
-//         vel_z: ent.vel.z,
-//         rot_x: ent.rot.x,
-//         rot_y: ent.rot.y,
-//         rot_z: ent.rot.z,
-//         id: -1.,
-//     }
-// }
-
-// }
-
-// impl<T: IAnimalData> Animal<T> {
-// impl<'b> UserData for LuaEnt<'b> {
-//     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-//         methods.add_method("add_x", |_, this, ()| Ok(Self.ent.set_x(10.)));
-
-//         methods.add_async_function(
-//             "read",
-//             |lua, (this, size): (AnyUserData, usize)| async move {
-//                 let mut this = this.borrow_mut::<Self>()?;
-//                 let mut buf = vec![0; size];
-//                 let n = this.0.read(&mut buf).await?;
-//                 buf.truncate(n);
-//                 lua.create_string(&buf)
-//             },
-//         );
-
-//         methods.add_async_function(
-//             "write",
-//             |_, (this, data): (AnyUserData, LuaString)| async move {
-//                 let mut this = this.borrow_mut::<Self>()?;
-//                 let n = this.0.write(&data.as_bytes()).await?;
-//                 Ok(n)
-//             },
-//         );
-
-//         methods.add_async_function("close", |_, this: AnyUserData| async move {
-//             let mut this = this.borrow_mut::<Self>()?;
-//             this.0.shutdown().await?;
-//             Ok(())
-//         });
-//     }
-// }

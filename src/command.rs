@@ -544,8 +544,46 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "kill",
-        move |lu, (ent): (Arc<std::sync::Mutex<LuaEnt>>)| {
-            match pitcher.send((bundle_id, MainCommmand::Kill(ent.lock().unwrap().get_id()))) {
+        move |lu, (ent): (Value)| {
+            //Arc<std::sync::Mutex<LuaEnt>>
+            let id = match ent {
+                Value::UserData(g) => {
+                    // let gg = g.borrow().unwrap();
+
+                    // match g.borrow()
+
+                    // .downcast_ref::<LuaEnt>() {
+                    //     Ok(ll) => {}
+                    //     _ => {}
+                    // }
+
+                    // // g.into()
+                    // let en:Arc<std::sync::Mutex<LuaEnt>> = g.into();
+                    // g.take()
+
+                    // match g.get_named_user_value::<_, u64>("id") {
+                    //     Ok(g) => g,
+                    //     _ => 0,
+                    // }
+                    // println!("userdata is {}", g.is::<Arc<std::sync::Mutex<LuaEnt>>>());
+                    match g.borrow::<Arc<std::sync::Mutex<LuaEnt>>>() {
+                        Ok(r) => {
+                            // println!("internal");
+                            r.lock().unwrap().get_id()
+                        }
+                        Err(_) => 0,
+                    }
+
+                    // g.borrow_mut()
+                    //     .downcast_mut::<Arc<std::sync::Mutex<LuaEnt>>>()
+                    //     .unwrap();
+                }
+                Value::Integer(n) => n as u64,
+                Value::Number(n) => n as u64,
+                _ => 0,
+            };
+            // println!("ent id {}", id);
+            match pitcher.send((bundle_id, MainCommmand::Kill(id))) {
                 Ok(_) => {}
                 Err(er) => log(format!("error sending spawn {}", er)),
             }
