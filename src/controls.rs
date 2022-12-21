@@ -255,6 +255,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if input_helper.key_pressed(VirtualKeyCode::Return) {
                 core.global.fullscreen = !core.global.fullscreen;
+                core.check_fullscreen();
                 println!("fullscreen {}", core.global.fullscreen);
             }
         }
