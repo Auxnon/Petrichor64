@@ -12,7 +12,7 @@ cube("xub", "witch0", "witch1", "witch0", "witch1", "witch2", "witch2")
 MID = 12
 
 LOST = false
-crt {
+attr {
     modernize = 0,
     resolution = 720
 }
