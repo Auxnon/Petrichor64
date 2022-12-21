@@ -620,11 +620,12 @@ pub fn init_lua_sys(
         move |_, table: Table| {
             // pitcher.send(MainCommmand::Globals(table));
 
-            let mut hash = HashMap::new();
+            let mut hash = vec![];
             for it in table.pairs() {
                 match it {
                     Ok(pair) => {
-                        hash.insert(pair.0, pair.1);
+                        println!("pair {:?}", pair.1);
+                        hash.push((pair.0, pair.1));
                         // switch
                         //     .write()
                         //     .remaps
@@ -1621,7 +1622,7 @@ pub enum MainCommmand {
     Group(u64, u64, SyncSender<bool>),
     Kill(u64),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
-    Globals(HashMap<String, f32>),
+    Globals(Vec<(String, Vec<f32>)>),
     AsyncError(String),
     AsyncGui(image::RgbaImage, bool),
     Reload(),
