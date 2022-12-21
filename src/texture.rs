@@ -559,12 +559,24 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
             Some(o) => {
                 let b = bits.get(1).unwrap();
                 if bits.len() > 2 && b.starts_with("tile") {
-                    return (o.to_string(), if b.ends_with("32") { 32 } else { 16 });
+                    return (o.to_string(), check_tile_size(b));
                 }
                 (o.to_string(), 0)
             }
             None => (str, 0),
         }
+    }
+}
+
+fn check_tile_size(str: &str) -> u32 {
+    match if str.starts_with("tile") {
+        // cuts string to just the number
+        str[4..].parse::<u32>()
+    } else {
+        str.parse::<u32>()
+    } {
+        Ok(o) => o,
+        _ => 16,
     }
 }
 
