@@ -1,5 +1,5 @@
 example = spawn('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
-player = { x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0 }
+player = { x = 0, y = 0, z = -2, vx = 0, vy = 0, vz = 0 }
 cam = { x = 0, y = 0, z = 0 }
 rot = { x = 0, y = 0 }
 srot = { x = 0, y = 0 }
@@ -10,11 +10,28 @@ absolute_speed = 0
 
 aim = spawn("square", 0, 0, 0)
 
-the_size = 6
+the_size = 7
 ni = -the_size
 nj = -the_size
 fire_delay = 0
 bullets = {}
+bot = spawn("bot.bot", 0, 0, 0)
+m_off = false
+pheight = 6
+
+function model_test()
+    local n = 0.5
+    -- pyramid
+    local v = { { 0, 0, 0 }, { n, 0, 0 }, { n, n, 0 }, { 0, n, 0 }, { 0, n, n }, { 0, 0, n } }
+    local i = { 0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5, 1, 2, 5, 2, 4, 5, 2, 3, 4, 1, 3, 5 }
+    local u = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 }, { 0, 0 }, { 1, 0 } }
+    -- local v = { { -n, -n, 0 }, { n, -n, 0 }, { n, n, 0 }, { -n, n, 0 } }
+    model("thing",
+        { t = "square", v = v, i = i, u = u })
+end
+
+model_test()
+
 -- for ni = -12, 12 do
 --     local ii = ni * 40
 --     for nj = -12, 12 do
@@ -38,20 +55,20 @@ function doot(ii, jj)
     for i = -10, 10 do
         for j = -10, 10 do
             -- local m = 10 - (abs(i) + abs(j)) / 3
-            tile("square", i + ii, j + jj, -2)
+            tile("thing", i + ii, j + jj, -2)
             -- tile("square", m + i + ii, j + jj, m)
         end
     end
 
     for zz = 6, 34, 4 do
         for i = -10, 10 do
-            tile("square", i + ii, -10 + jj, zz + rnd() * 10)
-            tile("square", i + ii, 10 + jj, zz + rnd() * 10)
+            tile("square", i + ii, -10 + jj, zz)
+            tile("square", i + ii, 10 + jj, zz)
         end
 
         for i = -9, 9 do
-            tile("square", -10 + ii, i + jj, zz + rnd() * 10)
-            tile("square", 10 + ii, i + jj, zz + rnd() * 10)
+            tile("square", -10 + ii, i + jj, zz)
+            tile("square", 10 + ii, i + jj, zz)
         end
     end
 
@@ -101,6 +118,42 @@ function speedcap()
     end
 end
 
+function place(a, b)
+    a.x = b.x
+    a.y = b.y
+    a.z = b.z
+end
+
+function rnda()
+    return rnd() * 0.4 + 0.6
+end
+
+function rndb()
+    return rnd() - 0.5
+end
+
+function fire()
+    local b = spawn("red", player.x, player.y, player.z + pheight)
+    -- tile("red", player.x, player.y, player.z + pheight)
+    -- local affect = 0.1
+    local bb = { ent = b,
+        vx = (aim.x - player.x) + rndb(),
+        vy = (aim.y - player.y) + rndb(),
+        vz = (aim.z - player.z) + rndb(),
+        t = 100
+    }
+    local speed = 0.7
+    bb.vx = bb.vx * speed * rnda() + player.vx
+    bb.vy = bb.vy * speed * rnda() + player.vy
+    bb.vz = bb.vz * speed * rnda() + player.vz
+    local r = rnd();
+    bb.ent.x = bb.ent.x + bb.vx * r
+    bb.ent.y = bb.ent.y + bb.vy * r
+    bb.ent.z = bb.ent.z + bb.vz * r
+
+    table.insert(bullets, bb)
+end
+
 function loop()
     makey()
     example.x = example.x + rnd() * 0.1 - 0.05
@@ -146,9 +199,17 @@ function loop()
 
     end
 
+    if is_tile(player.x, player.y, player.z) then
+        player.vz = player.vz + 0.02
+    elseif player.z > 0 then
+        player.vz = player.vz - 0.02
+    end
+
     player.x = player.x + player.vx
     player.y = player.y + player.vy
     player.z = player.z + player.vz
+
+
 
     local friction = 0.9
     if absolute_speed > 0.7 then
@@ -157,34 +218,46 @@ function loop()
     player.vx = player.vx * friction
     player.vy = player.vy * friction
     player.vz = player.vz * friction
+    place(bot, player)
+    bot.rot_z = srot.x + pi / 2.
 
-    cam.x = cam.x + (player.x - cam.x) / 2.
-    cam.y = cam.y + (player.y - cam.y) / 2.
-    cam.z = cam.z + (player.z - cam.z) / 2.
+
+
+
+    cam.x = player.x - math.cos(srot.x) * 12
+    cam.y = player.y - math.sin(srot.x) * 12
+    cam.z = player.z + pheight
 
     make_thing()
 
-    aim.z = player.z + math.sin(srot.y) * 10
-    local xz = math.cos(srot.y) * 10
+
+    aim.z = player.z + math.sin(srot.y) * 4
+    local xz = math.cos(srot.y) * 4
     aim.x = player.x + math.cos(srot.x) * xz
     aim.y = player.y + math.sin(srot.x) * xz
 
-    if fire_delay <= 0 then
-        fire_delay = 3
-        local b = spawn("example", player.x, player.y, player.z)
-        local bb = { ent = b,
-            vx = aim.x - player.x,
-            vy = aim.y - player.y,
-            vz = aim.z - player.z,
-        }
-        local speed = 1
-        bb.vx = bb.vx * speed
-        bb.vy = bb.vy * speed
-        bb.vz = bb.vz * speed
-        table.insert(bullets, bb)
+    if m.m1 then
+        if not m_off then
+            for i = 1, 100 do
+                fire()
+            end
+        end
+        m_off = true
+
     else
-        fire_delay = fire_delay - 1
+        m_off = false
     end
+
+
+    -- if fire_delay <= 0 then
+    -- fire_delay = 1
+
+    -- else
+    --     fire_delay = fire_delay - 1
+    -- end
+
+    aim.z = aim.z + pheight
+
 
     for i = #bullets, 1, -1 do
         local b = bullets[i]
@@ -192,9 +265,25 @@ function loop()
         b.ent.y = b.ent.y + b.vy
         b.ent.z = b.ent.z + b.vz
         b.vz = b.vz - 0.01
-        if b.ent.z < -2 then
+        b.t = b.t - 1
+        if b.t < 0 then
             b.ent:kill()
             table.remove(bullets, i)
+            if not is_tile(b.ent.x, b.ent.y, b.ent.z) then
+                tile("red", b.ent.x, b.ent.y, b.ent.z)
+            end
+        elseif is_tile(b.ent.x, b.ent.y, b.ent.z) then
+            b.ent:kill()
+            table.remove(bullets, i)
+            tile("red", b.ent.x - b.vx, b.ent.y - b.vy, b.ent.z - b.vz)
+
+
+        elseif b.ent.z < -2 then
+            b.ent:kill()
+            table.remove(bullets, i)
+            if not is_tile(b.ent.x, b.ent.y, b.ent.z) then
+                tile("red", b.ent.x, b.ent.y, b.ent.z)
+            end
         end
         -- return b.ent.z > 0
     end
@@ -203,4 +292,7 @@ function loop()
 
     camrot(srot.x, srot.y)
     campos(cam.x, cam.y, cam.z)
+
+    clr()
+    text("x " .. flr(player.x * 100) / 100, 0, 30) --s.. "  y " .. flr(player.y * 100))
 end
