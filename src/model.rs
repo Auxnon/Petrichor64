@@ -30,6 +30,7 @@ impl ModelManager {
         });
 
         let plane_model = Model {
+            base_name: "plane".to_string(),
             name: "plane".to_string(),
             vertex_buf: plane_vertex_buf,
             index_buf: plane_index_buf,
@@ -51,6 +52,7 @@ impl ModelManager {
             usage: wgpu::BufferUsages::INDEX,
         });
         let cube_model = Model {
+            base_name: "cube".to_string(),
             name: "cube".to_string(),
             vertex_buf: cube_vertex_buf,
             index_buf: cube_index_buf,
@@ -128,10 +130,10 @@ impl ModelManager {
         let p = std::path::PathBuf::from(&str);
         match p.file_stem() {
             Some(p) => {
-                let name = p.to_os_string().into_string().unwrap();
+                let base_name = p.to_os_string().into_string().unwrap().to_lowercase();
 
                 let uv_arr =
-                    tex_manager.load_tex_from_data(name.clone(), str.to_string(), &image_data);
+                    tex_manager.load_tex_from_data(base_name.clone(), str.to_string(), &image_data);
 
                 let uv_adjust = if uv_arr.len() == 0 {
                     vec![vec4(0., 0., 1., 1.)]
@@ -144,11 +146,12 @@ impl ModelManager {
                 let mut first_instance = true;
                 let mut meshes = vec![];
 
-                for mesh in nodes.meshes() {
+                for (mi, mesh) in nodes.meshes().enumerate() {
                     let mesh_name = match mesh.name() {
-                        Some(n) => n,
-                        _ => "" as &str,
-                    };
+                        Some(name) => name.to_string(),
+                        None => mi.to_string(),
+                    }
+                    .to_lowercase();
 
                     first_instance = true;
                     for primitive in mesh.primitives() {
@@ -165,9 +168,6 @@ impl ModelManager {
 
                         let vertices = verts_interleaved
                             .map(|(pos, uv)| {
-                                // position: Vec3::from(pos),
-                                // uv: Vec2::from(uv),
-                                // color: WHITE,
                                 let mut vv = vertexx(pos, [0, 0, 0], uv);
                                 //DEV are we always offseting the glb uv by the tilemap this way?
                                 vv.texture(uv_adjust[0]);
@@ -178,45 +178,15 @@ impl ModelManager {
                         if let Some(inds) = reader.read_indices() {
                             let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
 
-                            let mesh_vertex_buf =
-                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                    label: Some(&format!("{}{}", str, " Mesh Vertex Buffer")),
-                                    contents: bytemuck::cast_slice(&vertices),
-                                    usage: wgpu::BufferUsages::VERTEX,
-                                });
+                            let model = Self::build_complex_model(
+                                device,
+                                &base_name,
+                                Some(&mesh_name),
+                                vertices,
+                                indices,
+                            );
 
-                            let mesh_index_buf =
-                                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                    label: Some(&format!("{}{}", str, " Mesh Index Buffer")),
-                                    contents: bytemuck::cast_slice(&indices),
-                                    usage: wgpu::BufferUsages::INDEX,
-                                });
-
-                            println!("Load mesh {} with {} verts", name, vertices.len());
-                            println!("ind #{} verts #{}", indices.len(), vertices.len());
-
-                            let compound_name = format!("{}.{}", name, mesh_name).to_lowercase();
-
-                            let model = Model {
-                                name: compound_name,
-                                vertex_buf: mesh_vertex_buf,
-                                index_buf: mesh_index_buf,
-                                index_format: wgpu::IndexFormat::Uint32,
-                                index_count: indices.len(),
-                                data: Some((vertices, indices)),
-                            };
-
-                            // if first_instance {
-                            //     first_instance = false;
-                            let model_cell = Rc::new(model);
-
-                            //
-                            log(format!(
-                                "populated model {} with mesh named {}",
-                                name, mesh_name
-                            ));
-
-                            meshes.push((mesh_name, model_cell));
+                            meshes.push(model);
                             // }
                         };
                     }
@@ -225,22 +195,30 @@ impl ModelManager {
                 if meshes.len() > 0 {
                     if meshes.len() == 1 {
                         let mesh = meshes.pop().unwrap();
-                        let lower = name.to_lowercase();
-                        log(format!("single model stored as {}", name));
-                        //TODO is this mapped at some point?`
-                        world.index_model(bundle_id, lower.clone(), Rc::clone(&mesh.1));
+                        log(format!(
+                            "single model stored as {} and {}",
+                            mesh.base_name, mesh.name
+                        ));
+
+                        world.index_model(bundle_id, &mesh.base_name, Rc::clone(&mesh));
+                        // world.index_texture_alias(bundle_id, name, direct)
                         self.DICTIONARY
-                            .insert(lower.to_string(), Rc::clone(&mesh.1));
-                        let compound_name = format!("{}.{}", lower, mesh.0).to_lowercase();
-                        log(format!("backup model stored as {}", compound_name));
-                        self.DICTIONARY.insert(compound_name, mesh.1);
+                            .insert(mesh.base_name.clone(), Rc::clone(&mesh));
+                        // let compound_name = format!("{}.{}", lower, mesh.0).to_lowercase();
+                        // self.DICTIONARY.insert(compound_name, mesh.1);
                     } else {
-                        for m in meshes {
-                            log(format!("multi-model stored as {}", m.1.name));
-                            // m.1.name = compound_name;
-                            //TODO is this mapped at some point?
-                            world.index_model(bundle_id, m.1.name.clone(), Rc::clone(&m.1));
-                            self.DICTIONARY.insert(m.1.name.clone(), m.1);
+                        for (i, m) in meshes.drain(..).enumerate() {
+                            if i == 0 {
+                                log(format!(
+                                    "multi-model {} stored as base name {}",
+                                    i, m.base_name
+                                ));
+                                world.index_model(bundle_id, &m.base_name, Rc::clone(&m));
+                                self.DICTIONARY.insert(m.base_name.clone(), Rc::clone(&m));
+                            }
+                            log(format!("multi-model {} stored as {}", i, m.name));
+                            world.index_model(bundle_id, &m.name, Rc::clone(&m));
+                            self.DICTIONARY.insert(m.name.clone(), m);
                         }
                     }
                 }
@@ -248,6 +226,95 @@ impl ModelManager {
 
             None => {}
         }
+    }
+
+    fn build_complex_model(
+        device: &Device,
+        base_name: &str,
+        mesh_name: Option<&str>,
+        vertices: Vec<Vertex>,
+        indices: Vec<u32>,
+    ) -> Rc<Model> {
+        let compound_name = match mesh_name {
+            Some(n) => format!("{}.{}", base_name, n),
+            None => base_name.to_owned(),
+        };
+        println!("Load mesh {} with {} verts", compound_name, vertices.len());
+        println!("ind #{} verts #{}", indices.len(), vertices.len());
+        let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{}{}", compound_name, " Mesh Vertex Buffer")),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{}{}", compound_name, " Mesh Index Buffer")),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+
+        let model = Model {
+            base_name: base_name.to_string(),
+            name: compound_name,
+            vertex_buf: mesh_vertex_buf,
+            index_buf: mesh_index_buf,
+            index_format: wgpu::IndexFormat::Uint32,
+            index_count: indices.len(),
+            data: Some((vertices, indices)),
+        };
+        let model_cell = Rc::new(model);
+
+        model_cell
+    }
+
+    pub fn upsert_model(
+        &mut self,
+        device: &Device,
+        tex_manager: &TexManager,
+        world: &mut World,
+        bundle_id: u8,
+        name: &str,
+        texture: &str,
+        verts: Vec<[f32; 3]>,
+        inds: Vec<u32>,
+        uvs: Vec<[f32; 2]>,
+    ) {
+        let uv_adjust = tex_manager.get_tex(texture);
+        let vertices = if uvs.len() == verts.len() {
+            verts
+                .iter()
+                .enumerate()
+                .map(|(i, pos)| {
+                    let uv = uvs[i];
+                    let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                    vv.texture(uv_adjust);
+                    vv
+                })
+                .collect::<Vec<Vertex>>()
+        } else {
+            verts
+                .iter()
+                .map(|pos| {
+                    let mut vv = vertexx(*pos, [0, 0, 0], [0., 0.]);
+                    vv.texture(uv_adjust);
+                    vv
+                })
+                .collect::<Vec<Vertex>>()
+        };
+        let indicies = if inds.len() == 0 {
+            let mut inds2 = Vec::new();
+            for i in 0..verts.len() {
+                inds2.push(i as u32);
+            }
+            inds2
+        } else {
+            inds
+        };
+        let model =
+            Self::build_complex_model(device, &name.to_lowercase(), None, vertices, indicies);
+
+        world.index_model(bundle_id, &model.base_name, Rc::clone(&model));
+        self.DICTIONARY.insert(model.base_name.clone(), model);
     }
 
     /** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */
@@ -367,6 +434,7 @@ impl ModelManager {
         });
 
         let model = Model {
+            base_name: name.clone(),
             name: name.clone(),
             vertex_buf: mesh_vertex_buf,
             index_buf: mesh_index_buf,
@@ -377,7 +445,7 @@ impl ModelManager {
 
         let rced_model = Rc::new(model);
         //TODO is this mapped at some point?
-        let model_index = world.index_model(bundle_id, name.clone(), Rc::clone(&rced_model));
+        world.index_model(bundle_id, &name, Rc::clone(&rced_model));
         self.DICTIONARY.insert(name.clone(), rced_model);
         log(format!("created new model cube {}", name));
     }
@@ -650,7 +718,13 @@ pub fn create_plane(size: i16, offset: Option<IVec3>, uv: Option<Vec4>) -> (Vec<
     (vertex_data.to_vec(), index_data.to_vec())
 }
 
-pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec<u16>) -> Model {
+fn build_model(
+    device: &Device,
+    base_name: &str,
+    name: &str,
+    verts: &Vec<Vertex>,
+    inds: &Vec<u16>,
+) -> Model {
     let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Vertex Buffer"),
         contents: bytemuck::cast_slice(verts),
@@ -663,7 +737,8 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
         usage: wgpu::BufferUsages::INDEX,
     });
     Model {
-        name: str,
+        base_name: base_name.to_string(),
+        name: name.to_string(),
         vertex_buf,
         index_buf,
         index_format: wgpu::IndexFormat::Uint32,
@@ -673,6 +748,9 @@ pub fn build_model(device: &Device, str: String, verts: &Vec<Vertex>, inds: &Vec
 }
 
 pub struct Model {
+    /** base name of the model if it is a multi-part model in the format of: base_name  */
+    pub base_name: String,
+    /** direct name including sub mesh name in the format of: base_name.sub_name */
     pub name: String,
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,

@@ -719,6 +719,20 @@ impl Core {
                     );
                 }
                 MainCommmand::Clear() => self.gui.clean(),
+                MainCommmand::Model(name, texture, v, i, u) => {
+                    self.model_manager.upsert_model(
+                        &self.device,
+                        &self.tex_manager,
+                        &mut self.world,
+                        id,
+                        &name,
+                        &texture,
+                        v,
+                        i,
+                        u,
+                    );
+                    // name, v, i, u);
+                }
                 MainCommmand::ListModel(s, bundles, tx) => {
                     let list = self.model_manager.search_model(&s, bundles);
                     tx.send(list);
@@ -763,7 +777,7 @@ impl Core {
                     for (k, v) in table.iter() {
                         // println!("global map {} {}", k, v);
                         if (*v).len() > 0 {
-                        match k.as_str() {
+                            match k.as_str() {
                                 "resolution" => self.global.screen_effects.crt_resolution = (*v)[0],
                                 "curvature" => {
                                     self.global.screen_effects.corner_harshness = (*v)[0]
@@ -775,17 +789,17 @@ impl Core {
                                 "high" => self.global.screen_effects.high_range = (*v)[0],
                                 "low" => self.global.screen_effects.low_range = (*v)[0],
                                 "modernize" => self.global.screen_effects.modernize = (*v)[0],
-                            "fullscreen" => {
+                                "fullscreen" => {
                                     self.global.fullscreen =
                                         if (*v)[0] != 0.0 { true } else { false };
                                     self.check_fullscreen();
                                     self.global.fullscreen_state = self.global.fullscreen;
-                            }
-                            "mouse_grab" => {
+                                }
+                                "mouse_grab" => {
                                     println!("mouse grab {}", (*v)[0]);
                                     self.global.mouse_grab =
                                         if (*v)[0] != 0.0 { true } else { false }
-                            }
+                                }
                                 "size" => {
                                     self.win_ref.set_inner_size(LogicalSize::new(
                                         (*v)[0].clamp(10., f32::INFINITY) as u32,
@@ -799,7 +813,7 @@ impl Core {
                                     }
                                 }
 
-                            _ => {}
+                                _ => {}
                             }
                         }
                     }
@@ -839,6 +853,9 @@ impl Core {
                 MainCommmand::WorldSync(chunks, dropped) => {
                     self.world
                         .process_sync(id, chunks, dropped, &self.model_manager, &self.device);
+                }
+                MainCommmand::Stats() => {
+                    self.world.stats();
                 }
                 _ => {}
             };

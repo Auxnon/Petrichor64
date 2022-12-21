@@ -1,6 +1,7 @@
 use crate::{
     bundle::{Bundle, BundleResources},
     gui::GuiMorsel,
+    lg,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
     pad::Pad,
@@ -989,6 +990,36 @@ pub fn init_lua_sys(
         },
         "Get image data"
     );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "model",
+        move |_, (name, t): (String, Table)| {
+            let v = t.get::<_, Vec<[f32; 3]>>("v")?;
+            if v.len() > 0 {
+                let i = match t.get::<_, Vec<u32>>("i") {
+                    Ok(o) => o,
+                    _ => vec![],
+                };
+                let u = match t.get::<_, Vec<[f32; 2]>>("u") {
+                    Ok(o) => o,
+                    _ => vec![],
+                };
+                match t.get::<_, String>("t") {
+                    Ok(texture) => {
+                        pitcher.send((bundle_id, MainCommmand::Model(name, texture, v, i, u)));
+                    }
+                    _ => {
+                        lg!("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                        return Ok(());
+                    }
+                };
+            }
+            Ok(())
+        },
+        "create a model <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>"
+    );
+
     let pitcher = main_pitcher.clone();
     lua!(
         "lmodel",
@@ -1622,6 +1653,7 @@ pub enum MainCommmand {
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Group(u64, u64, SyncSender<bool>),
     Kill(u64),
+    Model(String, String, Vec<[f32; 3]>, Vec<u32>, Vec<[f32; 2]>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, Vec<f32>)>),
     AsyncError(String),
@@ -1631,6 +1663,7 @@ pub enum MainCommmand {
     Subload(String, bool),
     WorldSync(Vec<Chunk>, bool),
     Null(),
+    Stats(),
     //for testing
     Meta(usize),
 }
