@@ -2,11 +2,8 @@ use crate::{
     bundle::BundleResources,
     command::MainCommmand,
     controls::ControlState,
-    gui::GuiMorsel,
     pad::Pad,
-    sound::{SoundCommand, SoundPacket},
-    switch_board::SwitchBoard,
-    texture::TexManager,
+    sound::SoundCommand,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
@@ -14,15 +11,12 @@ use mlua::{
     Lua,
     Value::{self, Nil},
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     collections::HashMap,
     rc::Rc,
-    sync::{
-        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
-        Arc,
-    },
+    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
     thread,
 };
 

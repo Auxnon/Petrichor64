@@ -899,22 +899,40 @@ impl Core {
         // };
         s
     }
+
+    pub fn toggle_fullscreen(&mut self) {
+        self.global.fullscreen = !self.global.fullscreen;
+        self.check_fullscreen();
+    }
+
+    fn check_fullscreen(&self) {
+        if self.global.fullscreen != self.global.fullscreen_state {
+            if self.global.fullscreen {
+                // TODO windows;; macos use Fullscreen::Borderless
+                self.win_ref
+                    .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            } else {
+                self.win_ref.set_fullscreen(None)
+            }
+        }
+    }
 }
 
 fn main() {
     crate::parse::test(&"test.lua".to_string());
     env_logger::init();
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
+    let win = WindowBuilder::new()
         .with_inner_size(winit::dpi::LogicalSize::new(640i32, 480i32))
         .build(&event_loop)
         .unwrap();
-    window.set_title("Petrichor");
+    win.set_title("Petrichor");
     let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
+    let rwindow = Rc::new(win);
 
     // State::new uses async code, so we're going to wait for it to finish
 
-    let mut core = pollster::block_on(Core::new(&window));
+    let mut core = pollster::block_on(Core::new(Rc::clone(&rwindow)));
 
     crate::command::load_empty(&mut core);
     crate::asset::parse_config(&mut core.global, core.bundle_manager.get_lua());
@@ -964,34 +982,25 @@ fn main() {
 
             if core.global.mouse_grab {
                 if !core.global.mouse_grabbed_state {
-                    window.set_cursor_visible(false);
-                    window.set_cursor_position(center).unwrap();
-                    window
+                    rwindow.set_cursor_visible(false);
+                    rwindow.set_cursor_position(center).unwrap();
+                    rwindow
                         .set_cursor_grab(CursorGrabMode::Confined)
-                        .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+                        .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
                     core.global.mouse_grabbed_state = true;
                 }
             } else {
                 if core.global.mouse_grabbed_state {
-                    window.set_cursor_visible(true);
-                    window.set_cursor_grab(CursorGrabMode::None);
+                    rwindow.set_cursor_visible(true);
+                    rwindow.set_cursor_grab(CursorGrabMode::None);
                     core.global.mouse_grabbed_state = false;
                 }
             }
             // window.set_cursor_position(center).unwrap();
         } else if core.global.mouse_grabbed_state {
-            window.set_cursor_visible(true);
-            window.set_cursor_grab(CursorGrabMode::None);
+            rwindow.set_cursor_visible(true);
+            rwindow.set_cursor_grab(CursorGrabMode::None);
             core.global.mouse_grabbed_state = false;
-        }
-        if core.global.fullscreen != core.global.fullscreen_state {
-            if core.global.fullscreen {
-                // TODO windows;; macos use Fullscreen::Borderless
-                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-            } else {
-                window.set_fullscreen(None)
-            }
-            core.global.fullscreen_state = core.global.fullscreen;
         }
         // println!("bits {:?}", bits.0);
 

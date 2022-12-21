@@ -1117,6 +1117,7 @@ pub fn init_lua_sys(
         "I guess blow up the lua core?"
     );
 
+    // REMEMBER this always has to be at the end
     let command_map_clone = command_map.clone();
     lua!(
         "help",

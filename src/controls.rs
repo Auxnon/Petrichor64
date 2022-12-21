@@ -170,7 +170,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
                 *control_flow = ControlFlow::Exit;
             } else if input_helper.key_pressed(VirtualKeyCode::Return) {
-                core.global.fullscreen = !core.global.fullscreen;
+                core.toggle_fullscreen();
+                core.global.fullscreen_state = core.global.fullscreen;
             }
         } else {
             let t = input_helper.text();
