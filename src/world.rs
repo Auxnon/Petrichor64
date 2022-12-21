@@ -11,6 +11,7 @@ use wgpu::Device;
 use crate::{
     bundle,
     command::MainCommmand,
+    lg,
     model::{Model, ModelManager},
     tile::{Chunk, ChunkModel, Layer, LayerModel},
 };
@@ -34,6 +35,7 @@ pub enum TileCommand {
     MapModel(String),
     Clear(),
     Destroy(),
+    Stats(),
 }
 
 pub enum TileResponse {
@@ -43,6 +45,7 @@ pub enum TileResponse {
 }
 
 pub struct WorldInstance {
+    pub bundle_id: u8,
     /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
     pub COUNTER: u32,
     /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
@@ -53,8 +56,9 @@ pub struct WorldInstance {
 }
 
 impl WorldInstance {
-    pub fn new() -> WorldInstance {
+    pub fn new(bundle_id: u8) -> WorldInstance {
         WorldInstance {
+            bundle_id,
             COUNTER: 2,
             INT_TEX_DICTIONARY: HashMap::new(),
             // INT_TEX_MAP: FxHashMap::default(),
@@ -104,12 +108,50 @@ impl WorldInstance {
         self.COUNTER += 1;
         ind
     }
+    pub fn stats(&self) {
+        println!("++World_Instance_{}---------------------", self.bundle_id);
+        self.INT_TEX_DICTIONARY.iter().for_each(|(k, v)| {
+            println!("---tex2int {}->{}", k, v);
+        });
+        self.INT_MODEL_DICTIONARY.iter().for_each(|(k, v)| {
+            println!("---model2int {}->{}", k, v);
+        });
+    }
+}
+pub struct Mapper {
+    tex_map: FxHashMap<u32, Vec4>,
+    model_map: FxHashMap<u32, Rc<Model>>,
+}
+impl Mapper {
+    pub fn new() -> Mapper {
+        Mapper {
+            tex_map: FxHashMap::default(),
+            model_map: FxHashMap::default(),
+        }
+    }
+    // pub fn get_tex(&self, index: u32) -> Vec4{
+    //     match self.tex_map.get(&index){
+    //         Some(v) => v.clone(),
+    //         None => vec4(0.0, 0.0, 1.0, 1.0),
+    //     }
+    // }
+    // pub fn get_model(&self, index: u32) -> Rc<Model>{
+    //     match self.model_map.get(&index){
+    //         Some(v) => v.clone(),
+    //         None => Rc::new(Model::new()),
+    //     }
+    // }
+    // pub fn set_tex(&mut self, index: u32, uv: Vec4){
+    //     self.tex_map.insert(index, uv);
+    // }
+    // pub fn set_model(&mut self, index: u32, model: Rc<Model>){
+    //     self.model_map.insert(index, model);
+    // }
 }
 pub struct World {
     layers: FxHashMap<u8, LayerModel>,
     pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
-    pub local_tex_map: FxHashMap<u32, Vec4>,
-    pub local_model_map: FxHashMap<u32, Rc<Model>>,
+    pub local_mappers: FxHashMap<u8, Mapper>,
 }
 
 impl World {
@@ -119,8 +161,7 @@ impl World {
         World {
             layers: FxHashMap::default(),
             senders: FxHashMap::default(),
-            local_tex_map: FxHashMap::default(),
-            local_model_map: FxHashMap::default(),
+            local_mappers: FxHashMap::default(),
         }
     }
 
@@ -133,6 +174,7 @@ impl World {
         let sender = World::init(bundle_id, pitcher);
         self.senders.insert(bundle_id, sender.clone());
         self.layers.insert(bundle_id, LayerModel::new());
+        self.local_mappers.insert(bundle_id, Mapper::new());
         sender
     }
 
@@ -149,7 +191,7 @@ impl World {
 
         std::thread::spawn(move || {
             let mut layer = Layer::new();
-            let mut instance = WorldInstance::new();
+            let mut instance = WorldInstance::new(bundle_id);
 
             // let a_device = Arc::clone(&device);
             for m in reciever {
@@ -213,6 +255,10 @@ impl World {
                         let i = instance.index_model(name);
                         res_handle(response.send(TileResponse::Mapped(i)));
                     }
+                    (TileCommand::Stats(), response) => {
+                        instance.stats();
+                        res_handle(response.send(TileResponse::Success(true)));
+                    }
                 }
             }
         });
@@ -231,37 +277,40 @@ impl World {
             if dropped && chunks.is_empty() {
                 layer.chunks.clear();
             } else {
-                for chunk in chunks {
-                    // let key = chunk.key.clone();
-                    match layer.chunks.entry(chunk.key.clone()) {
-                        Entry::Occupied(o) => {
-                            let c = o.into_mut();
-                            // println!("rebuild model chunk {}", chunk.key);
-                            c.build_chunk(
-                                &self.local_tex_map,
-                                &self.local_model_map,
-                                model_manager,
-                                chunk,
-                            );
-                            c.cook(device);
-                        }
-                        Entry::Vacant(v) => {
-                            let ix = chunk.pos.x.div_euclid(16) * 16;
-                            let iy = chunk.pos.y.div_euclid(16) * 16;
-                            let iz = chunk.pos.z.div_euclid(16) * 16;
-                            // println!(
-                            //     "populate new model chunk {} {} {} {}",
-                            //     chunk.key, ix, iy, iz
-                            // );
-                            let mut model = ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
-                            model.build_chunk(
-                                &self.local_tex_map,
-                                &self.local_model_map,
-                                model_manager,
-                                chunk,
-                            );
-                            model.cook(device);
-                            v.insert(model);
+                if let Some(mapper) = self.local_mappers.get(&bundle_id) {
+                    for chunk in chunks {
+                        // let key = chunk.key.clone();
+                        match layer.chunks.entry(chunk.key.clone()) {
+                            Entry::Occupied(o) => {
+                                let c = o.into_mut();
+                                // println!("rebuild model chunk {}", chunk.key);
+                                c.build_chunk(
+                                    &mapper.tex_map,
+                                    &mapper.model_map,
+                                    model_manager,
+                                    chunk,
+                                );
+                                c.cook(device);
+                            }
+                            Entry::Vacant(v) => {
+                                let ix = chunk.pos.x.div_euclid(16) * 16;
+                                let iy = chunk.pos.y.div_euclid(16) * 16;
+                                let iz = chunk.pos.z.div_euclid(16) * 16;
+                                // println!(
+                                //     "populate new model chunk {} {} {} {}",
+                                //     chunk.key, ix, iy, iz
+                                // );
+                                let mut model =
+                                    ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
+                                model.build_chunk(
+                                    &mapper.tex_map,
+                                    &mapper.model_map,
+                                    model_manager,
+                                    chunk,
+                                );
+                                model.cook(device);
+                                v.insert(model);
+                            }
                         }
                     }
                 }
@@ -333,7 +382,10 @@ impl World {
 
         match sender.send((TileCommand::Is(ivec3(x, y, z)), tx)) {
             Ok(_) => match rx.recv() {
-                Ok(TileResponse::Success(b)) => b,
+                Ok(TileResponse::Success(b)) => {
+                    // println!("is tile {} {} {} {}", x, y, z, b);
+                    b
+                }
                 _ => false,
             },
             _ => false,
@@ -404,6 +456,7 @@ impl World {
             }
             _ => {}
         }
+        self.local_mappers.remove(&bundle_id);
         self.layers.remove(&bundle_id);
     }
 
@@ -427,6 +480,7 @@ impl World {
                 break;
             }
         }
+        self.local_mappers.clear();
         self.layers.clear()
     }
 
@@ -468,7 +522,14 @@ impl World {
                     Ok(_) => match rx.recv() {
                         Ok(TileResponse::Mapped(i)) => {
                             // println!("mapped tex {} to {}", name, i);
-                            self.local_tex_map.insert(i, uv);
+                            match self.local_mappers.get_mut(&bundle_id) {
+                                Some(m) => {
+                                    m.tex_map.insert(i, uv);
+                                }
+                                _ => {
+                                    lg!("err::no world tex mapper for bundle {}", bundle_id)
+                                } // self.local_tex_map.insert(i, uv);
+                            }
                             i
                         }
                         _ => 0,
@@ -476,7 +537,10 @@ impl World {
                     _ => 0,
                 }
             }
-            _ => 0,
+            _ => {
+                lg!("err::no world sender for bundle {}", bundle_id);
+                0
+            }
         }
     }
 
@@ -484,43 +548,107 @@ impl World {
     pub fn index_texture_alias(&mut self, bundle_id: u8, name: String, direct: u32) {
         if let Some(sender) = self.senders.get(&bundle_id) {
             let (tx, rx) = sync_channel::<TileResponse>(0);
-            if let Ok(_) = sender.send((TileCommand::MapTex(name.to_lowercase(), direct), tx)) {
-                if let Ok(TileResponse::Mapped(i)) = rx.recv() {
-                    // println!("mapped tex {} to {}", name, i);
-                    self.local_tex_map
-                        .insert(i, self.local_tex_map.get(&direct).unwrap().clone());
+            match sender.send((TileCommand::MapTex(name.to_lowercase(), direct), tx)) {
+                Ok(_) => {
+                    if let Ok(TileResponse::Mapped(i)) = rx.recv() {
+                        // println!("mapped tex {} to {}", name, i);
+                        match self.local_mappers.get_mut(&bundle_id) {
+                            Some(m) => {
+                                m.tex_map.insert(
+                                    i,
+                                    m.tex_map
+                                        .get(&direct)
+                                        .unwrap_or(&vec4(0., 0., 1., 1.))
+                                        .clone(),
+                                );
+                            }
+                            _ => {
+                                lg!("err::no world tex mapper for bundle {}", bundle_id)
+                            }
+                        }
+
+                        // self.local_tex_map
+                        //     .insert(i, self.local_tex_map.get(&direct).unwrap().clone());
+                    }
+                }
+                _ => {
+                    lg!("err::no world sender for bundle {}", bundle_id);
                 }
             }
         }
     }
 
     /** index the model by name within the world, and the world instance generates an index by name to store on it's own thread*/
-    pub fn index_model(&mut self, bundle_id: u8, name: String, model: Rc<Model>) {
+    pub fn index_model(&mut self, bundle_id: u8, name: &str, model: Rc<Model>) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
         if let Some(sender) = self.senders.get(&bundle_id) {
             if let Ok(_) = sender.send((TileCommand::MapModel(name.to_lowercase()), tx)) {
                 if let Ok(TileResponse::Mapped(i)) = rx.recv() {
                     // println!("mapped model {} to {}", name, i);
-                    self.local_model_map.insert(i, model);
+                    // self.local_model_map.insert(i, model);
+                    match self.local_mappers.get_mut(&bundle_id) {
+                        Some(m) => {
+                            m.model_map.insert(i, model);
+                        }
+                        _ => {
+                            lg!("err::no world model mapper for bundle {}", bundle_id)
+                        }
+                    };
                 }
             }
         }
     }
-
+    // TODO should we get mapper every time?
     /** return texture uv coordinates from a given texture numerical index */
-    pub fn get_tex_from_index(&self, ind: u32) -> Vec4 {
-        match self.local_tex_map.get(&ind) {
-            Some(uv) => uv.clone(),
-            _ => vec4(1., 1., 0., 0.),
-        }
-    }
+    // pub fn get_tex_from_index(&self, bundle_id: u8, ind: u32) -> Vec4 {
+    //     match self.local_mappers.get(&bundle_id) {
+    //         Some(m) => match m.tex_map.get(&ind) {
+    //             Some(uv) => uv.clone(),
+    //             _ => vec4(1., 1., 0., 0.),
+    //         },
+    //         _ => {
+    //             lg!("err::no world tex mapper for bundle {}", bundle_id);
+    //             vec4(1., 1., 0., 0.)
+    //         }
+    //     }
+    // }
 
-    pub fn get_model_from_index(&self, index: u32) -> Option<Rc<Model>> {
-        match self.local_model_map.get(&index) {
-            Some(model) => Some(Rc::clone(model)),
+    // TODO should we get mapper every time?
+    // pub fn get_model_from_index(&self, bundle_id: u8, index: u32) -> Option<Rc<Model>> {
+    //     match self.local_mappers.get(&bundle_id) {
+    //         Some(m) => match m.model_map.get(&index) {
+    //             Some(model) => Some(Rc::clone(model)),
+    //             None => None,
+    //         },
+    //         None => None,
+    //     }
+    // }
+    pub fn stats(&self) {
+        println!("+World====================");
+        self.local_mappers.iter().for_each(|(k, v)| {
+            println!("--mapper id {}", k);
+            println!("---#int2models {}", v.model_map.len());
+            v.model_map.iter().for_each(|(k, v)| {
+                println!("---int2model {}->{}", k, v.name);
+            });
+            println!("---#int2tex {}", v.tex_map.len());
+            v.tex_map.iter().for_each(|(k, v)| {
+                println!("---int2tex {}->{}", k, v);
+            });
+        });
 
-            None => None,
-        }
+        println!("--#layers {}", self.layers.len());
+        self.layers.iter().for_each(|(k, v)| {
+            println!("--layer id {}-> #{}", k, v.chunks.len());
+        });
+        self.senders.iter().for_each(|(k, v)| {
+            let (tx, rx) = sync_channel::<TileResponse>(0);
+            if let Ok(r) = v.send((TileCommand::Stats(), tx)) {
+                // we don't have to wait this is just to preserve output order
+                rx.recv();
+            }
+            // println!("--sender id{}-> #{}", k, v.len());
+        });
     }
 }
 
