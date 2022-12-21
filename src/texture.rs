@@ -362,13 +362,13 @@ impl TexManager {
     }
 
     /** return texture uv coordinates from a given texture name */
-    pub fn get_tex(&self, str: &String) -> Vec4 {
+    pub fn get_tex(&self, str: &str) -> Vec4 {
         match self.dictionary.get(str) {
             Some(v) => v.clone(),
-            None => Vec4::new(0., 0., 0., 0.),
+            None => Vec4::new(0., 0., 1., 1.),
         }
     }
-    pub fn get_tex_or_not(&self, str: &String) -> Option<Vec4> {
+    pub fn get_tex_or_not(&self, str: &str) -> Option<Vec4> {
         match self.dictionary.get(str) {
             Some(v) => Some(v.clone()),
             None => None,
@@ -545,7 +545,7 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
             Some(o) => {
                 let b = bits.get(bits.len() - 1).unwrap();
                 if bits.len() > 1 && b.starts_with("tile") {
-                    return (o.to_string(), if b.ends_with("32") { 32 } else { 16 });
+                    return (o.to_string(), check_tile_size(b));
                 }
                 (o.to_string(), 0)
             }
