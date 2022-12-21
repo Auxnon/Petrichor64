@@ -12,6 +12,7 @@ use model::ModelManager;
 use sound::{SoundCommand, SoundPacket};
 use std::{
     mem,
+    rc::Rc,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc,
@@ -26,6 +27,7 @@ use parking_lot::RwLock;
 use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, Texture};
 use winit::{
+    dpi::{LogicalSize, PhysicalSize},
     event::*,
     event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
@@ -93,6 +95,7 @@ pub struct Core {
     ent_manager: EntManager,
     input_manager: winit_input_helper::WinitInputHelper,
     bundle_manager: BundleManager,
+    win_ref: Rc<Window>,
 }
 
 #[repr(C)]
@@ -146,8 +149,9 @@ fn create_depth_texture(
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl Core {
-    async fn new(window: &Window) -> Core {
+    async fn new(rwindow: Rc<Window>) -> Core {
         // crate::texture::save_audio_buffer(&vec![255u8; 1024]);
+        let window = &*rwindow;
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -641,13 +645,15 @@ impl Core {
             catcher,
             input_manager,
             bundle_manager: BundleManager::new(),
+            win_ref: rwindow,
         }
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
-            // println!("1resize {} {}", self.size.width, self.size.height);
+            // self.config.
+            println!("physical resize {} {}", self.size.width, self.size.height);
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
@@ -756,24 +762,45 @@ impl Core {
                     println!("global remap");
                     for (k, v) in table.iter() {
                         // println!("global map {} {}", k, v);
+                        if (*v).len() > 0 {
                         match k.as_str() {
-                            "resolution" => self.global.screen_effects.crt_resolution = *v,
-                            "curvature" => self.global.screen_effects.corner_harshness = *v,
-                            "flatness" => self.global.screen_effects.corner_ease = *v,
-                            "dark" => self.global.screen_effects.dark_factor = *v,
-                            "bleed" => self.global.screen_effects.lumen_threshold = *v,
-                            "glitch" => self.global.screen_effects.glitchiness = *v,
-                            "high" => self.global.screen_effects.high_range = *v,
-                            "low" => self.global.screen_effects.low_range = *v,
-                            "modernize" => self.global.screen_effects.modernize = *v,
+                                "resolution" => self.global.screen_effects.crt_resolution = (*v)[0],
+                                "curvature" => {
+                                    self.global.screen_effects.corner_harshness = (*v)[0]
+                                }
+                                "flatness" => self.global.screen_effects.corner_ease = (*v)[0],
+                                "dark" => self.global.screen_effects.dark_factor = (*v)[0],
+                                "bleed" => self.global.screen_effects.lumen_threshold = (*v)[0],
+                                "glitch" => self.global.screen_effects.glitchiness = (*v)[0],
+                                "high" => self.global.screen_effects.high_range = (*v)[0],
+                                "low" => self.global.screen_effects.low_range = (*v)[0],
+                                "modernize" => self.global.screen_effects.modernize = (*v)[0],
                             "fullscreen" => {
-                                self.global.fullscreen = if *v != 0.0 { true } else { false }
+                                    self.global.fullscreen =
+                                        if (*v)[0] != 0.0 { true } else { false };
+                                    self.check_fullscreen();
+                                    self.global.fullscreen_state = self.global.fullscreen;
                             }
                             "mouse_grab" => {
-                                println!("mouse grab {}", *v);
-                                self.global.mouse_grab = if *v != 0.0 { true } else { false }
+                                    println!("mouse grab {}", (*v)[0]);
+                                    self.global.mouse_grab =
+                                        if (*v)[0] != 0.0 { true } else { false }
                             }
+                                "size" => {
+                                    self.win_ref.set_inner_size(LogicalSize::new(
+                                        (*v)[0].clamp(10., f32::INFINITY) as u32,
+                                        self.size.height,
+                                    ));
+                                    if (*v).len() > 1 {
+                                        self.win_ref.set_inner_size(LogicalSize::new(
+                                            self.size.width,
+                                            (*v)[1].clamp(10., f32::INFINITY) as u32,
+                                        ));
+                                    }
+                                }
+
                             _ => {}
+                            }
                         }
                     }
                 }
