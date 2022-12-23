@@ -35,6 +35,9 @@ use std::{
     },
 };
 
+#[cfg(feature = "online_capable")]
+use std::sync::mpsc::Receiver;
+
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     let bundle_id = core.bundle_manager.console_bundle_target;
@@ -200,18 +203,16 @@ pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
     bundle_id: u8,
-    // switch_board: Arc<RwLock<SwitchBoard>>,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
-    net_sender: OnlineType,
+    _net_sender: OnlineType,
     singer: Sender<SoundCommand>,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 8]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
-    // ent_tracker: Rc<RefCell<FxHashMap<u64,bool>
 ) -> Result<(), Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -222,12 +223,10 @@ pub fn init_lua_sys(
     println!("init lua sys");
 
     #[cfg(feature = "online_capable")]
-    {
-        let (netout, netin) = match net_sender {
+    let (netout, netin) = match _net_sender {
             Some((nout, nin)) => (Some(nout), Some(nin)),
             _ => (None, None),
         };
-    }
 
     let default_func = lua_ctx
         .create_function(|_, _: f32| Ok("placeholder func uwu"))
