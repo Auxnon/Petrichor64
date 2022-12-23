@@ -239,7 +239,9 @@ pub fn make_directory(directory: String) {
         scripts.join("main.lua"),
         "
 example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
-bg(1, 1, .4, 1)
+sky()
+fill(1, 1, .4, 1)
+gui()
 function main()
     log('main runs once everything has loaded')
 end
