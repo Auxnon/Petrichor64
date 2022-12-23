@@ -4,11 +4,13 @@ cam = { x = 0, y = 0, z = 0 }
 rot = { x = 0, y = 0 }
 srot = { x = 0, y = 0 }
 m = { x = 0, y = 0 }
-bg(1, 1, .4, 1)
-attr { mouse_grab = 1, fullscreen = 1 }
+
+-- attr { mouse_grab = 1, fullscreen = 1 }
 absolute_speed = 0
 
-aim = spawn("square", 0, 0, 0)
+aim = spawn("screen", 0, 0, 0)
+sqimg = gimg("screen")
+ogimg = sqimg:copy()
 
 the_size = 7
 ni = -the_size
@@ -18,6 +20,7 @@ bullets = {}
 bot = spawn("bot.bot", 0, 0, 0)
 m_off = false
 pheight = 6
+
 
 function model_test()
     local n = 0.5
@@ -62,13 +65,13 @@ function doot(ii, jj)
 
     for zz = 6, 34, 4 do
         for i = -10, 10 do
-            tile("square", i + ii, -10 + jj, zz)
-            tile("square", i + ii, 10 + jj, zz)
+            tile("screen", i + ii, -10 + jj, zz)
+            tile("screen", i + ii, 10 + jj, zz)
         end
 
         for i = -9, 9 do
-            tile("square", -10 + ii, i + jj, zz)
-            tile("square", 10 + ii, i + jj, zz)
+            tile("screen", -10 + ii, i + jj, zz)
+            tile("screen", 10 + ii, i + jj, zz)
         end
     end
 
@@ -91,20 +94,34 @@ end
 spots = {}
 function make_thing()
 
-    spots[#spots + 1] = spawn("example", player.x, player.y, player.z - 2)
-    if #spots > 120 then
+    spots[#spots + 1] = spawn("smoke", player.x, player.y, player.z - 2)
+    if #spots > 100 then
         -- for i = 1, #spots - 10 do
 
         -- spots[1].kill()
 
         -- end
-        table.remove(spots, 1):kill()
+        table.remove(spots, 1)
+        -- :kill()
         -- spots=table.slice(spots,#spots-10,#spots)
     end
 end
 
+function move_things()
+    for i = 1, #spots do
+        local s = spots[i]
+        s.x = s.x + rndb()
+        s.y = s.y + rndb()
+        s.z = s.z + rndb()
+    end
+
+end
+
 function main()
     log('main runs once everything has loaded')
+    sky()
+    fill("fff")
+    gui()
 end
 
 function speedcap()
@@ -154,8 +171,24 @@ function fire()
     table.insert(bullets, bb)
 end
 
+county = 0
+scounty = 0
+function imgey()
+    scounty = scounty + 1
+    if scounty > 60 then
+        county = county + 1
+        scounty = 0
+        sqimg:dimg(ogimg)
+        -- sqimg:line(rnd(), rnd(), rnd(), rnd())
+        sqimg:text("" .. county, 0, 12)
+        simg("screen", sqimg)
+    end
+
+end
+
 function loop()
     makey()
+    imgey()
     example.x = example.x + rnd() * 0.1 - 0.05
     example.z = example.z + rnd() * 0.1 - 0.05
     local mp = m
@@ -229,6 +262,7 @@ function loop()
     cam.z = player.z + pheight
 
     make_thing()
+    move_things()
 
 
     aim.z = player.z + math.sin(srot.y) * 4
