@@ -340,7 +340,8 @@ fn start(
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
         let mice_mutex = Rc::new(RefCell::new(mice));
         let ent_counter = Rc::new(Mutex::new(2u64));
-        let gui_handle = Rc::new(RefCell::new(resources));
+
+        let gui_handle = Rc::new(RefCell::new(crate::gui::GuiMorsel::new(resources)));
 
         let lua_ctx = if true {
             unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }

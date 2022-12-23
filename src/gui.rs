@@ -1,3 +1,5 @@
+use std::{borrow::Borrow, rc::Rc};
+
 use glam::Vec4;
 use rand::Rng;
 // use tracy::frame;
@@ -146,43 +148,43 @@ impl Gui {
         }
     }
 
-    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
-        let targ = if onto_console {
-            &mut self.console
-        } else {
-            if self.target_sky {
-                self.dirty_sky = true;
-                &mut self.sky
-            } else {
-                self.dirty = true;
-                &mut self.main
-            }
-        };
-        let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
-        let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
+    // pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
+    //     let targ = if onto_console {
+    //         &mut self.console
+    //     } else {
+    //         if self.target_sky {
+    //             self.dirty_sky = true;
+    //             &mut self.sky
+    //         } else {
+    //             self.dirty = true;
+    //             &mut self.main
+    //         }
+    //     };
+    //     let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
+    //     let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
 
-        for (i, line) in txt.lines().enumerate() {
-            let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
-            let mut lx = xx + (LETTER_SIZE) as i64;
-            for c in line.chars() {
-                let mut ind = c as u32;
-                if ind > 255 {
-                    ind = 255;
-                }
-                let index_x = ind % 16;
-                let index_y = ind / 16;
-                let sub = image::imageops::crop_imm(
-                    &self.letters,
-                    index_x * LETTER_SIZE,
-                    index_y * LETTER_SIZE,
-                    LETTER_SIZE,
-                    LETTER_SIZE,
-                );
-                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
-                lx += (LETTER_SIZE + 1) as i64;
-            }
-        }
-    }
+    //     for (i, line) in txt.lines().enumerate() {
+    //         let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
+    //         let mut lx = xx + (LETTER_SIZE) as i64;
+    //         for c in line.chars() {
+    //             let mut ind = c as u32;
+    //             if ind > 255 {
+    //                 ind = 255;
+    //             }
+    //             let index_x = ind % 16;
+    //             let index_y = ind / 16;
+    //             let sub = image::imageops::crop_imm(
+    //                 &self.letters,
+    //                 index_x * LETTER_SIZE,
+    //                 index_y * LETTER_SIZE,
+    //                 LETTER_SIZE,
+    //                 LETTER_SIZE,
+    //             );
+    //             image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
+    //             lx += (LETTER_SIZE + 1) as i64;
+    //         }
+    //     }
+    // }
 
     pub fn draw_image(
         &mut self,
@@ -214,9 +216,8 @@ impl Gui {
             (source.z * w as f32) as u32,
             (source.w * h as f32) as u32,
         );
-        let xx = if x.0 { x.1 } else { x.1 * self.size[0] as f32 };
-        let yy = if y.0 { y.1 } else { y.1 * self.size[1] as f32 };
-        image::imageops::overlay(targ, &mut sub.to_image(), xx as i64, yy as i64);
+
+        direct_image(targ, &sub.to_image(), x, y, self.size[0], self.size[1]);
 
         // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
         // self.dirty = true;
@@ -317,13 +318,7 @@ impl Gui {
         let width = self.size[0];
         let height = self.size[1];
 
-        let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
-        let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
-        let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
-        let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
-
-        let white = image::Rgba([255, 255, 255, 255]);
-        imageproc::drawing::draw_line_segment_mut(self.get_targ(), (xx1, yy1), (xx2, yy2), white);
+        direct_line(self.get_targ(), width, height, x1, y1, x2, y2);
     }
 
     fn get_targ(&mut self) -> &mut RgbaImage {
@@ -409,19 +404,19 @@ impl Gui {
         }
     }
 
-    pub fn make_morsel(&self) -> GuiMorsel {
-        let morsel = GuiMorsel::new(
+    pub fn make_morsel(&self) -> PreGuiMorsel {
+        (
             self.letters.clone(),
             self.main.clone(),
             self.sky.clone(),
             self.size,
-        );
-        morsel
+        )
     }
 }
 
+pub type PreGuiMorsel = (RgbaImage, RgbaImage, RgbaImage, [u32; 2]);
 pub struct GuiMorsel {
-    pub letters: RgbaImage,
+    pub letters: Rc<RgbaImage>,
     dirty: bool,
     dirty_sky: bool,
     pub main: RgbaImage,
@@ -431,9 +426,10 @@ pub struct GuiMorsel {
 }
 
 impl GuiMorsel {
-    pub fn new(letters: RgbaImage, main: RgbaImage, sky: RgbaImage, size: [u32; 2]) -> Self {
+    pub fn new((letters, main, sky, size): PreGuiMorsel) -> Self {
+        // letters: Rc<RgbaImage>, main: RgbaImage, sky: RgbaImage, size: [u32; 2]
         Self {
-            letters,
+            letters: Rc::new(letters),
             dirty: true,
             dirty_sky: true,
             main,
@@ -482,16 +478,10 @@ impl GuiMorsel {
         let width = self.size[0];
         let height = self.size[1];
 
-        let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
-        let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
-        let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
-        let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
-
-        let white = image::Rgba([255, 255, 255, 255]);
-        imageproc::drawing::draw_line_segment_mut(self.get_targ(), (xx1, yy1), (xx2, yy2), white);
+        direct_line(self.get_targ(), width, height, x1, y1, x2, y2)
     }
 
-    pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: NumCouple, y: NumCouple) {
+    pub fn text(&mut self, txt: &str, x: NumCouple, y: NumCouple) {
         let targ = if self.target_sky {
             self.dirty_sky = true;
             &mut self.sky
@@ -500,30 +490,7 @@ impl GuiMorsel {
             &mut self.main
         };
 
-        let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
-        let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
-
-        for (i, line) in txt.lines().enumerate() {
-            let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
-            let mut lx = xx + (LETTER_SIZE) as i64;
-            for c in line.chars() {
-                let mut ind = c as u32;
-                if ind > 255 {
-                    ind = 255;
-                }
-                let index_x = ind % 16;
-                let index_y = ind / 16;
-                let sub = image::imageops::crop_imm(
-                    &self.letters,
-                    index_x * LETTER_SIZE,
-                    index_y * LETTER_SIZE,
-                    LETTER_SIZE,
-                    LETTER_SIZE,
-                );
-                image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
-                lx += (LETTER_SIZE + 1) as i64;
-            }
-        }
+        direct_text(targ, &self.letters, self.size[0], self.size[1], txt, x, y)
     }
 
     pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
@@ -547,6 +514,7 @@ impl GuiMorsel {
     /* Clean off the main raster */
     pub fn clean(&mut self) {
         // self.main.
+
         self.main = RgbaImage::new(self.size[0], self.size[1]);
         self.dirty = true;
     }
@@ -591,6 +559,73 @@ pub fn init_image(
     img.put_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
     let out = crate::texture::make_tex(device, queue, &img);
     (out.0, out.1, out.2, img)
+}
+
+pub fn direct_line(
+    target: &mut RgbaImage,
+    width: u32,
+    height: u32,
+    x1: NumCouple,
+    y1: NumCouple,
+    x2: NumCouple,
+    y2: NumCouple,
+) {
+    let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
+    let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
+    let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
+    let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
+
+    let white = image::Rgba([255, 255, 255, 255]);
+    imageproc::drawing::draw_line_segment_mut(target, (xx1, yy1), (xx2, yy2), white);
+}
+
+pub fn direct_text(
+    target: &mut RgbaImage,
+    letters: &Rc<RgbaImage>,
+    width: u32,
+    height: u32,
+    txt: &str,
+    x: NumCouple,
+    y: NumCouple,
+) {
+    let xx = (x.1 * if x.0 { 1. } else { width as f32 }) as i64;
+    let yy = (y.1 * if y.0 { 1. } else { height as f32 }) as i64;
+
+    for (i, line) in txt.lines().enumerate() {
+        let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
+        let mut lx = xx + (LETTER_SIZE) as i64;
+        for c in line.chars() {
+            let mut ind = c as u32;
+            if ind > 255 {
+                ind = 255;
+            }
+            let index_x = ind % 16;
+            let index_y = ind / 16;
+            let sub: image::SubImage<&RgbaImage> = image::imageops::crop_imm(
+                letters.borrow(),
+                index_x * LETTER_SIZE,
+                index_y * LETTER_SIZE,
+                LETTER_SIZE,
+                LETTER_SIZE,
+            );
+            image::imageops::overlay(target, &mut sub.to_image(), lx, ly);
+            lx += (LETTER_SIZE + 1) as i64;
+        }
+    }
+}
+
+pub fn direct_image(
+    target: &mut RgbaImage,
+    source: &RgbaImage,
+    x: NumCouple,
+    y: NumCouple,
+    width: u32,
+    height: u32,
+) {
+    let xx = if x.0 { x.1 } else { x.1 * width as f32 };
+    let yy = if y.0 { y.1 } else { y.1 * height as f32 };
+
+    image::imageops::overlay(target, source, xx as i64, yy as i64);
 }
 
 fn log(str: String) {

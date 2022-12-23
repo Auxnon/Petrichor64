@@ -1,12 +1,14 @@
 use crate::{
-    bundle::{Bundle, BundleResources},
+    bundle::BundleResources,
     gui::GuiMorsel,
     lg,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
+    lua_img::LuaImg,
     pad::Pad,
-    sound::{Instrument, Note, SoundCommand, SoundPacket},
+    sound::{Instrument, Note, SoundCommand},
     tile::Chunk,
+    types::ValueMap,
     world::{TileCommand, TileResponse, World},
     Core,
 };
@@ -15,15 +17,16 @@ use crate::{
 use crate::online::MovePacket;
 
 use glam::{vec4, Vec4};
-use image::{ImageBuffer, RgbaImage};
+use image::RgbaImage;
 use itertools::Itertools;
-use mlua::{Error, Lua, Table, Value};
+use mlua::{
+    AnyUserData, Error, Lua, Table, UserData,
+    Value::{self, Nil},
+};
 use parking_lot::Mutex;
-use serde_json::map;
 
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
+    cell::RefCell,
     path::Path,
     rc::Rc,
     sync::{
@@ -874,23 +877,8 @@ pub fn init_lua_sys(
     lua!(
         "text",
         move |_, (txt, x, y): (String, Option<Value>, Option<Value>)| {
-            // pitcher.send((
-            //     bundle_id,
-            //     MainCommmand::Text(
-            //         txt,
-            // match x {
-            //     Some(o) => numm(o),
-            //     _ => (false, 0.),
-            // },
-            // match y {
-            //     Some(o) => numm(o),
-            //     _ => (false, 0.),
-            // },
-            //     ),
-            // ));
-            gui.borrow_mut().direct_text(
+            gui.borrow_mut().text(
                 &txt,
-                false,
                 match x {
                     Some(o) => numm(o),
                     _ => (false, 0.),
@@ -901,8 +889,6 @@ pub fn init_lua_sys(
                 },
             );
 
-            // let c = get_color(r, g, b, a);
-            // gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
             Ok(())
         },
         "Draw text on the gui at position"
@@ -910,16 +896,14 @@ pub fn init_lua_sys(
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
     lua!(
-        "img",
-        move |_, (im, x, y): (Table, Option<Value>, Option<Value>)| {
-            if let Ok(img) = im.get::<_, Vec<u8>>("data") {
-                if let Ok(w) = im.get::<_, u32>("w") {
-                    if let Ok(h) = im.get::<_, u32>("h") {
-                        let len = img.len();
-                        if let Some(rgba) = RgbaImage::from_raw(w, h, img) {
+        "dimg",
+        move |_, (im, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
                             // println!("got image {}x{} w len {}", w, h, len);
+            // if let Value::UserData(imm) = im {
+
+            if let Ok(limg) = im.borrow::<LuaImg>() {
                             gui.borrow_mut().draw_image(
-                                &rgba,
+                    &limg.image,
                                 match x {
                                     Some(o) => numm(o),
                                     _ => (false, 0.),
@@ -929,53 +913,100 @@ pub fn init_lua_sys(
                                     _ => (false, 0.),
                                 },
                             );
-                        }
-                    }
-                }
-            }
-            // pitcher.send((
-            //     bundle_id,
-            //     MainCommmand::DrawImg(
-            //         im,
-            //         match x {
-            //             Some(o) => numm(o),
-            //             _ => (false, 0.),
-            //         },
-            //         match y {
-            //             Some(o) => numm(o),
-            //             _ => (false, 0.),
-            //         },
-            //     ),
-            // ));
+            };
+
+            // match im {
+            //     mlua::Value::UserData(imm) => {
+            //         if let Ok(limg) = imm.borrow::<LuaImg>() {
+            //             gui.borrow_mut().draw_image(
+            //                 &limg.image,
+            //                 match x {
+            //                     Some(o) => numm(o),
+            //                     _ => (false, 0.),
+            //                 },
+            //                 match y {
+            //                     Some(o) => numm(o),
+            //                     _ => (false, 0.),
+            //                 },
+            //             );
+            //         };
+            //     }
+            //     // TODO should we shortcut calling by string?
+            //     // mlua::Value::String(s) => {
+            //     //     lu.call_function::<_, ()>("gimg", (s,))?;
+            //     // }
+            //     _ => {}
+            // }
+
+            // };
+
+            // if let Ok(img) = im.get::<_, Vec<u8>>("data") {
+            // v    if let Ok(w) = im.get::<_, u32>("w") {
+            //         if let Ok(h) = im.get::<_, u32>("h") {
+            //             let len = img.len();
+            //             if let Some(rgba) = RgbaImage::from_raw(w, h, img) {
+            //                 // println!("got image {}x{} w len {}", w, h, len);
+            //                 gui.borrow_mut().draw_image(
+            //                     &rgba,
+            //                     match x {
+            //                         Some(o) => numm(o),
+            //                         _ => (false, 0.),
+            //                     },
+            //                     match y {
+            //                         Some(o) => numm(o),
+            //                         _ => (false, 0.),
+            //                     },
+            //                 );
+            //             }
+            //         }
+            //     }
+            // }
+
             Ok(())
         },
-        "Draw text on the gui at position"
+        "Draw image on the gui at position"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "gimg",
-        move |lu, im: String| {
-            match lu.create_table() {
-                Ok(table) => {
-                    let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, Vec<u8>)>(0);
-                    match pitcher.send((bundle_id, MainCommmand::GetImg(im, tx))) {
-                        Ok(o) => match rx.recv() {
-                            Ok(d) => {
-                                table.set("w", d.0)?;
-                                table.set("h", d.1)?;
-                                table.set("data", d.2)?;
-                                Ok(table)
-                            }
-                            _ => Ok(table),
-                        },
-                        _ => Ok(table),
-                    }
-                }
-                Err(e) => Err(e),
-            }
+        "simg",
+        move |_, (name, im): (String, AnyUserData)| {
+            // println!("got image {}x{} w len {}", w, h, len);
+            // if let Value::UserData(imm) = im {
+            if let Ok(limg) = im.borrow::<LuaImg>() {
+                pitcher.send((bundle_id, MainCommmand::SetImg(name, limg.image.clone())));
+            };
+
+            Ok(())
         },
-        "Get image data"
+        "Draw image on the gui at position"
+    );
+
+    let pitcher = main_pitcher.clone();
+    let gui = gui_in.clone();
+    lua!(
+        "gimg",
+        move |lu, name: String| {
+            //Err(mlua::prelude::LuaError::external("Failed to get image"))
+            //Err(mlua::prelude::LuaError::external("Core did not respond"))
+            let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, RgbaImage)>(0);
+            let limg = match pitcher.send((bundle_id, MainCommmand::GetImg(name, tx))) {
+                        Ok(o) => match rx.recv() {
+                    Ok((w, h, im)) => {
+                        let lua_img =
+                            LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
+                        // table.set("w", d.0)?;
+                        // table.set("h", d.1)?;
+                        // table.set("data", d.2)?;
+                        lua_img
+                            }
+                    _ => LuaImg::empty(),
+                        },
+                _ => LuaImg::empty(),
+            };
+            Ok(limg)
+        },
+        "Get image buffer userdata for editing"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1630,7 +1661,8 @@ pub enum MainCommmand {
     Square(NumCouple, NumCouple, NumCouple, NumCouple),
     // Text(String, NumCouple, NumCouple),
     DrawImg(String, NumCouple, NumCouple),
-    GetImg(String, SyncSender<(u32, u32, Vec<u8>)>),
+    GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
+    SetImg(String, RgbaImage),
     Pixel(u32, u32, glam::Vec4),
     CamPos(glam::Vec3),
     CamRot(glam::Vec2),

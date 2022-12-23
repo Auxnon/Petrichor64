@@ -103,9 +103,9 @@ impl TexManager {
     }
 
     pub fn refinalize(&self, queue: &Queue, texture: &Texture) {
-        for (k, v) in self.dictionary.iter() {
-            println!("tex>>{}>>{}", k, v);
-        }
+        // for (k, v) in self.dictionary.iter() {
+        //     println!("tex>>{}>>{}", k, v);
+        // }
         write_tex(queue, texture, &self.atlas);
     }
 
@@ -361,6 +361,19 @@ impl TexManager {
             .collect::<Vec<Vec4>>()
     }
 
+    pub fn overwrite_texture(&mut self, name: &str, source: RgbaImage) {
+        if let Some(pos) = self.get_tex_or_not(name) {
+            // overlay(master_img, &source, x as i64, y as i64);
+            image::imageops::replace(
+                &mut self.atlas,
+                &source,
+                (pos.x * self.atlas_dim.x as f32) as i64,
+                (pos.y * self.atlas_dim.y as f32) as i64,
+            );
+            // image::imageops::overlay(master_img, &source, x as i64, y as i64);
+        }
+    }
+
     /** return texture uv coordinates from a given texture name */
     pub fn get_tex(&self, str: &str) -> Vec4 {
         match self.dictionary.get(str) {
@@ -376,7 +389,7 @@ impl TexManager {
     }
 
     /** return the actual image buffer data from a given texture name */
-    pub fn get_img(&self, str: &String) -> (u32, u32, Vec<u8>) {
+    pub fn get_img(&self, str: &String) -> (u32, u32, RgbaImage) {
         let im = match self.dictionary.get(str) {
             Some(v) => image::imageops::crop_imm(
                 &self.atlas,
@@ -389,7 +402,7 @@ impl TexManager {
             None => self.atlas.clone(),
         };
 
-        (im.width(), im.height(), im.into_vec())
+        (im.width(), im.height(), im)
     }
 
     fn get_img_from_pos(&self, pos: &Vec4) -> RgbaImage {
@@ -520,6 +533,7 @@ pub fn load_img(str: &String) -> Result<DynamicImage, image::ImageError> {
     //Path::new(".").join("entities");
     load_img_nopath(&text)
 }
+
 pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> {
     lg!("{}", str.clone());
 
@@ -532,6 +546,7 @@ pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> 
 
     img
 }
+
 pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageError> {
     let img = image::load_from_memory(buffer);
     img
@@ -579,7 +594,7 @@ fn check_tile_size(str: &str) -> u32 {
         _ => 16,
     }
 }
-
+/** Apply an image on to a main image such as the atlas */
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x as i64, y as i64);
 }
@@ -731,6 +746,7 @@ macro_rules! err{
        }
    }
 }
+
 pub(crate) use err;
 pub(crate) use lg;
 

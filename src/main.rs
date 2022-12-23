@@ -1,5 +1,4 @@
 #![windows_subsystem = "windows"]
-
 use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
@@ -19,6 +18,7 @@ use std::{
     },
 };
 use texture::TexManager;
+use types::ValueMap;
 // use tracy::frame;
 use crate::gui::Gui;
 use crate::{ent::EntityUniforms, post::Post};
@@ -46,6 +46,7 @@ mod gui;
 mod log;
 mod lua_define;
 mod lua_ent;
+mod lua_img;
 mod model;
 #[cfg(feature = "online_capable")]
 mod online;
@@ -59,6 +60,7 @@ mod switch_board;
 mod template;
 mod texture;
 mod tile;
+mod types;
 mod world;
 mod zip_pal;
 
@@ -703,6 +705,11 @@ impl Core {
                 MainCommmand::GetImg(s, tx) => {
                     tx.send(self.tex_manager.get_img(&s));
                 }
+                MainCommmand::SetImg(s, im) => {
+                    self.tex_manager.overwrite_texture(&s, im);
+                    self.tex_manager
+                        .refinalize(&self.queue, &self.master_texture);
+                }
                 MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
                 MainCommmand::Anim(name, items, speed) => {
                     let frames = items
@@ -775,46 +782,49 @@ impl Core {
                 MainCommmand::Globals(table) => {
                     println!("global remap");
                     for (k, v) in table.iter() {
-                        // println!("global map {} {}", k, v);
-                        if (*v).len() > 0 {
-                            match k.as_str() {
-                                "resolution" => self.global.screen_effects.crt_resolution = (*v)[0],
-                                "curvature" => {
-                                    self.global.screen_effects.corner_harshness = (*v)[0]
-                                }
-                                "flatness" => self.global.screen_effects.corner_ease = (*v)[0],
-                                "dark" => self.global.screen_effects.dark_factor = (*v)[0],
-                                "bleed" => self.global.screen_effects.lumen_threshold = (*v)[0],
-                                "glitch" => self.global.screen_effects.glitchiness = (*v)[0],
-                                "high" => self.global.screen_effects.high_range = (*v)[0],
-                                "low" => self.global.screen_effects.low_range = (*v)[0],
-                                "modernize" => self.global.screen_effects.modernize = (*v)[0],
-                                "fullscreen" => {
-                                    self.global.fullscreen =
-                                        if (*v)[0] != 0.0 { true } else { false };
-                                    self.check_fullscreen();
-                                    self.global.fullscreen_state = self.global.fullscreen;
-                                }
-                                "mouse_grab" => {
-                                    println!("mouse grab {}", (*v)[0]);
-                                    self.global.mouse_grab =
-                                        if (*v)[0] != 0.0 { true } else { false }
-                                }
-                                "size" => {
+                        match k.as_str() {
+                            "resolution" => {
+                                self.global.screen_effects.crt_resolution = Self::val2float(v)
+                            }
+                            "curvature" => {
+                                self.global.screen_effects.corner_harshness = Self::val2float(v)
+                            }
+                            "flatness" => {
+                                self.global.screen_effects.corner_ease = Self::val2float(v)
+                            }
+                            "dark" => self.global.screen_effects.dark_factor = Self::val2float(v),
+                            "bleed" => {
+                                self.global.screen_effects.lumen_threshold = Self::val2float(v)
+                            }
+                            "glitch" => self.global.screen_effects.glitchiness = Self::val2float(v),
+                            "high" => self.global.screen_effects.high_range = Self::val2float(v),
+                            "low" => self.global.screen_effects.low_range = Self::val2float(v),
+                            "modernize" => {
+                                self.global.screen_effects.modernize = Self::val2float(v)
+                            }
+                            "fullscreen" => {
+                                self.global.fullscreen = Self::val2bool(v);
+                                self.check_fullscreen();
+                                self.global.fullscreen_state = self.global.fullscreen;
+                            }
+                            "mouse_grab" => self.global.mouse_grab = Self::val2bool(v),
+                            "size" => {
+                                let arr = Self::val2array(v);
+                                if arr.len() > 0 {
                                     self.win_ref.set_inner_size(LogicalSize::new(
-                                        (*v)[0].clamp(10., f32::INFINITY) as u32,
+                                        arr[0].clamp(10., f32::INFINITY) as u32,
                                         self.size.height,
                                     ));
-                                    if (*v).len() > 1 {
+                                    if arr.len() > 1 {
                                         self.win_ref.set_inner_size(LogicalSize::new(
                                             self.size.width,
-                                            (*v)[1].clamp(10., f32::INFINITY) as u32,
+                                            arr[1].clamp(10., f32::INFINITY) as u32,
                                         ));
                                     }
                                 }
-
-                                _ => {}
                             }
+
+                            _ => {}
                         }
                     }
                 }
@@ -891,6 +901,35 @@ impl Core {
         );
 
         self.global.iteration += 1;
+    }
+    fn val2float(val: &ValueMap) -> f32 {
+        match val {
+            ValueMap::Float(f) => *f,
+            ValueMap::Integer(i) => *i as f32,
+            ValueMap::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            _ => 0.0,
+        }
+    }
+    fn val2bool(val: &ValueMap) -> bool {
+        match val {
+            ValueMap::Float(f) => *f != 0.0,
+            ValueMap::Integer(i) => *i != 0,
+            ValueMap::Bool(b) => *b,
+            _ => false,
+        }
+    }
+    fn val2array(val: &ValueMap) -> Vec<f32> {
+        match val {
+            ValueMap::Array(a) => a.iter().map(|v| Self::val2float(v)).collect::<Vec<f32>>(),
+            ValueMap::Float(f) => vec![*f],
+            _ => vec![],
+        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
