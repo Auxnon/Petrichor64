@@ -101,6 +101,5 @@ impl Global {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => v.insert(0.),
         }
-        //map.entry(key).or_insert_with(|| default)
     }
 }

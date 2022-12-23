@@ -84,70 +84,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         .render(&core.queue, core.global.get("value2".to_string()));
 
     let instance_buffers = core.ent_manager.render_ents(iteration, &core.device);
-    // .iter()
-    // .map(|(m, b, s)| (Rc::clone(&m), b, s))
-    // .collect::<Vec<(Rc<Model>, &wgpu::Buffer, &usize)>>();
-
-    // let entity_manager = &core.ent_manager;
-    // let ents = &entity_manager.ent_array;
-    // let lua_ent_array = ents
-    //     .iter()
-    //     .filter_map(|a| match a.lock() {
-    //         Ok(g) => Some(g.clone()),
-    //         _ => None,
-    //     })
-    //     .collect::<Vec<_>>();
-
-    // let mut cur = &"".to_string();
-    // let mut model_array: Vec<Rc<Model>> = vec![];
-    // let mut transforms = vec![];
-    // let mut instance_buffers = vec![];
-    // for entity in &mut lua_ent_array.iter() {
-    //     match entity_manager.get_from_id(entity.get_id()) {
-    //         Some(o) => {
-    //             if cur != &o.model.name {
-    //                 cur = &o.model.name;
-    //                 if model_array.len() > 0 {
-    //                     instance_buffers.push((
-    //                         crate::ent_manager::EntManager::build_instance_buffer(
-    //                             &transforms,
-    //                             &core.device,
-    //                         ),
-    //                         transforms.len(),
-    //                     ));
-    //                     transforms = vec![];
-    //                 }
-    //                 model_array.push(Rc::clone(&o.model));
-    //             }
-    //             let data = o.get_uniform(&entity, iteration);
-    //             // let instance = data; //InstanceRaw { model: data.model,uv: data.};
-    //             // instances.push(instance);
-    //             transforms.push(data);
-    //             // let instance=
-    //             // let e = o.clone();
-    //             // ent_array.push(model);
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // instance_buffers.push((
-    //     crate::ent_manager::EntManager::build_instance_buffer(&transforms, &core.device),
-    //     transforms.len(),
-    // ));
-
-    // if false {
-    //     let speck_instances = core
-    //         .ent_manager
-    //         .specks
-    //         .iter()
-    //         .map(|m| m.simple_unfiforms(0))
-    //         .collect();
-    //     let speck_buffer =
-    //         crate::ent_manager::EntManager::build_instance_buffer(&speck_instances, &core.device);
-    // }
-    // drop(ents);
-    // drop(entity_manager);
 
     // frame!("ent build::end");
     let cam_pos = if core.global.debug {
@@ -195,17 +131,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         0.,
         0.,
     ];
-
-    // let iTime=adj[0];
-    // let dark_factor:f32=adj[8]; //0.4
-    // let low_range:f32=adj[9]; //.05
-    // let high_range:f32=adj[10]; //0.6
-    // let resolution=vec2<f32>(adj[1],adj[2]);
-    // let corner_harshness: f32 =adj[4]; // 1.2
-    // let corner_ease: f32 = adj[5]; // 4.0
-    // let res: f32 =adj[3]; //  320.0
-    // let glitchy: f32 =adj[6]; // 3.0
-    // let lumen_threshold:f32=adj[7]; //0.2
 
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
@@ -255,28 +180,17 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
             render_pass.draw(0..4, 0..4);
-
-            // render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
-
-            // frame!("render pass");
-            //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-            //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-            //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
         }
 
         //world space
         {
-            // render_pass.set_bind_group(1, &core.entity_bind_group, &[0]);
-
             render_pass.set_pipeline(&core.render_pipeline);
             render_pass.set_bind_group(0, &core.main_bind_group, &[]);
             render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
             let chunks = core.world.get_chunk_models();
-            // println!("------chunks {} ------", chunks.len());
 
             for c in chunks {
                 if c.buffers.is_some() {
-                    // println!("chunk {} pos: {} ind: {}", c.key, c.pos, c.ind_data.len());
                     let b = c.buffers.as_ref().unwrap();
                     render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.set_vertex_buffer(0, b.0.slice(..));
@@ -292,17 +206,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
 
                 render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
             }
-
-            // if model_array.len() > 0 {
-            //     for (i, m) in model_array.iter().enumerate() {
-            //         let (instance_buffer, size) = instance_buffers.get(i).unwrap();
-            //         render_pass.set_vertex_buffer(0, m.vertex_buf.slice(..));
-            //         render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-            //         render_pass.set_index_buffer(m.index_buf.slice(..), m.index_format);
-
-            //         render_pass.draw_indexed(0..m.index_count as u32, 0, 0..*size as _);
-            //     }
-            // }
 
             if core.ent_manager.specks.len() > 0 {
                 // let m = &core.model_manager.PLANE;
@@ -325,16 +228,12 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
             //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
             //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
         }
-        // BLUE
-        //post process
-
-        //render_pass.draw(0..3, 0..1);
-        //render_pass.draw_indexed(0..core.index_count as u32, 0, 0..1);
     }
     // drop(render_pass);
     encoder.pop_debug_group();
     // frame!("pop_debug_group");
 
+    // TODO screen grab
     // let texture_extent = wgpu::Extent3d {
     //     width: core.config.width as u32,
     //     height: core.config.height as u32,

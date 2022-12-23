@@ -285,39 +285,6 @@ impl Core {
                 ],
             });
 
-        // let gui_bind_group_layout =
-        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //         label: None,
-        //         entries: &[
-        //             wgpu::BindGroupLayoutEntry {
-        //                 binding: 0,
-        //                 visibility: wgpu::ShaderStages::VERTEX,
-        //                 ty: wgpu::BindingType::Buffer {
-        //                     ty: wgpu::BufferBindingType::Uniform,
-        //                     has_dynamic_offset: false,
-        //                     min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
-        //                 },
-        //                 count: None,
-        //             },
-        //             wgpu::BindGroupLayoutEntry {
-        //                 binding: 1,
-        //                 visibility: wgpu::ShaderStages::FRAGMENT,
-        //                 ty: wgpu::BindingType::Texture {
-        //                     multisampled: false,
-        //                     sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
-        //                     view_dimension: wgpu::TextureViewDimension::D2,
-        //                 },
-        //                 count: None,
-        //             },
-        //             wgpu::BindGroupLayoutEntry {
-        //                 binding: 2,
-        //                 visibility: wgpu::ShaderStages::FRAGMENT,
-        //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        //                 count: None,
-        //             },
-        //         ],
-        //     });
-
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
             // 0.,
@@ -355,13 +322,6 @@ impl Core {
                 ], //&bind_group_layout
                 push_constant_ranges: &[],
             });
-
-        // let vertex_attr = wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
-        // let vb_desc = wgpu::VertexBufferLayout {
-        //     array_stride: vertex_size as wgpu::BufferAddress,
-        //     step_mode: wgpu::VertexStepMode::Vertex,
-        //     attributes: &vertex_attr,
-        // };
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -589,7 +549,6 @@ impl Core {
             gui_image,
         );
         gui.add_text("initialized".to_string());
-        // gui.add_img(&"map.tile.png".to_string());
 
         let global = Global::new();
         if global.console {
@@ -677,11 +636,9 @@ impl Core {
             match p {
                 MainCommmand::CamPos(v) => {
                     self.global.camera_pos = v;
-                    // println!("🧲 eyup pos{} {} {}", p.1, p.2, p.3);
                 }
                 MainCommmand::CamRot(v) => {
                     self.global.simple_cam_rot = v;
-                    // println!("🧲 eyup rot{} {} {}", p.1, p.2, p.3);
                 }
                 MainCommmand::Sky() => {
                     self.gui.target_sky();
@@ -698,7 +655,6 @@ impl Core {
                 MainCommmand::Line(x, y, x2, y2) => {
                     self.gui.line(x, y, x2, y2);
                 }
-                // MainCommmand::Text(s, x, y) => self.gui.direct_text(&s, false, x, y),
                 MainCommmand::DrawImg(s, x, y) => {
                     self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
                 }
@@ -745,8 +701,6 @@ impl Core {
                     tx.send(list);
                 }
                 MainCommmand::Make(m, tx) => {
-                    // self.gui.draw_image(&s, false, x as i64, y as i64)
-                    // println!("this far");
                     if m.len() == 7 {
                         let m2 = vec![
                             m[1].clone(),
@@ -764,10 +718,8 @@ impl Core {
                             m2,
                             &self.device,
                         );
-                        // println!("this far2");
 
                         tx.send(0);
-                        // println!("this far3");
                     }
                 }
                 MainCommmand::Spawn(lent) => {
@@ -835,8 +787,6 @@ impl Core {
                         .filter(|(i, s)| i % 2 == 0)
                         .map(|x| x.1)
                         .join("...]");
-                    // .collect::<Vec<String>>();
-                    // s = re.sub(r'\(.*?\)', '', s)
                     let s = format!("async error: {}", ee);
                     println!("{}", s);
                     crate::log::log(s);
@@ -846,14 +796,12 @@ impl Core {
                     mutations.push((id, MainCommmand::Subload(file, is_overlay)));
                 }
                 MainCommmand::Reload() => {
-                    // println!("resetttt");
                     mutations.push((id, MainCommmand::Reload()));
                 }
                 MainCommmand::AsyncGui(img, is_sky) => {
                     let raster_id = if is_sky { 1 } else { 0 };
 
                     if !self.bundle_manager.is_single() {
-                        // println!("async gui");
                         self.bundle_manager.set_raster(id, raster_id, img);
                         mutations.push((id, MainCommmand::Meta(raster_id)));
                     } else {
@@ -935,9 +883,7 @@ impl Core {
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let _delta = self.loop_helper.loop_start();
 
-        // or .loop_start_s() for f64 seconds
         if let Some(fps) = self.loop_helper.report_rate() {
-            //  let current_fps = Some(fps);
             self.global.fps = fps;
         }
         self.global.delayed += 1;
@@ -1030,8 +976,6 @@ fn main() {
             bits.1[1] = core.global.mouse_pos.y;
             bits.1[2] = core.global.mouse_delta.x;
             bits.1[3] = core.global.mouse_delta.y;
-            // println!("bits {:?}", bits.1);
-            // core.global.
             bits.1[4] = core.global.mouse_buttons[0];
             bits.1[5] = core.global.mouse_buttons[1];
             bits.1[6] = core.global.mouse_buttons[2];
@@ -1052,13 +996,11 @@ fn main() {
                     core.global.mouse_grabbed_state = false;
                 }
             }
-            // window.set_cursor_position(center).unwrap();
         } else if core.global.mouse_grabbed_state {
             rwindow.set_cursor_visible(true);
             rwindow.set_cursor_grab(CursorGrabMode::None);
             core.global.mouse_grabbed_state = false;
         }
-        // println!("bits {:?}", bits.0);
 
         if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
@@ -1109,7 +1051,3 @@ fn main() {
     //     tracy::shutdown_tracy();
     // }
 }
-
-// fn log(str: String) {
-//     crate::log::log(format!("main::{}", str));
-// }

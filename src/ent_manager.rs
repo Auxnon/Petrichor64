@@ -194,12 +194,8 @@ impl EntManager {
                 _ => None,
             })
             .collect::<Vec<_>>();
+
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
-        // let mut instance_buffers = vec![];
-
-        // let h = Vec::from_iter(self.render_hash.iter());
-
-        // let hash: FxHashMap<String, (Rc<Model>, Vec<EntityUniforms>)> = FxHashMap::default();
 
         for (lent, ent, uni_ref) in lua_ent_array.iter() {
             let parent = match lent.parent {
@@ -211,15 +207,6 @@ impl EntManager {
             let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
             uni_ref.replace(uni);
             mats.insert(lent.get_id(), mat);
-            // match hash.get_mut(&ent.model.name) {
-            //     Some(b) => b.1.push(uni),
-            //     None => {
-            //         hash.insert(
-            //             ent.borrow().model.name.clone(),
-            //             (Rc::clone(&ent.borrow().model), vec![uni]),
-            //         );
-            //     }
-            // }
         }
 
         let instance_buffers = self
