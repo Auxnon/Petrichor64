@@ -621,21 +621,8 @@ pub fn init_lua_sys(
         move |_, table: Table| {
             // pitcher.send(MainCommmand::Globals(table));
 
-            let mut hash = vec![];
-            for it in table.pairs() {
-                match it {
-                    Ok(pair) => {
-                        println!("pair {:?}", pair.1);
-                        hash.push((pair.0, pair.1));
-                        // switch
-                        //     .write()
-                        //     .remaps
-                        //     .push(("globals".to_string(), pair.0, pair.1));
-                    }
-                    _ => {}
-                }
-            }
-            println!("crt {:?}", hash);
+            let hash = table_hasher(table);
+            // println!("crt {:?}", hash);
             pitcher.send((bundle_id, MainCommmand::Globals(hash)));
 
             // switch.write().dirty = true;
@@ -1655,7 +1642,7 @@ pub enum MainCommmand {
     Kill(u64),
     Model(String, String, Vec<[f32; 3]>, Vec<u32>, Vec<[f32; 2]>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
-    Globals(Vec<(String, Vec<f32>)>),
+    Globals(Vec<(String, ValueMap)>),
     AsyncError(String),
     AsyncGui(image::RgbaImage, bool),
     Reload(),
@@ -1737,6 +1724,50 @@ fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> 
         ),
         _ => vec4(1., 1., 1., 1.),
     }
+}
+
+fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
+    let mut data = vec![];
+    for it in table.pairs::<String, Value>() {
+        if let Ok((key, val)) = it {
+            println!("pair {}", key);
+            let mapped = match val {
+                Value::String(s) => {
+                    // println!("string {}", s);
+                    match s.to_str() {
+                        Ok(s) => ValueMap::String(s.to_string()),
+                        _ => ValueMap::Null(),
+                    }
+                }
+                Value::Integer(i) => ValueMap::Integer(i as i32),
+                Value::Number(n) => ValueMap::Float(n as f32),
+                Value::Boolean(b) => ValueMap::Bool(b),
+                Value::Table(t) => {
+                    ValueMap::Array(
+                        t.sequence_values()
+                            .filter_map(|v| match v {
+                                Ok(v) => match v {
+                                    Value::String(s) => match s.to_str() {
+                                        Ok(s) => Some(ValueMap::String(s.to_string())),
+                                        _ => None,
+                                    },
+                                    Value::Integer(i) => Some(ValueMap::Integer(i as i32)),
+                                    Value::Number(n) => Some(ValueMap::Float(n as f32)),
+                                    Value::Boolean(b) => Some(ValueMap::Bool(b)),
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
+                            .collect::<Vec<ValueMap>>(),
+                    )
+                    // ValueMap::Table(table_hasher(&t, recursion_check + 1))
+                }
+                _ => ValueMap::Null(),
+            };
+            data.push((key, mapped));
+        }
+    }
+    data
 }
 
 // #[macro_export]

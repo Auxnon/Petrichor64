@@ -175,7 +175,9 @@ impl LuaCore {
 fn lua_load(lua: &Lua, st: &String) {
     let chunk = lua.load(st);
 
-    chunk.exec();
+    if let Err(e) = chunk.exec() {
+        log(format!("lua error on load: {}", e));
+    }
 }
 
 // fn lua_load_classic(lua: &Lua, st: &String) {
