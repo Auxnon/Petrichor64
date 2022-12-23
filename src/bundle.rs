@@ -5,7 +5,11 @@ use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    controls::ControlState, gui::GuiMorsel, lua_define::LuaCore, texture::TexManager, Core,
+    controls::ControlState,
+    gui::{GuiMorsel, PreGuiMorsel},
+    lua_define::LuaCore,
+    texture::TexManager,
+    Core,
 };
 
 /**
@@ -21,7 +25,7 @@ pub struct Bundle {
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
 }
 
-pub type BundleResources = GuiMorsel;
+pub type BundleResources = PreGuiMorsel;
 
 impl Bundle {
     pub fn new(id: u8, name: String, lua: LuaCore) -> Self {
