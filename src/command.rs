@@ -1070,12 +1070,12 @@ pub fn init_lua_sys(
     );
     lua!(
         "flr",
-        move |_, f: f32| { Ok(f.floor() as u32) },
+        move |_, f: f32| { Ok(f.floor() as i32) },
         "Floor value"
     );
     lua!(
         "ceil",
-        move |_, f: f32| { Ok(f.ceil() as u32) },
+        move |_, f: f32| { Ok(f.ceil() as i32) },
         "Ceil value"
     );
     lua!("abs", move |_, f: f32| { Ok(f.abs()) }, "Absolute value");
