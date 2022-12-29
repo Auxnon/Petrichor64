@@ -311,7 +311,7 @@ impl ChunkModel {
         EntityUniforms {
             color: [0.; 4],
             uv_mod: [0., 0., 1., 1.],
-            effects: [0; 4],
+            effects: [0.; 4],
             model: model.to_cols_array_2d(),
         }
     }
@@ -414,7 +414,6 @@ fn _add_tile_model(
             let cube = model_manager.cube_model();
             let data = cube.data.as_ref().unwrap().clone();
 
-            // crate::model::create_plane(16, None, None)
             let verts = data
                 .0
                 .iter()
@@ -435,51 +434,6 @@ fn _add_tile_model(
             (verts, inds)
         }
     };
-
-    // let (verts, inds) = match crate::model::get_adjustable_model(model) {
-    //     Some(m) => {
-    //         // println!("🟢we got a cube model");
-    //         let data = m.get().unwrap().data.as_ref().unwrap().clone();
-    //         (data.0, data.1)
-    //     }
-    //     None => {
-    //         //println!("🔴failed to locate cube model");
-    //         crate::model::create_plane(16, None, None)
-    //     }
-    // };
-
-    // 0 texture don't bother offseting the uv on the model
-    // let mut verts2 = if texture < 2 {
-    //     verts
-    //         .iter()
-    //         .map(|v| {
-    //             let mut v2 = v.clone();
-    //             v2.trans(offset.clone());
-    //             v2
-    //         })
-    //         .collect::<Vec<Vertex>>()
-    // } else {
-    //     verts
-    //         .iter()
-    //         .map(|v| {
-    //             let mut v2 = v.clone();
-    //             v2.trans(offset.clone());
-    //             v2.texture(uv);
-    //             v2
-    //         })
-    //         .collect::<Vec<Vertex>>()
-    // };
-
-    // let inds2 = data
-    //     .1
-    //     .iter()
-    //     .map(|i| *i + current_count)
-    //     .collect::<Vec<u32>>();
-
-    // let mut inds2 = inds
-    //     .iter()
-    //     .map(|i| i.clone() + current_count)
-    //     .collect::<Vec<u32>>();
 
     c.vert_data.append(&mut verts);
 
