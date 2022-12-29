@@ -9,7 +9,7 @@ struct VertexOutput {
 struct InstanceInput {
     @location(4) uv_mod: vec4<f32>,
     @location(5) color: vec4<f32>,
-    @location(6) effects: vec4<u32>,
+    @location(6) effects: vec4<f32>,
     @location(7) model_matrix_0: vec4<f32>,
     @location(8) model_matrix_1: vec4<f32>,
     @location(9) model_matrix_2: vec4<f32>,
@@ -76,9 +76,26 @@ fn vs_main(
     let pos=vec4<f32>(position);
     //    out.proj_position = globals.view_proj * world_pos;
 
+    let bb=instance.effects[0];
     //billboard if true
-    if(instance.effects[0]> 0u){
-        out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.0, 0.0, 0.0, 1.0) +vec4<f32>(pos.x,pos.y,0.,0.));
+    if(bb> 0.){
+        // let billbo=mat4x4<f32>(
+        //     vec4<f32>(bb,0.,0.,0.),
+        //     vec4<f32>(0.,bb,0.,0.),
+        //     vec4<f32>(0.,0.,bb,0.),
+        //     vec4<f32>(0.,0.,0.,1.),
+        // );
+        // let sq=sqrt(2.)/2.;
+        let r=instance.effects[1];
+        let roo=mat4x4<f32>(
+            vec4<f32>(cos(r),-sin(r),0.,0.),
+            vec4<f32>(sin(r),cos(r),0.,0.),
+            vec4<f32>(0.,0.,1.,0.),
+            vec4<f32>(0.,0.,0.,1.),
+        );
+
+        // out.proj_position=globals.proj_mat*(globals.view_mat*billbo*w*vec4<f32>(1.,1.,1.,1.)+ pos);
+    out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.,0.,0.,1./bb)+roo*vec4<f32>(pos.x,pos.y,0.,0.));
     }else{
         out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
     }

@@ -9,14 +9,14 @@ use std::{ops::Mul, rc::Rc};
 pub struct EntityUniforms {
     pub uv_mod: [f32; 4],
     pub color: [f32; 4],
-    pub effects: [u32; 4],
+    pub effects: [f32; 4],
     pub model: [[f32; 4]; 4],
 }
 
 impl EntityUniforms {
     const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         4=>Float32x4,5=>Float32x4,
-    6=>Uint32x4, 
+    6=>Float32x4, 
     7 => Float32x4, 8 => Float32x4, 9=> Float32x4,10=>Float32x4];
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         // let vertex_attr = ;
@@ -77,7 +77,7 @@ pub struct Ent {
     tex_name: String,
     /**hold the string name of models for hot reloads*/
     model_name: String,
-    pub effects: UVec4,
+    pub effects: Vec4,
     // pub brain: Option<Function<'lua>>,
     // pub brain_name: Option<String>,
  anim: Option<Anim>,
@@ -164,7 +164,7 @@ impl<'lua> Ent {
             tex, 
             tex_name,
             uniform_offset,
-            effects: UVec4::new(if billboarded { 1 } else { 0 }, 0, 0, 0),
+            effects: Vec4::new(if billboarded { 1. } else { 0. }, 0., 0., 0.),
             anim: None,
             anim_it:0,
             pos:None,
@@ -182,9 +182,11 @@ impl<'lua> Ent {
     pub fn build_meta(&self, lua: &LuaEnt,parent:Option<&Mat4>) -> Mat4 {
         let quat = Quat::from_euler(glam::EulerRot::XYZ, lua.rot_x as f32,lua.rot_y as f32,lua.rot_z as f32);
         // println!("build {} {:?}",self.model.name,parent);
-        let s:f32 = 1.*(lua.scale as f32);
+        let s:f32 = (lua.scale as f32);
+        // println!("scale {}",s);
         let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
-        let m=Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos);
+        let m=//Mat4::from_translation(pos);
+        Mat4::from_scale_rotation_translation(vec3(s, s, s), quat, pos);
         match parent{
             Some(p)=>*p*m,
             None=>m
@@ -206,8 +208,8 @@ impl<'lua> Ent {
         let flipped=lua.flipped;
         // self.matrix = model;
         let effects = [
-            self.effects.x,
-            self.effects.y,
+            self.effects.x*lua.scale as f32,
+            lua.rot_z as f32,
             self.effects.z,
             self.effects.w,
         ];

@@ -7,9 +7,9 @@ pub struct LuaEnt {
     pub rot_x: f64,
     pub rot_y: f64,
     pub rot_z: f64,
-    pub vel_x: f64,
-    pub vel_y: f64,
-    pub vel_z: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub vz: f64,
     pub scale: f64,
     id: u64, // pub uuid: String,
     asset: String,
@@ -106,18 +106,20 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("rot_y", |_, this, rot_y: f64| Ok(this.rot_y = rot_y));
         fields.add_field_method_set("rot_x", |_, this, rot_x: f64| Ok(this.rot_x = rot_x));
 
-        fields.add_field_method_get("vel_x", |_, this| Ok(this.vel_x));
-        fields.add_field_method_set("vel_x", |_, this, vel_x: f64| Ok(this.vel_x = vel_x));
-        fields.add_field_method_get("vel_y", |_, this| Ok(this.vel_y));
-        fields.add_field_method_set("vel_y", |_, this, vel_y: f64| Ok(this.vel_y = vel_y));
-        fields.add_field_method_get("vel_z", |_, this| Ok(this.vel_z));
-        fields.add_field_method_set("vel_z", |_, this, vel_z: f64| Ok(this.vel_z = vel_z));
+        fields.add_field_method_get("vx", |_, this| Ok(this.vx));
+        fields.add_field_method_set("vx", |_, this, vx: f64| Ok(this.vx = vx));
+        fields.add_field_method_get("vy", |_, this| Ok(this.vy));
+        fields.add_field_method_set("vy", |_, this, vy: f64| Ok(this.vy = vy));
+        fields.add_field_method_get("vz", |_, this| Ok(this.vz));
+        fields.add_field_method_set("vz", |_, this, vz: f64| Ok(this.vz = vz));
 
         fields.add_field_method_get("flipped", |_, this| Ok(this.flipped));
         fields.add_field_method_set("flipped", |_, this, flipped: bool| {
             // println!("flipped it {}", flipped);
             Ok(this.flipped = flipped)
         });
+
+        fields.add_field_method_set("scale", |_, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, this| Ok(this.id));
     }
@@ -166,9 +168,9 @@ impl LuaEnt {
             rot_x: 0.,
             rot_y: 0.,
             rot_z: 0.,
-            vel_x: 0.,
-            vel_y: 0.,
-            vel_z: 0.,
+            vx: 0.,
+            vy: 0.,
+            vz: 0.,
             scale,
             // ent: None,
             asset,
@@ -211,9 +213,9 @@ impl Clone for LuaEnt {
             x: self.x,
             y: self.y,
             z: self.z,
-            vel_x: self.vel_x,
-            vel_y: self.vel_y,
-            vel_z: self.vel_z,
+            vx: self.vx,
+            vy: self.vy,
+            vz: self.vz,
             rot_x: self.rot_x,
             rot_y: self.rot_y,
             rot_z: self.rot_z,
