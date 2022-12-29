@@ -719,6 +719,7 @@ pub fn init_lua_sys(
                             }
                         }
                         Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                        Value::Integer(n) => Some(Note::new(0, *n as f32, 1., 1.)),
                         _ => None,
                     }
                 })
