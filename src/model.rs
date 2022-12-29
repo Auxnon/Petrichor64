@@ -15,7 +15,7 @@ pub struct ModelManager {
 
 impl ModelManager {
     pub fn init(device: &Device) -> ModelManager {
-        let (plane_vertex_data, plane_index_data) = create_plane(16, Some(ivec3(-8, 0, 0)), None);
+        let (plane_vertex_data, plane_index_data) = create_plane(8, Some(ivec3(0, 0, 0)), None);
         //device.create_buffer_init(desc)
         let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Plane Vertex Buffer"),
@@ -686,7 +686,7 @@ pub fn create_plane(size: i16, offset: Option<IVec3>, uv: Option<Vec4>) -> (Vec<
 
     let vertex_data = [
         vertex(
-            [o.x as i16 + size, o.y as i16, o.z as i16],
+            [o.x as i16 + size, o.y as i16 - size, o.z as i16],
             [0, 0, 1],
             [ex, ey],
         ),
@@ -695,9 +695,13 @@ pub fn create_plane(size: i16, offset: Option<IVec3>, uv: Option<Vec4>) -> (Vec<
             [0, 0, 1],
             [ex, sy],
         ),
-        vertex([o.x as i16, o.y as i16, o.z as i16], [0, 0, 1], [sx, ey]),
         vertex(
-            [o.x as i16, o.y as i16 + size, o.z as i16],
+            [o.x as i16 - size, o.y as i16 - size, o.z as i16],
+            [0, 0, 1],
+            [sx, ey],
+        ),
+        vertex(
+            [o.x as i16 - size, o.y as i16 + size, o.z as i16],
             [0, 0, 1],
             [sx, sy],
         ),
