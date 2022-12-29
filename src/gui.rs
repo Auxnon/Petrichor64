@@ -104,9 +104,8 @@ impl Gui {
         self.text = format!("{}\n{}", self.text, str);
         self.apply_console_out_text();
     }
-    pub fn type_text(&mut self, str: String) {
-        self.text = format!("{}\n{}", self.text, str);
-    }
+
+    // DEV is this still useful? it numbers tiles on a 16x16 grid
     pub fn add_img(&self, str: &String) {
         match crate::texture::load_img(str) {
             Ok(t) => {
@@ -282,29 +281,6 @@ impl Gui {
         );
     }
 
-    pub fn target_gui(&mut self) {
-        self.target_sky = false;
-    }
-    pub fn target_sky(&mut self) {
-        self.target_sky = true;
-    }
-
-    pub fn square(&mut self, x: NumCouple, y: NumCouple, w: NumCouple, h: NumCouple) {
-        let width = self.size[0];
-        let height = self.size[1];
-
-        let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
-        let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
-        let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
-        let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
-        // let mut im = RgbaImage::new(w, h);
-        // image::imageops::overlay(&mut self.main, &mut im, x, y);
-        draw_filled_rect_mut(
-            self.get_targ(),
-            imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
-            image::Rgba([255, 255, 255, 255]),
-        );
-    }
     pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
         self.get_targ().get_pixel_mut(x, y).0 = [
             (r * 255.) as u8,
@@ -312,13 +288,6 @@ impl Gui {
             (b * 255.) as u8,
             (a * 255.) as u8,
         ];
-    }
-
-    pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple) {
-        let width = self.size[0];
-        let height = self.size[1];
-
-        direct_line(self.get_targ(), width, height, x1, y1, x2, y2);
     }
 
     fn get_targ(&mut self) -> &mut RgbaImage {
@@ -459,29 +428,17 @@ impl GuiMorsel {
         let width = self.size[0];
         let height = self.size[1];
 
-        let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
-        let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
-        let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
-        let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
-        draw_filled_rect_mut(
-            self.get_targ(),
-            imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
-            image::Rgba([
-                (c.x * 255.).floor() as u8,
-                (c.y * 255.).floor() as u8,
-                (c.z * 255.).floor() as u8,
-                (c.w * 255.).floor() as u8,
-            ]),
-        );
+        direct_rect(self.get_targ(), width, height, x, y, w, h, c)
     }
-    pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple) {
+
+    pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple, c: Vec4) {
         let width = self.size[0];
         let height = self.size[1];
 
-        direct_line(self.get_targ(), width, height, x1, y1, x2, y2)
+        direct_line(self.get_targ(), width, height, x1, y1, x2, y2, c)
     }
 
-    pub fn text(&mut self, txt: &str, x: NumCouple, y: NumCouple) {
+    pub fn text(&mut self, txt: &str, x: NumCouple, y: NumCouple, c: Vec4) {
         let targ = if self.target_sky {
             self.dirty_sky = true;
             &mut self.sky
@@ -490,7 +447,16 @@ impl GuiMorsel {
             &mut self.main
         };
 
-        direct_text(targ, &self.letters, self.size[0], self.size[1], txt, x, y)
+        direct_text(
+            targ,
+            &self.letters,
+            self.size[0],
+            self.size[1],
+            txt,
+            x,
+            y,
+            c,
+        )
     }
 
     pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
@@ -561,6 +527,32 @@ pub fn init_image(
     (out.0, out.1, out.2, img)
 }
 
+pub fn direct_rect(
+    target: &mut RgbaImage,
+    width: u32,
+    height: u32,
+    x: NumCouple,
+    y: NumCouple,
+    w: NumCouple,
+    h: NumCouple,
+    c: Vec4,
+) {
+    let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
+    let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
+    let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
+    let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
+    draw_filled_rect_mut(
+        target,
+        imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
+        image::Rgba([
+            (c.x * 255.).floor() as u8,
+            (c.y * 255.).floor() as u8,
+            (c.z * 255.).floor() as u8,
+            (c.w * 255.).floor() as u8,
+        ]),
+    );
+}
+
 pub fn direct_line(
     target: &mut RgbaImage,
     width: u32,
@@ -569,14 +561,20 @@ pub fn direct_line(
     y1: NumCouple,
     x2: NumCouple,
     y2: NumCouple,
+    c: Vec4,
 ) {
     let xx1 = x1.1.max(0.) * if x1.0 { 1. } else { width as f32 };
     let yy1 = y1.1.max(0.) * if y1.0 { 1. } else { height as f32 };
     let xx2 = x2.1.max(0.) * if x2.0 { 1. } else { width as f32 };
     let yy2 = y2.1.max(0.) * if y2.0 { 1. } else { height as f32 };
 
-    let white = image::Rgba([255, 255, 255, 255]);
-    imageproc::drawing::draw_line_segment_mut(target, (xx1, yy1), (xx2, yy2), white);
+    let color = image::Rgba([
+        (c.x * 255.).floor() as u8,
+        (c.y * 255.).floor() as u8,
+        (c.z * 255.).floor() as u8,
+        (c.w * 255.).floor() as u8,
+    ]);
+    imageproc::drawing::draw_line_segment_mut(target, (xx1, yy1), (xx2, yy2), color);
 }
 
 pub fn direct_text(
@@ -587,6 +585,7 @@ pub fn direct_text(
     txt: &str,
     x: NumCouple,
     y: NumCouple,
+    c: Vec4,
 ) {
     let xx = (x.1 * if x.0 { 1. } else { width as f32 }) as i64;
     let yy = (y.1 * if y.0 { 1. } else { height as f32 }) as i64;
