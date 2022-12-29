@@ -1,5 +1,5 @@
 math.randomseed(os.time())
-crt({
+attr({
     dark = 99.,
     low = 0.1,
     high = 0.9,
@@ -15,7 +15,7 @@ crt({
 
 bars = {}
 bar_notes = {}
--- note_set = { "C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B" }
+music_note_set = { "C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B" }
 
 iter_notes = 1
 sound_counter = 0
@@ -30,6 +30,8 @@ mouse_once = false
 
 last_notes = {}
 last_instr = {}
+
+musical_mode = true
 
 
 
@@ -67,7 +69,7 @@ function main()
 
 
     for i = 1, 12 do
-        img(poof, rnd(), rnd() / 3.)
+        dimg(poof, rnd(), rnd() / 3.)
         --     spawn("poofy", rnd(-12., 12.), 18, rnd(1., 8.))
     end
     gui()
@@ -88,7 +90,7 @@ function main()
         end
         last_instr[i] = bars[i]
         last_notes[i] = bars[i]
-        bar_notes[i] = check_bar(i)
+        check_bar(i)
     end
 
     make_ui_buttons()
@@ -118,10 +120,18 @@ camera = {
 }
 overlay = ""
 function check_bar(bi)
-
-    -- local v = 1 + flr(bars[bi] * (#note_set - 1))
-    -- return note_set[v]
-    return (bars[bi] * 440.)
+    if musical_mode then
+        local v = 1 + flr(bars[bi] * (#music_note_set - 1))
+        local note = music_note_set[v]
+        bar_notes[bi] = note
+        -- also adjust our bar ui to be flush with the edge
+        bars[bi] = v / (#music_note_set)
+        return note
+    else
+        local v = (bars[bi] * 440.)
+        bar_notes[bi] = v
+        return v
+    end
 end
 
 function loop()
@@ -152,7 +162,7 @@ function loop()
     end
 
     -- print("mouse " .. m.x)
-    if m.y > 0.15 then
+    if m.y > 0.19 then
         ui_bars(m)
     end
 
@@ -207,14 +217,14 @@ function make_square()
         else
             bars[i] = 38. / 440.
         end
-        bar_notes[i] = check_bar(i)
+        check_bar(i)
     end
 end
 
 function make_noise()
     for i = 1, bar_ui_count do
         bars[i] = math.random()
-        bar_notes[i] = check_bar(i)
+        check_bar(i)
     end
 end
 
@@ -235,6 +245,10 @@ function send_instr()
     else
         print "full"
     end
+    -- iterate over bars
+    for j = 1, #bars do
+        print("p" .. bars[j])
+    end
     instr(bars, half_enabled)
     sound(440., 2.)
 end
@@ -246,7 +260,11 @@ function send_notes()
     -- print("dur" .. dur)
     for i = 1, #bars do
         if bars[i] > 0. then
-            out[#out + 1] = { bar_notes[i], dur } --octave4[bar_notes[i]]
+            local n = bar_notes[i]
+            if type(n) == "string" then
+                n = octave4[n]
+            end
+            out[#out + 1] = { n, dur } --octave4[bar_notes[i]]
         else
             out[#out + 1] = { 0., dur }
         end
@@ -289,9 +307,12 @@ function ui_bars(m)
         if m.x > x and m.x < x + w then
             if m.m1 then
                 bars[i] = clamp(1. - m.y, 0., bar_ui_size) / bar_ui_size
-
-                bar_notes[i] = check_bar(i)
-                overlay = "" .. flr(bar_notes[i]) .. "hz"
+                local b = check_bar(i)
+                if type(b) == "string" then
+                    overlay = b
+                else
+                    overlay = "" .. flr(b) .. "hz"
+                end
             elseif m.m2 then
                 bars[i] = 0.
                 bar_notes[i] = 0. --""

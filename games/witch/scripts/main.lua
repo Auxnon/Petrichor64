@@ -1,6 +1,6 @@
 sky()
 fill("544e68")
-img(gimg("twilight"))
+dimg(gimg("twilight"))
 text("MakeAvoy", 0, 180)
 -- line(.85, .85, 1, .85)
 -- line(.85, .85, .85, 1)
@@ -233,11 +233,11 @@ function loop()
         difficulty_loop()
 
         if LOST then
-            sqr(60, 100, 200, 16)
+            rect(60, 100, 200, 16)
             text("Ya got unwitched :\\ ", 60, 100)
             player:tex("witchy1")
 
-            sqr(60, 190, 200, 16)
+            rect(60, 190, 200, 16)
             text("Survived  " .. survive_timer .. " seconds", 60, 190)
 
             if key("z") or key("x") or key("c") or key("space") or key("a") or key("d") then
@@ -300,7 +300,7 @@ function loop()
             text_timer = text_timer + 1
 
             if TITLE_UP then
-                img(title, 96, 128)
+                dimg(title, 96, 128)
             end
 
             campos(cam_pos.x, cam_pos.y, cam_pos.z)

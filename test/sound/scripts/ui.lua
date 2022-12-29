@@ -6,14 +6,16 @@ song_speed = 1
 bar_ui_count = 16
 
 function make_button(x, y, w, h, states, reference)
-    local midx = (w / 2.) - (#states[1][1] * 12)
+    local midx = (w / 2.) - (#states[1][1] * 6)
     local midy = (h / 2.) - (4)
 
     local state_on = 1
 
-    if not type(_G[reference]) == "function" then
+    if type(_G[reference]) ~= "function" then
         state_on = _G[reference]
+        print("state_on" .. tern(state_on, "true", "false") .. " for " .. states[1][1] .. "type " .. type(_G[reference]))
     end
+
 
     local b = {
         x = x,
@@ -57,8 +59,11 @@ function draw_button(b, m)
             b.down = true
             if mouse_once then
                 mouse_once = false
+
                 if b.is_toggle then
+                    print("toggle" .. tern(b.state_on, "true", "false"))
                     b.state_on = not b.state_on
+                    print("toggle" .. tern(b.state_on, "true", "false"))
                 else
                     b.state_on = b.state_on + 1
                     if b.state_on > #b.states then
@@ -113,26 +118,28 @@ function make_ui_buttons()
     local y1 = "f1ff9e"
     local y2 = "e9ff65"
     local y3 = "f3ec47"
-    make_button(4, 4, 50, 20, { { "Note", b1, b2, b3 }, { "Inst", r1, r2, r3 } }, "change_mode")
-    make_button(58, 4, 40, 20, { { " 1 ", b1, b2, b3 }, { "1/N", r1, r2, r3 } }, "half_enabled")
-    make_button(102, 4, 40, 20,
+    make_button(4, 4, 50, 15, { { "Note", b1, b2, b3 }, { "Inst", r1, r2, r3 } }, "change_mode")
+    make_button(58, 4, 40, 15, { { " 1 ", b1, b2, b3 }, { "1/N", r1, r2, r3 } }, "half_enabled")
+    make_button(102, 4, 40, 15,
         { { "x1", b1, b2, b3 }, { "x2", g1, g2, g3 }, { "x4", y1, y2, y3 }, { "x8", r1, r2, r3 } }
         , "change_speed")
 
-    make_button(146, 4, 40, 20,
+    make_button(146, 4, 40, 15,
         { { "16", b1, b2, b3 }, { "32", g1, g2, g3 }, { "64", r1, r2, r3 } }
         , "bar_change")
 
-    make_button(190, 4, 30, 20,
+    make_button(190, 4, 30, 15,
         { { "_", y1, y2, y3 } }, "make_square")
 
-    make_button(224, 4, 30, 20,
+    make_button(224, 4, 30, 15,
         { { "R", y1, y2, y3 } }, "make_noise")
 
 
-    make_button(258, 4, 50, 20,
+    make_button(258, 4, 50, 15,
         { { "send", g1, g2, g3 } },
         "activate")
+
+    make_button(4, 23, 40, 15, { { "Htz", r1, r2, r3 }, { "Har", b1, b2, b3 } }, "musical_mode")
 
     -- make_button(0.25, 0.05, 0.15, 0.1, { { "Half Off", b1, b2, b3 }, { "Half On", r1, r2, r3 } }, "half_enabled")
     -- make_button(0.45, 0.05, 0.15, 0.1, { { "Mode 1", b1, b2, b3 }, { "Mode 2", r1, r2, r3 } })
@@ -151,7 +158,7 @@ function change_mode()
     end
 
     for i = 1, bar_ui_count do
-        bar_notes[i] = check_bar(i)
+        check_bar(i)
     end
 end
 
@@ -192,7 +199,7 @@ function bar_change(v)
 
     table.remove(bar_notes)
     for i = 1, bar_ui_count do
-        bar_notes[i] = check_bar(i)
+        check_bar(i)
     end
 
 end

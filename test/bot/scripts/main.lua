@@ -5,12 +5,14 @@ rot = { x = 0, y = 0 }
 srot = { x = 0, y = 0 }
 m = { x = 0, y = 0 }
 
--- attr { mouse_grab = 1, fullscreen = 1 }
+attr { mouse_grab = 1 } --fullscreen = 1
 absolute_speed = 0
 
 aim = spawn("screen", 0, 0, 0)
 sqimg = gimg("screen")
+rimg = gimg("red")
 ogimg = sqimg:copy()
+ogrimg = rimg:copy()
 
 the_size = 7
 ni = -the_size
@@ -18,6 +20,7 @@ nj = -the_size
 fire_delay = 0
 bullets = {}
 bot = spawn("bot.bot", 0, 0, 0)
+-- bot.scale = 2
 m_off = false
 pheight = 6
 
@@ -29,7 +32,7 @@ function model_test()
     local i = { 0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5, 1, 2, 5, 2, 4, 5, 2, 3, 4, 1, 3, 5 }
     local u = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 }, { 0, 0 }, { 1, 0 } }
     -- local v = { { -n, -n, 0 }, { n, -n, 0 }, { n, n, 0 }, { -n, n, 0 } }
-    model("thing",
+    smodel("thing",
         { t = "square", v = v, i = i, u = u })
 end
 
@@ -93,15 +96,18 @@ end
 
 spots = {}
 function make_thing()
-
-    spots[#spots + 1] = spawn("smoke", player.x, player.y, player.z - 2)
-    if #spots > 100 then
+    local e = spawn("smoke", player.x, player.y, player.z - 2)
+    e.vx = rnd() * 0.05 - 0.025
+    e.vy = rnd() * 0.05 - 0.025
+    e.vz = rnd() * 0.05 - 0.025
+    spots[#spots + 1] = e
+    if #spots > 200 then
         -- for i = 1, #spots - 10 do
 
         -- spots[1].kill()
 
         -- end
-        table.remove(spots, 1)
+        table.remove(spots, 1):kill()
         -- :kill()
         -- spots=table.slice(spots,#spots-10,#spots)
     end
@@ -110,9 +116,9 @@ end
 function move_things()
     for i = 1, #spots do
         local s = spots[i]
-        s.x = s.x + rndb()
-        s.y = s.y + rndb()
-        s.z = s.z + rndb()
+        s.x = s.x + s.vx
+        s.y = s.y + s.vy
+        s.z = s.z + s.vz
     end
 
 end
@@ -179,9 +185,17 @@ function imgey()
         county = county + 1
         scounty = 0
         sqimg:dimg(ogimg)
+        rimg:clr()
+        rimg:dimg(ogrimg)
         -- sqimg:line(rnd(), rnd(), rnd(), rnd())
         sqimg:text("" .. county, 0, 12)
+        if county % 2 == 0 then
+            rimg:text("A", -1, 4)
+        else
+            rimg:text("B", -1, 4)
+        end
         simg("screen", sqimg)
+        simg("red", rimg)
     end
 
 end
