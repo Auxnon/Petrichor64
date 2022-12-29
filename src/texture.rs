@@ -278,7 +278,7 @@ impl TexManager {
             }
         }
 
-        // lg!("sort_image name {} pos {}", name, pos);
+        lg!("sort_image name {} pos {} tile_size {}", name, pos, is_tile);
         self.dictionary.insert(name.clone(), pos);
         world.index_texture(bundle_id, name, pos);
     }
@@ -558,8 +558,8 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
         let bits = str.split(".").collect::<Vec<_>>();
         match bits.get(0) {
             Some(o) => {
-                let b = bits.get(bits.len() - 1).unwrap();
-                if bits.len() > 1 && b.starts_with("tile") {
+                if bits.len() > 1 {
+                    let b = bits.get(bits.len() - 1).unwrap();
                     return (o.to_string(), check_tile_size(b));
                 }
                 (o.to_string(), 0)
@@ -572,8 +572,10 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
         let bits = actual.split(".").collect::<Vec<_>>();
         match bits.get(0) {
             Some(o) => {
-                let b = bits.get(1).unwrap();
-                if bits.len() > 2 && b.starts_with("tile") {
+                // println!("compare {} for {} ", bits.len(), actual);
+                if bits.len() > 2 {
+                    let b = bits.get(1).unwrap();
+                    // println!("compare {} for {} ", bits.len(), actual);
                     return (o.to_string(), check_tile_size(b));
                 }
                 (o.to_string(), 0)
