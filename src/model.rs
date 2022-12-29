@@ -390,17 +390,7 @@ impl ModelManager {
     ) {
         let m = self.CUBE.clone();
         let (verts, inds) = (m).data.as_ref().unwrap().clone();
-        // let (verts, inds) =  {
-        //     Some(m) => {
-        //         // println!("🟢we got a cube model");
-        //         let data = cube.get().unwrap().data.as_ref().unwrap().clone();
-        //         (data.0, data.1)
-        //     }
-        //     None => {
-        //         //println!("🔴failed to locate cube model");
-        //         crate::model::create_plane(16, None, None)
-        //     }
-        // };
+
         let mut uv = vec![];
         // println!("keys {}", crate::texture::list_keys());
         for t in textures {

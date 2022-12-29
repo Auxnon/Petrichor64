@@ -640,21 +640,21 @@ impl Core {
                 MainCommmand::CamRot(v) => {
                     self.global.simple_cam_rot = v;
                 }
-                MainCommmand::Sky() => {
-                    self.gui.target_sky();
-                }
-                MainCommmand::Gui() => {
-                    self.gui.target_gui();
-                }
-                MainCommmand::Fill(v) => {
-                    self.gui.fill(v.x, v.y, v.z, v.w);
-                }
-                MainCommmand::Square(x, y, w, h) => {
-                    self.gui.square(x, y, w, h);
-                }
-                MainCommmand::Line(x, y, x2, y2) => {
-                    self.gui.line(x, y, x2, y2);
-                }
+                // MainCommmand::Sky() => {
+                //     self.gui.target_sky();
+                // }
+                // MainCommmand::Gui() => {
+                //     self.gui.target_gui();
+                // }
+                // MainCommmand::Fill(v) => {
+                //     self.gui.fill(v.x, v.y, v.z, v.w);
+                // }
+                // MainCommmand::Rect(x, y, w, h, c) => {
+                //     self.gui.rect(x, y, w, h, c);
+                // }
+                // MainCommmand::Line(x, y, x2, y2, c) => {
+                //     self.gui.line(x, y, x2, y2, c);
+                // }
                 MainCommmand::DrawImg(s, x, y) => {
                     self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
                 }

@@ -1,11 +1,12 @@
 use std::rc::Rc;
 
+use glam::{vec4, Vec4};
 use image::RgbaImage;
 use mlua::{AnyUserData, UserData, UserDataMethods, Value};
 
 use crate::{
     command::NumCouple,
-    gui::{direct_image, direct_line, direct_text},
+    gui::{direct_image, direct_line, direct_rect, direct_text},
 };
 
 pub struct LuaImg {
@@ -58,7 +59,19 @@ impl UserData for LuaImg {
         methods.add_method("raw", |_, this, _: ()| Ok(this.image.to_vec()));
         methods.add_method_mut(
             "line",
-            |_, this, (x, y, x2, y2, color): (Value, Value, Value, Value, Option<String>)| {
+            |_,
+             this,
+             (x, y, x2, y2, r, g, b, a): (
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+                Option<f32>,
+                Option<f32>,
+                Option<f32>,
+            )| {
+                let c = get_color(r, g, b, a);
                 direct_line(
                     &mut this.image,
                     this.width,
@@ -67,6 +80,36 @@ impl UserData for LuaImg {
                     numm(y),
                     numm(x2),
                     numm(y2),
+                    c,
+                );
+                Ok(())
+            },
+        );
+
+        methods.add_method_mut(
+            "rect",
+            |_,
+             this,
+             (x, y, w, h, r, g, b, a): (
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+                Option<f32>,
+                Option<f32>,
+                Option<f32>,
+            )| {
+                let c = get_color(r, g, b, a);
+                direct_rect(
+                    &mut this.image,
+                    this.width,
+                    this.height,
+                    numm(x),
+                    numm(y),
+                    numm(w),
+                    numm(h),
+                    c,
                 );
                 Ok(())
             },
@@ -74,7 +117,21 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "text",
-            |_, this, (txt, x, y): (String, Option<Value>, Option<Value>)| {
+            |_,
+             this,
+             (txt, x, y, r, g, b, a): (
+                String,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<f32>,
+                Option<f32>,
+                Option<f32>,
+            )| {
+                let c = match r {
+                    Some(rr) => get_color(rr, g, b, a),
+                    _ => vec4(1., 1., 1., 1.),
+                };
                 direct_text(
                     &mut this.image,
                     &this.letters,
@@ -89,6 +146,7 @@ impl UserData for LuaImg {
                         Some(o) => numm(o),
                         _ => (false, 0.),
                     },
+                    c,
                 );
                 Ok(())
             },
@@ -152,4 +210,67 @@ fn numm(x: mlua::Value) -> NumCouple {
         mlua::Value::Number(f) => (false, f as f32),
         _ => (false, 0.),
     }
+}
+
+pub fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> Vec4 {
+    match x {
+        mlua::Value::String(s) => match s.to_str() {
+            Ok(s2) => {
+                let s = if s2.starts_with("#") {
+                    &s2[1..s2.len()]
+                } else {
+                    s2
+                };
+
+                let halfed = s2.len() < 4;
+                let res = if halfed {
+                    half_decode_hex(s)
+                } else {
+                    decode_hex(s)
+                };
+
+                match res {
+                    Ok(b) => {
+                        if b.len() > 2 {
+                            let f = b
+                                .iter()
+                                .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
+                                .collect::<Vec<f32>>();
+                            vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
+                        } else {
+                            vec4(0., 0., 0., 0.)
+                        }
+                    }
+                    _ => vec4(0., 0., 0., 0.),
+                }
+            }
+            _ => vec4(0., 0., 0., 0.),
+        },
+        mlua::Value::Integer(i) => vec4(
+            i as f32,
+            y.unwrap_or_else(|| 0.),
+            z.unwrap_or_else(|| 0.),
+            w.unwrap_or_else(|| 1.),
+        ),
+        mlua::Value::Number(f) => vec4(
+            f as f32,
+            y.unwrap_or_else(|| 0.),
+            z.unwrap_or_else(|| 0.),
+            w.unwrap_or_else(|| 1.),
+        ),
+        _ => vec4(1., 1., 1., 1.),
+    }
+}
+
+fn decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
+}
+
+fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
+    (0..s.len())
+        .map(|i| u8::from_str_radix(&s[i..i + 1], 16))
+        .collect()
 }
