@@ -189,6 +189,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 crate::parse::test(&s)
             }
         }
+        "stats" => core.world.stats(),
         &_ => return false,
     }
     true
