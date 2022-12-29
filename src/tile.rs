@@ -165,6 +165,13 @@ impl Layer {
         self.dropped = true;
         self.chunks.clear();
     }
+
+    pub fn stats(&self) {
+        println!("--global_layer -> global_chunks#:{} ", self.chunks.len());
+        self.chunks.iter().enumerate().for_each(|(i, (k, v))| {
+            println!("---chunk {} [{}] -> p:{}", i, k, v.pos);
+        });
+    }
 }
 pub struct Chunk {
     pub dirty: bool,
