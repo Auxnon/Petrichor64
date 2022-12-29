@@ -257,6 +257,7 @@ impl World {
                     }
                     (TileCommand::Stats(), response) => {
                         instance.stats();
+                        layer.stats();
                         res_handle(response.send(TileResponse::Success(true)));
                     }
                 }
@@ -637,9 +638,19 @@ impl World {
             });
         });
 
-        println!("--#layers {}", self.layers.len());
+        println!("--#render_layers {}", self.layers.len());
         self.layers.iter().for_each(|(k, v)| {
-            println!("--layer id {}-> #{}", k, v.chunks.len());
+            println!("---render_layer [{}] -> #{}", k, v.chunks.len());
+            v.chunks.iter().enumerate().for_each(|(i, (ck, cv))| {
+                println!(
+                    "----render_chunk {} [{}] -> p:{}, v#:{}, i#:{}",
+                    i,
+                    ck,
+                    cv.pos,
+                    cv.vert_data.len(),
+                    cv.ind_data.len()
+                );
+            });
         });
         self.senders.iter().for_each(|(k, v)| {
             let (tx, rx) = sync_channel::<TileResponse>(0);
