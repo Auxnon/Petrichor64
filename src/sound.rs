@@ -220,6 +220,7 @@ where
     };
 
     let mut instruments: FxHashMap<usize,Instrument> = FxHashMap::default();
+    instruments.insert(0,Instrument::new(0,vec![0.8,0.,0.8,0.,0.8,0.,0.8,0.],true));
     let mut amps: Vec<f32> = vec![];
     let mut instrument_diviser = 1.;
 
