@@ -175,6 +175,17 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 core.loggy.log(LogType::Config, "new <name>");
             }
         }
+        "bg" => {
+            if segments.len() > 1 {
+                let v = dehex(segments[1]);
+                core.gui.set_console_background_color(
+                    (v.x * 255.) as u8,
+                    (v.y * 255.) as u8,
+                    (v.z * 255.) as u8,
+                    (v.w * 255.) as u8,
+                );
+            } else {
+                core.loggy.log(LogType::Config, "bg <color in hex>");
             }
         }
         "find" => {

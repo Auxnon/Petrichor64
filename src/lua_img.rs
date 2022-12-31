@@ -212,38 +212,40 @@ fn numm(x: mlua::Value) -> NumCouple {
     }
 }
 
+pub fn dehex(s2: &str) -> Vec4 {
+    let s = if s2.starts_with("#") {
+        &s2[1..s2.len()]
+    } else {
+        s2
+    };
+
+    let halfed = s2.len() < 4;
+    let res = if halfed {
+        half_decode_hex(s)
+    } else {
+        decode_hex(s)
+    };
+
+    match res {
+        Ok(b) => {
+            if b.len() > 2 {
+                let f = b
+                    .iter()
+                    .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
+                    .collect::<Vec<f32>>();
+                vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
+            } else {
+                vec4(0., 0., 0., 0.)
+            }
+        }
+        _ => vec4(0., 0., 0., 0.),
+    }
+}
+
 pub fn get_color(x: mlua::Value, y: Option<f32>, z: Option<f32>, w: Option<f32>) -> Vec4 {
     match x {
         mlua::Value::String(s) => match s.to_str() {
-            Ok(s2) => {
-                let s = if s2.starts_with("#") {
-                    &s2[1..s2.len()]
-                } else {
-                    s2
-                };
-
-                let halfed = s2.len() < 4;
-                let res = if halfed {
-                    half_decode_hex(s)
-                } else {
-                    decode_hex(s)
-                };
-
-                match res {
-                    Ok(b) => {
-                        if b.len() > 2 {
-                            let f = b
-                                .iter()
-                                .map(|u| (*u as f32) / if halfed { 15. } else { 255. })
-                                .collect::<Vec<f32>>();
-                            vec4(f[0], f[1], f[2], if b.len() > 3 { f[3] } else { 1. })
-                        } else {
-                            vec4(0., 0., 0., 0.)
-                        }
-                    }
-                    _ => vec4(0., 0., 0., 0.),
-                }
-            }
+            Ok(s2) => dehex(s2),
             _ => vec4(0., 0., 0., 0.),
         },
         mlua::Value::Integer(i) => vec4(
