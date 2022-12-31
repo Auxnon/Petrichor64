@@ -3,7 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{bundle, template::AssetTemplate, world::World};
+use crate::{
+    bundle,
+    log::{LogType, Loggy},
+    template::AssetTemplate,
+    world::World,
+};
 use glam::{vec4, UVec2, UVec4, Vec4};
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
@@ -79,7 +84,7 @@ impl TexManager {
         image::imageops::replace(&mut self.atlas, &img, 0, 0);
     }
 
-    pub fn save_atlas(&mut self) {
+    pub fn save_atlas(&mut self, loggy: &mut Loggy) {
         let dim = self.atlas.dimensions();
         match image::save_buffer_with_format(
             "atlas.png",
@@ -89,8 +94,14 @@ impl TexManager {
             image::ColorType::Rgba8,
             image::ImageFormat::Png,
         ) {
-            Ok(_) => lg!("saved atlas {}x{}", dim.0, dim.1),
-            Err(err) => lg!("failed to save atlas:{}", err),
+            Ok(_) => loggy.log(
+                LogType::Texture,
+                &format!("saved atlas {}x{}", dim.0, dim.1),
+            ),
+            Err(err) => loggy.log(
+                LogType::TextureError,
+                &format!("failed to save atlas:{}", err),
+            ),
         }
     }
 
@@ -246,6 +257,7 @@ impl TexManager {
         bundle_id: u8,
         template: Option<&AssetTemplate>,
         from_unpack: bool,
+        loggy: &mut Loggy,
     ) {
         let (name, mut is_tile) = get_name(name_like.clone(), from_unpack);
         let mut rename = None;
@@ -278,7 +290,10 @@ impl TexManager {
             }
         }
 
-        lg!("sort_image name {} pos {} tile_size {}", name, pos, is_tile);
+        loggy.log(
+            LogType::Texture,
+            &format!("sort_image name {} pos {} tile_size {}", name, pos, is_tile),
+        );
         self.dictionary.insert(name.clone(), pos);
         world.index_texture(bundle_id, name, pos);
     }
@@ -291,6 +306,7 @@ impl TexManager {
         buffer: &Vec<u8>,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
+        loggy: &mut Loggy,
     ) {
         // println!("🟢load_tex_from_buffer{} is {}", str, buffer.len());
         match image::load_from_memory(buffer.as_slice()) {
@@ -301,8 +317,14 @@ impl TexManager {
                 bundle_id,
                 template,
                 true,
+                loggy,
             ),
-            Err(err) => err!("failed to load texture {}", err),
+            Err(err) => {
+                loggy.log(
+                    LogType::TextureError,
+                    &format!("failed to load texture {}", err),
+                );
+            }
         }
     }
 
@@ -313,11 +335,11 @@ impl TexManager {
         name_like: &String,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
+        loggy: &mut Loggy,
     ) {
-        // println!("🟢load_tex{}", str);
-        lg!("apply texture {}", name_like);
+        loggy.log(LogType::Texture, &format!("apply texture {}", name_like));
 
-        match load_img_nopath(name_like) {
+        match load_img_nopath(name_like, loggy) {
             Ok(img) => self.sort_image(
                 world,
                 name_like,
@@ -325,12 +347,13 @@ impl TexManager {
                 bundle_id,
                 template,
                 false,
+                loggy,
             ),
             Err(err) => {
-                err!("failed to load texture {}", err);
-                // dictionary
-                //     .lock()
-                //     .insert(name, cgmath::Vector4::new(0., 0., 0., 0.));
+                loggy.log(
+                    LogType::TextureError,
+                    &format!("failed to load texture {}", err),
+                );
             }
         }
     }
@@ -340,6 +363,7 @@ impl TexManager {
         short_name: String,
         path: String,
         images: &Vec<gltf::image::Data>,
+        loggy: &mut Loggy,
     ) -> Vec<Vec4> {
         images
             .iter()
@@ -350,7 +374,7 @@ impl TexManager {
                 let pos = match image::RgbaImage::from_raw(imm.width, imm.height, im) {
                     Some(o) => self.locate(o),
                     None => {
-                        error("Failed to load texture from mesh".to_string());
+                        loggy.log(LogType::TextureError, &"Failed to load texture from mesh");
                         vec4(0., 0., 1., 1.)
                     }
                 };
@@ -445,7 +469,7 @@ impl TexManager {
         self.bundle_lookup.remove(&bundle_id);
     }
 
-    pub fn rebuild_atlas(&mut self, world: &mut World) {
+    pub fn rebuild_atlas(&mut self, world: &mut World, loggy: &mut Loggy) {
         self.atlas = image::RgbaImage::new(self.atlas_dim.x, self.atlas_dim.y);
         self.dictionary = HashMap::new();
         let hash = self.bundle_lookup.drain().collect_vec();
@@ -462,18 +486,17 @@ impl TexManager {
                 (k, vv)
             })
             .collect_vec();
-        // let im2 = images.iter().cloned();
         self.reset();
         for (bundle_id, v) in images {
             for (name, img) in v {
-                self.sort_image(world, &name, img, *bundle_id, None, true);
+                self.sort_image(world, &name, img, *bundle_id, None, true, loggy);
             }
         }
         //
     }
 }
 
-pub fn simple_square(size: u32, path: PathBuf) {
+pub fn simple_square(size: u32, path: PathBuf, loggy: &mut Loggy) {
     let mut img: RgbaImage = ImageBuffer::new(size, size);
     let magenta = Rgba([255u8, 0u8, 255u8, 255u8]);
     draw_filled_rect_mut(
@@ -489,12 +512,15 @@ pub fn simple_square(size: u32, path: PathBuf) {
         image::ColorType::Rgba8,
         image::ImageFormat::Png,
     ) {
-        Err(err) => err!("could not save example image: {}", err),
+        Err(err) => loggy.log(
+            LogType::TextureError,
+            &format!("could not save example image: {}", err),
+        ),
         _ => {}
     }
 }
 
-pub fn save_audio_buffer(buffer: &Vec<u8>) {
+pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
     // println!("🟣buffer {} {}", buffer.len(), 512);
     let w = buffer.len() as u32;
     let h = 512;
@@ -517,7 +543,10 @@ pub fn save_audio_buffer(buffer: &Vec<u8>) {
         image::ImageFormat::Png,
     ) {
         Err(err) => {
-            err!("unable to save image: {}", err);
+            loggy.log(
+                LogType::TextureError,
+                &format!("unable to save image: {}", err),
+            );
         }
         _ => {}
     }
@@ -528,16 +557,14 @@ pub fn render_sampler(device: &wgpu::Device, size: (u32, u32)) -> (TextureView, 
     make_render_tex(device, &img)
 }
 
-pub fn load_img(str: &String) -> Result<DynamicImage, image::ImageError> {
+pub fn load_img(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
     let text = Path::new("assets").join(str).to_str().unwrap().to_string();
     //Path::new(".").join("entities");
-    load_img_nopath(&text)
+    load_img_nopath(&text, loggy)
 }
 
-pub fn load_img_nopath(str: &String) -> Result<DynamicImage, image::ImageError> {
-    lg!("{}", str.clone());
-
-    println!("opening asset {}", str);
+pub fn load_img_nopath(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
+    loggy.log(LogType::Texture, &format!("loading image {}", str));
 
     let img = image::open(str);
 
@@ -727,31 +754,4 @@ pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, 
         ..Default::default()
     });
     (diffuse_texture_view, diffuse_sampler, tex)
-}
-
-macro_rules! lg{
-    ($($arg:tt)*) => {{
-           {
-            let st=format!("🎨texture::{}",format!($($arg)*));
-            println!("{}",st);
-            crate::log::log(st);
-           }
-       }
-   }
-}
-
-macro_rules! err{
-    ($($arg:tt)*) => {{
-           {
-            crate::log::error(format!("‼︎ERROR::🎨texture::{}",format!($($arg)*)));
-           }
-       }
-   }
-}
-
-pub(crate) use err;
-pub(crate) use lg;
-
-fn error(str: String) {
-    crate::log::error(format!("‼︎ERROR::🎨texture::{}", str));
 }

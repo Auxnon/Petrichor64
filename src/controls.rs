@@ -1,4 +1,4 @@
-use crate::lg;
+use crate::log::LogType;
 use crate::lua_define::LuaResponse;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
@@ -47,6 +47,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         *control_flow = ControlFlow::Exit;
     }
     match input_helper.dropped_file() {
+        // TODO drag and drop
         Some(path) => println!("dropped file {}", path.as_os_str().to_string_lossy()),
         _ => {}
     }
@@ -70,7 +71,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // input_helper.mouse
     core.global.scroll_delta = input_helper.scroll_diff();
     if core.global.scroll_delta != 0. {
-        crate::log::scroll(core.global.scroll_delta);
+        core.loggy.scroll(core.global.scroll_delta);
     }
 
     // core.input_helper.key_pressed(check_key_code)
@@ -96,28 +97,17 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             0.
         },
     ];
-    // println!("{:?}", core.global.mouse_buttons);
-    // if input_helper.mouse_pressed(0) {
-    //     core.global.mouse_click_pos = core.global.mouse_active_pos.clone();
-    //     let i = (core.global.cursor_projected_pos / 1.).floor() * 16.;
-    //     core.world
-    //         .set_tile(&"grid".to_string(), i.x as i32, i.y as i32, i.z as i32);
-    //     core.world
-    //         .get_chunk_mut(i.x as i32, i.y as i32, i.z as i32)
-    //         .cook(&core.device);
-    // }
 
     if input_helper.key_released(VirtualKeyCode::Grave) {
         core.global.console = !core.global.console;
         if core.global.console {
-            // crate::log::add("$load".to_string());
-            core.gui.enable_console()
+            core.gui.enable_console(&core.loggy)
         } else {
             core.gui.disable_console()
         }
     } else if core.global.console {
         if input_helper.key_released(VirtualKeyCode::Return) {
-            let command = crate::log::carriage();
+            let command = core.loggy.carriage();
             if command.is_some() {
                 // if core.global.test {
                 let mut com = command.unwrap(); //.to_lowercase();
@@ -127,6 +117,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 }
                 for c in com.split("&&") {
                     if !crate::command::init_con_sys(core, c) {
+                        let mut ltype = LogType::Lua;
                         let result = match core.bundle_manager.get_lua().func(c) {
                             LuaResponse::String(s) => s,
                             LuaResponse::Number(n) => n.to_string(),
@@ -142,27 +133,28 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                                 s.push_str("}");
                                 s
                             }
+                            LuaResponse::Error(e) => {
+                                ltype = LogType::LuaError;
+                                e
+                            } // LuaResponse::Function(f) => format!("function: {}", f),
                         };
 
-                        crate::lg!("{}", result);
+                        core.loggy.log(ltype, &result);
                     }
                 }
-                // } else {
-                //     core.global.test = true;
-                // }
             }
         } else if input_helper.key_pressed(VirtualKeyCode::Up) {
-            crate::log::history_up()
+            core.loggy.history_up()
         } else if input_helper.key_pressed(VirtualKeyCode::Down) {
-            crate::log::history_down()
+            core.loggy.history_down()
         } else if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::C) {
                 let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                ctx.set_contents(crate::log::get_line()).unwrap();
+                ctx.set_contents(core.loggy.get_line()).unwrap();
             } else if input_helper.key_pressed(VirtualKeyCode::V) {
                 let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
                 match ctx.get_contents() {
-                    Ok(s) => crate::log::add(s),
+                    Ok(s) => core.loggy.add(s),
                     _ => {}
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
@@ -179,28 +171,25 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 // let neg = 0;
                 // let emp: char;
 
-                match t.last() {
-                    Some(s) => {
-                        match s {
-                            winit_input_helper::TextChar::Char(c) => match *c as u32 {
-                                96 => {}
-                                127 => {
-                                    crate::log::back();
-                                }
-                                _ => {
-                                    println!("char {}  {}", *c as u32, c);
-                                    crate::log::add(String::from(*c))
-                                } //st.push(*c),
-                            },
-                            winit_input_helper::TextChar::Back => {
-                                // crate::log::back();
-                                // neg += 1;
-                                // st.remove(st.len() - 1);
+                t.iter().for_each(|s| {
+                    match s {
+                        winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                            96 => {}
+                            127 => {
+                                core.loggy.back();
                             }
+                            _ => {
+                                println!("char {}  {}", *c as u32, c);
+                                core.loggy.add(String::from(*c))
+                            } //st.push(*c),
+                        },
+                        winit_input_helper::TextChar::Back => {
+                            // crate::log::back();
+                            // neg += 1;
+                            // st.remove(st.len() - 1);
                         }
                     }
-                    None => {}
-                }
+                });
 
                 // for tt in t.iter() {
                 //     match tt {
@@ -228,24 +217,39 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         if core.global.debug {
             if input_helper.key_pressed(VirtualKeyCode::Left) {
                 core.global.debug_camera_pos.x += 10.;
-                lg!("x {}", core.global.debug_camera_pos.x)
+                core.loggy.log(
+                    LogType::Debug,
+                    &format!("x {}", core.global.debug_camera_pos.x),
+                )
             } else if input_helper.key_pressed(VirtualKeyCode::Right) {
                 core.global.debug_camera_pos.x -= 10.;
             } else if input_helper.key_pressed(VirtualKeyCode::Up) {
                 if input_helper.held_shift() {
                     core.global.debug_camera_pos.z += 10.;
-                    lg!("z {}", core.global.debug_camera_pos.z)
+                    core.loggy.log(
+                        LogType::Debug,
+                        &format!("z {}", core.global.debug_camera_pos.z),
+                    )
                 } else {
                     core.global.debug_camera_pos.y += 10.;
-                    lg!("y {}", core.global.debug_camera_pos.y)
+                    core.loggy.log(
+                        LogType::Debug,
+                        &format!("y {}", core.global.debug_camera_pos.y),
+                    )
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::Down) {
                 if input_helper.held_shift() {
                     core.global.debug_camera_pos.z -= 10.;
-                    lg!("z {}", core.global.debug_camera_pos.z)
+                    core.loggy.log(
+                        LogType::Debug,
+                        &format!("z {}", core.global.debug_camera_pos.z),
+                    )
                 } else {
                     core.global.debug_camera_pos.y -= 10.;
-                    lg!("y {}", core.global.debug_camera_pos.y)
+                    core.loggy.log(
+                        LogType::Debug,
+                        &format!("y {}", core.global.debug_camera_pos.y),
+                    )
                 }
             }
         }
@@ -339,9 +343,4 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
 
 fn bundle_missing(bm: &BundleManager) -> String {
     format!("please switch to target {} instead", bm.list_bundles())
-}
-
-fn log(str: String) {
-    crate::log::log(format!("controls::{}", str));
-    println!("{}", str);
 }

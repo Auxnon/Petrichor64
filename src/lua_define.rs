@@ -2,12 +2,14 @@ use crate::{
     bundle::BundleResources,
     command::MainCommmand,
     controls::ControlState,
+    log::LogType,
     pad::Pad,
     sound::SoundCommand,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 use mlua::{
+    prelude::LuaError,
     Lua,
     Value::{self, Nil},
 };
@@ -31,6 +33,7 @@ pub enum LuaResponse {
     Boolean(bool),
     Table(HashMap<String, String>),
     Nil,
+    Error(String),
 }
 
 pub struct LuaCore {
@@ -39,7 +42,7 @@ pub struct LuaCore {
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
+        Option<SyncSender<(LuaResponse, Option<ControlState>)>>,
     )>,
 }
 
@@ -55,15 +58,10 @@ impl LuaCore {
             String,
             String,
             Option<ControlState>,
-            Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
+            Option<SyncSender<(LuaResponse, Option<ControlState>)>>,
         )>();
-        // log("lua core thread started".to_string());
 
-        // let (rec, _catcher, lua_handle) = start(bundle_id, gui, world_sender, singer, dangerous);
-        LuaCore {
-            to_lua_tx: sender,
-            // catcher,
-        }
+        LuaCore { to_lua_tx: sender }
     }
 
     pub fn start(
@@ -72,6 +70,7 @@ impl LuaCore {
         resources: BundleResources,
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         pitcher: Sender<MainPacket>,
+        loggy: Sender<(LogType, String)>,
         singer: Sender<SoundCommand>,
         dangerous: bool,
     ) -> LuaHandle {
@@ -80,6 +79,7 @@ impl LuaCore {
             resources,
             world_sender,
             pitcher,
+            loggy,
             singer,
             dangerous,
         );
@@ -90,10 +90,7 @@ impl LuaCore {
     }
 
     pub fn func(&self, func: &str) -> LuaResponse {
-        match self.inject(func, &"0", None).0 {
-            Some(res) => res,
-            None => LuaResponse::Nil,
-        }
+        self.inject(func, &"0", None).0
     }
 
     pub fn async_func(&self, func: &String, bits: ControlState) {
@@ -105,8 +102,8 @@ impl LuaCore {
         func: &str,
         path: &str,
         ent: Option<ControlState>,
-    ) -> (Option<LuaResponse>, Option<ControlState>) {
-        let (tx, rx) = sync_channel::<(Option<LuaResponse>, Option<ControlState>)>(0);
+    ) -> (LuaResponse, Option<ControlState>) {
+        let (tx, rx) = sync_channel::<(LuaResponse, Option<ControlState>)>(0);
         // println!("xxx {} :: {}", func, path);
         match self
             .to_lua_tx
@@ -115,15 +112,18 @@ impl LuaCore {
             Ok(_) => match rx.recv() {
                 Ok(lua_out) => lua_out,
                 Err(e) => {
-                    log(format!("unable to recieve lua return command {}", e));
-                    err(e.to_string());
-                    (None, None)
+                    // log(format!("unable to recieve lua return command {}", e));
+
+                    (
+                        LuaResponse::Error(format!("No response from lua: {}", e)),
+                        None,
+                    )
                 }
             },
-            Err(e) => {
-                err(format!("unable to inject lua command {}", e));
-                (None, None)
-            }
+            Err(e) => (
+                LuaResponse::Error(format!("Cannot speak to lua: {}", e)),
+                None,
+            ),
         }
     }
 
@@ -138,13 +138,13 @@ impl LuaCore {
         }
     }
 
-    pub fn load(&self, file: &String) -> (Option<LuaResponse>, Option<ControlState>) {
-        log("loading script".to_string());
+    pub fn load(&self, file: &String) -> (LuaResponse, Option<ControlState>) {
+        // log("loading script".to_string());
         self.inject(&"load".to_string(), file, None)
     }
 
     pub fn async_load(&self, file: &String) {
-        log("loading script".to_string());
+        // log("loading script".to_string());
         match self
             .to_lua_tx
             .send(("load".to_string(), file.to_string(), None, None))
@@ -158,7 +158,7 @@ impl LuaCore {
         const empty: ControlState = ([false; 256], [0f32; 8]);
         self.async_func(&"main()".to_string(), empty);
 
-        log("called main method of main script".to_string());
+        // log("called main method of main script".to_string());
     }
 
     pub fn call_loop(&self, bits: ControlState) {
@@ -167,17 +167,15 @@ impl LuaCore {
 
     /** sends kill signal to this lua context thread */
     pub fn die(&self) {
-        log("lua go bye bye".to_string());
+        // log("lua go bye bye".to_string());
         self.async_inject(&"_self_destruct".to_string(), None);
         // self.inject(&"load".to_string(), &"_self_destruct".to_string(), None);
     }
 }
-fn lua_load(lua: &Lua, st: &String) {
+fn lua_load(lua: &Lua, st: &String) -> Result<(), LuaError> {
     let chunk = lua.load(st);
 
-    if let Err(e) = chunk.exec() {
-        log(format!("lua error on load: {}", e));
-    }
+    chunk.exec()
 }
 
 // fn lua_load_classic(lua: &Lua, st: &String) {
@@ -282,6 +280,7 @@ fn start(
     resources: BundleResources,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     pitcher: Sender<MainPacket>,
+    loggy: Sender<(LogType, String)>,
     singer: Sender<SoundCommand>,
     dangerous: bool,
 ) -> (
@@ -289,7 +288,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
+        Option<SyncSender<(LuaResponse, Option<ControlState>)>>,
     )>,
     LuaHandle,
 ) {
@@ -297,7 +296,7 @@ fn start(
         String,
         String,
         Option<ControlState>,
-        Option<SyncSender<(Option<LuaResponse>, Option<ControlState>)>>,
+        Option<SyncSender<(LuaResponse, Option<ControlState>)>>,
     )>();
 
     let mut online = false;
@@ -330,7 +329,7 @@ fn start(
     // let pitchers = Arc::new(pitcher);
     // let pitch_lusa = Arc::clone(&pitchers);
 
-    log("init lua core".to_string());
+    loggy.send((LogType::LuaSys, format!("init lua core {}", bundle_id)));
     // let lua_thread =
     let thread_join = thread::spawn(move || {
         let keys = [false; 256];
@@ -353,10 +352,16 @@ fn start(
 
         let globals = lua_ctx.globals();
 
-        log("new controller connector starting".to_string());
+        loggy.send((
+            LogType::LuaSys,
+            "new controller connector starting".to_owned(),
+        ));
         let mut gilrs = Gilrs::new().unwrap();
         for (_id, gamepad) in gilrs.gamepads() {
-            log(format!("{} is {:?}", gamepad.name(), gamepad.power_info()));
+            loggy.send((
+                LogType::LuaSys,
+                format!("gamepad {} is {:?}", gamepad.name(), gamepad.power_info()),
+            ));
         }
 
         let pads = Rc::new(RefCell::new(Pad::new()));
@@ -378,16 +383,20 @@ fn start(
             Rc::clone(&mice_mutex),
             Rc::clone(&pads),
             Rc::clone(&ent_counter),
+            loggy.clone(),
         ) {
             Err(err) => {
-                log(format!("lua command injection failed: {}", err));
+                loggy.send((
+                    LogType::LuaSysError,
+                    format!("lua command injection failed: {}", err),
+                ));
             }
             _ => {
-                log("lua commands initialized".to_string());
+                loggy.send((LogType::LuaSys, "lua commands initialized".to_owned()));
             }
         }
 
-        log("💫 lua_thread::orbiting".to_string());
+        loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()));
         for m in reciever {
             let (s1, s2, bit_in, channel) = m;
             while let Some(Event {
@@ -467,7 +476,9 @@ fn start(
                     }
                     break;
                 } else {
-                    lua_load(&lua_ctx, &s2);
+                    if let Err(er) = lua_load(&lua_ctx, &s2) {
+                        loggy.send((LogType::LuaError, er.to_string()));
+                    }
                 }
             } else {
                 //MARK if loop() then path string is the keyboard keys
@@ -536,14 +547,18 @@ fn start(
                                     }
                                     _ => LuaResponse::Nil,
                                 };
-                                sync.send((Some(output), None))
+                                sync.send((output, None))
                             }
-                            Err(er) => sync.send((Some(LuaResponse::String(er.to_string())), None)),
+                            Err(er) => sync.send((LuaResponse::String(er.to_string()), None)),
                         } {
                             Err(e) => {
                                 // println!("loop err: {}", e);
                                 // if !s1.starts_with("loop") {
-                                err(format!("lua server communication error occured -> {}", e))
+                                loggy.send((
+                                    LogType::LuaSysError,
+                                    format!("lua server communication error occured -> {}", e),
+                                ));
+
                                 // }
                             }
                             _ => {}
@@ -560,7 +575,7 @@ fn start(
                                     match lua_ctx.inspect_stack(1) {
                                         Some(d) => {
                                             // d.names().name
-                                            println!("stack {:?}", d.stack());
+                                            println!("😩😩😩stack {:?}", d.stack());
                                             println!("er line is {}", d.curr_line());
                                         }
                                         _ => {}
@@ -644,12 +659,12 @@ fn start(
     (sender, thread_join)
 }
 
-fn log(str: String) {
-    println!("📜lua::{}", str);
-    crate::log::log(format!("📜lua::{}", str));
-}
+// fn log(str: String) {
+//     println!("📜lua::{}", str);
+//     crate::log::log(format!("📜lua::{}", str));
+// }
 
-fn err(str: String) {
-    println!("📜lua_err::{}", str);
-    crate::log::log(format!("📜lua_err::{}", str));
-}
+// fn err(str: String) {
+//     println!("📜lua_err::{}", str);
+//     crate::log::log(format!("📜lua_err::{}", str));
+// }

@@ -20,8 +20,8 @@ use std::{
 use texture::TexManager;
 use types::ValueMap;
 // use tracy::frame;
-use crate::gui::Gui;
 use crate::{ent::EntityUniforms, post::Post};
+use crate::{gui::Gui, log::LogType};
 use glam::{vec2, vec3, Mat4};
 use parking_lot::RwLock;
 use switch_board::SwitchBoard;
@@ -98,6 +98,7 @@ pub struct Core {
     input_manager: winit_input_helper::WinitInputHelper,
     bundle_manager: BundleManager,
     win_ref: Rc<Window>,
+    loggy: log::Loggy,
 }
 
 #[repr(C)]
@@ -539,6 +540,8 @@ impl Core {
             multiview: None,
         });
 
+        let mut loggy = log::Loggy::new();
+
         let mut gui = Gui::new(
             gui_pipeline,
             sky_pipeline,
@@ -547,17 +550,18 @@ impl Core {
             sky_group,
             sky_texture,
             gui_image,
+            &mut loggy,
         );
         gui.add_text("initialized".to_string());
 
         let global = Global::new();
         if global.console {
-            gui.enable_console()
+            gui.enable_console(&loggy)
         }
 
         let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
 
-        let world = World::new();
+        let world = World::new(loggy.make_sender());
 
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
@@ -567,7 +571,10 @@ impl Core {
         let stream_result = match stream {
             Ok(stream) => Some(stream),
             Err(e) => {
-                crate::log::log(format!("sound stream error, continuing in silence!: {}", e));
+                loggy.log(
+                    LogType::CoreError,
+                    &format!("sound stream error, continuing in silence!: {}", e),
+                );
                 None
             }
         };
@@ -607,6 +614,7 @@ impl Core {
             input_manager,
             bundle_manager: BundleManager::new(),
             win_ref: rwindow,
+            loggy,
         }
     }
 
@@ -788,8 +796,9 @@ impl Core {
                         .map(|x| x.1)
                         .join("...]");
                     let s = format!("async error: {}", ee);
-                    println!("{}", s);
-                    crate::log::log(s);
+                    // println!("{}", s);
+                    self.loggy.log(LogType::LuaError, &s);
+                    // crate::log::log(s);
                 }
                 MainCommmand::BundleDropped(b) => self.bundle_manager.reclaim_resources(b),
                 MainCommmand::Subload(file, is_overlay) => {
@@ -937,7 +946,11 @@ fn main() {
     let mut core = pollster::block_on(Core::new(Rc::clone(&rwindow)));
 
     crate::command::load_empty(&mut core);
-    crate::asset::parse_config(&mut core.global, core.bundle_manager.get_lua());
+    crate::asset::parse_config(
+        &mut core.global,
+        core.bundle_manager.get_lua(),
+        &mut core.loggy,
+    );
 
     // unsafe {
     //     tracy::startup_tracy();

@@ -4,7 +4,11 @@ use itertools::izip;
 use std::{collections::HashMap, rc::Rc};
 use wgpu::{util::DeviceExt, Device};
 
-use crate::{texture::TexManager, world::World};
+use crate::{
+    log::{LogType, Loggy},
+    texture::TexManager,
+    world::World,
+};
 
 pub struct ModelManager {
     pub CUBE: Rc<Model>,
@@ -125,6 +129,7 @@ impl ModelManager {
         buffers: Vec<gltf::buffer::Data>,
         image_data: Vec<gltf::image::Data>,
         device: &Device,
+        loggy: &mut Loggy,
         debug: bool,
     ) {
         let p = std::path::PathBuf::from(&str);
@@ -132,8 +137,12 @@ impl ModelManager {
             Some(p) => {
                 let base_name = p.to_os_string().into_string().unwrap().to_lowercase();
 
-                let uv_arr =
-                    tex_manager.load_tex_from_data(base_name.clone(), str.to_string(), &image_data);
+                let uv_arr = tex_manager.load_tex_from_data(
+                    base_name.clone(),
+                    str.to_string(),
+                    &image_data,
+                    loggy,
+                );
 
                 let uv_adjust = if uv_arr.len() == 0 {
                     vec![vec4(0., 0., 1., 1.)]
@@ -195,10 +204,13 @@ impl ModelManager {
                 if meshes.len() > 0 {
                     if meshes.len() == 1 {
                         let mesh = meshes.pop().unwrap();
-                        log(format!(
-                            "single model stored as {} and {}",
-                            mesh.base_name, mesh.name
-                        ));
+                        loggy.log(
+                            LogType::Model,
+                            &format!(
+                                "single model stored as {} and {}",
+                                mesh.base_name, mesh.name
+                            ),
+                        );
 
                         world.index_model(bundle_id, &mesh.base_name, Rc::clone(&mesh));
                         // world.index_texture_alias(bundle_id, name, direct)
@@ -209,14 +221,20 @@ impl ModelManager {
                     } else {
                         for (i, m) in meshes.drain(..).enumerate() {
                             if i == 0 {
-                                log(format!(
-                                    "multi-model {} stored as base name {}",
-                                    i, m.base_name
-                                ));
+                                loggy.log(
+                                    LogType::Model,
+                                    &format!(
+                                        "multi-model {} stored as base name {}",
+                                        i, m.base_name
+                                    ),
+                                );
                                 world.index_model(bundle_id, &m.base_name, Rc::clone(&m));
                                 self.DICTIONARY.insert(m.base_name.clone(), Rc::clone(&m));
                             }
-                            log(format!("multi-model {} stored as {}", i, m.name));
+                            loggy.log(
+                                LogType::Model,
+                                &format!("multi-model {} stored as {}", i, m.name),
+                            );
                             world.index_model(bundle_id, &m.name, Rc::clone(&m));
                             self.DICTIONARY.insert(m.name.clone(), m);
                         }
@@ -326,6 +344,7 @@ impl ModelManager {
         str: &String,
         slice: &Vec<u8>,
         device: &Device,
+        loggy: &mut Loggy,
         debug: bool,
     ) {
         match gltf::import_slice(slice) {
@@ -339,6 +358,7 @@ impl ModelManager {
                     buffers,
                     image_data,
                     device,
+                    loggy,
                     debug,
                 );
             }
@@ -354,6 +374,7 @@ impl ModelManager {
         tex_manager: &mut TexManager,
         str: &String,
         device: &Device,
+        loggy: &mut Loggy,
         debug: bool,
     ) {
         let target = str; //format!("assets/{}", str);
@@ -369,11 +390,15 @@ impl ModelManager {
                     buffers,
                     image_data,
                     device,
+                    loggy,
                     debug,
                 );
             }
             Err(err) => {
-                log(format!("gltf err for {} -> {}", &target, err));
+                loggy.log(
+                    LogType::ModelError,
+                    &format!("gltf err for {} -> {}", &target, err),
+                );
             }
         }
     }
@@ -437,7 +462,7 @@ impl ModelManager {
         //TODO is this mapped at some point?
         world.index_model(bundle_id, &name, Rc::clone(&rced_model));
         self.DICTIONARY.insert(name.clone(), rced_model);
-        log(format!("created new model cube {}", name));
+        // TODO log(format!("created new model cube {}", name));
     }
 
     pub fn reset(&mut self) {
@@ -753,8 +778,8 @@ pub struct Model {
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
 }
 
-fn log(str: String) {
-    let m = format!("🎦model::{}", str);
-    crate::log::log(m.clone());
-    println!("{}", m);
-}
+// fn log(str: String) {
+//     let m = format!("🎦model::{}", str);
+//     crate::log::log(m.clone());
+//     println!("{}", m);
+// }

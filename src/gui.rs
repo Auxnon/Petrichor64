@@ -4,7 +4,11 @@ use glam::Vec4;
 use rand::Rng;
 // use tracy::frame;
 
-use crate::{command::NumCouple, texture::TexManager};
+use crate::{
+    command::NumCouple,
+    log::{LogType, Loggy},
+    texture::TexManager,
+};
 use image::{ImageBuffer, RgbaImage};
 use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
@@ -31,6 +35,7 @@ pub struct Gui {
     time: f32,
     pub letters: RgbaImage,
     pub size: [u32; 2],
+    pub console_background: image::Rgba<u8>,
     // console_dity: bool,
     // main_dirty: bool,
     dirty: bool,
@@ -48,10 +53,11 @@ impl Gui {
         sky_group: wgpu::BindGroup,
         sky_texture: Texture,
         gui_img: RgbaImage,
+        loggy: &mut Loggy,
     ) -> Gui {
         let d = gui_img.dimensions();
 
-        let letters = match crate::texture::load_img(&"6x6-8unicode.png".to_string()) {
+        let letters = match crate::texture::load_img(&"6x6-8unicode.png".to_string(), loggy) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {
                 #[cfg(not(windows))]
@@ -96,6 +102,7 @@ impl Gui {
             size: [d.0, d.1],
             dirty: true,
             output: false,
+            console_background: image::Rgba([255, 255, 255, 0]),
         }
     }
 
@@ -106,8 +113,8 @@ impl Gui {
     }
 
     // DEV is this still useful? it numbers tiles on a 16x16 grid
-    pub fn add_img(&self, str: &String) {
-        match crate::texture::load_img(str) {
+    pub fn add_img(&self, str: &String, loggy: &mut Loggy) {
+        match crate::texture::load_img(str, loggy) {
             Ok(t) => {
                 let mut im = t.to_rgba8();
                 let w = im.width() / 16;
@@ -142,7 +149,7 @@ impl Gui {
                 }
             }
             Err(e) => {
-                log(format!("{}", e));
+                loggy.log(LogType::TextureError, &e.to_string());
             }
         }
     }
@@ -222,11 +229,12 @@ impl Gui {
         // self.dirty = true;
     }
 
+    pub fn set_console_background_color(&mut self, r: u8, g: u8, b: u8, a: u8) {
+        self.console_background = image::Rgba([r, g, b, a])
+    }
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
         image::imageops::replace(&mut self.console, &im, 0, 0);
-
-        const WHITE: image::Rgba<u8> = image::Rgba([255, 255, 0, 100]);
 
         for (i, line) in self.text.lines().enumerate() {
             let y = i as i64 * (LETTER_SIZE as i64 + 2);
@@ -252,7 +260,7 @@ impl Gui {
                     &mut self.console,
                     imageproc::rect::Rect::at((x - 1) as i32, (y - 1) as i32)
                         .of_size(LETTER_SIZE + 2, LETTER_SIZE + 2 as u32),
-                    WHITE,
+                    self.console_background,
                 );
                 //sub.to_image().
                 image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);
@@ -260,8 +268,8 @@ impl Gui {
             }
         }
 
-        self.console =
-            image::imageops::huerotate(&mut self.console, rand::thread_rng().gen_range(0..360));
+        // self.console =
+        //     image::imageops::huerotate(&mut self.console, rand::thread_rng().gen_range(0..360));
         self.dirty = true;
     }
 
@@ -306,8 +314,8 @@ impl Gui {
         self.dirty = true;
     }
 
-    pub fn enable_console(&mut self) {
-        self.text = crate::log::get(
+    pub fn enable_console(&mut self, loggy: &Loggy) {
+        self.text = loggy.get(
             (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
             (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
         );
@@ -340,17 +348,17 @@ impl Gui {
     //     }
     // }
     // fn draw_img();
-    pub fn render(&mut self, queue: &Queue, time: f32) {
+    pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
         //let mut rng = rand::thread_rng();
         // frame!("gui start");
         self.time = time;
-        if self.output && crate::log::is_dirty() {
-            self.text = crate::log::get(
+        if self.output && loggy.is_dirty_and_listen() {
+            self.text = loggy.get(
                 (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
                 (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
             );
             self.apply_console_out_text();
-            crate::log::clean();
+            loggy.clean();
         }
         if self.dirty {
             let raster = if self.output {
@@ -625,8 +633,4 @@ pub fn direct_image(
     let yy = if y.0 { y.1 } else { y.1 * height as f32 };
 
     image::imageops::overlay(target, source, xx as i64, yy as i64);
-}
-
-fn log(str: String) {
-    crate::log::log(format!("📺gui::{}", str));
 }

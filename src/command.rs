@@ -1,10 +1,10 @@
 use crate::{
     bundle::BundleResources,
     gui::GuiMorsel,
-    lg,
+    log::LogType,
     lua_define::MainPacket,
     lua_ent::LuaEnt,
-    lua_img::{get_color, LuaImg},
+    lua_img::{dehex, get_color, LuaImg},
     pad::Pad,
     sound::{Instrument, Note, SoundCommand},
     tile::Chunk,
@@ -16,12 +16,12 @@ use crate::{
 #[cfg(feature = "online_capable")]
 use crate::online::MovePacket;
 
-use glam::{vec4, Vec4};
+use glam::vec4;
 use image::RgbaImage;
 use itertools::Itertools;
 use mlua::{
-    AnyUserData, Error, Lua, Table, UserData,
-    Value::{self, Nil},
+    AnyUserData, Error, Lua, Table,
+    Value::{self},
 };
 use parking_lot::Mutex;
 
@@ -50,10 +50,15 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     match segments[0] {
         "die" => {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
+            core.loggy.log(
+                LogType::Config,
+                &format!("killing lua instance {}", bundle_id),
+            );
             lua.die();
         }
         "bundles" => {
-            crate::lg!("{}", core.bundle_manager.list_bundles());
+            core.loggy
+                .log(LogType::Config, &core.bundle_manager.list_bundles());
         }
         "pack" => {
             // name, path, cartridge pic
@@ -78,26 +83,31 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 } else {
                     None
                 },
+                &mut core.loggy,
                 core.global.debug,
             );
         }
         "superpack" => {
-            log(crate::asset::super_pack(&if segments.len() > 1 {
-                format!("{}", segments[1])
-            } else {
-                "game".to_string()
-            })
-            .to_string());
+            core.loggy.log(
+                LogType::Config,
+                &crate::asset::super_pack(&if segments.len() > 1 {
+                    segments[1]
+                } else {
+                    "game"
+                }),
+            );
         }
         "unpack" => {
             if segments.len() > 1 {
-                let name = segments[1].to_string();
+                let name = segments[1];
                 crate::zip_pal::unpack_and_save(
                     crate::zip_pal::get_file_buffer(&format!("./{}.game.zip", name)),
                     &format!("{}.zip", name),
+                    &mut core.loggy,
                 );
             } else {
-                log("unpack <file without .game.png>".to_string());
+                core.loggy
+                    .log(LogType::ConfigError, "unpack <file without .game.png>");
             }
         }
         "load" => {
@@ -119,11 +129,12 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
         "atlas" => {
-            core.tex_manager.save_atlas();
+            core.tex_manager.save_atlas(&mut core.loggy);
         }
         "dev" => {
             core.global.debug = !core.global.debug;
-            log(format!("debug is {}", core.global.debug));
+            core.loggy
+                .log(LogType::Config, &format!("debug is {}", core.global.debug));
         }
         "ls" => {
             let s = if segments.len() > 1 {
@@ -139,27 +150,31 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                         .filter(Result::is_ok)
                         .map(|e| format!("{:?}", e.unwrap().path()))
                         .join(",");
-                    log(dir);
+                    core.loggy.log(LogType::Config, &dir);
                 }
                 Err(er) => {
-                    log(format!("returned {}", er));
+                    core.loggy
+                        .log(LogType::ConfigError, &format!("read error: {}", er));
                 }
             }
         }
         "ugh" => {
             // TODO ugh?
         }
-        "clear" => crate::log::clear(),
+        "clear" => core.loggy.clear(),
         "test" => {
-            log("that test worked, yipee".to_string());
+            core.loggy.log(LogType::Config, "that test worked, yipee");
         }
         "new" => {
             if segments.len() > 1 {
                 let name = segments[1].to_string();
-                crate::asset::make_directory(name.clone());
-                log(format!("created directory {}", name));
+                crate::asset::make_directory(name.clone(), &mut core.loggy);
+                core.loggy
+                    .log(LogType::Config, &format!("created directory {}", name));
             } else {
-                log("new <name>".to_string());
+                core.loggy.log(LogType::Config, "new <name>");
+            }
+        }
             }
         }
         "find" => {
@@ -170,17 +185,19 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                             .model_manager
                             .search_model(&segments[2].to_string(), None);
                         if v.len() > 0 {
-                            log(format!("models -> {}", v.join(",")));
+                            core.loggy
+                                .log(LogType::Model, &format!("models -> {}", v.join(",")));
                         } else {
-                            log("no models".to_string());
+                            core.loggy.log(LogType::Model, "no models");
                         }
                     }
                     _ => {
-                        log("???".to_string());
+                        core.loggy.log(LogType::ModelError, "???");
                     }
                 }
             } else {
-                log("find <model | ???> <search-query>".to_string());
+                core.loggy
+                    .log(LogType::ModelError, "find <model | ???> <search-query>");
             }
         }
         "parse" => {
@@ -214,6 +231,7 @@ pub fn init_lua_sys(
     mice: Rc<RefCell<[f32; 8]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
+    loggy: Sender<(LogType, String)>,
 ) -> Result<(), Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -235,6 +253,7 @@ pub fn init_lua_sys(
     res(
         "_default_func",
         lua_globals.set("_default_func", default_func),
+        &loggy,
     );
 
     let mut command_map: Vec<(String, String)> = vec![];
@@ -255,6 +274,7 @@ pub fn init_lua_sys(
             res(
                 $name,
                 lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
+                &loggy,
             );
 
             // fn $func_name() {
@@ -282,10 +302,11 @@ pub fn init_lua_sys(
         "Get a point"
     );
 
+    let aux_loggy = loggy.clone();
     lua!(
         "log",
-        |_, s: String| {
-            log(format!("log::{}", s));
+        move |_, s: String| {
+            aux_loggy.send((LogType::Lua, s));
             Ok(())
         },
         "Prints string to console"
@@ -513,7 +534,11 @@ pub fn init_lua_sys(
 
             match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
-                Err(er) => log(format!("error sending spawn {}", er)),
+                Err(er) => {
+                    return Err(mlua::Error::RuntimeError(
+                        "Unable to create entity".to_string(),
+                    ))
+                }
             }
 
             // Ok(match rx.recv() {
@@ -533,7 +558,11 @@ pub fn init_lua_sys(
             let childId=child.lock().unwrap().get_id();
             match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
                 Ok(_) => {}
-                Err(er) => log(format!("error sending spawn {}", er)),
+                Err(er) => {
+                   return  Err(mlua::Error::RuntimeError(
+                        "Unable to group entity".to_string(),
+                    ));
+                },
             };
             match rx.recv(){
                 Ok(_) => {},
@@ -588,13 +617,13 @@ pub fn init_lua_sys(
             };
             // println!("ent id {}", id);
             match pitcher.send((bundle_id, MainCommmand::Kill(id))) {
-                Ok(_) => {}
-                Err(er) => log(format!("error sending spawn {}", er)),
+                Ok(_) => Ok(()),
+                Err(er) => Err(mlua::Error::RuntimeError(
+                    "Unable to kill entity".to_string(),
+                )),
             }
 
             // let wrapped = Arc::new(std::sync::Mutex::new(ent));
-
-            Ok(())
         },
         "Kills an entity"
     );
@@ -1054,8 +1083,8 @@ pub fn init_lua_sys(
                         pitcher.send((bundle_id, MainCommmand::Model(name, texture, v, i, u)));
                     }
                     _ => {
-                        lg!("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
-                        return Ok(());
+                        Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                        // return Ok(());
                     }
                 };
             }
@@ -1214,12 +1243,15 @@ pub fn init_lua_sys(
 }
 
 /** Error dumping helper */
-fn res(target: &str, r: Result<(), Error>) {
+fn res(target: &str, r: Result<(), Error>, loggy: &Sender<(LogType, String)>) {
     match r {
         Err(err) => {
-            log(format!(
-                "🔴lua::problem setting default lua function {}, {}",
-                target, err
+            loggy.send((
+                LogType::LuaSysError,
+                format!(
+                    "🔴lua::problem setting default lua function {}, {}",
+                    target, err
+                ),
             ));
         }
         _ => {}
@@ -1246,7 +1278,8 @@ pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
     let (exists, children) = core.bundle_manager.soft_reset(bundle_id);
     if exists {
         core.tex_manager.remove_bundle_content(bundle_id);
-        core.tex_manager.rebuild_atlas(&mut core.world);
+        core.tex_manager
+            .rebuild_atlas(&mut core.world, &mut core.loggy);
         // core.tex_manager.reset();
         core.model_manager.reset();
         core.gui.clean();
@@ -1277,6 +1310,7 @@ pub fn load_empty(core: &mut Core) {
         resources,
         world_sender,
         core.pitcher.clone(),
+        core.loggy.make_sender(),
         core.singer.clone(),
         false,
     );
@@ -1318,6 +1352,7 @@ pub fn load(
         resources,
         world_sender,
         core.pitcher.clone(),
+        core.loggy.make_sender(),
         core.singer.clone(),
         false,
     );
@@ -1339,6 +1374,7 @@ pub fn load(
                     &core.device,
                     &s,
                     p,
+                    &mut core.loggy,
                     debug,
                 );
                 // println!("unpacked");
@@ -1355,6 +1391,7 @@ pub fn load(
                         Some(&core.device),
                         &bundle.lua,
                         path,
+                        &mut core.loggy,
                         debug,
                     );
                 } else {
@@ -1378,14 +1415,21 @@ pub fn load(
                                     &core.device,
                                     &s,
                                     buff,
+                                    &mut core.loggy,
                                     debug,
                                 );
                             } else {
-                                err(format!("{:?} ({}) is not a file or directory (1)", path, s));
+                                core.loggy.log(
+                                    LogType::ConfigError,
+                                    &format!("{:?} ({}) is not a file or directory (1)", path, s),
+                                );
                             }
                         }
                         None => {
-                            err(format!("{} is not a file or directory (2)", s));
+                            core.loggy.log(
+                                LogType::ConfigError,
+                                &format!("{} is not a file or directory (2)", s),
+                            );
                         }
                     };
                 }
@@ -1401,6 +1445,7 @@ pub fn load(
                 Some(&core.device),
                 &bundle.lua,
                 path,
+                &mut core.loggy,
                 debug,
             );
         }
@@ -1416,11 +1461,19 @@ pub fn load(
         Some(s) => s.clone(),
         None => "_".to_string(),
     };
-    log("=================================================".to_string());
-    log(format!("loaded into game {}", dir));
-    log("-------------------------------------------------".to_string());
+    core.loggy.log(
+        LogType::Config,
+        "=================================================",
+    );
+    core.loggy
+        .log(LogType::Config, &format!("loaded into game {}", dir));
+    core.loggy.log(
+        LogType::Config,
+        "-------------------------------------------------",
+    );
     drop(bundle);
     core.update();
+    core.loggy.log(LogType::Config, "calling main method");
     core.bundle_manager.call_main(bundle_id);
 }
 
@@ -1665,16 +1718,6 @@ pub fn key_unmatch(u: usize) -> Option<char> {
         147 => Some('_'),
         _ => None,
     }
-}
-
-fn log(str: String) {
-    println!("com::{}", str);
-    crate::log::log(format!("com::{}", str));
-}
-
-fn err(str: String) {
-    println!("com_err::{}", str);
-    crate::log::log(format!("com_err::{}", str));
 }
 
 /** A tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val)*/

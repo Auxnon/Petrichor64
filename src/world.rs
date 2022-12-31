@@ -9,9 +9,8 @@ use rustc_hash::FxHashMap;
 use wgpu::Device;
 
 use crate::{
-    bundle,
     command::MainCommmand,
-    lg,
+    log::{LogType, Loggy},
     model::{Model, ModelManager},
     tile::{Chunk, ChunkModel, Layer, LayerModel},
 };
@@ -152,16 +151,18 @@ pub struct World {
     layers: FxHashMap<u8, LayerModel>,
     pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
     pub local_mappers: FxHashMap<u8, Mapper>,
+    loggy: Sender<(LogType, String)>,
 }
 
 impl World {
-    pub fn new() -> World {
+    pub fn new(loggy: Sender<(LogType, String)>) -> World {
         // let senders = FxHashMap::default();
         // senders.insert(k, v)
         World {
             layers: FxHashMap::default(),
             senders: FxHashMap::default(),
             local_mappers: FxHashMap::default(),
+            loggy,
         }
     }
 
@@ -171,7 +172,7 @@ impl World {
         pitcher: Sender<(u8, MainCommmand)>,
     ) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
         println!("🟢World::make");
-        let sender = World::init(bundle_id, pitcher);
+        let sender = World::init(bundle_id, pitcher, self.loggy.clone());
         self.senders.insert(bundle_id, sender.clone());
         self.layers.insert(bundle_id, LayerModel::new());
         self.local_mappers.insert(bundle_id, Mapper::new());
@@ -181,6 +182,7 @@ impl World {
     pub fn init(
         bundle_id: u8,
         pitcher: Sender<(u8, MainCommmand)>,
+        loggy: Sender<(LogType, String)>,
     ) -> Sender<(TileCommand, SyncSender<TileResponse>)> {
         // add block
         // check block
@@ -212,7 +214,7 @@ impl World {
                             tiles[0].1.z as i32,
                             tiles[0].1.w as i32,
                         );
-                        res_handle(response.send(TileResponse::Success(true)))
+                        res_handle(response.send(TileResponse::Success(true)), &loggy)
                     }
                     (TileCommand::Check(), response) => {
                         let chunks = layer.get_dirty();
@@ -227,19 +229,20 @@ impl World {
                     }
                     (TileCommand::Is(tile), response) => res_handle(
                         response.send(TileResponse::Success(layer.is_tile(tile.x, tile.y, tile.z))),
+                        &loggy,
                     ),
                     (TileCommand::Drop(v), response) => {
                         layer.drop_chunk(v.x as i32, v.y as i32, v.z as i32);
-                        res_handle(response.send(TileResponse::Success(true)))
+                        res_handle(response.send(TileResponse::Success(true)), &loggy)
                     }
                     (TileCommand::Destroy(), response) => {
                         layer.destroy_it_all();
-                        res_handle(response.send(TileResponse::Success(true)));
+                        res_handle(response.send(TileResponse::Success(true)), &loggy);
                         break;
                     }
                     (TileCommand::Clear(), response) => {
                         layer.destroy_it_all();
-                        res_handle(response.send(TileResponse::Success(true)));
+                        res_handle(response.send(TileResponse::Success(true)), &loggy);
                     }
                     (TileCommand::MapTex(name, direct), response) => {
                         let i = if direct <= 0 {
@@ -249,16 +252,16 @@ impl World {
                             direct
                         };
 
-                        res_handle(response.send(TileResponse::Mapped(i)));
+                        res_handle(response.send(TileResponse::Mapped(i)), &loggy);
                     }
                     (TileCommand::MapModel(name), response) => {
                         let i = instance.index_model(name);
-                        res_handle(response.send(TileResponse::Mapped(i)));
+                        res_handle(response.send(TileResponse::Mapped(i)), &loggy);
                     }
                     (TileCommand::Stats(), response) => {
                         instance.stats();
                         layer.stats();
-                        res_handle(response.send(TileResponse::Success(true)));
+                        res_handle(response.send(TileResponse::Success(true)), &loggy);
                     }
                 }
             }
@@ -411,7 +414,7 @@ impl World {
         match sender.send((TileCommand::Clear(), tx)) {
             Ok(_) => match rx.recv() {
                 Ok(TileResponse::Success(true)) => {
-                    crate::lg!("cleared tiles")
+                    // crate::lg!("cleared tiles")
                 }
                 _ => {}
             },
@@ -448,7 +451,10 @@ impl World {
                 match sender.send((TileCommand::Destroy(), tx)) {
                     Ok(_) => match rx.recv() {
                         Ok(TileResponse::Success(true)) => {
-                            crate::lg!("destroyed world instance {}", bundle_id)
+                            self.loggy.send((
+                                LogType::World,
+                                format!("destroyed world instance {}", bundle_id),
+                            ));
                         }
                         _ => {}
                     },
@@ -528,7 +534,10 @@ impl World {
                                     m.tex_map.insert(i, uv);
                                 }
                                 _ => {
-                                    lg!("err::no world tex mapper for bundle {}", bundle_id)
+                                    self.loggy.send((
+                                        LogType::WorldError,
+                                        format!("no world tex mapper for bundle {}", bundle_id),
+                                    ));
                                 } // self.local_tex_map.insert(i, uv);
                             }
                             i
@@ -539,7 +548,10 @@ impl World {
                 }
             }
             _ => {
-                lg!("err::no world sender for bundle {}", bundle_id);
+                self.loggy.send((
+                    LogType::WorldError,
+                    format!("err::no world tex mapper for bundle {}", bundle_id),
+                ));
                 0
             }
         }
@@ -564,7 +576,10 @@ impl World {
                                 );
                             }
                             _ => {
-                                lg!("err::no world tex mapper for bundle {}", bundle_id)
+                                self.loggy.send((
+                                    LogType::WorldError,
+                                    format!("no world tex mapper for bundle {}", bundle_id),
+                                ));
                             }
                         }
 
@@ -573,7 +588,10 @@ impl World {
                     }
                 }
                 _ => {
-                    lg!("err::no world sender for bundle {}", bundle_id);
+                    self.loggy.send((
+                        LogType::WorldError,
+                        format!("err::no world tex mapper for bundle {}", bundle_id),
+                    ));
                 }
             }
         }
@@ -592,7 +610,10 @@ impl World {
                             m.model_map.insert(i, model);
                         }
                         _ => {
-                            lg!("err::no world model mapper for bundle {}", bundle_id)
+                            self.loggy.send((
+                                LogType::WorldError,
+                                format!("no world model mapper for bundle {}", bundle_id),
+                            ));
                         }
                     };
                 }
@@ -663,16 +684,22 @@ impl World {
     }
 }
 
-fn res_handle(res: Result<(), std::sync::mpsc::SendError<TileResponse>>) {
+fn res_handle(
+    res: Result<(), std::sync::mpsc::SendError<TileResponse>>,
+    loggy: &Sender<(LogType, String)>,
+) {
     match res {
         Ok(_) => {}
         Err(er) => {
-            log(format!("Failed to respond::{}", er.to_string()));
+            loggy.send((
+                LogType::WorldError,
+                format!("Failed to respond::{}", er.to_string()),
+            ));
         }
     }
 }
 
-pub fn log(s: String) {
-    println!("World::{}", s);
-    crate::log::log(format!("World::{}", s));
-}
+// pub fn log(s: String) {
+//     println!("World::{}", s);
+//     crate::log::log(format!("World::{}", s));
+// }

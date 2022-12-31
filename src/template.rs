@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use crate::log::{LogType, Loggy};
 use crate::texture::Anim;
 
 #[derive(Default, Debug, Deserialize)]
@@ -59,12 +60,15 @@ fn default_anim() -> Vec<(String, Vec<String>, bool)> {
 }
 
 /** load file as a ron template for asset */
-pub fn load_ron(path: &String) -> Option<AssetTemplate> {
+pub fn load_ron(path: &String, loggy: &mut Loggy) -> Option<AssetTemplate> {
     match std::fs::File::open(path) {
         Ok(f) => match from_reader(f) {
             Ok(x) => Some(x),
             Err(e) => {
-                log(format!("problem with template {}", e));
+                loggy.log(
+                    LogType::ConfigError,
+                    &format!("problem with template {}", e),
+                );
                 None
             }
         },
@@ -81,11 +85,14 @@ pub fn load_json(filename: &String, path: &String) -> Option<AssetTemplate> {
 }
 
 /** interpret string as a ron template for asset */
-pub fn interpret_ron(s: &String) -> Option<AssetTemplate> {
+pub fn interpret_ron(s: &String, loggy: &mut Loggy) -> Option<AssetTemplate> {
     match ron::from_str(s) {
         Ok(x) => Some(x),
         Err(e) => {
-            log(format!("problem with template {}", e));
+            loggy.log(
+                LogType::ConfigError,
+                &format!("problem with template {}", e),
+            );
             //std::process::exit(1);
             None
         }
@@ -209,9 +216,4 @@ fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
         }
     }
     None
-}
-
-fn log(str: String) {
-    crate::log::log(format!("template::{}", str));
-    println!("template::{}", str);
 }

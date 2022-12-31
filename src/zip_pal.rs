@@ -5,7 +5,7 @@ use std::{fs::File, path::Path};
 
 use zip::write::FileOptions;
 
-use crate::lg;
+use crate::log::{LogType, Loggy};
 
 /**
  * Squish a data file on to the end of an image file. PoC.
@@ -80,11 +80,14 @@ pub fn get_file_buffer_from_path(path: PathBuf) -> Vec<u8> {
 }
 
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
-pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String) {
+pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String, loggy: &mut Loggy) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer_from_path(thumb);
     if image.len() > 0 {
-        crate::lg!("using icon of {} bytes", image.len());
+        loggy.log(
+            LogType::Config,
+            &format!("using icon of {} bytes", image.len()),
+        );
 
         // let new_file = File::create(&Path::new("temp")).unwrap();
         let v = Vec::new();
@@ -97,24 +100,17 @@ pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String) {
             //.to_string();
             // zip.add_directory(s, options);
             //zip::ZipWriter::start_file;
-            match zip.start_file(
+            if let Err(err) = zip.start_file(
                 &source,
                 options.compression_method(zip::CompressionMethod::Stored),
             ) {
-                Ok(_) => {}
-                Err(err) => {
-                    log(format!("zipping error: {}", err));
-                }
+                loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
             }
 
             let buff = get_file_buffer(&source);
             let buffy = buff.as_slice();
-            // println!("buffy size {} and source {}", buffy.len(), source);
-            let re = zip.write(buffy);
-            if re.is_err() {
-                log(format!("zipping error: {}", re.unwrap()));
-            } else {
-                // log(format!(println!(" zip buffy size? {}", re.unwrap()));
+            if let Err(err) = zip.write(buffy) {
+                loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
             }
         }
 
@@ -126,47 +122,56 @@ pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String) {
                 // Read the "file's" contents into a vector
                 let mut buf = Vec::new();
                 f.read_to_end(&mut buf).unwrap();
-                println!("zip buffer size {}", buf.len());
+                loggy.log(LogType::Config, &format!("zip buffer size {}", buf.len()));
 
                 image.append(&mut buf);
                 let new_file = File::create(&Path::new(out)).unwrap();
                 let mut writer = BufWriter::new(new_file);
                 match writer.write(image.as_slice()) {
-                    Ok(_) => lg("cartridge zipped!"),
-                    Err(err) => log(format!("failed zipping to cartridge: {}", err)),
+                    Ok(_) => loggy.log(LogType::Config, &"cartridge zipped!"),
+                    Err(err) => loggy.log(
+                        LogType::ConfigError,
+                        &format!("failed zipping to cartridge: {}", err),
+                    ),
                 }
             }
             Err(_) => todo!(),
         }
     } else {
-        crate::lg!("unable to pack file as icon chosen is not available, is it in the game directory root?");
+        loggy.log(LogType::ConfigError,&"unable to pack file as icon chosen is not available, is it in the game directory root?");
     }
 }
 
-fn write_check(res: std::io::Result<usize>) {
-    match res {
-        Ok(_) => {}
-        Err(err) => log(format!("failed to write: {}", err)),
-    }
-}
+// fn write_check(res: std::io::Result<usize>) {
+//     match res {
+//         Ok(_) => {}
+//         Err(err) => log(format!("failed to write: {}", err)),
+//     }
+// }
 
 /** unpacked a packed game image-zip and save the zip contents as a useable file*/
-pub fn unpack_and_save(file: Vec<u8>, out: &String) {
-    let v = unpack(file);
+pub fn unpack_and_save(file: Vec<u8>, out: &String, loggy: &mut Loggy) {
+    let v = unpack(file, loggy);
     if v.len() > 0 {
         let new_file = File::create(&Path::new(out)).unwrap();
         let mut writer = BufWriter::new(new_file);
         match writer.write(v.as_slice()) {
             Ok(_) => {
-                lg!("unpacked game {} into {}.zip", out, out);
+                loggy.log(
+                    LogType::Config,
+                    &format!("unpacked game {} into {}.zip", out, out),
+                );
             }
-            Err(err) => log(format!("cannot unpack game: {}", err)),
+            Err(err) => loggy.log(
+                LogType::ConfigError,
+                &format!("cannot unpack game: {}", err),
+            ),
         }
     }
 }
 
 // MARK new pack
-pub fn pack_game_bin(out: &String) -> &str {
+pub fn pack_game_bin(out: &str) -> &str {
     let mut game_buffer = get_file_buffer(&"Petrichor".to_string());
     if game_buffer.len() <= 0 {
         return "Can't find engine file";
@@ -186,8 +191,9 @@ pub fn pack_game_bin(out: &String) -> &str {
 pub fn unpack_and_walk(
     file: Vec<u8>,
     sort: Vec<String>,
+    loggy: &mut Loggy,
 ) -> HashMap<String, Vec<(String, Vec<u8>)>> {
-    let v = unpack(file);
+    let v = unpack(file, loggy);
     let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
     if v.len() <= 0 {
         return map;
@@ -225,11 +231,17 @@ pub fn unpack_and_walk(
             // } else {
             let dir = part[part.len() - 2];
             let name = part[part.len() - 1];
-            println!(
-                "check file {} and convert to dir {} and name {}",
-                shorter, dir, name
+            loggy.log(
+                LogType::Config,
+                &format!(
+                    "check file {} and convert to dir {} and name {}",
+                    shorter, dir, name
+                ),
             );
-            crate::lg!("full {}, file {}, dir {}", file_name, name, dir);
+            loggy.log(
+                LogType::Config,
+                &format!("full {}, file {}, dir {}", file_name, name, dir),
+            );
             match archive.by_name(file_name.as_str()) {
                 Ok(mut file) => match map.get_mut(&dir.to_string()) {
                     Some(ar) => {
@@ -244,14 +256,15 @@ pub fn unpack_and_walk(
                     _ => {}
                 },
                 Err(..) => {
+                    loggy.log(LogType::ConfigError, &"problem reading archive");
                     println!("?");
                 }
             };
             // }
 
-            crate::lg!("list: {}", file_name);
+            loggy.log(LogType::Config, &format!("list: {}", file_name));
         } else {
-            crate::lg!("bad path for {}", file_name);
+            loggy.log(LogType::ConfigError, &format!("bad path for {}", file_name));
         }
     }
 
@@ -259,10 +272,10 @@ pub fn unpack_and_walk(
 }
 
 /** Unpacked a packed game image-zip into just the zip as a u8 buffer, buffer will still need unzipping */
-pub fn unpack(gamefile: Vec<u8>) -> Vec<u8> {
+pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
     // let mut gamefile = get_file_buffer(target);
     if gamefile.len() <= 0 {
-        lg("file to unpack is 0 bytes!");
+        loggy.log(LogType::ConfigError, &"file to unpack is 0 bytes!");
         return vec![];
     }
     // println!("zip file found {}", gamefile.len());
@@ -290,12 +303,11 @@ pub fn unpack(gamefile: Vec<u8>) -> Vec<u8> {
         }
         //     vec_chunks.push(chunk.to_vec());
     }
-    log(format!("stretch size {}", v.len()));
+    loggy.log(LogType::Config, &format!("stretch size {}", v.len()));
 
     v
 }
 
-/** alternative unpack method? WIP */
 // pub fn walk_zip(str: &String) {
 //     let zipfile = std::fs::File::open(str).unwrap();
 
@@ -326,12 +338,3 @@ pub fn unpack(gamefile: Vec<u8>) -> Vec<u8> {
 //     //     _ => {}
 //     // }
 // }
-/** log str */
-fn lg(s: &str) {
-    crate::log::log(format!("zip::{}", s));
-}
-
-/** log String */
-fn log(str: String) {
-    crate::log::log(format!("zip::{}", str));
-}

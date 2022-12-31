@@ -8,6 +8,7 @@ use wgpu::Device;
 
 use crate::{
     global::Global,
+    log::{LogType, Loggy},
     lua_define::{LuaCore, LuaResponse},
     model::ModelManager,
     texture::TexManager,
@@ -24,6 +25,7 @@ pub fn pack(
     name: &String,
     directory: Option<String>,
     cart_pic: Option<String>,
+    loggy: &mut Loggy,
     debug: bool,
 ) {
     let path = determine_path(directory);
@@ -35,15 +37,16 @@ pub fn pack(
         None,
         lua_master,
         path.clone(),
+        loggy,
         debug,
     );
     let icon = path.join(match cart_pic {
         Some(pic) => pic,
         None => "icon.png".to_string(),
     });
-    crate::zip_pal::pack_zip(sources, icon, &name)
+    crate::zip_pal::pack_zip(sources, icon, &name, loggy)
 }
-pub fn super_pack(name: &String) -> &str {
+pub fn super_pack(name: &str) -> &str {
     // let sources = walk_files(None);
     // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
     // create::
@@ -59,18 +62,22 @@ pub fn unpack(
     device: &Device,
     name: &String,
     file: Vec<u8>,
+    loggy: &mut Loggy,
     debug: bool,
 ) {
     println!("unpack {}", name);
-    let map =
-        crate::zip_pal::unpack_and_walk(file, vec!["assets".to_string(), "scripts".to_string()]);
+    let map = crate::zip_pal::unpack_and_walk(
+        file,
+        vec!["assets".to_string(), "scripts".to_string()],
+        loggy,
+    );
 
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
     let mut configs = vec![];
 
     match map.get("assets") {
         Some(dir) => {
-            crate::lg!("unpacking {} assets", dir.len());
+            loggy.log(LogType::Config, &format!("unpacking {} assets", dir.len()));
             for item in dir {
                 let path = Path::new(&item.0);
 
@@ -83,7 +90,7 @@ pub fn unpack(
                                 _ => item.0.clone(),
                             };
                             let chonk = (name.clone(), ext.clone(), String::new(), Some(&item.1));
-                            println!("unpack🤡chonk {:?}", chonk.0);
+                            // println!("unpack🤡chonk {:?}", chonk.0);
                             if ext == "ron" || ext == "json" {
                                 configs.push(chonk);
                             } else {
@@ -105,12 +112,13 @@ pub fn unpack(
         Some(device),
         configs,
         sources,
+        loggy,
         debug,
     );
 
     match map.get("scripts") {
         Some(dir) => {
-            crate::lg!("unpacking {} scripts", dir.len());
+            loggy.log(LogType::Config, &format!("unpacking {} scripts", dir.len()));
             for item in dir {
                 match Path::new(&item.0).extension() {
                     Some(e) => {
@@ -120,10 +128,16 @@ pub fn unpack(
                             Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
                         };
                         if e == "lua" {
+                            loggy.log(
+                                LogType::LuaSys,
+                                &format!("loading script {}", buffer.to_string()),
+                            );
                             handle_script(buffer, lua_master);
-                            log(format!("loading  script {}", buffer.to_string()));
                         } else {
-                            log(format!("skipping file type {}", file_name));
+                            loggy.log(
+                                LogType::Config,
+                                &format!("skipping file type {}", file_name),
+                            );
                         }
                     }
                     _ => {}
@@ -149,7 +163,7 @@ fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.async_load(&buffer.to_string());
 }
 
-pub fn parse_config(globals: &mut Global, lua: &LuaCore) {
+pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) {
     let p = PathBuf::new().join("config.lua");
     if p.exists() {
         if let Ok(buffer) = std::fs::read_to_string(p) {
@@ -157,15 +171,15 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore) {
 
             globals.debug = eval_bool(lua.func("dev"));
             if let LuaResponse::Table(t) = lua.func("alias") {
-                crate::lg!("{} aliases", t.len());
+                loggy.log(LogType::Config, &format!("{} aliases", t.len()));
                 // crate::lg!("{:?} aliases", t);
                 for (k, v) in t {
-                    crate::lg!("{} -> {}", k, v);
+                    loggy.log(LogType::Config, &format!("{} -> {}", k, v));
                     globals.aliases.insert(k, v);
                 }
             }
             if globals.debug {
-                crate::lg!("dev is enabled");
+                loggy.log(LogType::Config, &"dev is enabled");
             }
         };
     }
@@ -220,7 +234,7 @@ pub fn determine_path(directory: Option<String>) -> PathBuf {
     }
 }
 
-pub fn make_directory(directory: String) {
+pub fn make_directory(directory: String, loggy: &mut Loggy) {
     let root = determine_path(Some(directory));
     if !root.exists() {
         fs::create_dir_all(&root).unwrap();
@@ -252,7 +266,7 @@ end",
     )
     .unwrap();
 
-    crate::texture::simple_square(16, assets.join("example.png"));
+    crate::texture::simple_square(16, assets.join("example.png"), loggy);
 }
 
 pub fn walk_files(
@@ -264,13 +278,20 @@ pub fn walk_files(
     lua_master: &LuaCore,
     // list: Option<HashMap<String, Vec<Vec<u8>>>>,
     current_path: PathBuf,
+    loggy: &mut Loggy,
     debug: bool,
 ) -> Vec<String> {
-    log(format!("current dir is {}", current_path.display()));
+    loggy.log(
+        LogType::Config,
+        &format!("current dir is {}", current_path.display()),
+    );
     let assets_path = current_path.join(Path::new("assets"));
     let scripts_path = current_path.join(Path::new("scripts"));
 
-    log(format!("assets dir is {}", assets_path.display()));
+    loggy.log(
+        LogType::Config,
+        &format!("assets dir is {}", assets_path.display()),
+    );
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
     let mut configs = vec![];
     let mut paths = vec![];
@@ -283,7 +304,10 @@ pub fn walk_files(
                 .collect();
 
             for entry in assets_dir {
-                log(format!("asset to load {}", entry.display()));
+                loggy.log(
+                    LogType::Config,
+                    &format!("asset to load {}", entry.display()),
+                );
                 match entry.extension() {
                     Some(e) => {
                         let ext = e.to_ascii_lowercase().into_string().unwrap();
@@ -310,13 +334,16 @@ pub fn walk_files(
                         }
                     }
                     None => {
-                        log(format!("invalid asset {:?}", entry));
+                        loggy.log(LogType::ConfigError, &format!("invalid asset {:?}", entry));
                     }
                 }
             }
         }
         _ => {
-            log("assets directory cannot be located".to_string());
+            loggy.log(
+                LogType::ConfigError,
+                &"assets directory cannot be located".to_string(),
+            );
         }
     }
     parse_assets(
@@ -327,10 +354,14 @@ pub fn walk_files(
         device,
         configs,
         sources,
+        loggy,
         debug,
     );
 
-    log(format!("scripts dir is {}", scripts_path.display()));
+    loggy.log(
+        LogType::Config,
+        &format!("scripts dir is {}", scripts_path.display()),
+    );
     match read_dir(&scripts_path) {
         Ok(dir) => {
             let scripts_dir: Vec<PathBuf> = dir
@@ -344,7 +375,7 @@ pub fn walk_files(
                         let s = e.to_ascii_lowercase();
                         let file_name = &entry.into_os_string().into_string().unwrap();
                         if s == "lua" {
-                            log(format!("loading  script {}", file_name));
+                            loggy.log(LogType::Config, &format!("reading script {}", file_name));
 
                             let input_path = Path::new("")
                                 .join(file_name.to_owned())
@@ -359,17 +390,20 @@ pub fn walk_files(
                             }
                             paths.push(file_name.to_owned());
                         } else {
-                            log(format!("skipping file type {}", file_name));
+                            loggy.log(
+                                LogType::ConfigError,
+                                &format!("skipping file type {}", file_name),
+                            );
                         }
                     }
                     None => {
-                        log(format!("invalid script {:?}", entry));
+                        loggy.log(LogType::ConfigError, &format!("invalid script {:?}", entry));
                     }
                 }
             }
         }
         _ => {
-            log("scripts directory cannot be located".to_string());
+            loggy.log(LogType::ConfigError, &"scripts directory cannot be located");
         }
     }
 
@@ -385,9 +419,13 @@ fn parse_assets(
     device: Option<&Device>,
     configs: Vec<(String, String, String, Option<&Vec<u8>>)>,
     mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)>,
+    loggy: &mut Loggy,
     debug: bool,
 ) {
-    crate::lg!("found {} template(s)", configs.len());
+    loggy.log(
+        LogType::Config,
+        &format!("found {} template(s)", configs.len()),
+    );
     for con in configs {
         // yes a double match!
         // load direct or apply zipped config buffer to string and interpret to RoN
@@ -395,7 +433,10 @@ fn parse_assets(
             Some(buffer) => {
                 // TODO handle utf8 error somehow?
                 if con.1 == "ron" {
-                    crate::template::interpret_ron(&String::from_utf8(buffer.to_vec()).unwrap())
+                    crate::template::interpret_ron(
+                        &String::from_utf8(buffer.to_vec()).unwrap(),
+                        loggy,
+                    )
                 } else if con.1 == "json" {
                     crate::template::interpret_json(
                         &con.0,
@@ -407,7 +448,7 @@ fn parse_assets(
             }
             None => {
                 if con.1 == "ron" {
-                    crate::template::load_ron(&con.2)
+                    crate::template::load_ron(&con.2, loggy)
                 } else if con.1 == "json" {
                     crate::template::load_json(&con.0, &con.2)
                 } else {
@@ -417,7 +458,10 @@ fn parse_assets(
         } {
             Some(template) => {
                 // name is either the name field or default to file name without the extension
-                log(format!("loaded template {} or {}", con.0, template.name));
+                loggy.log(
+                    LogType::Config,
+                    &format!("loaded template {} or {}", con.0, template.name),
+                );
                 let name = if template.name.len() > 0 {
                     template.name.clone()
                 } else {
@@ -456,6 +500,7 @@ fn parse_assets(
                                     &resource.3.unwrap(),
                                     bundle_id,
                                     Some(&template),
+                                    loggy,
                                 );
                             } else if device.is_some() {
                                 tex_manager.load_tex(
@@ -463,6 +508,7 @@ fn parse_assets(
                                     &resource.2,
                                     bundle_id,
                                     Some(&template),
+                                    loggy,
                                 );
                             }
 
@@ -495,7 +541,10 @@ fn parse_assets(
         let (file_name, ext, path, buffer) = source;
 
         if ext == "glb" || ext == "gltf" {
-            log(format!("loading {} as glb/gltf model", file_name));
+            loggy.log(
+                LogType::Model,
+                &format!("loading {} as glb/gltf model", file_name),
+            );
             match device {
                 Some(d) => match buffer {
                     Some(b) => model_manager.load_from_buffer(
@@ -505,6 +554,7 @@ fn parse_assets(
                         &file_name,
                         &b,
                         d,
+                        loggy,
                         debug,
                     ),
                     _ => model_manager.load_from_string(
@@ -513,6 +563,7 @@ fn parse_assets(
                         tex_manager,
                         &path,
                         d,
+                        loggy,
                         debug,
                     ),
                 },
@@ -521,7 +572,10 @@ fn parse_assets(
         } else if ext == "png" {
             match device {
                 Some(_) => {
-                    log(format!("loading {} as png image", file_name));
+                    loggy.log(
+                        LogType::Texture,
+                        &format!("loading {} as png image", file_name),
+                    );
                     match buffer {
                         Some(b) => tex_manager.load_tex_from_buffer(
                             world,
@@ -529,20 +583,24 @@ fn parse_assets(
                             &b,
                             bundle_id,
                             None,
+                            loggy,
                         ),
-                        _ => tex_manager.load_tex(world, &path, bundle_id, None),
+                        _ => tex_manager.load_tex(world, &path, bundle_id, None, loggy),
                     }
                 }
                 _ => {}
             };
         } else {
-            log(format!(
-                "unknown file {} with type {} at path {} which is {}",
-                file_name,
-                ext,
-                path,
-                "png".eq_ignore_ascii_case(ext)
-            ));
+            loggy.log(
+                LogType::ConfigError,
+                &format!(
+                    "unknown file {} with type {} at path {} which is {}",
+                    file_name,
+                    ext,
+                    path,
+                    "png".eq_ignore_ascii_case(ext)
+                ),
+            );
         }
     }
 }
@@ -570,7 +628,7 @@ fn parse_assets(
 //     }
 // }
 
-fn log(str: String) {
-    crate::log::log(format!("📦assets::{}", str));
-    println!("📦assets::{}", str);
-}
+// fn log(str: String) {
+//     crate::log::log(format!("📦assets::{}", str));
+//     println!("📦assets::{}", str);
+// }

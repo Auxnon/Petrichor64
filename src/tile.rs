@@ -449,10 +449,10 @@ fn _add_tile_model(
 }
 
 // fn default_tile_size() -> u16 {}
-fn log(str: String) {
-    crate::log::log(format!("🪴tile::{}", str));
-    println!("🪴tile::{}", str);
-}
+// fn log(str: String) {
+//     crate::log::log(format!("🪴tile::{}", str));
+//     println!("🪴tile::{}", str);
+// }
 
 /* TEST
 fn test(ix: i32, iy: i32, iz: i32) {
