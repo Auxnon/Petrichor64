@@ -9,7 +9,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     //let mm = Mat4::from_translation(core.camera_pos) * Mat4::IDENTITY;
     //mx_model
 
-    let _tran = Mat4::from_translation(core.global.camera_pos);
+    let _tran = Mat4::from_translation(core.global.cam_pos);
 
     // let inv = (mx_persp * mx_view).inverse(); //mx_persp * mx_model * mx_view
     //let inv = mx_persp.inverse() * mx_view.inverse(); //mx_persp * mx_model * mx_view
@@ -53,9 +53,9 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // println!("cam pos proj {}", cam_proj);
 
     let _cam_eye = vec4(
-        core.global.camera_pos.x,
-        core.global.camera_pos.y,
-        core.global.camera_pos.z,
+        core.global.cam_pos.x,
+        core.global.cam_pos.y,
+        core.global.cam_pos.z,
         1.,
     );
 
@@ -63,7 +63,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
 
     //let cam_center = vec4(0., 0., 0., 1.);
-    let _cam_center = vec3(core.global.camera_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
+    let _cam_center = vec3(core.global.cam_pos.z, 0., 0.); // vec4(core.camera_pos.x, 0., core.camera_pos.y, 1.);
 
     let win_coord = vec3(
         core.global.simple_cam_rot.x,

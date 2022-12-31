@@ -18,11 +18,12 @@ pub struct Global {
     pub mouse_grabbed_state: bool,
     pub simple_cam_rot: Vec2,
     pub smooth_cam_rot: Vec2,
+    pub smooth_cam_pos: Vec3,
     pub mouse_delta: Vec2,
     pub scroll_delta: f32,
     pub game_controller: bool,
     pub console: bool,
-    pub camera_pos: Vec3,
+    pub cam_pos: Vec3,
     pub debug_camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
@@ -46,7 +47,8 @@ impl Global {
             mouse_click_pos: vec2(0., 0.),
             mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
-            camera_pos: vec3(0., 0., 0.),
+            cam_pos: vec3(0., 0., 0.),
+            smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
             debug: false,
@@ -75,9 +77,12 @@ impl Global {
         self.simple_cam_rot.y = 0.;
         self.smooth_cam_rot.x = self.simple_cam_rot.x;
         self.smooth_cam_rot.y = self.simple_cam_rot.y;
-        self.camera_pos.x = 0.;
-        self.camera_pos.y = 0.;
-        self.camera_pos.z = 0.;
+        self.cam_pos.x = 0.;
+        self.cam_pos.y = 0.;
+        self.cam_pos.z = 0.;
+        self.smooth_cam_pos.x = 0.;
+        self.smooth_cam_pos.y = 0.;
+        self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
     }

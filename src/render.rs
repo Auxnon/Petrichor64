@@ -86,10 +86,12 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     let instance_buffers = core.ent_manager.render_ents(iteration, &core.device);
 
     // frame!("ent build::end");
+
+    core.global.smooth_cam_pos = core.global.smooth_cam_pos * 0.1 + core.global.cam_pos * 0.9;
     let cam_pos = if core.global.debug {
-        core.global.camera_pos + core.global.debug_camera_pos
+        core.global.smooth_cam_pos + core.global.debug_camera_pos
     } else {
-        core.global.camera_pos
+        core.global.smooth_cam_pos
     };
 
     // let v = core.global.get_mut("value".to_string());
