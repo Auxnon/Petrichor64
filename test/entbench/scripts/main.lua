@@ -32,6 +32,10 @@ function loop()
         player.x = player.x + 0.1
     end
     campos(player.x, player.y, player.z)
+    local t = input()
+    if #t > 0 then
+        print(t)
+    end
 end
 
 -- while moving W 40-43fps on macos external 120hz 2k monitor
