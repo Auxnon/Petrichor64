@@ -1,4 +1,8 @@
+use std::sync::mpsc::Sender;
+
 use mlua::{UserData, UserDataFields, UserDataMethods, Value::Nil};
+
+use crate::command::MainCommmand;
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
     pub x: f64,
@@ -21,11 +25,31 @@ pub struct LuaEnt {
     pub dead: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
+    // pub sender: Option<Sender<(u8, MainCommmand)>>,
+    // pub cloned: bool,
 }
 
 impl UserData for LuaEnt {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
+        // set meta method __gc
+        // let h = mlua::MetaMethod::
+        methods.add_meta_method("__tostring", |lu, this, _: ()| {
+            // println!("lua ent gc'd");
+            // match lu.globals().get::<&str, mlua::Function>("kill") {
+            //     Ok(kill) => {
+            //         kill.call::<_, ()>((this.get_id(),))?;
+            //     }
+            //     Err(e) => {
+            //         println!("kill error: {}", e);
+            //     }
+            // }
+            Ok(format!("[entity {}]", this.get_id()))
+        });
+        //mlua::MetaMethod::Concat::name()
+        methods.add_meta_method("__concat", |lu, this, _: ()| {
+            Ok(format!("[entity {}]", this.get_id()))
+        });
         methods.add_method_mut("pos", |_, this, p: (f64, f64, f64)| {
             this.x = p.0;
             this.y = p.1;
@@ -125,6 +149,13 @@ impl UserData for LuaEnt {
     }
 }
 
+// impl Drop for LuaEnt {
+//     fn drop(&mut self) {
+//         println!("dropping lua ent {} && cloned is {}", self.id, self.cloned);
+//         self.dirty = true;
+//         self.dead = true;
+//     }
+// }
 // impl serde::Serialize for LuaEnt {
 //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 //     where
@@ -134,33 +165,42 @@ impl UserData for LuaEnt {
 // }
 
 impl LuaEnt {
-    pub fn empty() -> LuaEnt {
-        LuaEnt {
-            x: 0.,
-            y: 0.,
-            z: 0.,
-            rot_x: 0.,
-            rot_y: 0.,
-            rot_z: 0.,
-            vel_x: 0.,
-            vel_y: 0.,
-            vel_z: 0.,
-            id: 0,
-            scale: 1.,
-            // ent: None,
-            asset: String::new(),
-            tex: String::new(),
-            dirty: false,
-            anim: false,
-            dead: false,
-            flipped: false,
-            parent: None, // children: None,
-            bundle_id: 0,
-        }
-    }
+    // pub fn empty() -> LuaEnt {
+    //     LuaEnt {
+    //         x: 0.,
+    //         y: 0.,
+    //         z: 0.,
+    //         rot_x: 0.,
+    //         rot_y: 0.,
+    //         rot_z: 0.,
+    //         vx: 0.,
+    //         vy: 0.,
+    //         vz: 0.,
+    //         id: 0,
+    //         scale: 1.,
+    //         // ent: None,
+    //         asset: String::new(),
+    //         tex: String::new(),
+    //         dirty: false,
+    //         anim: false,
+    //         dead: false,
+    //         flipped: false,
+    //         parent: None, // children: None,
+    //         bundle_id: 0,
+    //     }
+    // }
 
-    pub fn new(id: u64, asset: String, x: f64, y: f64, z: f64, scale: f64) -> LuaEnt {
+    pub fn new(
+        // sender: Sender<(u8, MainCommmand)>,
+        id: u64,
+        asset: String,
+        x: f64,
+        y: f64,
+        z: f64,
+        scale: f64,
+    ) -> LuaEnt {
         LuaEnt {
+            // sender: Some(sender),
             id,
             x,
             y,
@@ -181,6 +221,7 @@ impl LuaEnt {
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
+            // cloned: false,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -209,6 +250,10 @@ impl LuaEnt {
 
 impl Clone for LuaEnt {
     fn clone(&self) -> LuaEnt {
+        // MARK by clonging luaents for renderer and then dropping hte clones we're calling the deconstrcutor so this wont work
+        // Do we even need to clone lua ents? Can we just pass a reference to the lua ent?
+        // This was done to avoid having the lua ent lock up the render frame because the lua context is mutating it.
+        // We;re avoiding teh Arc consequences but is it worth it
         LuaEnt {
             x: self.x,
             y: self.y,
@@ -230,6 +275,8 @@ impl Clone for LuaEnt {
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
+            // sender: None,
+            // cloned: true,
         }
     }
 }

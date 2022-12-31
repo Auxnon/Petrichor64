@@ -18,6 +18,7 @@ use wgpu::Buffer;
 
 use crate::{ent::Ent, lua_ent::LuaEnt};
 
+pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize)>;
 pub struct EntManager {
     // pub ent_table: Mutex<mlua::Table<'static>>,
     // pub entities: HashMap<u64, Rc<RefCell<Ent>>>,
@@ -181,32 +182,41 @@ impl EntManager {
         // println!("rebuild")
     }
 
-    pub fn render_ents(
+    pub fn tick_update_ents(
         &self,
         iteration: u64,
         device: &wgpu::Device,
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
-        let lua_ent_array = self
-            .ent_array
-            .iter()
-            .filter_map(|a| match a.0.lock() {
-                Ok(g) => Some((g.clone(), &a.1, &a.2)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        // let lua_ent_array = self
+        //     .ent_array
+        //     .iter()
+        //     .filter_map(|a| match a.0.lock() {
+        //         Ok(g) => Some((g.clone(), &a.1, &a.2)),
+        //         _ => None,
+        //     })
+        //     .collect::<Vec<_>>();
 
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
+        for (alent, ent, uni_ref) in self.ent_array.iter() {
+            if let Ok(lent) = alent.lock() {
+                if lent.dead {
+                    // self.kill_ent(lent.get_id());
+                    println!("dead ent {}", lent.get_id());
+                }
 
-        for (lent, ent, uni_ref) in lua_ent_array.iter() {
-            let parent = match lent.parent {
-                Some(u) => mats.get(&u),
-                None => None,
-            };
+                //     }
 
-            let mat = ent.build_meta(&lent, parent);
-            let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
-            uni_ref.replace(uni);
-            mats.insert(lent.get_id(), mat);
+                // for (lent, ent, uni_ref) in lua_ent_array.iter() {
+                let parent = match lent.parent {
+                    Some(u) => mats.get(&u),
+                    None => None,
+                };
+
+                let mat = ent.build_meta(&lent, parent);
+                let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
+                uni_ref.replace(uni);
+                mats.insert(lent.get_id(), mat);
+            }
         }
 
         let instance_buffers = self
@@ -360,21 +370,34 @@ impl EntManager {
         println!("ent count after bundle purge {}", self.ent_array.len());
     }
 
-    pub fn check_ents(&mut self, iteration: u64, tm: &TexManager, mm: &ModelManager) {
-        let mut v: Vec<LuaEnt> = vec![];
+    pub fn check_ents(
+        &mut self,
+        iteration: u64,
+        device: &wgpu::Device,
+        tm: &TexManager,
+        mm: &ModelManager,
+    ) -> Vec<(Rc<Model>, Buffer, usize)> {
+        // let mut v: Vec<LuaEnt> = vec![];
+        let mut failed = 0;
+        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
         for (lent, ent, uni_ref) in self.ent_array.iter_mut() {
-            match lent.try_lock() {
+            match lent.lock() {
                 Ok(mut l) => {
+                    let parent = match l.parent {
+                        Some(u) => mats.get(&u),
+                        None => None,
+                    };
                     if l.is_dirty() {
+                        failed += 1;
+                        if l.dead {
+                            println!("dead");
+                            continue;
+                        }
                         l.clear_dirt();
-                        // println!("pre dirty in array {}", l.get_tex());
-                        // v.push(l.clone());
 
                         if l.is_anim() {
-                            // println!("anim {}", l.get_tex());
                             match tm.animations.get(l.get_tex()) {
                                 Some(t) => {
-                                    // println!("we found {} with {:?}", l.get_tex(), t);
                                     ent.set_anim(t.clone(), iteration);
                                 }
                                 _ => {}
@@ -386,15 +409,38 @@ impl EntManager {
                     } else {
                         // println!("not dirty");
                     }
+                    let mat = ent.build_meta(&l, parent);
+                    let uni = ent.get_uniforms_with_mat(&l, iteration, mat);
+                    uni_ref.replace(uni);
+                    mats.insert(l.get_id(), mat);
                 }
                 _ => {}
             }
         }
 
+        let instance_buffers = self
+            .render_hash
+            .iter()
+            .map(|(name, (m, unis))| {
+                let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
+                let sz = u.len();
+                (
+                    Rc::clone(m),
+                    crate::ent_manager::EntManager::build_instance_buffer(&u, device),
+                    sz,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        if failed > 0 {
+            println!("failed to lock {} ents", failed);
+        }
+        // println!("size {}", self.ent_array.len());
         if self.hash_dirty {
             self.rebuild_render_hash();
             self.hash_dirty = false;
         }
+        instance_buffers
 
         // if (self.specks.len() == 0 && self.specks.len() < 10000) {
         //     self.awful_test(tm, mm);

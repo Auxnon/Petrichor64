@@ -4,6 +4,7 @@ use std::{iter, ops::Add, rc::Rc};
 
 use crate::{
     ent::{Ent, EntityUniforms},
+    ent_manager::InstanceBuffer,
     model::Model,
     Core,
 };
@@ -71,7 +72,11 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     (mx_view, mx_projection, model_mat)
 }
 
-pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceError> {
+pub fn render_loop(
+    core: &mut Core,
+    iteration: u64,
+    instance_buffers: InstanceBuffer,
+) -> Result<(), wgpu::SurfaceError> {
     // frame!("Render");
     let output = core.surface.get_current_texture()?;
 
@@ -80,10 +85,13 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
         .create_view(&wgpu::TextureViewDescriptor::default());
 
     // TODO is this expensive? only sometimes?
-    core.gui
-        .render(&core.queue, core.global.get("value2".to_string()));
+    core.gui.render(
+        &core.queue,
+        core.global.get("value2".to_string()),
+        &mut core.loggy,
+    );
 
-    let instance_buffers = core.ent_manager.render_ents(iteration, &core.device);
+    // let instance_buffers = core.ent_manager.render_ents(iteration, &core.device);
 
     // frame!("ent build::end");
 
@@ -280,6 +288,6 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> Result<(), wgpu::SurfaceE
     Ok(())
 }
 
-pub fn log(str: String) {
-    crate::log::log(format!("🖌render::{}", str));
-}
+// pub fn log(str: String) {
+//     crate::log::log(format!("🖌render::{}", str));
+// }

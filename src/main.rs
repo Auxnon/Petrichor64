@@ -3,7 +3,7 @@ use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
 use controls::ControlState;
-use ent_manager::EntManager;
+use ent_manager::{EntManager, InstanceBuffer};
 use global::Global;
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
@@ -637,13 +637,13 @@ impl Core {
     //     false
     // }
 
-    fn update(&mut self) {
+    fn update(&mut self) -> InstanceBuffer {
         let mut mutations = vec![];
 
         for (id, p) in self.catcher.try_iter() {
             match p {
                 MainCommmand::CamPos(v) => {
-                    self.global.camera_pos = v;
+                    self.global.cam_pos = v;
                 }
                 MainCommmand::CamRot(v) => {
                     self.global.simple_cam_rot = v;
@@ -851,13 +851,15 @@ impl Core {
                 }
             }
         }
-        self.ent_manager.check_ents(
+        let instance_buffers = self.ent_manager.check_ents(
             self.global.iteration,
+            &self.device,
             &self.tex_manager,
             &self.model_manager,
         );
 
         self.global.iteration += 1;
+        instance_buffers
     }
     fn val2float(val: &ValueMap) -> f32 {
         match val {
@@ -889,19 +891,18 @@ impl Core {
         }
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let _delta = self.loop_helper.loop_start();
-
-        if let Some(fps) = self.loop_helper.report_rate() {
-            self.global.fps = fps;
-        }
+    fn render(&mut self, instance_buffers: InstanceBuffer) -> Result<(), wgpu::SurfaceError> {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
             println!("fps::{}", self.global.fps);
         }
+        // self.loop_helper.loop_start();
 
-        let s = render::render_loop(self, self.global.iteration);
+        let s = render::render_loop(self, self.global.iteration, instance_buffers);
+        if let Some(fps) = self.loop_helper.report_rate() {
+            self.global.fps = fps;
+        }
         self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
 
         // match self.loop_helper.report_rate() {
@@ -1018,21 +1019,24 @@ fn main() {
         if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
-            core.update();
-            core.bundle_manager.call_loop(bits);
 
-            match core.render() {
-                Ok(_) => {}
-                // Reconfigure the surface if lost
-                Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-                // The system is out of memory, we should probably quit
-                Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                // All other errors (Outdated, Timeout) should be resolved by the next frame
-                Err(e) => eprintln!("{:?}", e),
-            }
             core.global.mouse_delta = vec2(0., 0.);
             // frame!("END");
             // frame!();
+        }
+
+        core.loop_helper.loop_start();
+        let instance_buffer = core.update();
+        core.bundle_manager.call_loop(bits);
+
+        match core.render(instance_buffer) {
+            Ok(_) => {}
+            // Reconfigure the surface if lost
+            Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+            // The system is out of memory, we should probably quit
+            Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+            // All other errors (Outdated, Timeout) should be resolved by the next frame
+            Err(e) => eprintln!("{:?}", e),
         }
 
         match event {
