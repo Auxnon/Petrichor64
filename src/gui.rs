@@ -340,19 +340,10 @@ impl Gui {
             self.dirty = true;
         }
     }
-    // pub fn toggle_output(&mut self) {
-    //     if self.output {
-    //         self.disable_output();
-    //     } else {
-    //         self.enable_output();
-    //     }
-    // }
-    // fn draw_img();
+
     pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
-        //let mut rng = rand::thread_rng();
-        // frame!("gui start");
         self.time = time;
-        if self.output && loggy.is_dirty_and_listen() {
+        if loggy.is_dirty_and_listen() && self.output {
             self.text = loggy.get(
                 (self.size[0] / (LETTER_SIZE + 1) - 2) as usize,
                 (self.size[1] / (LETTER_SIZE + 1) - 8) as usize,
@@ -372,12 +363,6 @@ impl Gui {
         if self.dirty_sky {
             crate::texture::write_tex(queue, &self.sky_texture, &self.sky);
             self.dirty_sky = false;
-        }
-
-        if time % 0.2 == 0.0 {
-            //log(format!("time {}", self.time));
-            //self.img = image::imageops::huerotate(&mut self.img, (time * 360.) as i32);
-            //crate::texture::write_tex(device, queue, &self.texture, &self.img);
         }
     }
 
@@ -510,6 +495,9 @@ impl GuiMorsel {
         }
     }
 
+    pub fn new_image(w: u32, h: u32) -> RgbaImage {
+        RgbaImage::new(w, h)
+    }
     pub fn send_state(&mut self) -> Option<(RgbaImage, bool)> {
         if self.dirty {
             self.dirty = false;

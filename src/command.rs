@@ -1075,6 +1075,18 @@ pub fn init_lua_sys(
         "Get image buffer userdata for editing"
     );
 
+    let gui = gui_in.clone();
+    lua!(
+        "nimg",
+        move |_, (w, h): (u32, u32)| {
+            let im = GuiMorsel::new_image(w, h);
+            let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
+
+            Ok(lua_img)
+        },
+        "Get image buffer userdata for editing"
+    );
+
     let pitcher = main_pitcher.clone();
     lua!(
         "smodel",
