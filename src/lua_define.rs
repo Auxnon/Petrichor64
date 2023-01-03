@@ -1,10 +1,11 @@
+#[cfg(feature = "audio")]
+use crate::sound::SoundCommand;
 use crate::{
     bundle::BundleResources,
     command::MainCommmand,
     controls::ControlState,
     log::LogType,
     pad::Pad,
-    sound::SoundCommand,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
@@ -22,6 +23,11 @@ use std::{
     thread,
 };
 
+#[cfg(feature = "audio")]
+pub type SoundSender = Sender<SoundCommand>;
+#[cfg(not(feature = "audio"))]
+pub type SoundSender = ();
+
 pub type MainPacket = (u8, MainCommmand);
 
 pub type LuaHandle = thread::JoinHandle<()>;
@@ -29,7 +35,7 @@ pub type LuaHandle = thread::JoinHandle<()>;
 pub enum LuaResponse {
     String(String),
     Number(f64),
-    Integer(i64),
+    Integer(i32),
     Boolean(bool),
     Table(HashMap<String, String>),
     Nil,
@@ -71,7 +77,7 @@ impl LuaCore {
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         pitcher: Sender<MainPacket>,
         loggy: Sender<(LogType, String)>,
-        singer: Sender<SoundCommand>,
+        singer: SoundSender,
         dangerous: bool,
     ) -> LuaHandle {
         let (rec, lua_handle) = start(
@@ -281,7 +287,7 @@ fn start(
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     pitcher: Sender<MainPacket>,
     loggy: Sender<(LogType, String)>,
-    singer: Sender<SoundCommand>,
+    singer: SoundSender,
     dangerous: bool,
 ) -> (
     Sender<(

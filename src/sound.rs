@@ -1,10 +1,9 @@
 use std::{sync::mpsc::{channel, Receiver, Sender}, collections::VecDeque};
 
 //use byte_slice_cast::AsByteSlice;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustc_hash::FxHashMap;
-
-use crate::sound;
 
 pub type SoundPacket = (f32, f32, Vec<f32>, Vec<f32>);
 
@@ -109,6 +108,7 @@ where
     let sample_rate = config.sample_rate.0 as f32;
     println!("Sample rate: {}", sample_rate);
     let channels = config.channels as usize;
+    println!("Channels: {}", channels);
 
     // Produce a sinusoid of maximum amplitude.
     let mut sample_clock = 0f64;

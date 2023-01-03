@@ -1,12 +1,13 @@
+#[cfg(feature = "audio")]
+use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
     bundle::BundleResources,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::MainPacket,
+    lua_define::{MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, get_color, LuaImg},
     pad::Pad,
-    sound::{Instrument, Note, SoundCommand},
     tile::Chunk,
     types::ValueMap,
     world::{TileCommand, TileResponse, World},
@@ -236,7 +237,7 @@ pub fn init_lua_sys(
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
     _net_sender: OnlineType,
-    singer: Sender<SoundCommand>,
+    singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 8]>>,
@@ -695,8 +696,6 @@ pub fn init_lua_sys(
     lua!(
         "camrot",
         move |_, (x, y): (f32, f32)| {
-            // let (tx, rx) = sync_channel::<bool>(0);
-
             pitcher.send((bundle_id, MainCommmand::CamRot(glam::vec2(x, y))));
             // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
             // println!("🧲 eyup send rot");
@@ -709,18 +708,19 @@ pub fn init_lua_sys(
         },
         "Set the camera rotation by azimuth and elevation"
     );
+    #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "sound",
         move |_, (freq, length): (f32, Option<f32>)| {
-            let len = match length {
-                Some(l) => l,
-                None => 1.,
-            };
-
-            // println!("freq {}", freq);
-            sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
-            // sing.send((freq, len, vec![], vec![]));
+            #[cfg(feature = "audio")]
+            {
+                let len = match length {
+                    Some(l) => l,
+                    None => 1.,
+                };
+                sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
+            }
             Ok(())
         },
         "Make sound"
@@ -729,49 +729,35 @@ pub fn init_lua_sys(
     lua!(
         "song",
         move |_, (notes): (Vec<Value>)| {
-            // println!("sent chain {}", converted.len());
-            let converted = notes
-                .iter()
-                .filter_map(|v| {
-                    // to vector
-                    match v {
-                        Value::Table(t) => {
-                            // let mut vec = Vec::new();
-
-                            // for it in t.pairs() {
-                            //     match it {
-                            //         Ok(pair) => {
-                            //             vec.push(pair.1);
-                            //         }
-                            //         _ => {}
-                            //     }
-                            // }
-
-                            if t.raw_len() > 0 {
-                                Some(Note::new(
-                                    0,
-                                    t.get::<usize, f32>(1).unwrap_or(440.),
-                                    t.get::<usize, f32>(2).unwrap_or(1.),
-                                    1.,
-                                ))
-                            } else {
-                                None
+            #[cfg(feature = "audio")]
+            {
+                let converted = notes
+                    .iter()
+                    .filter_map(|v| {
+                        // to vector
+                        match v {
+                            Value::Table(t) => {
+                                if t.raw_len() > 0 {
+                                    Some(Note::new(
+                                        0,
+                                        t.get::<usize, f32>(1).unwrap_or(440.),
+                                        t.get::<usize, f32>(2).unwrap_or(1.),
+                                        1.,
+                                    ))
+                                } else {
+                                    None
+                                }
                             }
+                            Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                            Value::Integer(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                            _ => None,
                         }
-                        Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
-                        Value::Integer(n) => Some(Note::new(0, *n as f32, 1., 1.)),
-                        _ => None,
-                    }
-                })
-                .collect::<Vec<Note>>();
+                    })
+                    .collect::<Vec<Note>>();
 
-            // for n in converted.iter() {
-            //     println!("note {} {}", n.frequency, n.duration);
-            // }
-
-            println!("sent chain {}", converted.len());
-            sing.send(SoundCommand::Chain(converted, None));
-            // sing.send((freq, len, vec![], vec![]));
+                // println!("sent chain {}", converted.len());
+                sing.send(SoundCommand::Chain(converted, None));
+            }
             Ok(())
         },
         "Make song"
@@ -781,8 +767,7 @@ pub fn init_lua_sys(
     lua!(
         "silence",
         move |_, (channel): (Option<usize>)| {
-            // println!("freqs {:?}", notes);
-
+            #[cfg(feature = "audio")]
             sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
 
             Ok(())
@@ -793,8 +778,7 @@ pub fn init_lua_sys(
     lua!(
         "instr",
         move |_, (notes, half): (Vec<f32>, Option<bool>)| {
-            // println!("freqs {:?}", notes);
-
+            #[cfg(feature = "audio")]
             singer.send(SoundCommand::MakeInstrument(Instrument::new(
                 0,
                 notes,
@@ -1328,6 +1312,7 @@ pub fn load_empty(core: &mut Core) {
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
+    #[cfg(feature = "audio")]
     bundle.lua.start(
         bundle.id,
         resources,
@@ -1335,6 +1320,16 @@ pub fn load_empty(core: &mut Core) {
         core.pitcher.clone(),
         core.loggy.make_sender(),
         core.singer.clone(),
+        false,
+    );
+    #[cfg(not(feature = "audio"))]
+    bundle.lua.start(
+        bundle.id,
+        resources,
+        world_sender,
+        core.pitcher.clone(),
+        core.loggy.make_sender(),
+        (),
         false,
     );
     let default = "function main() end function loop() end";
@@ -1370,6 +1365,7 @@ pub fn load(
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+    #[cfg(feature = "audio")]
     bundle.lua.start(
         bundle_id,
         resources,
@@ -1377,6 +1373,16 @@ pub fn load(
         core.pitcher.clone(),
         core.loggy.make_sender(),
         core.singer.clone(),
+        false,
+    );
+    #[cfg(not(feature = "audio"))]
+    bundle.lua.start(
+        bundle_id,
+        resources,
+        world_sender,
+        core.pitcher.clone(),
+        core.loggy.make_sender(),
+        (),
         false,
     );
     let debug = core.global.debug;

@@ -8,6 +8,7 @@ use global::Global;
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
 use model::ModelManager;
+#[cfg(feature = "audio")]
 use sound::{SoundCommand, SoundPacket};
 use std::{
     mem,
@@ -55,6 +56,7 @@ mod parse;
 mod post;
 mod ray;
 mod render;
+#[cfg(feature = "audio")]
 mod sound;
 mod switch_board;
 mod template;
@@ -76,7 +78,9 @@ pub struct Core {
     switch_board: Arc<RwLock<SwitchBoard>>,
     global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
+    #[cfg(feature = "audio")]
     _stream: Option<cpal::Stream>,
+    #[cfg(feature = "audio")]
     singer: Sender<SoundCommand>,
     uniform_buf: Buffer,
     uniform_alignment: u64,
@@ -567,7 +571,9 @@ impl Core {
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(120.0); // limit to X FPS if possible
 
+        #[cfg(feature = "audio")]
         let (stream, singer) = sound::init();
+        #[cfg(feature = "audio")]
         let stream_result = match stream {
             Ok(stream) => Some(stream),
             Err(e) => {
@@ -600,7 +606,9 @@ impl Core {
             main_bind_group,
             entity_bind_group,
             entity_uniform_buf,
+            #[cfg(feature = "audio")]
             _stream: stream_result,
+            #[cfg(feature = "audio")]
             singer,
             world,
             master_texture: diff_tex,
@@ -701,6 +709,7 @@ impl Core {
                         v,
                         i,
                         u,
+                        &mut self.loggy,
                     );
                     // name, v, i, u);
                 }
