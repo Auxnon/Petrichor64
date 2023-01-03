@@ -152,6 +152,7 @@ impl Loggy {
     /** SYS: log out */
     pub fn log(&mut self, log_type: LogType, str: &str) {
         self._print(str, false);
+        println!("log {}", str);
     }
 
     /** SYS: Well this looks dumb, just take my word for it*/
@@ -245,11 +246,14 @@ impl Loggy {
         }
         buf
     }
-    /** Check for any pending messages and return true if the log has new content or not*/
-    pub fn is_dirty_and_listen(&mut self) -> bool {
+    pub fn listen(&mut self) {
         if let Ok((t, s)) = self.receiver.try_recv() {
             self.log(t, &s);
         }
+    }
+    /** Check for any pending messages and return true if the log has new content or not*/
+    pub fn is_dirty_and_listen(&mut self) -> bool {
+        self.listen();
         // let stuff = self
         //     .receiver
         //     .try_iter()

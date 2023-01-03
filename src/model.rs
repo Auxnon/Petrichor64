@@ -1,6 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{ivec3, vec4, IVec3, Mat4, Quat, Vec3, Vec4};
 use itertools::izip;
+use log::logger;
 use std::{collections::HashMap, rc::Rc};
 use wgpu::{util::DeviceExt, Device};
 
@@ -257,8 +258,8 @@ impl ModelManager {
             Some(n) => format!("{}.{}", base_name, n),
             None => base_name.to_owned(),
         };
-        println!("Load mesh {} with {} verts", compound_name, vertices.len());
-        println!("ind #{} verts #{}", indices.len(), vertices.len());
+        // println!("Load mesh {} with {} verts and texture {}", compound_name, vertices.len(),);
+        // println!("ind #{} verts #{}", indices.len(), vertices.len());
         let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", compound_name, " Mesh Vertex Buffer")),
             contents: bytemuck::cast_slice(&vertices),
@@ -296,8 +297,20 @@ impl ModelManager {
         verts: Vec<[f32; 3]>,
         inds: Vec<u32>,
         uvs: Vec<[f32; 2]>,
+        loggy: &mut Loggy,
     ) {
+        loggy.log(
+            LogType::Model,
+            &format!(
+                "Build inline model {} from {} verts, {} inds and texture {}",
+                name,
+                verts.len(),
+                inds.len(),
+                texture
+            ),
+        );
         let uv_adjust = tex_manager.get_tex(texture);
+        loggy.log(LogType::Model, &format!("uv_adjust: {:?}", uv_adjust));
         let vertices = if uvs.len() == verts.len() {
             verts
                 .iter()
