@@ -21,10 +21,8 @@ iter_notes = 1
 sound_counter = 0
 out = {}
 
-
 bar_ui_size = 0.8
 bar_ui_size2 = 1. - bar_ui_size
-
 
 mouse_once = false
 
@@ -32,9 +30,6 @@ last_notes = {}
 last_instr = {}
 
 musical_mode = true
-
-
-
 
 -- e c - e f - - f
 --  G - - A _ G e c

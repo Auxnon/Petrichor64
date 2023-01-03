@@ -2,6 +2,9 @@ example = spawn('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
 sky()
 fill(1, 1, .4, 1)
 gui()
+t = 0
+camera = { x = 0, y = 0, z = 0 }
+
 
 function land(h)
     for i = -5, 5 do
@@ -22,14 +25,18 @@ function irnd(a)
 end
 
 function tree(x, y, h)
-    tile("blocks9", x, y, h + 1)
+    tile("trunk", x, y, h + 1)
     tile("blocks8", x, y, h + 2)
-    print("tr" .. x .. "," .. y .. "," .. h)
+    -- print("tr" .. x .. "," .. y .. "," .. h)
 end
 
 function main()
+    init_test()
     log('main runs once everything has loaded')
     land(-2)
+
+    camrot(pi / 2., 0) -- -pi / 8.)
+
 end
 
 tiler = 1
@@ -42,4 +49,11 @@ function loop()
         text("t" .. tiler, tiler * 10)
         tiler = 1 + tiler
     end
+    t = t + 0.2
+    -- camrot(pi / 2., t)
+
+    -- camrot(0, t)
+    loop_controls()
+    loop_test()
+    campos(camera.x, camera.y, camera.z)
 end

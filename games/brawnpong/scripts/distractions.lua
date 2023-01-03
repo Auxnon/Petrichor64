@@ -1,0 +1,3 @@
+-- calls for mom, mom blocks half the view
+-- cat shows up and bats controller, pushes tv
+-- player 2 pushes tv, punches you, tries to take controller
