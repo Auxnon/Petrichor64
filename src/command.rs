@@ -807,7 +807,7 @@ pub fn init_lua_sys(
             // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
             let c = get_color(r, g, b, a);
             println!("fill");
-            gui.borrow_mut().fill(c.x, c.y, c.z, c.w);
+            gui.borrow_mut().fill(c);
             Ok(1)
         },
         "Set background color"
@@ -869,17 +869,37 @@ pub fn init_lua_sys(
             Value,
             Option<f32>,
             Option<f32>,
-            Option<f32>
+            Option<f32>,
         )| {
-            // pitcher.send((
-            //     bundle_id,
-            //     MainCommmand::Square(numm(x), numm(y), numm(w), numm(h)),
-            // ));
             let c = get_color(r, g, b, a);
-            gui.borrow_mut().rect(numm(x), numm(y), numm(w), numm(h), c);
+            gui.borrow_mut()
+                .rect(numm(x), numm(y), numm(w), numm(h), c, None);
             Ok(())
         },
         "Draw a rectangle on the gui"
+    );
+
+    let gui = gui_in.clone();
+    lua!(
+        "rrect",
+        move |_,
+              (x, y, w, h, ro, r, g, b, a): (
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>,
+        )| {
+            let c = get_color(r, g, b, a);
+            gui.borrow_mut()
+                .rect(numm(x), numm(y), numm(w), numm(h), c, Some(numm(ro)));
+            Ok(())
+        },
+        "Draw a rounded rectangle on the gui"
     );
 
     // let pitcher = main_pitcher.clone();
@@ -1789,7 +1809,7 @@ pub enum MainCommmand {
 fn numm(x: mlua::Value) -> NumCouple {
     match x {
         mlua::Value::Integer(i) => (true, i as f32),
-        mlua::Value::Number(f) => (false, f as f32),
+        mlua::Value::Number(f) => (f >= 2., f as f32),
         _ => (false, 0.),
     }
 }

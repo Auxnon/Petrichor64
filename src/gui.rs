@@ -10,7 +10,7 @@ use crate::{
     texture::TexManager,
 };
 use image::{ImageBuffer, RgbaImage};
-use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
+use imageproc::drawing::{draw_filled_circle_mut, draw_filled_rect_mut};
 use wgpu::{Device, Queue, Sampler, Texture, TextureView};
 
 const LETTER_SIZE: u32 = 8;
@@ -401,27 +401,25 @@ impl GuiMorsel {
         }
     }
 
-    pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
+    pub fn fill(&mut self, c: Vec4) {
         let width = self.size[0];
         let height = self.size[1];
-
-        draw_filled_rect_mut(
-            self.get_targ(),
-            imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
-            image::Rgba([
-                (r * 255.) as u8,
-                (g * 255.) as u8,
-                (b * 255.) as u8,
-                (a * 255.) as u8,
-            ]),
-        );
+        direct_fill(self.get_targ(), width, height, c);
     }
 
-    pub fn rect(&mut self, x: NumCouple, y: NumCouple, w: NumCouple, h: NumCouple, c: Vec4) {
+    pub fn rect(
+        &mut self,
+        x: NumCouple,
+        y: NumCouple,
+        w: NumCouple,
+        h: NumCouple,
+        c: Vec4,
+        corner: Option<NumCouple>,
+    ) {
         let width = self.size[0];
         let height = self.size[1];
 
-        direct_rect(self.get_targ(), width, height, x, y, w, h, c)
+        direct_rect(self.get_targ(), width, height, x, y, w, h, c, corner)
     }
 
     pub fn line(&mut self, x1: NumCouple, y1: NumCouple, x2: NumCouple, y2: NumCouple, c: Vec4) {
@@ -532,21 +530,56 @@ pub fn direct_rect(
     w: NumCouple,
     h: NumCouple,
     c: Vec4,
+    corner: Option<NumCouple>,
 ) {
-    let xx = x.1.max(0.) * if x.0 { 1. } else { width as f32 };
-    let yy = y.1.max(0.) * if y.0 { 1. } else { height as f32 };
-    let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.);
-    let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.);
-    draw_filled_rect_mut(
-        target,
-        imageproc::rect::Rect::at(xx as i32, yy as i32).of_size(ww as u32, hh as u32),
-        image::Rgba([
-            (c.x * 255.).floor() as u8,
-            (c.y * 255.).floor() as u8,
-            (c.z * 255.).floor() as u8,
-            (c.w * 255.).floor() as u8,
-        ]),
-    );
+    let xx = (x.1.max(0.) * if x.0 { 1. } else { width as f32 }) as i32;
+    let yy = (y.1.max(0.) * if y.0 { 1. } else { height as f32 }) as i32;
+    let ww = (w.1.max(0.) * if w.0 { 1. } else { width as f32 }).max(1.) as u32;
+    let hh = (h.1.max(0.) * if h.0 { 1. } else { height as f32 }).max(1.) as u32;
+    let color = image::Rgba([
+        (c.x * 255.).floor() as u8,
+        (c.y * 255.).floor() as u8,
+        (c.z * 255.).floor() as u8,
+        (c.w * 255.).floor() as u8,
+    ]);
+    match corner {
+        Some(c) => {
+            let mut radius = (c.1.max(0.) * if c.0 { 1. } else { width as f32 }) as i32;
+            let maxa = (ww.min(hh) / 2) as i32;
+            if radius > maxa {
+                radius = maxa;
+            }
+            let ww2 = ww as i32;
+            let hh2 = hh as i32;
+
+            let cx1 = xx + (radius);
+            let cx2 = xx + (ww2 - radius - 1); // -1 is error correction, why do we need it? -\_(ツ)_/-
+            let cy1 = yy + radius;
+            let cy2 = yy + (hh2 - radius - 1);
+            draw_filled_circle_mut(target, (cx1, cy1), radius, color);
+            draw_filled_circle_mut(target, (cx1, cy2), radius, color);
+            draw_filled_circle_mut(target, (cx2, cy1), radius, color);
+            draw_filled_circle_mut(target, (cx2, cy2), radius, color);
+
+            draw_filled_rect_mut(
+                target,
+                imageproc::rect::Rect::at(xx, cy1).of_size(ww, (cy2 - cy1) as u32),
+                color,
+            );
+            draw_filled_rect_mut(
+                target,
+                imageproc::rect::Rect::at(cx1, yy).of_size((cx2 - cx1) as u32, hh),
+                color,
+            );
+        }
+        None => {
+            draw_filled_rect_mut(
+                target,
+                imageproc::rect::Rect::at(xx, yy).of_size(ww, hh),
+                color,
+            );
+        }
+    }
 }
 
 pub fn direct_line(
@@ -621,4 +654,18 @@ pub fn direct_image(
     let yy = if y.0 { y.1 } else { y.1 * height as f32 };
 
     image::imageops::overlay(target, source, xx as i64, yy as i64);
+}
+
+pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4) {
+    let color = image::Rgba([
+        (c.x * 255.).floor() as u8,
+        (c.y * 255.).floor() as u8,
+        (c.z * 255.).floor() as u8,
+        (c.w * 255.).floor() as u8,
+    ]);
+    draw_filled_rect_mut(
+        target,
+        imageproc::rect::Rect::at(0, 0).of_size(width, height),
+        color,
+    );
 }

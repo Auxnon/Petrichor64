@@ -6,7 +6,7 @@ use mlua::{AnyUserData, UserData, UserDataMethods, Value};
 
 use crate::{
     command::NumCouple,
-    gui::{direct_image, direct_line, direct_rect, direct_text},
+    gui::{direct_fill, direct_image, direct_line, direct_rect, direct_text},
 };
 
 pub struct LuaImg {
@@ -110,6 +110,37 @@ impl UserData for LuaImg {
                     numm(w),
                     numm(h),
                     c,
+                    None,
+                );
+                Ok(())
+            },
+        );
+        methods.add_method_mut(
+            "rrect",
+            |_,
+             this,
+             (x, y, w, h, ro, r, g, b, a): (
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+                Option<f32>,
+                Option<f32>,
+                Option<f32>,
+            )| {
+                let c = get_color(r, g, b, a);
+                direct_rect(
+                    &mut this.image,
+                    this.width,
+                    this.height,
+                    numm(x),
+                    numm(y),
+                    numm(w),
+                    numm(h),
+                    c,
+                    Some(numm(ro)),
                 );
                 Ok(())
             },
@@ -177,6 +208,18 @@ impl UserData for LuaImg {
             this.image = RgbaImage::new(this.width, this.height);
             Ok(())
         });
+        methods.add_method_mut(
+            "fill",
+            |_, this, (r, g, b, a): (Option<Value>, Option<f32>, Option<f32>, Option<f32>)| {
+                let c = match r {
+                    Some(rr) => get_color(rr, g, b, a),
+                    _ => vec4(1., 1., 1., 1.),
+                };
+                direct_fill(&mut this.image, this.width, this.height, c);
+                // this.image = RgbaImage::new(this.width, this.height);
+                Ok(())
+            },
+        );
         methods.add_method("copy", |_, this, (): ()| Ok(this.clone()));
 
         // TODO from raw
@@ -207,7 +250,7 @@ impl UserData for LuaImg {
 fn numm(x: mlua::Value) -> NumCouple {
     match x {
         mlua::Value::Integer(i) => (true, i as f32),
-        mlua::Value::Number(f) => (false, f as f32),
+        mlua::Value::Number(f) => (f >= 2., f as f32),
         _ => (false, 0.),
     }
 }
