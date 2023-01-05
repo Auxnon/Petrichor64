@@ -678,7 +678,13 @@ impl Core {
                     tx.send(self.tex_manager.get_img(&s));
                 }
                 MainCommmand::SetImg(s, im) => {
-                    self.tex_manager.overwrite_texture(&s, im);
+                    self.tex_manager.overwrite_texture(
+                        &s,
+                        im,
+                        &mut self.world,
+                        id,
+                        &mut self.loggy,
+                    );
                     self.tex_manager
                         .refinalize(&self.queue, &self.master_texture);
                 }

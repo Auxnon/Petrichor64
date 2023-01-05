@@ -252,14 +252,14 @@ impl TexManager {
     fn sort_image(
         &mut self,
         world: &mut World,
-        name_like: &String,
+        name_like: &str,
         img: RgbaImage,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
         from_unpack: bool,
         loggy: &mut Loggy,
     ) {
-        let (name, mut is_tile) = get_name(name_like.clone(), from_unpack);
+        let (name, mut is_tile) = get_name(name_like, from_unpack);
         let mut rename = None;
         let mut tile_dim = if is_tile > 0 { is_tile } else { 16u32 };
         match template {
@@ -302,7 +302,7 @@ impl TexManager {
     pub fn load_tex_from_buffer(
         &mut self,
         world: &mut World,
-        name_like: &String,
+        name_like: &str,
         buffer: &Vec<u8>,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
@@ -385,16 +385,30 @@ impl TexManager {
             .collect::<Vec<Vec4>>()
     }
 
-    pub fn overwrite_texture(&mut self, name: &str, source: RgbaImage) {
-        if let Some(pos) = self.get_tex_or_not(name) {
-            // overlay(master_img, &source, x as i64, y as i64);
-            image::imageops::replace(
-                &mut self.atlas,
-                &source,
-                (pos.x * self.atlas_dim.x as f32) as i64,
-                (pos.y * self.atlas_dim.y as f32) as i64,
-            );
-            // image::imageops::overlay(master_img, &source, x as i64, y as i64);
+    pub fn overwrite_texture(
+        &mut self,
+        name: &str,
+        source: RgbaImage,
+        world: &mut World,
+        bundle_id: u8,
+        loggy: &mut Loggy,
+    ) {
+        match self.get_tex_or_not(name) {
+            Some(pos) => {
+                // overlay(master_img, &source, x as i64, y as i64);
+                image::imageops::replace(
+                    &mut self.atlas,
+                    &source,
+                    (pos.x * self.atlas_dim.x as f32) as i64,
+                    (pos.y * self.atlas_dim.y as f32) as i64,
+                );
+                // image::imageops::overlay(master_img, &source, x as i64, y as i64);
+            }
+            None => {
+                // println!("brand new texture {}", name);
+                self.sort_image(world, name, source, bundle_id, None, true, loggy)
+                // self.load_tex_from_buffer(world, name, &source.to_vec(), bundle_id, None, loggy)
+            }
         }
     }
 
@@ -579,7 +593,7 @@ pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageE
     img
 }
 
-fn get_name(str: String, from_unpack: bool) -> (String, u32) {
+fn get_name(str: &str, from_unpack: bool) -> (String, u32) {
     if from_unpack {
         //TODO we can assume hopefully that no file extension was provided in an unpack call of this func, this should be fixed but it's complicated
         let bits = str.split(".").collect::<Vec<_>>();
@@ -591,7 +605,7 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
                 }
                 (o.to_string(), 0)
             }
-            None => (str, 0),
+            None => (str.to_string(), 0),
         }
     } else {
         let smol = str.split(SLASH).collect::<Vec<_>>();
@@ -607,7 +621,7 @@ fn get_name(str: String, from_unpack: bool) -> (String, u32) {
                 }
                 (o.to_string(), 0)
             }
-            None => (str, 0),
+            None => (str.to_string(), 0),
         }
     }
 }
