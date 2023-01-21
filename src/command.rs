@@ -813,9 +813,9 @@ pub fn init_lua_sys(
     let gui = gui_in.clone();
     lua!(
         "fill",
-        move |_, (r, g, b, a): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| {
+        move |_, rgb: mlua::Value| {
             // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
-            let c = get_color(r, g, b, a);
+            let c = get_color(rgb);
             println!("fill");
             gui.borrow_mut().fill(c);
             Ok(1)
@@ -826,16 +826,8 @@ pub fn init_lua_sys(
     let gui = gui_in.clone();
     lua!(
         "pixel",
-        move |_,
-              (x, y, r, g, b, a): (
-            u32,
-            u32,
-            mlua::Value,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>
-        )| {
-            let c = get_color(r, g, b, a);
+        move |_, (x, y, rgb): (u32, u32, mlua::Value,)| {
+            let c = get_color(rgb);
             gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
             // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
             Ok(1)
@@ -870,20 +862,10 @@ pub fn init_lua_sys(
     let gui = gui_in.clone();
     lua!(
         "rect",
-        move |_,
-              (x, y, w, h, r, g, b, a): (
-            Value,
-            Value,
-            Value,
-            Value,
-            Value,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>,
-        )| {
-            let c = get_color(r, g, b, a);
+        move |_, (x, y, w, h, rgb): (Value, Value, Value, Value, Value,)| {
+            let c = get_color(rgb);
             gui.borrow_mut()
-                .rect(numm(x), numm(y), numm(w), numm(h), c, None);
+                .rect(num(x), num(y), num(w), num(h), c, None);
             Ok(())
         },
         "Draw a rectangle on the gui"
@@ -892,21 +874,10 @@ pub fn init_lua_sys(
     let gui = gui_in.clone();
     lua!(
         "rrect",
-        move |_,
-              (x, y, w, h, ro, r, g, b, a): (
-            Value,
-            Value,
-            Value,
-            Value,
-            Value,
-            Value,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>,
-        )| {
-            let c = get_color(r, g, b, a);
+        move |_, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value,)| {
+            let c = get_color(rgb);
             gui.borrow_mut()
-                .rect(numm(x), numm(y), numm(w), numm(h), c, Some(numm(ro)));
+                .rect(num(x), num(y), num(w), num(h), c, Some(num(ro)));
             Ok(())
         },
         "Draw a rounded rectangle on the gui"
@@ -916,23 +887,13 @@ pub fn init_lua_sys(
     let gui = gui_in.clone();
     lua!(
         "line",
-        move |_,
-              (x, y, x2, y2, r, g, b, a): (
-            Value,
-            Value,
-            Value,
-            Value,
-            Option<Value>,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>
-        )| {
-            let color = match r {
-                Some(rr) => get_color(rr, g, b, a),
+        move |_, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Option<Value>,)| {
+            let color = match rgb {
+                Some(rgba) => get_color(rgba),
                 None => vec4(1., 1., 1., 1.),
             };
             gui.borrow_mut()
-                .line(numm(x), numm(y), numm(x2), numm(y2), color);
+                .line(num(x), num(y), num(x2), num(y2), color);
 
             Ok(())
         },
@@ -943,31 +904,32 @@ pub fn init_lua_sys(
     lua!(
         "text",
         move |_,
-              (txt, x, y, r, g, b, a): (
+              (txt, x, y, rgb, typeset): (
             String,
             Option<Value>,
             Option<Value>,
             Option<Value>,
-            Option<f32>,
-            Option<f32>,
-            Option<f32>
+            Option<Value>
         )| {
-            let color = match r {
-                Some(rr) => get_color(rr, g, b, a),
+            let color = match rgb {
+                Some(rgba) => get_color(rgba),
                 None => vec4(1., 1., 1., 1.),
             };
-            gui.borrow_mut().text(
-                &txt,
-                match x {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
+            let font = match typeset {
+                Some(t) => match t {
+                    Value::String(s) => match s.to_str() {
+                        Ok(ss) => Some(ss.to_string()),
+                        _ => None,
                 },
-                match y {
-                    Some(o) => numm(o),
-                    _ => (false, 0.),
+                    Value::Integer(i) => match i {
+                        8 => Some("8".to_string()),
+                        _ => None,
                 },
-                color,
-            );
+                    _ => None,
+                },
+                _ => None,
+            };
+            gui.borrow_mut().text(&txt, numop(x), numop(y), color);
 
             Ok(())
         },
@@ -982,17 +944,7 @@ pub fn init_lua_sys(
             // if let Value::UserData(imm) = im {
 
             if let Ok(limg) = im.borrow::<LuaImg>() {
-                gui.borrow_mut().draw_image(
-                    &limg.image,
-                    match x {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
-                    match y {
-                        Some(o) => numm(o),
-                        _ => (false, 0.),
-                    },
-                );
+                gui.borrow_mut().draw_image(&limg.image, numop(x), numop(y));
             };
 
             // match im {
@@ -1788,7 +1740,7 @@ pub enum MainCommmand {
     // Line(NumCouple, NumCouple, NumCouple, NumCouple, Vec4),
     // Rect(NumCouple, NumCouple, NumCouple, NumCouple, Vec4),
     // Text(String, NumCouple, NumCouple),
-    DrawImg(String, NumCouple, NumCouple),
+    DrawImg(String, LuaResponse, LuaResponse),
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage),
     Pixel(u32, u32, glam::Vec4),
@@ -1804,7 +1756,7 @@ pub enum MainCommmand {
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
     AsyncError(String),
-    AsyncGui(image::RgbaImage, bool),
+    LoopComplete(Option<(image::RgbaImage, bool)>),
     Reload(),
     BundleDropped(BundleResources),
     Subload(String, bool),
@@ -1815,14 +1767,107 @@ pub enum MainCommmand {
     Meta(usize),
 }
 
-/** converts or value into a tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val) */
-fn numm(x: mlua::Value) -> NumCouple {
+pub fn num(x: Value) -> LuaResponse {
+    match x {
+        Value::Integer(i) => LuaResponse::Integer(i),
+        Value::Number(f) => LuaResponse::Number(f),
+        Value::String(s) => match s.to_str() {
+            Ok(s) => LuaResponse::String(s.to_string()),
+            _ => LuaResponse::Integer(0),
+        },
+        _ => LuaResponse::Integer(0),
+    }
+}
+pub fn numop(x: Option<Value>) -> LuaResponse {
+    match x {
+        Some(v) => num(v),
+        _ => LuaResponse::Integer(0),
+    }
+}
+fn nummold(x: mlua::Value) -> NumCouple {
     match x {
         mlua::Value::Integer(i) => (true, i as f32),
         mlua::Value::Number(f) => (f >= 2., f as f32),
         _ => (false, 0.),
     }
 }
+
+/** converts or value into a tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val) */
+// fn numm2(x: mlua::Value) -> GuiUnit {
+//     match x {
+//         // mlua::Value::Integer(i) => (true, i as f32),
+//         // mlua::Value::Number(f) => (f >= 2., f as f32),
+//         // _ => (false, 0.),
+//         Value::Integer(i) => {
+//             if i < 0 {
+//                 GuiUnit::ReversePixel(i.abs() as u32)
+//             } else {
+//                 GuiUnit::Pixel(i as u32)
+//             }
+//         }
+//         Value::Number(f) => {
+//             if f < 0. {
+//                 GuiUnit::ReversePercent(f.abs() as f32)
+//             } else {
+//                 GuiUnit::Percent(f as f32)
+//             }
+//         }
+//         Value::String(s) => match s.to_str() {
+//             Ok(s) => {
+//                 // print!()
+//                 let st = s.trim();
+//                 if st.starts_with("=") {
+//                     st.split(['-', '+']).for_each(|p| {
+//                         let seg = p.trim();
+//                         // if st.ends_with("%") {
+//                         //     if st.ends_with("@%") {
+//                         //         let n = st[0..st.len() - 2].parse::<f32>().unwrap_or(0);
+//                         //         return GuiUnit::AspectPercent(n / 100.);
+//                         //     } else {
+//                         //         let n = st.parse::<f32>().unwrap_or(0.);
+//                         //         return GuiUnit::Percent(n / 100.);
+//                         //     }
+//                         // } else if st.ends_with("@") {
+//                         //     let n = st.parse::<u32>().unwrap_or(0);
+//                         //     return GuiUnit::Pixel(n);
+//                         // }
+
+//                         // if s.starts_with("=") {
+//                         //     let n = s[1..].parse::<f32>().unwrap_or(0.);
+//                         //     return GuiUnit::AspectPercent(n / 100.);
+//                         // } else {
+//                         //     let n = s.parse::<f32>().unwrap_or(0.);
+//                         //     return GuiUnit::AspectPercent(n / 100.);
+//                         // }
+//                     });
+//                     return GuiUnit::Percent(0.5);
+//                 } else {
+//                     if st.ends_with("%") {
+//                         if st.ends_with("@%") {
+//                             let n = st[0..st.len() - 2].parse::<f32>().unwrap_or(0.);
+//                             return GuiUnit::AspectPercent(n / 100.);
+//                         } else {
+//                             let n = st.parse::<f32>().unwrap_or(0.);
+//                             return GuiUnit::Percent(n / 100.);
+//                         }
+//                     } else if st.ends_with("@") {
+//                         let n = st.parse::<u32>().unwrap_or(0);
+//                         return GuiUnit::Pixel(n);
+//                     } else {
+//                         return GuiUnit::Percent(0.5);
+//                     }
+//                 }
+//                 // match s {
+//                 //     "center" => GuiUnit::Percent(0.5),
+//                 //     "left" => GuiUnit::Percent(0.),
+//                 //     "right" => GuiUnit::Percent(1.),
+//                 // }
+//             }
+//             _ => GuiUnit::Pixel(0),
+//         },
+//         _ => GuiUnit::Pixel(0),
+//     }
+// }
 
 fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
@@ -1866,4 +1911,8 @@ fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
         }
     }
     data
+}
+
+fn make_err(s: &str) -> mlua::prelude::LuaError {
+    return mlua::Error::RuntimeError(s.to_string());
 }
