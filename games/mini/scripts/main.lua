@@ -20,9 +20,9 @@ function land(h)
     tile("example", 0, 12, h + 1)
 end
 
-function irnd(a)
-    return flr(rnd() * a)
-end
+-- function irnd(a)
+--     return flr(rnd() * a)
+-- end
 
 function tree(x, y, h)
     tile("trunk", x, y, h + 1)

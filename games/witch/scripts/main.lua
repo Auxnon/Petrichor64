@@ -303,7 +303,7 @@ function loop()
                 dimg(title, 96, 128)
             end
 
-            campos(cam_pos.x, cam_pos.y, cam_pos.z)
+            cam { pos = { cam_pos.x, cam_pos.y, cam_pos.z } }
 
             second_timer = second_timer + 1
             if second_timer >= 60 then
