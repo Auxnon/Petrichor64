@@ -666,7 +666,7 @@ impl Core {
 
     fn update(&mut self, completed_bundles: &mut FxHashMap<u8, bool>) -> Option<InstanceBuffer> {
         let mut mutations = vec![];
-
+        let mut loop_complete = false;
         for (id, p) in self.catcher.try_iter() {
             match p {
                 MainCommmand::CamPos(v) => {
@@ -834,14 +834,27 @@ impl Core {
                     self.loggy.log(LogType::LuaError, &s);
                     // crate::log::log(s);
                 }
-                MainCommmand::BundleDropped(b) => self.bundle_manager.reclaim_resources(b),
+                MainCommmand::BundleDropped(b) => {
+                    completed_bundles.remove(&id);
+                    self.bundle_manager.reclaim_resources(b)
+                }
                 MainCommmand::Subload(file, is_overlay) => {
                     mutations.push((id, MainCommmand::Subload(file, is_overlay)));
                 }
                 MainCommmand::Reload() => {
                     mutations.push((id, MainCommmand::Reload()));
                 }
-                MainCommmand::AsyncGui(img, is_sky) => {
+
+                MainCommmand::WorldSync(chunks, dropped) => {
+                    self.world
+                        .process_sync(id, chunks, dropped, &self.model_manager, &self.device);
+                }
+                MainCommmand::Stats() => {
+                    self.world.stats();
+                }
+                MainCommmand::LoopComplete(img_result) => {
+                    match img_result {
+                        Some((img, is_sky)) => {
                     let raster_id = if is_sky { 1 } else { 0 };
 
                     if !self.bundle_manager.is_single() {
@@ -851,12 +864,15 @@ impl Core {
                         self.gui.replace_image(img, is_sky);
                     }
                 }
-                MainCommmand::WorldSync(chunks, dropped) => {
-                    self.world
-                        .process_sync(id, chunks, dropped, &self.model_manager, &self.device);
+                        _ => {}
                 }
-                MainCommmand::Stats() => {
-                    self.world.stats();
+                    // if let Some(reff) = completed_bundles.get_mut(&id) {
+                    //     *reff += 1;
+                    // } else {
+                    //     completed_bundles.insert(id, 1);
+                    // }
+                    completed_bundles.insert(id, true);
+                    loop_complete = true;
                 }
                 _ => {}
             };
@@ -885,12 +901,17 @@ impl Core {
                 }
             }
         }
-        let instance_buffers = self.ent_manager.check_ents(
+        let instance_buffers = if loop_complete {
+            Some(self.ent_manager.check_ents(
             self.global.iteration,
             &self.device,
             &self.tex_manager,
             &self.model_manager,
-        );
+            ))
+        } else {
+            // println!("skip frame");
+            None
+        };
 
         self.global.iteration += 1;
         instance_buffers
@@ -924,8 +945,14 @@ impl Core {
             _ => vec![],
         }
     }
+    fn val2string(val: &ValueMap) -> Option<&String> {
+        match val {
+            ValueMap::String(s) => Some(s),
+            _ => None,
+        }
+    }
 
-    fn render(&mut self, instance_buffers: InstanceBuffer) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, instance_buffers: &InstanceBuffer) -> Result<(), wgpu::SurfaceError> {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
@@ -1016,8 +1043,11 @@ fn main() {
     }
 
     // :reload(core);
+    let mut instance_buffers = vec![];
+    let mut updated_bundles = FxHashMap::default();
 
     event_loop.run(move |event, _, control_flow| {
+        core.loop_helper.loop_start();
         if !core.global.console {
             controls::bit_check(&event, &mut bits);
             bits.1[0] = core.global.mouse_pos.x;
@@ -1073,11 +1103,14 @@ fn main() {
             // frame!();
         }
 
-        core.loop_helper.loop_start();
-        let instance_buffer = core.update();
-        core.bundle_manager.call_loop(bits);
+        // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
+        // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+        if let Some(buff) = core.update(&mut updated_bundles) {
+            instance_buffers = buff;
+        }
+        core.bundle_manager.call_loop(&mut updated_bundles, bits);
 
-        match core.render(instance_buffer) {
+        match core.render(&instance_buffers) {
             Ok(_) => {}
             // Reconfigure the surface if lost
             Err(wgpu::SurfaceError::Lost) => core.resize(core.size),

@@ -15,7 +15,6 @@ use crate::{
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
  */
-
 pub struct Bundle {
     pub id: u8,
     pub name: String,
@@ -23,6 +22,9 @@ pub struct Bundle {
     pub lua: LuaCore,
     pub children: Vec<u8>,
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
+    pub skips: u16,
+    pub skipped_control_state: Option<ControlState>,
+    pub frame_split: u16,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -36,6 +38,9 @@ impl Bundle {
             lua,
             children: Vec::new(),
             rasters: FxHashMap::default(),
+            skips: 0,
+            skipped_control_state: None,
+            frame_split: 1,
         }
     }
 
@@ -43,7 +48,8 @@ impl Bundle {
         self.lua.call_loop(bits);
     }
     pub fn call_main(&self) {
-        self.lua.call_main()
+        self.lua.call_main();
+        self.lua.call_loop(([false; 256], [0.; 10]));
     }
     pub fn shutdown(&self) {
         self.lua.die();
@@ -79,9 +85,44 @@ impl BundleManager {
         self.bundles.len() == 1
     }
 
-    pub fn call_loop(&mut self, bits: ControlState) {
-        for bundle in &mut self.bundles.values() {
-            bundle.call_loop(bits);
+    pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: ControlState) {
+        for (id, bundle) in &mut self.bundles.iter_mut() {
+            if !if let Some(updated) = updated_bundles.get_mut(id) {
+                if *updated {
+                    if bundle.skips >= bundle.frame_split {
+                        *updated = false;
+                        bundle.skips = 0;
+                        match bundle.skipped_control_state {
+                            Some(old_bits) => {
+                                bundle.call_loop(combine_states(old_bits, bits));
+                                bundle.skipped_control_state = None;
+                            }
+                            None => {
+                                bundle.call_loop(bits);
+                            }
+                        }
+                        bundle.call_loop(bits);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            } {
+                //skip
+                match bundle.skipped_control_state {
+                    Some(old_bits) => {
+                        bundle.skipped_control_state = Some(combine_states(old_bits, bits));
+                    }
+                    None => {
+                        bundle.skipped_control_state = Some(bits);
+                    }
+                };
+                bundle.skips += 1;
+            }
         }
     }
 
@@ -292,4 +333,22 @@ impl BundleManager {
     // pub fn get_bundle(&self, id: u8) -> Option<&Bundle> {
     //     self.bundles.get(id as usize)
     // }
+}
+
+fn combine_states(mut old: ControlState, bits: ControlState) -> ControlState {
+    for (i, key) in bits.0.iter().enumerate() {
+        old.0[i] = old.0[i] || *key;
+    }
+    // replace first 2, add the next 2, 4 5 6 ||
+    old.1[0] = bits.1[0];
+    old.1[1] = bits.1[1];
+    old.1[2] += bits.1[2];
+    old.1[3] += bits.1[3];
+
+    old.1[4] = (old.1[4] + bits.1[4]).clamp(0.0, 1.0);
+    old.1[5] = (old.1[5] + bits.1[5]).clamp(0.0, 1.0);
+    old.1[6] = (old.1[6] + bits.1[6]).clamp(0.0, 1.0);
+    // old.1[7] += bits.1[7];
+
+    old
 }
