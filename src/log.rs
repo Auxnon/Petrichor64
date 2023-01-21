@@ -9,6 +9,8 @@ pub struct Loggy {
     current_line: String,
     sender: Sender<(LogType, String)>,
     receiver: Receiver<(LogType, String)>,
+    current_length: usize,
+    buffer_dimensions: (usize, usize),
     // queue: Vec<String>,
     // static ref BUFFER: Mutex<Vec<String>> = Mutex::new(vec![]);
     // static ref log_dirty: Mutex<bool> = Mutex::new(false);
@@ -52,6 +54,8 @@ impl Loggy {
             current_line: String::new(),
             sender,
             receiver,
+            current_length: 0,
+            buffer_dimensions: (0, 0),
             // queue: vec![],
         }
     }
@@ -184,11 +188,26 @@ impl Loggy {
         if n > 150 {
             self.buffer.drain(0..50);
         }
+        self.current_length = self.buffer.len();
+        self.log_dirty = true;
+    }
+
+    pub fn set_dimensions(&mut self, width: u32, height: u32) {
+        self.buffer_dimensions = (width as usize, height as usize);
         self.log_dirty = true;
     }
 
     pub fn scroll(&mut self, delta: f32) {
         self.offset += delta;
+
+        let cap = if self.buffer_dimensions.1 >= self.current_length {
+            (0, self.current_length)
+        } else {
+            (0, self.current_length - self.buffer_dimensions.1)
+        };
+        // println!("cap {}", cap);
+        self.offset = self.offset.clamp(cap.0 as f32, cap.1 as f32);
+        println!("scroll {}", self.offset);
         self.log_dirty = true;
     }
 
@@ -206,15 +225,15 @@ impl Loggy {
         out
     }
 
-    pub fn get(&self, width: usize, height: usize) -> String {
+    pub fn get(&self) -> String {
         // println!("get len {}, height{}", BUFFER.lock().len(), height);
-
-        let l = self.buffer.len();
+        let (width, height) = self.buffer_dimensions;
+        let l = self.current_length;
 
         let pre_buf = if l < height {
             self.buffer.clone()
         } else {
-            let offset = (self.offset / 10.).floor() as usize;
+            let offset = (self.offset).floor() as usize;
 
             let contro_height = (l - (height - 1));
             let (deg, cap) = if contro_height < offset {

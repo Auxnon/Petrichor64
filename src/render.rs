@@ -136,8 +136,8 @@ pub fn render_loop(
         core.global.screen_effects.low_range,
         core.global.screen_effects.high_range,
         core.global.screen_effects.modernize,
-        0.,
-        0.,
+        core.global.gui_params.resolution.0 as f32,
+        core.global.gui_params.resolution.1 as f32,
         0.,
         0.,
     ];

@@ -4,10 +4,11 @@ use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
 use controls::ControlState;
 use ent_manager::{EntManager, InstanceBuffer};
-use global::Global;
+use global::{Global, GuiParams, StateChange};
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
 use model::ModelManager;
+use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
 use sound::{SoundCommand, SoundPacket};
 use std::{
@@ -21,7 +22,7 @@ use std::{
 use texture::TexManager;
 use types::ValueMap;
 // use tracy::frame;
-use crate::{ent::EntityUniforms, post::Post};
+use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
 use crate::{gui::Gui, log::LogType};
 use glam::{vec2, vec3, Mat4};
 use parking_lot::RwLock;
@@ -91,6 +92,7 @@ pub struct Core {
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     main_bind_group: BindGroup,
+    main_bind_group_layout: wgpu::BindGroupLayout,
     master_texture: Texture,
     gui: Gui,
     post: Post,
@@ -194,8 +196,11 @@ impl Core {
         let model_manager = ModelManager::init(&device);
         let mut ent_manager = EntManager::new(&device);
 
-        let (diffuse_texture_view, diffuse_sampler, diff_tex) =
-            tex_manager.finalize(&device, &queue);
+        let TexTuple {
+            view: diffuse_texture_view,
+            sampler: diffuse_sampler,
+            texture: diff_tex,
+        } = tex_manager.finalize(&device, &queue);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -292,7 +297,6 @@ impl Core {
 
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
-            // 0.,
             vec3(0., 0., 0.),
             vec2(0., 0.),
         );
@@ -392,50 +396,16 @@ impl Core {
 
         let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
 
+        let global = Global::new();
+
         //Gui
-        let (gui_texture_view, gui_sampler, gui_texture, gui_image) =
-            gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
 
-        let (sky_texture_view, sky_sampler, sky_texture, sky_image) =
-            gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
+        let psize = winit::dpi::PhysicalSize::new(1280, 960);
+        let gui_scaled = Self::compute_gui_size(&global.gui_params, psize);
+        println!("gui_scaled: {:?}", gui_scaled);
+        // let (gui_bundle, gui_image) = gui::init_image(&device, &queue, gui_scaled);
 
-        let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &main_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&sky_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sky_sampler),
-                },
-            ],
-            label: None,
-        });
-
-        let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &main_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gui_texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&gui_sampler),
-                },
-            ],
-            label: None,
-        });
+        // let (sky_bundle, sky_image) = gui::init_image(&device, &queue, gui_scaled);
 
         // Create main bind group
         let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -549,16 +519,17 @@ impl Core {
         let mut gui = Gui::new(
             gui_pipeline,
             sky_pipeline,
-            gui_group,
-            gui_texture,
-            sky_group,
-            sky_texture,
-            gui_image,
+            &main_bind_group_layout,
+            &uniform_buf,
+            &device,
+            &queue,
+            gui_scaled,
             &mut loggy,
         );
+        let (w, h) = gui.get_console_size();
+        loggy.set_dimensions(w, h);
         gui.add_text("initialized".to_string());
 
-        let global = Global::new();
         if global.console {
             gui.enable_console(&loggy)
         }
@@ -604,6 +575,7 @@ impl Core {
             post,
             gui,
             main_bind_group,
+            main_bind_group_layout,
             entity_bind_group,
             entity_uniform_buf,
             #[cfg(feature = "audio")]
@@ -630,22 +602,69 @@ impl Core {
         if new_size.width > 0 && new_size.height > 0 {
             self.size = new_size;
             // self.config.
-            println!("physical resize {} {}", self.size.width, self.size.height);
+            // println!("physical resize {} {}", self.size.width, self.size.height);
             self.config.width = new_size.width;
             self.config.height = new_size.height;
+            if self.global.state_delay == 0 {
+                self.global.state_changes.push(StateChange::Resized);
+            }
+            self.global.state_delay = 15;
+            self.global.is_state_changed = true;
+        }
+    }
+
+    pub fn debounced_resize(&mut self) {
+        let new_size = self.size;
             self.surface.configure(&self.device, &self.config);
             let d = create_depth_texture(&self.config, &self.device);
             self.depth_texture = d.1;
             self.post.resize(&self.device, new_size, &self.uniform_buf);
+        let gui_scaled = Self::compute_gui_size(&self.global.gui_params, new_size);
+        // println!(
+        //     "gui resize {} {} new size {} {}",
+        //     gui_scaled.0, gui_scaled.1, new_size.width, new_size.height
+        // );
+        self.gui.resize(
+            gui_scaled,
+            &self.device,
+            &self.queue,
+            &self.main_bind_group_layout,
+            &self.uniform_buf,
+        );
+        let (con_w, con_h) = self.gui.get_console_size();
+        self.loggy.set_dimensions(con_w, con_h);
+    }
+    fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>) -> (u32, u32) {
+        let gui_size = gui_params.resolution;
+        match gui_params.style {
+            GuiStyle::Aspect => {
+                let aspect = new_size.width as f32 / new_size.height as f32;
+                let gaspect = gui_size.0 as f32 / gui_size.1 as f32;
+                // preserve aspect ratio
+                if aspect > gaspect {
+                    //wider
+                    let new_width = (gui_size.1 as f32 * aspect) as u32;
+                    (new_width, gui_size.1)
+                } else {
+                    //taller
+                    let new_height = (gui_size.0 as f32 / aspect) as u32;
+                    (gui_size.0, new_height)
+                }
+            }
+            GuiStyle::Width => {
+                let aspect = new_size.width as f32 / new_size.height as f32;
+                let new_height = (gui_size.0 as f32 / aspect) as u32;
+                (gui_size.0, new_height)
+            }
+            GuiStyle::Height => {
+                let aspect = new_size.width as f32 / new_size.height as f32;
+                let new_width = (gui_size.1 as f32 * aspect) as u32;
+                (new_width, gui_size.1)
+            }
         }
     }
 
-    // #[allow(unused_variables)]
-    // fn input(&mut self, event: &WindowEvent) -> bool {
-    //     false
-    // }
-
-    fn update(&mut self) -> InstanceBuffer {
+    fn update(&mut self, completed_bundles: &mut FxHashMap<u8, bool>) -> Option<InstanceBuffer> {
         let mut mutations = vec![];
 
         for (id, p) in self.catcher.try_iter() {
@@ -1008,9 +1027,22 @@ fn main() {
             bits.1[4] = core.global.mouse_buttons[0];
             bits.1[5] = core.global.mouse_buttons[1];
             bits.1[6] = core.global.mouse_buttons[2];
-
-            if core.global.mouse_grab {
-                if !core.global.mouse_grabbed_state {
+        } else if core.global.mouse_grabbed_state {
+            rwindow.set_cursor_visible(true);
+            rwindow.set_cursor_grab(CursorGrabMode::None);
+            core.global.mouse_grabbed_state = false;
+        }
+        if core.global.is_state_changed {
+            if core.global.state_delay > 0 {
+                core.global.state_delay -= 1;
+                // println!("delaying state change {} ", core.global.state_delay);
+            } else {
+                core.global.is_state_changed = false;
+                let states: Vec<StateChange> = core.global.state_changes.drain(..).collect();
+                for state in states {
+                    match state {
+                        // StateChange::Fullscreen => {core.check_fullscreen();
+                        StateChange::MouseGrabOn => {
                     rwindow.set_cursor_visible(false);
                     rwindow.set_cursor_position(center).unwrap();
                     rwindow
@@ -1018,17 +1050,18 @@ fn main() {
                         .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
                     core.global.mouse_grabbed_state = true;
                 }
-            } else {
-                if core.global.mouse_grabbed_state {
+                        StateChange::MouseGrabOff => {
                     rwindow.set_cursor_visible(true);
                     rwindow.set_cursor_grab(CursorGrabMode::None);
                     core.global.mouse_grabbed_state = false;
                 }
+                        StateChange::Resized => {
+                            core.debounced_resize();
             }
-        } else if core.global.mouse_grabbed_state {
-            rwindow.set_cursor_visible(true);
-            rwindow.set_cursor_grab(CursorGrabMode::None);
-            core.global.mouse_grabbed_state = false;
+                    }
+                }
+                core.check_fullscreen();
+            }
         }
 
         if core.input_manager.update(&event) {

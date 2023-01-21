@@ -4,7 +4,6 @@ use std::{
 };
 
 use crate::{
-    bundle,
     log::{LogType, Loggy},
     template::AssetTemplate,
     world::World,
@@ -21,6 +20,21 @@ const SLASH: char = '\\';
 #[cfg(not(target_os = "windows"))]
 const SLASH: char = '/';
 
+pub struct TexTuple {
+    pub view: TextureView,
+    pub sampler: Sampler,
+    pub texture: Texture,
+}
+impl TexTuple {
+    pub fn new(view: TextureView, sampler: Sampler, texture: Texture) -> TexTuple {
+        TexTuple {
+            view,
+            sampler,
+            texture,
+        }
+    }
+}
+
 pub struct TexManager {
     pub atlas: RgbaImage,
     /** Last position of a locatated section for a texture, x y, the last   */
@@ -29,11 +43,6 @@ pub struct TexManager {
     pub atlas_dim: UVec2,
     /** Our wonderful string to uv coordinate map, give us a texture name and we'll give you a position on the atlas of that texture! */
     pub dictionary: HashMap<String, Vec4>,
-    // /** a really basic UUID, just incrementing from 0..n is fine internally, can we even go higher then 4294967295 (2^32 -1 is u32 max)?*/
-    // pub COUNTER: u32,
-    // /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
-    // pub INT_DICTIONARY: HashMap<String, u32>,
-    // pub INT_MAP: FxHashMap<u32, Vec4>,
     pub animations: HashMap<String, Anim>,
     pub bundle_lookup: FxHashMap<u8, Vec<(String, glam::Vec4)>>,
 }
@@ -42,6 +51,7 @@ pub struct Anim {
     pub speed: u32,
     pub once: bool,
 }
+
 impl Anim {
     pub fn empty() -> Anim {
         Anim {
@@ -105,11 +115,7 @@ impl TexManager {
         }
     }
 
-    pub fn finalize(
-        &self,
-        device: &wgpu::Device,
-        queue: &Queue,
-    ) -> (TextureView, Sampler, Texture) {
+    pub fn finalize(&self, device: &wgpu::Device, queue: &Queue) -> TexTuple {
         make_tex(device, queue, &self.atlas)
     }
 
@@ -182,20 +188,6 @@ impl TexManager {
         let iw = 1. / dw as f32;
         let ih = 1. / dh as f32;
 
-        /*
-        assert!(found, "Texture atlas couldnt find an empty spot?");
-        log(format!("found position {} {}", cpos.x, cpos.y));
-        stich(m_ref, source, cpos.x, cpos.y);
-        cgmath::Vector4::new(
-            cpos.x as f32 / adim.x as f32,
-            cpos.y as f32 / adim.y as f32,
-            w as f32 / adim.x as f32,
-            h as f32 / adim.y as f32,
-        ) */
-        // println!(
-        //     "d {} {} {} {} and seed pos {} {} {} {}",
-        //     dw, dh, iw, ih, pos.x, pos.y, pos.z, pos.w
-        // );
         let mut first_complete = false;
         let mut first = vec4(0., 0., 1., 1.);
         let can_rename = if rename.is_some() { true } else { false };
@@ -285,7 +277,7 @@ impl TexManager {
                 b.push((name.clone(), pos));
             }
             None => {
-                let mut b = vec![(name.clone(), pos)];
+                let b = vec![(name.clone(), pos)];
                 self.bundle_lookup.insert(bundle_id, b);
             }
         }
@@ -357,6 +349,7 @@ impl TexManager {
             }
         }
     }
+
     /** Loads images from a gltf into dictionary and returns array of uv rects for each resource */
     pub fn load_tex_from_data(
         &mut self,
@@ -671,11 +664,7 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
     );
 }
 
-pub fn make_tex(
-    device: &wgpu::Device,
-    queue: &Queue,
-    img: &RgbaImage,
-) -> (TextureView, Sampler, Texture) {
+pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTuple {
     // lg!("make master texture");
     let rgba = img; //img.as_rgba8().unwrap();
     let dimensions = img.dimensions();
@@ -728,7 +717,11 @@ pub fn make_tex(
         mipmap_filter: wgpu::FilterMode::Nearest,
         ..Default::default()
     });
-    (diffuse_texture_view, diffuse_sampler, tex)
+    TexTuple {
+        view: diffuse_texture_view,
+        sampler: diffuse_sampler,
+        texture: tex,
+    }
 }
 
 pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, Sampler, Texture) {
