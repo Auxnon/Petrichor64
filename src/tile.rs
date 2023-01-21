@@ -56,9 +56,13 @@ impl Layer {
         iy: i32,
         iz: i32,
     ) {
-        let cell_type = match instance.get_model_index(&tile) {
-            Some(model_index) => model_index,
-            _ => instance.get_tex_index(&tile),
+        let cell_type = if tile.len() == 0 {
+            0
+        } else {
+            match instance.get_model_index(&tile) {
+                Some(model_index) => model_index,
+                _ => instance.get_tex_index(&tile),
+            }
         };
 
         let mut c = self.get_chunk_mut(ix, iy, iz);

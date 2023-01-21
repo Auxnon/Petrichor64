@@ -405,16 +405,20 @@ pub fn init_lua_sys(
     let sender = world_sender.clone();
     lua!(
         "tile",
-        move |_, (t, x, y, z, r): (String, i32, i32, i32, Option<u8>)| {
+        move |_, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
             // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
             // let mut mutex = &mut switch.write();
             // mutex.tile_queue.push((t, vec4(0., x, y, z)));
+            let tile = match t {
+                Value::String(s) => s.to_str().unwrap_or("").to_string(),
+                _ => "".to_string(),
+            };
             let ro = match r {
                 Some(i) => i,
                 None => 0,
             };
 
-            World::set_tile(&sender, t, x, y, z, ro);
+            World::set_tile(&sender, tile, x, y, z, ro);
             Ok(1)
         },
         "Set a tile within 3d space."
