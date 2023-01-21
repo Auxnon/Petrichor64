@@ -5,7 +5,7 @@ use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 use crate::post::ScreenBinds;
 /** Global variable container intended for main thread only */
 pub struct Global {
-    pub values: HashMap<String, f32>,
+    // pub values: HashMap<String, f32>,
     pub debug: bool,
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
@@ -38,7 +38,7 @@ pub struct Global {
 impl Global {
     pub fn new() -> Global {
         Global {
-            values: HashMap::new(),
+            // values: HashMap::new(),
             console: true,
             game_controller: false,
             simple_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
@@ -87,8 +87,26 @@ impl Global {
         self.iteration = 0;
     }
 
-    pub fn set(&mut self, key: String, v: f32) {
-        self.values.insert(key, v);
+    // pub fn set(&mut self, key: String, v: f32) {
+    //     self.values.insert(key, v);
+    // }
+
+    // pub fn get(&mut self, key: String) -> f32 {
+    //     match self.values.get(&key) {
+    //         Some(o) => *o,
+    //         None => {
+    //             self.values.insert(key, 0.);
+    //             0.
+    //         }
+    //     }
+    // }
+    // /** reference to the value so it can modified externally */
+    // pub fn get_mut(&mut self, key: String) -> &mut f32 {
+    //     match self.values.entry(key) {
+    //         Entry::Occupied(o) => o.into_mut(),
+    //         Entry::Vacant(v) => v.insert(0.),
+    //     }
+    // }
     }
 
     pub fn get(&mut self, key: String) -> f32 {

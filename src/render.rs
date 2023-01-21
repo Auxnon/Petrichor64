@@ -75,7 +75,7 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
 pub fn render_loop(
     core: &mut Core,
     iteration: u64,
-    instance_buffers: InstanceBuffer,
+    instance_buffers: &InstanceBuffer,
 ) -> Result<(), wgpu::SurfaceError> {
     // frame!("Render");
     let output = core.surface.get_current_texture()?;
@@ -87,7 +87,8 @@ pub fn render_loop(
     // TODO is this expensive? only sometimes?
     core.gui.render(
         &core.queue,
-        core.global.get("value2".to_string()),
+        0.,
+        // core.global.get("value2".to_string()),
         &mut core.loggy,
     );
 
