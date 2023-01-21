@@ -378,6 +378,9 @@ pub fn init_lua_sys(
                     tx,
                 ),
             ));
+            if let Err(err) = rx.recv() {
+                return Err(make_err(&err.to_string()));
+            }
             // match rx.recv() {
             //     Ok(_) => {}
             //     Err(_) => {}
@@ -1504,7 +1507,8 @@ pub fn load(
         "-------------------------------------------------",
     );
     drop(bundle);
-    core.update();
+    // TODO do we need to run an update here?
+    // core.update();
     core.loggy.log(LogType::Config, "calling main method");
     core.bundle_manager.call_main(bundle_id);
 }
