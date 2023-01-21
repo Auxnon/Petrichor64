@@ -3,7 +3,6 @@ use std::ops::Mul;
 use glam::{vec3, vec4, Mat4, Vec4Swizzles};
 
 use crate::Core;
-use nalgebra_glm;
 
 pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     //let trans = Mat4::from_translation(core.camera_pos);
@@ -208,7 +207,6 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
     // Calculate the picked position on the y = 0 plane.
     // out_point = near_unproj + dir * t;
     // println!("near_unproj {}", near_unproj);
-    // MARK
     // if plane_collide {
     //     // let planeP = vec3(16., 0., 0.) - near_unproj;
     //     let plane_p = vec3(0., 0., -6.);
