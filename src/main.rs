@@ -669,27 +669,14 @@ impl Core {
         let mut loop_complete = false;
         for (id, p) in self.catcher.try_iter() {
             match p {
-                MainCommmand::CamPos(v) => {
-                    self.global.cam_pos = v;
+                MainCommmand::Cam(p, r) => {
+                    if let Some(pos) = p {
+                        self.global.cam_pos = pos;
                 }
-                MainCommmand::CamRot(v) => {
-                    self.global.simple_cam_rot = v;
+                    if let Some(rot) = r {
+                        self.global.simple_cam_rot = rot;
                 }
-                // MainCommmand::Sky() => {
-                //     self.gui.target_sky();
-                // }
-                // MainCommmand::Gui() => {
-                //     self.gui.target_gui();
-                // }
-                // MainCommmand::Fill(v) => {
-                //     self.gui.fill(v.x, v.y, v.z, v.w);
-                // }
-                // MainCommmand::Rect(x, y, w, h, c) => {
-                //     self.gui.rect(x, y, w, h, c);
-                // }
-                // MainCommmand::Line(x, y, x2, y2, c) => {
-                //     self.gui.line(x, y, x2, y2, c);
-                // }
+                }
                 MainCommmand::DrawImg(s, x, y) => {
                     self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
                 }
@@ -1017,7 +1004,7 @@ fn main() {
     // unsafe {
     //     tracy::startup_tracy();
     // }
-    let mut bits: ControlState = ([false; 256], [0.; 8]);
+    let mut bits: ControlState = ([false; 256], [0.; 10]);
 
     match crate::asset::check_for_auto() {
         Some(s) => {
@@ -1057,6 +1044,9 @@ fn main() {
             bits.1[4] = core.global.mouse_buttons[0];
             bits.1[5] = core.global.mouse_buttons[1];
             bits.1[6] = core.global.mouse_buttons[2];
+            bits.1[7] = core.global.cursor_projected_pos.x;
+            bits.1[8] = core.global.cursor_projected_pos.y;
+            bits.1[9] = core.global.cursor_projected_pos.z;
         } else if core.global.mouse_grabbed_state {
             rwindow.set_cursor_visible(true);
             rwindow.set_cursor_grab(CursorGrabMode::None);

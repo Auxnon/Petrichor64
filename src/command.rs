@@ -556,11 +556,7 @@ pub fn init_lua_sys(
 
             match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
-                Err(er) => {
-                    return Err(mlua::Error::RuntimeError(
-                        "Unable to create entity".to_string(),
-                    ))
-                }
+                Err(er) => return Err(make_err("Unable to create entity")),
             }
 
             // Ok(match rx.recv() {
@@ -581,9 +577,7 @@ pub fn init_lua_sys(
             match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
                 Ok(_) => {}
                 Err(er) => {
-                   return  Err(mlua::Error::RuntimeError(
-                        "Unable to group entity".to_string(),
-                    ));
+                   return Err(make_err("Unable to group entity"));
                 },
             };
             match rx.recv(){
@@ -640,9 +634,7 @@ pub fn init_lua_sys(
             // println!("ent id {}", id);
             match pitcher.send((bundle_id, MainCommmand::Kill(id))) {
                 Ok(_) => Ok(()),
-                Err(er) => Err(mlua::Error::RuntimeError(
-                    "Unable to kill entity".to_string(),
-                )),
+                Err(er) => Err(make_err("Unable to kill entity")),
             }
 
             // let wrapped = Arc::new(std::sync::Mutex::new(ent));
@@ -688,36 +680,41 @@ pub fn init_lua_sys(
     // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
     lua!(
-        "campos",
-        move |_, (x, y, z): (f32, f32, f32)| {
-            // let (tx, rx) = sync_channel::<bool>(0);
-            // println!("🧲 eyup send pos");
-            pitcher.send((bundle_id, MainCommmand::CamPos(glam::vec3(x, y, z))));
-            // Ok(match rx.recv() {
-            //     Ok(v) => (true),
-            //     _ => (false),
-            // })
+        "cam",
+        move |_, (table): (Table)| {
+            let pos = match table.get("pos") {
+                Ok(v) => match v {
+                    Value::Table(t) => {
+                        let x = t.get::<_, f32>(1).unwrap_or(0.);
+                        let y = t.get::<_, f32>(2).unwrap_or(0.);
+                        let z = t.get::<_, f32>(3).unwrap_or(0.);
+                        Some(glam::vec3(x, y, z))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            let rot = match table.get("rot") {
+                Ok(v) => match v {
+                    Value::Table(t) => {
+                        let x = t.get::<_, f32>(1).unwrap_or(0.);
+                        let y = t.get::<_, f32>(2).unwrap_or(0.);
+                        Some(glam::vec2(x, y))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+
+            pitcher.send((bundle_id, MainCommmand::Cam(pos, rot)));
+
             Ok(())
         },
-        "Set the camera position"
+        "Set the camera position and/or rotation"
     );
 
     let pitcher = main_pitcher.clone();
-    lua!(
-        "camrot",
-        move |_, (x, y): (f32, f32)| {
-            pitcher.send((bundle_id, MainCommmand::CamRot(glam::vec2(x, y))));
-            // sender.send((TileCommand::Is(ivec3(x, y, z)), tx));
-            // println!("🧲 eyup send rot");
 
-            // Ok(match rx.recv() {
-            //     Ok(v) => (true),
-            //     _ => (false),
-            // })
-            Ok(())
-        },
-        "Set the camera rotation by azimuth and elevation"
-    );
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
@@ -1744,8 +1741,7 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage),
     Pixel(u32, u32, glam::Vec4),
-    CamPos(glam::Vec3),
-    CamRot(glam::Vec2),
+    Cam(Option<glam::Vec3>, Option<glam::Vec2>),
     Clear(),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
