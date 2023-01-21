@@ -33,6 +33,10 @@ pub struct Global {
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
     pub aliases: HashMap<String, String>,
+    pub gui_params: GuiParams,
+    pub state_changes: Vec<StateChange>,
+    pub state_delay: u32,
+    pub is_state_changed: bool,
     // pub loaded_directory: Option<String>,
 }
 impl Global {
@@ -63,6 +67,10 @@ impl Global {
             scroll_delta: 0.,
             screen_effects: ScreenBinds::new(),
             aliases: HashMap::new(),
+            gui_params: GuiParams::new(),
+            state_changes: Vec::new(),
+            state_delay: 0,
+            is_state_changed: false,
             // loaded_directory: None,
         }
     }
@@ -107,22 +115,31 @@ impl Global {
     //         Entry::Vacant(v) => v.insert(0.),
     //     }
     // }
-    }
+}
 
-    pub fn get(&mut self, key: String) -> f32 {
-        match self.values.get(&key) {
-            Some(o) => *o,
-            None => {
-                self.values.insert(key, 0.);
-                0.
-            }
-        }
-    }
-    /** reference to the value so it can modified externally */
-    pub fn get_mut(&mut self, key: String) -> &mut f32 {
-        match self.values.entry(key) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => v.insert(0.),
+pub enum StateChange {
+    Resized,
+    MouseGrabOn,
+    MouseGrabOff,
+}
+pub enum GuiStyle {
+    Aspect,
+    Width,
+    Height,
+}
+pub struct GuiParams {
+    pub resolution: (u32, u32),
+    pub style: GuiStyle,
+    pub layout: (i8, i8),
+    pub scaling: bool,
+}
+impl GuiParams {
+    pub fn new() -> GuiParams {
+        GuiParams {
+            resolution: (320, 240),
+            style: GuiStyle::Aspect,
+            layout: (0, -1),
+            scaling: false,
         }
     }
 }
