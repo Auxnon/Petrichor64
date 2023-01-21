@@ -920,11 +920,11 @@ pub fn init_lua_sys(
                     Value::String(s) => match s.to_str() {
                         Ok(ss) => Some(ss.to_string()),
                         _ => None,
-                },
+                    },
                     Value::Integer(i) => match i {
                         8 => Some("8".to_string()),
                         _ => None,
-                },
+                    },
                     _ => None,
                 },
                 _ => None,
