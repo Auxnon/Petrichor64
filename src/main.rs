@@ -615,10 +615,10 @@ impl Core {
 
     pub fn debounced_resize(&mut self) {
         let new_size = self.size;
-            self.surface.configure(&self.device, &self.config);
-            let d = create_depth_texture(&self.config, &self.device);
-            self.depth_texture = d.1;
-            self.post.resize(&self.device, new_size, &self.uniform_buf);
+        self.surface.configure(&self.device, &self.config);
+        let d = create_depth_texture(&self.config, &self.device);
+        self.depth_texture = d.1;
+        self.post.resize(&self.device, new_size, &self.uniform_buf);
         let gui_scaled = Self::compute_gui_size(&self.global.gui_params, new_size);
         // println!(
         //     "gui resize {} {} new size {} {}",
@@ -672,10 +672,10 @@ impl Core {
                 MainCommmand::Cam(p, r) => {
                     if let Some(pos) = p {
                         self.global.cam_pos = pos;
-                }
+                    }
                     if let Some(rot) = r {
                         self.global.simple_cam_rot = rot;
-                }
+                    }
                 }
                 MainCommmand::DrawImg(s, x, y) => {
                     self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
@@ -804,6 +804,11 @@ impl Core {
                                     }
                                 }
                             }
+                            "title" => {
+                                if let Some(s) = Self::val2string(v) {
+                                    self.win_ref.set_title(&s);
+                                }
+                            }
 
                             _ => {}
                         }
@@ -842,17 +847,17 @@ impl Core {
                 MainCommmand::LoopComplete(img_result) => {
                     match img_result {
                         Some((img, is_sky)) => {
-                    let raster_id = if is_sky { 1 } else { 0 };
+                            let raster_id = if is_sky { 1 } else { 0 };
 
-                    if !self.bundle_manager.is_single() {
-                        self.bundle_manager.set_raster(id, raster_id, img);
-                        mutations.push((id, MainCommmand::Meta(raster_id)));
-                    } else {
-                        self.gui.replace_image(img, is_sky);
-                    }
-                }
+                            if !self.bundle_manager.is_single() {
+                                self.bundle_manager.set_raster(id, raster_id, img);
+                                mutations.push((id, MainCommmand::Meta(raster_id)));
+                            } else {
+                                self.gui.replace_image(img, is_sky);
+                            }
+                        }
                         _ => {}
-                }
+                    }
                     // if let Some(reff) = completed_bundles.get_mut(&id) {
                     //     *reff += 1;
                     // } else {
@@ -890,10 +895,10 @@ impl Core {
         }
         let instance_buffers = if loop_complete {
             Some(self.ent_manager.check_ents(
-            self.global.iteration,
-            &self.device,
-            &self.tex_manager,
-            &self.model_manager,
+                self.global.iteration,
+                &self.device,
+                &self.tex_manager,
+                &self.model_manager,
             ))
         } else {
             // println!("skip frame");
@@ -1063,21 +1068,21 @@ fn main() {
                     match state {
                         // StateChange::Fullscreen => {core.check_fullscreen();
                         StateChange::MouseGrabOn => {
-                    rwindow.set_cursor_visible(false);
-                    rwindow.set_cursor_position(center).unwrap();
-                    rwindow
-                        .set_cursor_grab(CursorGrabMode::Confined)
-                        .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
-                    core.global.mouse_grabbed_state = true;
-                }
+                            rwindow.set_cursor_visible(false);
+                            rwindow.set_cursor_position(center).unwrap();
+                            rwindow
+                                .set_cursor_grab(CursorGrabMode::Confined)
+                                .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
+                            core.global.mouse_grabbed_state = true;
+                        }
                         StateChange::MouseGrabOff => {
-                    rwindow.set_cursor_visible(true);
-                    rwindow.set_cursor_grab(CursorGrabMode::None);
-                    core.global.mouse_grabbed_state = false;
-                }
+                            rwindow.set_cursor_visible(true);
+                            rwindow.set_cursor_grab(CursorGrabMode::None);
+                            core.global.mouse_grabbed_state = false;
+                        }
                         StateChange::Resized => {
                             core.debounced_resize();
-            }
+                        }
                     }
                 }
                 core.check_fullscreen();
