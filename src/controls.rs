@@ -18,7 +18,7 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 
-pub type ControlState = ([bool; 256], [f32; 8]);
+pub type ControlState = ([bool; 256], [f32; 10]);
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {
@@ -70,9 +70,6 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
     // input_helper.mouse
     core.global.scroll_delta = input_helper.scroll_diff();
-    if core.global.scroll_delta != 0. {
-        core.loggy.scroll(core.global.scroll_delta);
-    }
 
     // core.input_helper.key_pressed(check_key_code)
     core.global.mouse_buttons = [
@@ -106,6 +103,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             core.gui.disable_console()
         }
     } else if core.global.console {
+        if core.global.scroll_delta != 0. {
+            core.loggy.scroll(core.global.scroll_delta);
+        }
         if input_helper.key_released(VirtualKeyCode::Return) {
             let command = core.loggy.carriage();
             if command.is_some() {
@@ -118,6 +118,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 for c in com.split("&&") {
                     if !crate::command::init_con_sys(core, c) {
                         let mut ltype = LogType::Lua;
+                        // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
                         let result = match core.bundle_manager.get_lua().func(c) {
                             LuaResponse::String(s) => s,
                             LuaResponse::Number(n) => n.to_string(),

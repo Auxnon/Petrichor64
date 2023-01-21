@@ -4,7 +4,7 @@ use crate::{
     bundle::BundleResources,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{MainPacket, SoundSender},
+    lua_define::{LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, get_color, LuaImg},
     pad::Pad,
@@ -240,7 +240,7 @@ pub fn init_lua_sys(
     singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
-    mice: Rc<RefCell<[f32; 8]>>,
+    mice: Rc<RefCell<[f32; 12]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
@@ -512,10 +512,16 @@ pub fn init_lua_sys(
             t.set("y", m[1])?;
             t.set("dx", m[2])?;
             t.set("dy", m[3])?;
+            t.set("px", m[4])?;
+            t.set("py", m[5])?;
+
             // t.set("z",m[2])?;
-            t.set("m1", m[4] > 0.)?;
-            t.set("m2", m[5] > 0.)?;
-            t.set("m3", m[6] > 0.)?;
+            t.set("m1", m[6] > 0.)?;
+            t.set("m2", m[7] > 0.)?;
+            t.set("m3", m[8] > 0.)?;
+            t.set("vx", m[9])?;
+            t.set("vy", m[10])?;
+            t.set("vz", m[11])?;
 
             Ok(t)
         },
