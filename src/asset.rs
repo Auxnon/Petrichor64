@@ -147,17 +147,6 @@ pub fn unpack(
         _ => {}
     }
 }
-// pub fn parse_files(zipped: bool, device: Option<&Device>, target: &String) -> Vec<String> {
-//     let assets_path = Path::new(".").join("assets");
-//     let scripts_path = Path::new(".").join("scripts");
-//     let mut sources = vec![];
-// }
-
-// pub fn init(device: &Device, lua_master: &LuaCore, target: &String) {
-//     walk_files(Some(device), lua_master, determine_path(None));
-// }
-
-// fn asset_sort() {}
 
 fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.async_load(&buffer.to_string());

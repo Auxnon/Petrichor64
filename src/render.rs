@@ -11,34 +11,15 @@ use crate::{
 
 /** create rotation matrix from camera position and simple rotation */
 pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
-    let pi = std::f32::consts::PI;
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
 
     camera_pos *= 16.;
-    // println!("mouse {:?}", mouse);
-    // let r = 0.5f32;
 
-    // let mx_view = Mat4::look_at_rh(
-    //     vec3(92. * r.cos(), -128., 82.0),
-    //     vec3(0f32, 0.0, 0.0),
-    //     Vec3::Z,
-    // );
-
-    // let mx_view = Mat4::IDENTITY;
-
-    // let r = pi * (0.5 + (mouse.0 % 100.) / 50.);
-    // let azimuth = pi * (0.5 + (mouse.1 % 100.) / 50.);
     let r = mouse.x; // * pi * 2.; //(1. - mouse.x) * pi * 2.;
     let azimuth = mouse.y; // * pi * 2.;
                            // let pos = vec3(camera_pos.z, 0., 0.);
     let az = azimuth.cos() * 100.;
     let c = vec3(r.cos() * az, r.sin() * az, azimuth.sin() * 100.);
-
-    // println!("camera_pos: {:?}", camera_pos);
-    // let quat = Quat::from_axis_angle(vec3(0., 1., 0.), r);
-    // let model_mat =
-    //     Mat4::from_scale_rotation_translation(vec3(1., 1., 1.), quat, vec3(camera_pos.z, 0., 0.));
-    // let model_mat = Mat4::from_translation(vec3(camera_pos.z * 0.785398 * 2., 0., 0.));
 
     let model_mat = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
@@ -49,6 +30,10 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
         Vec3::Z,
     );
+
+    // TODO theres no point to the model mat
+
+    let model_mat = Mat4::IDENTITY;
 
     let mx_view = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),

@@ -8,7 +8,6 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::log::{LogType, Loggy};
-use crate::texture::Anim;
 
 #[derive(Default, Debug, Deserialize)]
 pub struct AssetTemplate {
@@ -23,21 +22,21 @@ pub struct AssetTemplate {
 }
 
 // #[derive(Debug)]
-pub struct TemplateAnim {
-    name: String,
-    anims: Vec<String>,
-    once: bool,
-}
+// pub struct TemplateAnim {
+//     name: String,
+//     anims: Vec<String>,
+//     once: bool,
+// }
 
-impl TemplateAnim {
-    pub fn new() -> TemplateAnim {
-        Self {
-            name: String::new(),
-            anims: vec![],
-            once: false,
-        }
-    }
-}
+// impl TemplateAnim {
+//     pub fn new() -> TemplateAnim {
+//         Self {
+//             name: String::new(),
+//             anims: vec![],
+//             once: false,
+//         }
+//     }
+// }
 
 // impl std::fmt::Debug for Anim {
 //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
