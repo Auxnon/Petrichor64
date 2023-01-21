@@ -110,16 +110,16 @@ fn vs_main(
 
 struct GuiFrag {
     @builtin(position) pos: vec4<f32>, 
-    @location(1) screen: vec2<f32>,
+    @location(1) screen: vec4<f32>,
     // @location(2) eh: array<f32>,
     // @location(2) adjustments: array<f32,12>,
 };
 
-struct PostFrag {
-    @builtin(position) pos: vec4<f32>, 
-    @location(1) screen: vec2<f32>,
-    // @location(2) adjustments: array<f32,12>,
-};
+// struct PostFrag {
+//     @builtin(position) pos: vec4<f32>, 
+//     @location(1) screen: vec4<f32>,
+//     // @location(2) adjustments: array<f32,12>,
+// };
 
 
 @vertex
@@ -130,11 +130,6 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     
 
     var out: GuiFrag;
-    // //return out;
-    // let n=i32(in_vertex_index)%2;
-    // let m=i32(in_vertex_index)/2;
-    // let x = f32(n - 1);
-    // let y = f32(max(m+n,1)  - 1);
 
     if (in_vertex_index==0u){
         out.pos=vec4<f32>(-1.,-1., 0.0, 1.0);
@@ -146,7 +141,7 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
     
-    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
+    out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2],globals.adjustments[3][0],globals.adjustments[3][1]);
     // out.eh=vec2<f32>(globals.adjustments[3],globals.adjustments[4]);
     //out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);
     return out;
@@ -186,6 +181,9 @@ fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
     //     discard;
     // }
     //return FragmentOutput(e3);
+    let aspect=in.screen.z/in.screen.w;
+    let f=1.;//min(in.screen.x,in.screen.y);
+
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
     f_color=textureSample(t_diffuse, s_diffuse, p);
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
@@ -203,7 +201,7 @@ fn sky_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     }else{
         out.pos=vec4<f32>(1.,1., 0.0, 1.0);
     }
-    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
+    out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2], globals.adjustments[3][0],globals.adjustments[3][1]);
     return out;
 }
 
@@ -232,7 +230,7 @@ fn post_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
      //globals.adjustments;
     //  out.adjustments=globals.adjustments;
     //  out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);//globals.adjustments;
-    out.screen=vec2<f32>(globals.adjustments[0][1],globals.adjustments[0][2]);
+    out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2], globals.adjustments[3][0],globals.adjustments[3][1]);
     
 
     return out;
