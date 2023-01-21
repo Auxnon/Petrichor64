@@ -69,6 +69,7 @@ impl ModelManager {
         let mut DICTIONARY = HashMap::new();
 
         DICTIONARY.insert("cube".to_string(), CUBE.clone());
+        DICTIONARY.insert("plane".to_string(), PLANE.clone());
         ModelManager {
             CUBE,
             PLANE,
