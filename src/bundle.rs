@@ -54,6 +54,9 @@ impl Bundle {
     pub fn shutdown(&self) {
         self.lua.die();
     }
+    pub fn resize(&self, width: u32, height: u32) {
+        self.lua.resize(width, height);
+    }
 }
 
 pub struct BundleManager {
@@ -83,6 +86,14 @@ impl BundleManager {
 
     pub fn is_single(&self) -> bool {
         self.bundles.len() == 1
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        for bundle in self.bundles.values_mut() {
+            bundle.resize(width, height);
+            bundle.rasters.clear();
+        }
+        self.rebuild_call_order();
     }
 
     pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: ControlState) {
@@ -255,9 +266,11 @@ impl BundleManager {
             // println!("1main raster {}", self.main_rasters.len());
             if self.main_rasters.len() > 0 {
                 let mut im = self.main_rasters[0].borrow().clone();
-                for r in self.main_rasters.iter().skip(1) {
-                    // image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
-                }
+                // TODO  raster overlay?
+                println!("build up main raster {:?}", im.dimensions());
+                // for r in self.main_rasters.iter().skip(1) {
+                // image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
+                // }
                 // println!("2main raster {}", self.main_rasters.len());
                 Some(im)
             } else {
@@ -266,9 +279,11 @@ impl BundleManager {
         } else {
             if self.sky_rasters.len() > 0 {
                 let mut im = self.sky_rasters[0].borrow().clone();
-                for r in self.sky_rasters.iter().skip(1) {
-                    image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
-                }
+                // for r in self.sky_rasters.iter().skip(1) {
+                //     image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
+                // }
+                println!("build up sky raster {:?}", im.dimensions());
+
                 Some(im)
             } else {
                 None

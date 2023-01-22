@@ -50,6 +50,7 @@ pub enum LuaTalk {
     Loop(ControlState),
     Load(String, SyncSender<LuaResponse>),
     AsyncLoad(String),
+    Resize(u32, u32),
     Die,
 }
 
@@ -155,6 +156,10 @@ impl LuaCore {
             },
             Err(e) => LuaResponse::Error(format!("Cannot speak to lua: {}", e)),
         }
+    }
+
+    pub fn resize(&self, w: u32, h: u32) {
+        self.to_lua_tx.send(LuaTalk::Resize(w, h));
     }
 
     pub fn async_load(&self, file: &String) {
@@ -520,6 +525,9 @@ fn start(
                         }
                         _ => {}
                     };
+                }
+                LuaTalk::Resize(w, h) => {
+                    gui_handle.borrow_mut().resize(w, h);
                 }
             }
 

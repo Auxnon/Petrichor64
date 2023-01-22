@@ -828,7 +828,7 @@ pub fn init_lua_sys(
         "pixel",
         move |_, (x, y, rgb): (u32, u32, mlua::Value,)| {
             let c = get_color(rgb);
-            gui.borrow_mut().pixel(x, y, c.x, c.y, c.z, c.w);
+            gui.borrow_mut().pixel(x, y, c);
             // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
             Ok(1)
         },

@@ -33,15 +33,15 @@ pub struct Gui {
     pub sky_texture: TexTuple,
     text: String,
     /** main game rendered gui raster to stay in memory if toggled to console */
-    pub main: RgbaImage,
+    main: RgbaImage,
     /** console raster with current output to stay in memory*/
-    pub console: RgbaImage,
+    console: RgbaImage,
     /** skybox raster */
-    pub sky: RgbaImage,
+    sky: RgbaImage,
 
     time: f32,
     pub letters: RgbaImage,
-    pub size: [u32; 2],
+    size: [u32; 2],
     pub console_background: image::Rgba<u8>,
     // console_dity: bool,
     // main_dirty: bool,
@@ -336,6 +336,7 @@ impl Gui {
 
     /* Clean off the main raster */
     pub fn clean(&mut self) {
+        println!("cleaning {:?}", self.size);
         self.main = RgbaImage::new(self.size[0], self.size[1]);
         self.dirty = true;
     }
@@ -362,6 +363,7 @@ impl Gui {
     //     self.dirty = true;
     // }
     pub fn replace_image(&mut self, img: RgbaImage, is_sky: bool) {
+        println!("replacing image of size {:?}", img.dimensions());
         if is_sky {
             self.sky = img;
             self.dirty_sky = true;
@@ -415,6 +417,13 @@ impl Gui {
         // self.main.self.main = RgbaImage::new(size[0], size[1]);
         // self.console = RgbaImage::new(size[0], size[1]);
         // self.sky = RgbaImage::new(size[0], size[1]);
+        println!(
+            "resize to {:?} {:?} {:?} {:?}",
+            size,
+            self.main.dimensions(),
+            self.console.dimensions(),
+            self.sky.dimensions()
+        );
 
         self.apply_console_out_text();
         self.dirty = true;
@@ -438,6 +447,12 @@ impl Gui {
             } else {
                 &self.main
             };
+            println!(
+                "raster size console {} {:?} stored size{:?}",
+                self.output,
+                raster.dimensions(),
+                self.size
+            );
             crate::texture::write_tex(queue, &self.overlay_texture.texture, raster);
             self.dirty = false;
         }
@@ -448,10 +463,12 @@ impl Gui {
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
+        //DEV debug
+        println!("morsel size {:?} ", self.size);
         (
             self.letters.clone(),
-            self.main.clone(),
-            self.sky.clone(),
+            RgbaImage::new(self.size[0], self.size[1]),
+            RgbaImage::new(self.size[0], self.size[1]),
             self.size,
         )
     }
@@ -538,13 +555,26 @@ impl GuiMorsel {
         )
     }
 
-    pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
-        self.get_targ().get_pixel_mut(x, y).0 = [
-            (r * 255.) as u8,
-            (g * 255.) as u8,
-            (b * 255.) as u8,
-            (a * 255.) as u8,
+    pub fn pixel(&mut self, x: u32, y: u32, rgb: Vec4) {
+        let s = self.size;
+        println!("morself gui {} {}", s[0], s[1]);
+
+        self.get_targ()
+            .get_pixel_mut(x.min(s[0] - 1), y.min(s[1] - 1))
+            .0 = [
+            (rgb.x * 255.) as u8,
+            (rgb.y * 255.) as u8,
+            (rgb.z * 255.) as u8,
+            (rgb.w * 255.) as u8,
         ];
+    }
+    pub fn resize(&mut self, w: u32, h: u32) {
+        self.size = [w, h];
+        println!("morself gui {} {}", w, h);
+        self.main = image::imageops::resize(&self.main, w, h, image::imageops::FilterType::Nearest);
+        self.sky = image::imageops::resize(&self.sky, w, h, image::imageops::FilterType::Nearest);
+        self.dirty = true;
+        self.dirty_sky = true;
     }
 
     pub fn draw_image(&mut self, image: &RgbaImage, x: LuaResponse, y: LuaResponse) {

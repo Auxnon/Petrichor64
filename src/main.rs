@@ -633,6 +633,7 @@ impl Core {
         );
         let (con_w, con_h) = self.gui.get_console_size();
         self.loggy.set_dimensions(con_w, con_h);
+        self.bundle_manager.resize(gui_scaled.0, gui_scaled.1);
     }
     fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>) -> (u32, u32) {
         let gui_size = gui_params.resolution;
