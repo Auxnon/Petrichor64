@@ -7,6 +7,7 @@ use crate::{
     lua_define::{LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, get_color, LuaImg},
+    model::TextureStyle,
     pad::Pad,
     tile::Chunk,
     types::ValueMap,
@@ -1057,26 +1058,50 @@ pub fn init_lua_sys(
     lua!(
         "smodel",
         move |_, (name, t): (String, Table)| {
-            let v = t.get::<_, Vec<[f32; 3]>>("v")?;
-            if v.len() > 0 {
-                let i = match t.get::<_, Vec<u32>>("i") {
-                    Ok(o) => o,
-                    _ => vec![],
-                };
-                let u = match t.get::<_, Vec<[f32; 2]>>("u") {
-                    Ok(o) => o,
-                    _ => vec![],
-                };
-                match t.get::<_, String>("t") {
-                    Ok(texture) => {
-                        pitcher.send((bundle_id, MainCommmand::Model(name, texture, v, i, u)));
+            match t.get::<_, Vec<[f32; 3]>>("q") {
+                Ok(quads) => {
+                    // println!("got quads {}", quads.len());
+                    let (v, uv, i) = convert_quads(quads);
+                    match t.get::<_, Vec<String>>("t") {
+                        Ok(texture) => {
+                            pitcher.send((
+                                bundle_id,
+                                MainCommmand::Model(name, texture, v, i, uv, TextureStyle::Quad),
+                            ));
+                        }
+                        _ => {
+                            Err::<(), &str>("This type of model requires a texture");
+                        }
                     }
-                    _ => {
-                        Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
-                        // return Ok(());
+                }
+                _ => {
+                    // println!("got no quads");
+                    let v = t.get::<_, Vec<[f32; 3]>>("v")?;
+                    if v.len() > 0 {
+                        let i = match t.get::<_, Vec<u32>>("i") {
+                            Ok(o) => o,
+                            _ => vec![],
+                        };
+                        let u = match t.get::<_, Vec<[f32; 2]>>("u") {
+                            Ok(o) => o,
+                            _ => vec![],
+                        };
+                        match t.get::<_, Vec<String>>("t") {
+                            Ok(texture) => {
+                                pitcher.send((
+                                    bundle_id,
+                                    MainCommmand::Model(name, texture, v, i, u, TextureStyle::Tri),
+                                ));
+                            }
+                            _ => {
+                                Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                                // return Ok(());
+                            }
+                        };
                     }
-                };
+                }
             }
+
             Ok(())
         },
         "create a model <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>"
@@ -1509,7 +1534,7 @@ pub fn load(
         LogType::Config,
         "-------------------------------------------------",
     );
-    drop(bundle);
+    // drop(bundle);
     // TODO do we need to run an update here?
     // core.update();
     core.loggy.log(LogType::Config, "calling main method");
@@ -1780,7 +1805,14 @@ pub enum MainCommmand {
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Group(u64, u64, SyncSender<bool>),
     Kill(u64),
-    Model(String, String, Vec<[f32; 3]>, Vec<u32>, Vec<[f32; 2]>),
+    Model(
+        String,
+        Vec<String>,
+        Vec<[f32; 3]>,
+        Vec<u32>,
+        Vec<[f32; 2]>,
+        TextureStyle,
+    ),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
     AsyncError(String),
@@ -1939,6 +1971,54 @@ fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
         }
     }
     data
+}
+fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
+    let mut vec = vec![];
+    let mut uv = vec![];
+    let mut ind: Vec<u32> = vec![];
+    let max = (q.len() / 4);
+    for i in 0..max {
+        let i = i * 4;
+        let v1 = q[i];
+        let v2 = q[i + 1];
+        let v3 = q[i + 2];
+        let v4 = q[i + 3];
+
+        let v1to2length =
+            ((v2[0] - v1[0]).powi(2) + (v2[1] - v1[1]).powi(2) + (v2[2] - v1[2]).powi(2)).sqrt();
+        let v2to3length =
+            ((v3[0] - v2[0]).powi(2) + (v3[1] - v2[1]).powi(2) + (v3[2] - v2[2]).powi(2)).sqrt();
+
+        let (w, h) = if v1to2length > v2to3length {
+            (1., v2to3length / v1to2length)
+        } else {
+            (v1to2length / v2to3length, 1.)
+        };
+        // let v1dir=[v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
+
+        vec.push(v1);
+        vec.push(v2);
+        vec.push(v3);
+        vec.push(v4);
+
+        uv.push([0., 0.]);
+        uv.push([w, 0.]);
+        uv.push([w, h]);
+        uv.push([0., h]);
+
+        // uv.push([0., h]);
+        // uv.push([w, h]);
+        // uv.push([w, 0.]);
+        // uv.push([0., 0.]);
+
+        ind.push(i as u32);
+        ind.push((i + 1) as u32);
+        ind.push((i + 2) as u32);
+        ind.push((i + 2) as u32);
+        ind.push((i + 3) as u32);
+        ind.push(i as u32);
+    }
+    (vec, uv, ind)
 }
 
 fn make_err(s: &str) -> mlua::prelude::LuaError {

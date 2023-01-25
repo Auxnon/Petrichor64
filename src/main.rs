@@ -711,17 +711,18 @@ impl Core {
                     );
                 }
                 MainCommmand::Clear() => self.gui.clean(),
-                MainCommmand::Model(name, texture, v, i, u) => {
+                MainCommmand::Model(name, texture, v, i, u, style) => {
                     self.model_manager.upsert_model(
                         &self.device,
                         &self.tex_manager,
                         &mut self.world,
                         id,
                         &name,
-                        &texture,
+                        texture,
                         v,
                         i,
                         u,
+                        style,
                         &mut self.loggy,
                     );
                     // name, v, i, u);
@@ -945,6 +946,22 @@ impl Core {
             ValueMap::Array(a) => a.iter().map(|v| Self::val2float(v)).collect::<Vec<f32>>(),
             ValueMap::Float(f) => vec![*f],
             _ => vec![],
+        }
+    }
+    fn val2vec3(val: &ValueMap) -> [f32; 3] {
+        match val {
+            ValueMap::Array(a) => match a.len() {
+                1 => [Self::val2float(&a[0]), 0., 0.],
+                2 => [Self::val2float(&a[0]), Self::val2float(&a[1]), 0.],
+                3 => [
+                    Self::val2float(&a[0]),
+                    Self::val2float(&a[1]),
+                    Self::val2float(&a[2]),
+                ],
+                _ => [0., 0., 0.],
+            },
+            ValueMap::Float(f) => [*f, 0., 0.],
+            _ => [0., 0., 0.],
         }
     }
     fn val2string(val: &ValueMap) -> Option<&String> {

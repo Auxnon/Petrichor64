@@ -11,6 +11,13 @@ use crate::{
     world::World,
 };
 
+pub enum TextureStyle {
+    Tri,
+    Quad,
+    TriRepeat,
+    QuadRepeat,
+}
+
 pub struct ModelManager {
     pub CUBE: Rc<Model>,
     pub PLANE: Rc<Model>,
@@ -294,41 +301,71 @@ impl ModelManager {
         world: &mut World,
         bundle_id: u8,
         name: &str,
-        texture: &str,
+        texture: Vec<String>,
         verts: Vec<[f32; 3]>,
         inds: Vec<u32>,
         uvs: Vec<[f32; 2]>,
+        tex_style: TextureStyle,
         loggy: &mut Loggy,
     ) {
         loggy.log(
             LogType::Model,
             &format!(
-                "Build inline model {} from {} verts, {} inds and texture {}",
+                "Build inline model {} from {} verts, {} inds and texture {:?}",
                 name,
                 verts.len(),
                 inds.len(),
                 texture
             ),
         );
-        let uv_adjust = tex_manager.get_tex(texture);
-        loggy.log(LogType::Model, &format!("uv_adjust: {:?}", uv_adjust));
-        let vertices = if uvs.len() == verts.len() {
-            verts
-                .iter()
-                .enumerate()
-                .map(|(i, pos)| {
-                    let uv = uvs[i];
-                    let mut vv = vertexx(*pos, [0, 0, 0], uv);
-                    vv.texture(uv_adjust);
-                    vv
-                })
-                .collect::<Vec<Vertex>>()
+        let t_count = texture.len();
+        let vertices = if uvs.len() == verts.len() || t_count > 0 {
+            if t_count == 1 {
+                let uv_adjust = tex_manager.get_tex(&texture[0]);
+                // loggy.log(LogType::Model, &format!("uv_adjust: {:?}", uv_adjust));
+                verts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pos)| {
+                        let uv = uvs[i];
+                        let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                        vv.texture(uv_adjust);
+                        vv
+                    })
+                    .collect::<Vec<Vertex>>()
+            } else {
+                let step_size = match tex_style {
+                    TextureStyle::Quad => 4,
+                    _ => 3,
+                };
+                let mut tex_cycle = 0;
+                let uv_adjusts: Vec<Vec4> =
+                    texture.iter().map(|t| tex_manager.get_tex(t)).collect();
+                let mut current_tex = uv_adjusts[0];
+                verts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pos)| {
+                        let uv = uvs[i];
+                        if i % step_size == 0 && i > 0 {
+                            tex_cycle += 1;
+                            if tex_cycle >= t_count {
+                                tex_cycle = 0;
+                            }
+                            current_tex = uv_adjusts[tex_cycle];
+                        }
+                        // println!("ctex {}: {:?}", i, current_tex);
+                        let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                        vv.texture(current_tex);
+                        vv
+                    })
+                    .collect::<Vec<Vertex>>()
+            }
         } else {
             verts
                 .iter()
                 .map(|pos| {
                     let mut vv = vertexx(*pos, [0, 0, 0], [0., 0.]);
-                    vv.texture(uv_adjust);
                     vv
                 })
                 .collect::<Vec<Vertex>>()

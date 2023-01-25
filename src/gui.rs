@@ -363,7 +363,7 @@ impl Gui {
     //     self.dirty = true;
     // }
     pub fn replace_image(&mut self, img: RgbaImage, is_sky: bool) {
-        println!("replacing image of size {:?}", img.dimensions());
+        // println!("replacing image of size {:?}", img.dimensions());
         if is_sky {
             self.sky = img;
             self.dirty_sky = true;
@@ -447,12 +447,12 @@ impl Gui {
             } else {
                 &self.main
             };
-            println!(
-                "raster size console {} {:?} stored size{:?}",
-                self.output,
-                raster.dimensions(),
-                self.size
-            );
+            // println!(
+            //     "raster size console {} {:?} stored size{:?}",
+            //     self.output,
+            //     raster.dimensions(),
+            //     self.size
+            // );
             crate::texture::write_tex(queue, &self.overlay_texture.texture, raster);
             self.dirty = false;
         }
