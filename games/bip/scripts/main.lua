@@ -1,6 +1,8 @@
 t = {
 	sidewall = 11,
-	topwall = 12,
+	topstraight = 30,
+	topbend = 31,
+	topend = 40,
 	sidedoor = 13,
 	floor = 14,
 	grass1 = 15,
@@ -23,7 +25,8 @@ sky()
 fill("9bbc0f") --cadc9f
 gui()
 
-dimg(gimg("speech"), .5, 50)
+dimg(gimg("speech"), "=50%-32", 4)
+-- text("test",)
 function main()
 	for key, val in pairs(t) do
 		t[key] = "bip" .. val
@@ -31,17 +34,21 @@ function main()
 	end
 	cube("leaves", t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside)
 	t.leaves = "leaves"
-	cube("wall", t.topwall, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
-	t.wall = "wall"
-	cube("door", t.topwall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall, t.sidewall)
+	cube("wallbend", t.topbend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	t.wallbend = "wallbend"
+	cube("wallstraight", t.topstraight, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	t.wallstraight = "wallstraight"
+	cube("wallend", t.topend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	t.wallend = "wallend"
+	cube("door", t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall)
 	t.door = "door"
 	feller = spawn('wall', 4, 0, 1)
 	feller2 = spawn('bip3', 4, 0, 1)
 	if true then
 
-
-		for i = -6, 6 do
-			for j = -6, 6 do
+		local gsize = 24;
+		for i = -gsize, gsize do
+			for j = -gsize, gsize do
 				tile(t["grass" .. irnd(1, 4)], i, j, 0)
 			end
 		end
@@ -55,22 +62,26 @@ function main()
 		end
 
 		for i = -2, 2 do
-			tile(t.wall, 3, i, 1)
+			tile(t.wallstraight, 3, i, 1, 1)
 		end
 
 		for i = -2, 2 do
-			tile(t.wall, -3, i, 1)
+			tile(t.wallstraight, -3, i, 1, 1)
 		end
 
-		for i = -3, 3 do
-			tile(t.wall, i, 3, 1)
+		for i = -2, 2 do
+			tile(t.wallstraight, i, 3, 1)
 		end
-		for i = -3, 3 do
-			tile(t.wall, i, -3, 1)
+		for i = -2, 2 do
+			tile(t.wallstraight, i, -3, 1)
 		end
+		tile(t.wallbend, 3, 3, 1, 0)
+		tile(t.wallbend, -3, 3, 1, 1)
+		tile(t.wallbend, 3, -3, 1, 3)
+		tile(t.wallbend, -3, -3, 1, 2)
 
-		tile(t.door, 0, 3, 1, 1)
-		tile(t.door, 0, -3, 1, 1)
+		tile(t.door, 0, 3, 1)
+		tile(t.door, 0, -3, 1)
 
 		tile(t.leaves, 4, 0, 2)
 		tile(t.leaves, 5, 0, 2, 1)
@@ -100,6 +111,7 @@ last_pos = { 0, 0, 0 }
 first_click = true
 remove_mode = false
 cpos = { 0, -8, 8 }
+sp = 0.1
 function loop()
 	-- example.x = example.x + rnd() * 0.1 - 0.05
 	-- example.z = example.z + rnd() * 0.1 - 0.05
@@ -156,7 +168,7 @@ function loop()
 	else
 		first_click = true
 	end
-	cam { pos = cpos, rot = { rr + pi / 2, -tau / 8 } }
+
 	-- cam { pos = cpos, rot = { 0, tau / 2 } }
 	if key("a") then
 		rr = rr + 0.02
@@ -164,11 +176,11 @@ function loop()
 		rr = rr - 0.02
 	end
 	if key("w") then
-		cpos[1] = cpos[1] - sin(rr) * 0.2
-		cpos[2] = cpos[2] + cos(rr) * 0.2
+		cpos[1] = cpos[1] - sin(rr) * sp
+		cpos[2] = cpos[2] + cos(rr) * sp
 	elseif key("s") then
-		cpos[1] = cpos[1] + sin(rr) * 0.2
-		cpos[2] = cpos[2] - cos(rr) * 0.2
+		cpos[1] = cpos[1] + sin(rr) * sp
+		cpos[2] = cpos[2] - cos(rr) * sp
 	end
 	if key("space") then
 		cpos[1] = 0
@@ -176,5 +188,6 @@ function loop()
 		cpos[3] = 8
 		rr = 0
 	end
+	cam { pos = cpos, rot = { rr + pi / 2, -tau / 8 } }
 
 end
