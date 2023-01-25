@@ -58,7 +58,7 @@ impl UserData for LuaEnt {
             Ok(())
         });
 
-        methods.add_method_mut("tex", |_, this, tex: String| {
+        methods.add_method_mut("stex", |_, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;
@@ -122,13 +122,13 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("z", |_, this| Ok(this.z));
         fields.add_field_method_set("z", |_, this, z: f64| Ok(this.z = z));
 
-        fields.add_field_method_get("rot_x", |_, this| Ok(this.rot_x));
-        fields.add_field_method_get("rot_y", |_, this| Ok(this.rot_y));
-        fields.add_field_method_get("rot_z", |_, this| Ok(this.rot_z));
+        fields.add_field_method_get("rx", |_, this| Ok(this.rot_x));
+        fields.add_field_method_get("ry", |_, this| Ok(this.rot_y));
+        fields.add_field_method_get("rz", |_, this| Ok(this.rot_z));
 
-        fields.add_field_method_set("rot_z", |_, this, rot_z: f64| Ok(this.rot_z = rot_z));
-        fields.add_field_method_set("rot_y", |_, this, rot_y: f64| Ok(this.rot_y = rot_y));
-        fields.add_field_method_set("rot_x", |_, this, rot_x: f64| Ok(this.rot_x = rot_x));
+        fields.add_field_method_set("rz", |_, this, rot_z: f64| Ok(this.rot_z = rot_z));
+        fields.add_field_method_set("ry", |_, this, rot_y: f64| Ok(this.rot_y = rot_y));
+        fields.add_field_method_set("rx", |_, this, rot_x: f64| Ok(this.rot_x = rot_x));
 
         fields.add_field_method_get("vx", |_, this| Ok(this.vx));
         fields.add_field_method_set("vx", |_, this, vx: f64| Ok(this.vx = vx));
