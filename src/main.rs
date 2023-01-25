@@ -810,6 +810,11 @@ impl Core {
                                     self.win_ref.set_title(&s);
                                 }
                             }
+                            "lock" => {
+                                self.global.console = false;
+                                self.gui.disable_console();
+                                self.global.locked = true;
+                            }
 
                             _ => {}
                         }
@@ -844,6 +849,10 @@ impl Core {
                 }
                 MainCommmand::Stats() => {
                     self.world.stats();
+                }
+                MainCommmand::Quit() => {
+                    self.global.state_changes.push(StateChange::Quit);
+                    self.global.is_state_changed = true;
                 }
                 MainCommmand::LoopComplete(img_result) => {
                     match img_result {
@@ -1083,6 +1092,9 @@ fn main() {
                         }
                         StateChange::Resized => {
                             core.debounced_resize();
+                        }
+                        StateChange::Quit => {
+                            *control_flow = ControlFlow::Exit;
                         }
                     }
                 }

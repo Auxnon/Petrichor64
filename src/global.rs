@@ -37,6 +37,7 @@ pub struct Global {
     pub state_changes: Vec<StateChange>,
     pub state_delay: u32,
     pub is_state_changed: bool,
+    pub locked: bool,
     // pub loaded_directory: Option<String>,
 }
 impl Global {
@@ -71,6 +72,7 @@ impl Global {
             state_changes: Vec::new(),
             state_delay: 0,
             is_state_changed: false,
+            locked: false,
             // loaded_directory: None,
         }
     }
@@ -93,6 +95,7 @@ impl Global {
         self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
+        self.screen_effects = ScreenBinds::new();
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
@@ -121,6 +124,7 @@ pub enum StateChange {
     Resized,
     MouseGrabOn,
     MouseGrabOff,
+    Quit,
 }
 pub enum GuiStyle {
     Aspect,

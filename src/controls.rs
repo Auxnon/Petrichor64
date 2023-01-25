@@ -96,11 +96,13 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     ];
 
     if input_helper.key_released(VirtualKeyCode::Grave) {
-        core.global.console = !core.global.console;
-        if core.global.console {
-            core.gui.enable_console(&core.loggy)
-        } else {
-            core.gui.disable_console()
+        if !core.global.locked {
+            core.global.console = !core.global.console;
+            if core.global.console {
+                core.gui.enable_console(&core.loggy)
+            } else {
+                core.gui.disable_console()
+            }
         }
     } else if core.global.console {
         if core.global.scroll_delta != 0. {
@@ -111,7 +113,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             if command.is_some() {
                 // if core.global.test {
                 let mut com = command.unwrap(); //.to_lowercase();
-                println!("command isss {}", com);
+                println!("command is {}", com);
                 if let Some(alias) = core.global.aliases.get(&com) {
                     com = alias.to_string();
                 }

@@ -1225,14 +1225,16 @@ pub fn init_lua_sys(
         "Recieve UDP"
     );
 
-    // lua!(
-    //     "_self_destruct",
-    //     |_, (): ()| {
-    //         Ok(())
-    //         //
-    //     },
-    //     "I guess blow up the lua core?"
-    // );
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "quit",
+        move |_, _: ()| {
+            pitcher.send((bundle_id, MainCommmand::Quit()));
+            Ok(())
+            //
+        },
+        "I guess blow up the lua core?"
+    );
 
     // REMEMBER this always has to be at the end
     let command_map_clone = command_map.clone();
@@ -1340,6 +1342,7 @@ pub fn load_empty(core: &mut Core) {
     );
     let default = "function main() end function loop() end";
     bundle.lua.async_load(&default.to_string());
+    bundle.call_main();
 }
 
 /**
@@ -1510,7 +1513,8 @@ pub fn load(
     // TODO do we need to run an update here?
     // core.update();
     core.loggy.log(LogType::Config, "calling main method");
-    core.bundle_manager.call_main(bundle_id);
+    // core.bundle_manager.call_main(bundle_id);
+    bundle.call_main();
 }
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
@@ -1789,6 +1793,7 @@ pub enum MainCommmand {
     Stats(),
     //for testing
     Meta(usize),
+    Quit(),
 }
 
 pub fn num(x: Value) -> LuaResponse {
@@ -1897,7 +1902,6 @@ fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
     for it in table.pairs::<String, Value>() {
         if let Ok((key, val)) = it {
-            println!("pair {}", key);
             let mapped = match val {
                 Value::String(s) => {
                     // println!("string {}", s);
