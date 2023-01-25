@@ -116,7 +116,7 @@ pub fn render_loop(
         core.global.screen_effects.crt_resolution,
         core.global.screen_effects.corner_harshness,
         core.global.screen_effects.corner_ease,
-        core.global.screen_effects.glitchiness,
+        core.global.screen_effects.glitchiness[0],
         core.global.screen_effects.lumen_threshold,
         core.global.screen_effects.dark_factor,
         core.global.screen_effects.low_range,
@@ -124,17 +124,26 @@ pub fn render_loop(
         core.global.screen_effects.modernize,
         core.global.gui_params.resolution.0 as f32,
         core.global.gui_params.resolution.1 as f32,
-        0.,
+        core.global.screen_effects.glitchiness[1],
         0.,
     ];
+    let specs: [f32; 4] = [
+        (core.global.cam_pos.x) * 16.,
+        (core.global.cam_pos.y) * 16.,
+        (core.global.cam_pos.z) * 16.,
+        core.global.screen_effects.fog,
+    ];
+    // println!("specs: {:?}", specs);
 
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
     let size3 = bytemuck::cast_slice(&time_ref);
 
+    let size_specs = bytemuck::cast_slice(&specs);
     core.queue.write_buffer(&core.uniform_buf, 0, size1);
     core.queue.write_buffer(&core.uniform_buf, 64, size2);
     core.queue.write_buffer(&core.uniform_buf, 128, size3);
+    core.queue.write_buffer(&core.uniform_buf, 192, size_specs);
 
     let mut encoder = core
         .device

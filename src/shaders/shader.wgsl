@@ -4,6 +4,7 @@ struct VertexOutput {
     @location(1) world_position: vec4<f32>,
     @location(2) tex_coords: vec2<f32>,
     @location(3) vpos:vec4<f32>,
+    @location(4) specs:vec4<f32>,
 };
 
 struct InstanceInput {
@@ -21,6 +22,7 @@ struct Globals {
     view_mat: mat4x4<f32>,
     proj_mat: mat4x4<f32>,
     adjustments: mat4x4<f32>,
+    specs: vec4<f32>,
     //num_lights: vec4<u32>,
 };
 
@@ -86,6 +88,7 @@ fn vs_main(
         //     vec4<f32>(0.,0.,0.,1.),
         // );
         // let sq=sqrt(2.)/2.;
+        
         let r=instance.effects[1];
         let roo=mat4x4<f32>(
             vec4<f32>(cos(r),-sin(r),0.,0.),
@@ -104,7 +107,8 @@ fn vs_main(
     out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
   
-    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0][0],world_pos.w);
+    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0][0],world_pos.w); 
+    out.specs=globals.specs;
     return out;
 }
 
@@ -115,19 +119,9 @@ struct GuiFrag {
     // @location(2) adjustments: array<f32,12>,
 };
 
-// struct PostFrag {
-//     @builtin(position) pos: vec4<f32>, 
-//     @location(1) screen: vec4<f32>,
-//     // @location(2) adjustments: array<f32,12>,
-// };
-
 
 @vertex
 fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
-    // @location(0) position: vec4<i32>,
-    // @location(1) normal: vec4<i32>,
-    //) -> VertexOutput {
-    
 
     var out: GuiFrag;
 
@@ -142,8 +136,6 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     }
     
     out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2],globals.adjustments[3][0],globals.adjustments[3][1]);
-    // out.eh=vec2<f32>(globals.adjustments[3],globals.adjustments[4]);
-    //out.adjustments=array<f32,12>(0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.);
     return out;
 }
 
@@ -156,10 +148,26 @@ var<private> f_color: vec4<f32>;
 
 fn main_2(in:VertexOutput) {
     //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
-    
+    // let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
+    // let v=abs((10.*in.vpos.z+0.01)/10.)%3.;
+    // let v=1.-min(1.,length(in.world_position.xyz - in.specs.xyz)%10.);
+
+    // let start=120.;
+   
     f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
-    //f_color=f_color*v; //vec4<f32>(v,v,v,1.0);
+    // f_color=f_color*v; //vec4<f32>(v,v,v,1.0);
+    // if (v<0.5){
+    //     discard;
+    // }
+    // f_color=vec4<f32>(v,v,v,1.); 
+    if( in.specs.w>0.){
+        let end=in.specs.w;
+        let dist=length(in.world_position.xyz-in.specs.xyz);      
+        // let v= clamp((end - dist) / (end - start), 0.0, 1.0);
+        let v= clamp((end - dist) / (  32.), 0.0, 1.0);
+        f_color.a*=v;
+    }
+   
     return;
 }
 
@@ -167,7 +175,7 @@ fn main_2(in:VertexOutput) {
 fn fs_main( in: VertexOutput) -> FragmentOutput {
     main_2(in); 
     let e3: vec4<f32> = f_color;
-    if (e3.a < 0.5) {
+    if (e3.a < 0.1) {
         discard;
     }
     return FragmentOutput(e3);
@@ -306,6 +314,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
     let corner_ease: f32 = adj[1][1]; // 4.0
     let resi: f32 =adj[0][3]; //  320.0
     let glitchy: f32 =adj[1][2]; // 3.0  
+    let glitchy_line: f32 =adj[3][2]; // 0.2
     let lumen_threshold:f32=adj[1][3]; //0.2
 
 
@@ -353,7 +362,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
         if(  uv.x>0. && uv.x<1. && uv.y>0. && uv.y<1.){
             
             //flicker
-            uv+=sin(min((iTime%1.),2.)*2000.)/10000.;
+            uv+=sin(min((iTime%1.),2.)*2000.)/(100.+9900.*(1.-glitchy));
 
             //resolution factor
             let res=min(resi,resolution.x);
@@ -377,22 +386,26 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
             
             ////===== START scan lines
             let L=0.01*cos(uv.x*1.2+iTime*20.);
-            let wave=cos(6.28*smoothstep(i.y,L,L+0.05))/5.;
+             //distance .05 .02 
+            let scan_size=5.*(1.-glitchy_line); //5
+            let wave=cos(smoothstep(i.y*16.,L,L+glitchy_line*20.))/scan_size;
             
            
             let scanny=cos(1.57+3.14*(.2-wave));
-            let vvv=2.*scanny*cos(uv.x*16.+iTime*16.)/res;
+            let sc=glitchy*scanny*cos(uv.x*32.+iTime*12.); // is iTime*16 bad for epilepsy?
+            let sc2=glitchy*sc/20.;
+            let vvv=2.*sc/res; //glitchy
             //========== END
 
-           let r=path(uv,res2,vec3f(1.,0.,0.),vec2f(0.,vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+           let r=path(uv+vec2(sc2,0.),res2,vec3f(1.,0.,0.),vec2f(0.,vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
            let red=r.y;
            let ar=r.x;
 
             let uv2=uv;
             let uv3=uv;
             
-            let g=path(uv2,res3,vec3f(0.,1.,0.),vec2f(0.,0.),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
-            let b=path(uv3,res4,vec3f(0.,0.,1.),vec2f(0.,-vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+            let g=path(uv2+vec2(0.,sc2/8.),res3,vec3f(0.,1.,0.),vec2f(0.,-vvv),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
+            let b=path(uv3-vec2(-sc2,0.),res4,vec3f(0.,0.,1.),vec2f(0.,0.),low_range,high_range,dark_factor,lumen_threshold,t_diffuse,s_diffuse);
             
             let ag=g.x;
             let green=g.y;

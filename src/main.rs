@@ -113,6 +113,7 @@ struct GlobalUniforms {
     view: [[f32; 4]; 4],
     persp: [[f32; 4]; 4],
     adjustments: [[f32; 4]; 4],
+    specs: [f32; 4],
 }
 
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
@@ -305,6 +306,7 @@ impl Core {
             view: mx_view.to_cols_array_2d(),
             persp: mx_persp.to_cols_array_2d(),
             adjustments: Mat4::ZERO.to_cols_array_2d(),
+            specs: [0.0, 0.0, 0.0, 0.0],
             //num_lights: [lights.len() as u32, 0, 0, 0],
         };
 
@@ -635,6 +637,7 @@ impl Core {
         self.loggy.set_dimensions(con_w, con_h);
         self.bundle_manager.resize(gui_scaled.0, gui_scaled.1);
     }
+
     fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>) -> (u32, u32) {
         let gui_size = gui_params.resolution;
         match gui_params.style {
@@ -763,7 +766,6 @@ impl Core {
                 }
                 MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
                 MainCommmand::Globals(table) => {
-                    println!("global remap");
                     for (k, v) in table.iter() {
                         match k.as_str() {
                             "resolution" => {
@@ -779,12 +781,13 @@ impl Core {
                             "bleed" => {
                                 self.global.screen_effects.lumen_threshold = Self::val2float(v)
                             }
-                            "glitch" => self.global.screen_effects.glitchiness = Self::val2float(v),
+                            "glitch" => self.global.screen_effects.glitchiness = Self::val2vec3(v),
                             "high" => self.global.screen_effects.high_range = Self::val2float(v),
                             "low" => self.global.screen_effects.low_range = Self::val2float(v),
                             "modernize" => {
                                 self.global.screen_effects.modernize = Self::val2float(v)
                             }
+                            "fog" => self.global.screen_effects.fog = Self::val2float(v),
                             "fullscreen" => {
                                 self.global.fullscreen = Self::val2bool(v);
                                 self.check_fullscreen();

@@ -21,8 +21,9 @@ pub struct ScreenBinds {
     pub corner_harshness: f32,
     pub corner_ease: f32,
     pub crt_resolution: f32,
-    pub glitchiness: f32,
+    pub glitchiness: [f32; 3],
     pub lumen_threshold: f32,
+    pub fog: f32,
 }
 
 impl ScreenBinds {
@@ -35,8 +36,9 @@ impl ScreenBinds {
             corner_harshness: 1.2,
             corner_ease: 4.0,
             crt_resolution: 720.0, //320
-            glitchiness: 3.0,
+            glitchiness: [3., 0., 0.02],
             lumen_threshold: 0.2,
+            fog: 0.0,
         }
     }
 }
