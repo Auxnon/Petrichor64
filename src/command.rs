@@ -41,6 +41,25 @@ use std::{
 #[cfg(feature = "online_capable")]
 use std::sync::mpsc::Receiver;
 
+static com_list: [&str; 16] = [
+    "new - creates a new game directory",
+    "load - loads an app file",
+    "pack - packs a directory into an app file",
+    "unpack - unpacks an app file into a zip archive",
+    "ls - show directory contents, relative to home",
+    "show - open current app folder or file",
+    "exit - exit to console",
+    "reload - reloads game, or press Super + R",
+    "atlas - dump texture atlas to png",
+    "dev - toggle dev mode this session",
+    "clear - clear the console",
+    "bg - set console background color",
+    "find - loaded assets search",
+    "stats - show stats",
+    "help - ;)",
+    "test",
+];
+
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     let bundle_id = core.bundle_manager.console_bundle_target;
@@ -1362,8 +1381,8 @@ pub fn init_lua_sys(
     let pitcher = main_pitcher.clone();
     lua!(
         "quit",
-        move |_, _: ()| {
-            pitcher.send((bundle_id, MainCommmand::Quit()));
+        move |_, u: Option<u8>| {
+            pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0))));
             Ok(())
             //
         },
@@ -1453,7 +1472,6 @@ pub fn load_empty(core: &mut Core) {
     let bundle = core.bundle_manager.make_bundle(None, None);
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
-
     #[cfg(feature = "audio")]
     bundle.lua.start(
         bundle.id,

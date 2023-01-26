@@ -857,8 +857,19 @@ impl Core {
                 MainCommmand::Stats() => {
                     self.world.stats();
                 }
-                MainCommmand::Quit() => {
-                    self.global.state_changes.push(StateChange::Quit);
+                MainCommmand::Quit(u) => {
+                    // println!("quit {}", u);
+                    if u > 0 {
+                        match &self.global.pending_load {
+                            Some(l) => {
+                                mutations.push((id, MainCommmand::Load(l.to_owned())));
+                            }
+                            _ => mutations.push((id, MainCommmand::Quit(u))),
+                        }
+                        self.global.pending_load = None;
+                    } else {
+                        self.global.state_changes.push(StateChange::Quit);
+                    }
                     self.global.is_state_changed = true;
                 }
                 MainCommmand::LoopComplete(img_result) => {
@@ -892,8 +903,17 @@ impl Core {
             for (id, m) in mutations {
                 match m {
                     MainCommmand::Reload() => crate::command::reload(self, id),
+                    MainCommmand::Quit(u) => {
+                        crate::command::hard_reset(self);
+                        crate::command::load_empty(self);
+                    }
                     MainCommmand::Subload(file, is_overlay) => {
                         crate::command::load(self, Some(file), None, None, Some((id, is_overlay)));
+                    }
+                    MainCommmand::Load(file) => {
+                        crate::command::hard_reset(self);
+                        println!("load {}", file);
+                        crate::command::load(self, Some(file), None, None, None);
                     }
                     MainCommmand::Meta(d) => {
                         if only_one_gui_sync {

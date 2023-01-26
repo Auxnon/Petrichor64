@@ -81,6 +81,7 @@ impl Loggy {
     pub fn clear(&mut self) {
         self.buffer.clear();
         self.log_dirty = true;
+        self.current_length = 0;
     }
 
     /** USER: hit return, push down buffer for an output as it's own line, if any, and then a new line for input. return is used to activate as a command */
@@ -207,7 +208,14 @@ impl Loggy {
         };
         // println!("cap {}", cap);
         self.offset = self.offset.clamp(cap.0 as f32, cap.1 as f32);
-        println!("scroll {}", self.offset);
+        // println!(
+        //     "scroll {} with cap {} length {} dim {} actual len {}",
+        //     self.offset,
+        //     cap.1,
+        //     self.current_length,
+        //     self.buffer_dimensions.1,
+        //     self.buffer.len()
+        // );
         self.log_dirty = true;
     }
 
@@ -286,6 +294,7 @@ impl Loggy {
 
         self.log_dirty
     }
+    /** set dirty */
     pub fn clean(&mut self) {
         self.log_dirty = false;
     }
