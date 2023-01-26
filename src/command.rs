@@ -29,6 +29,7 @@ use parking_lot::Mutex;
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     path::Path,
     rc::Rc,
     sync::{
@@ -43,7 +44,7 @@ use std::sync::mpsc::Receiver;
 /** Private commands not reachable by lua code, but also works without lua being loaded */
 pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     let bundle_id = core.bundle_manager.console_bundle_target;
-    let lua = core.bundle_manager.get_lua();
+    let main_bundle = core.bundle_manager.get_main_bundle();
     if s.len() <= 0 {
         return false;
     }
@@ -56,7 +57,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 LogType::Config,
                 &format!("killing lua instance {}", bundle_id),
             );
-            lua.die();
+            main_bundle.lua.die();
         }
         "bundles" => {
             core.loggy
@@ -176,6 +177,40 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
             } else {
                 core.loggy.log(LogType::Config, "new <name>");
             }
+        }
+        "show" => {
+            if segments.len() > 1 {
+                let name = segments[1];
+                crate::asset::open_dir(name);
+            } else {
+                match main_bundle.directory {
+                    Some(ref d) => {
+                        crate::asset::open_dir(d);
+                    }
+                    None => {
+                        crate::asset::open_dir("./");
+                    }
+                }
+                // core.loggy.log(LogType::Config, "show <name>");
+            }
+        }
+        "config" => {
+            if segments.len() > 1 {
+                let name = segments[1];
+                if name.eq_ignore_ascii_case("show") {
+                    crate::asset::show_config();
+                }
+            } else {
+                if !crate::asset::check_config() {
+                    crate::asset::show_config();
+                } else {
+                    core.global.is_state_changed = true;
+                    core.global
+                        .state_changes
+                        .push(crate::global::StateChange::Config);
+                }
+            }
+            // crate::asset::make_config();
         }
         "bg" => {
             if segments.len() > 1 {

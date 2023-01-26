@@ -22,13 +22,49 @@ pub fn pack(
     world: &mut World,
     bundle_id: u8,
     lua_master: &LuaCore,
-    name: &String,
-    directory: Option<String>,
-    cart_pic: Option<String>,
+    // name: &String,
+    // directory: Option<String>,
+    // cart_pic: Option<String>,
+    com_hash: HashMap<String, String>,
+    regular_com: Vec<String>,
+    current_game_dir: Option<String>,
     loggy: &mut Loggy,
     debug: bool,
 ) {
-    let path = determine_path(directory);
+    let dir = match com_hash.get("i") {
+        Some(path) => Some(path.to_owned()),
+        None => {
+            if regular_com.len() > 0 {
+                Some(regular_com[0].to_owned())
+            } else {
+                match current_game_dir {
+                    Some(dir) => Some(dir),
+                    None => None,
+                }
+            }
+        }
+    };
+    let path = determine_path(dir);
+
+    let name = match com_hash.get("n") {
+        Some(name) => name,
+        None => {
+            let p = path.file_stem();
+            // println!("p: {:?}", p);
+            match p {
+                Some(pp) => pp.to_str().unwrap_or("unknown"),
+                None => "unknown",
+            }
+        }
+    };
+    println!("name: {}", name);
+    let pack_name = if name.contains(".") {
+        name.to_owned()
+    } else {
+        format!("{}.game.png", name)
+    };
+    println!("pack name: {}", pack_name);
+
     let sources = walk_files(
         tex_manager,
         model_manager,
@@ -40,11 +76,12 @@ pub fn pack(
         loggy,
         debug,
     );
-    let icon = path.join(match cart_pic {
-        Some(pic) => pic,
+
+    let icon = path.join(match com_hash.get("c") {
+        Some(pic) => pic.to_owned(),
         None => "icon.png".to_string(),
     });
-    crate::zip_pal::pack_zip(sources, icon, &name, loggy)
+    crate::zip_pal::pack_zip(sources, icon, &pack_name, loggy)
 }
 pub fn super_pack(name: &str) -> &str {
     // let sources = walk_files(None);
@@ -60,12 +97,14 @@ pub fn unpack(
     bundle_id: u8,
     lua_master: &LuaCore,
     device: &Device,
-    name: &String,
+    name: &str,
     file: Vec<u8>,
     loggy: &mut Loggy,
     debug: bool,
 ) {
-    println!("unpack {}", name);
+    if debug {
+        loggy.log(LogType::Config, &format!("unpack {}", name));
+    }
     let map = crate::zip_pal::unpack_and_walk(
         file,
         vec!["assets".to_string(), "scripts".to_string()],
@@ -77,9 +116,11 @@ pub fn unpack(
 
     match map.get("assets") {
         Some(dir) => {
-            loggy.log(LogType::Config, &format!("unpacking {} assets", dir.len()));
-            for item in dir {
-                let path = Path::new(&item.0);
+            if debug {
+                loggy.log(LogType::Config, &format!("unpacking {} assets", dir.len()));
+            }
+            for (item_name, item_buffer) in dir {
+                let path = Path::new(&item_name);
 
                 match path.extension() {
                     Some(e) => {
@@ -87,9 +128,10 @@ pub fn unpack(
                         if is_valid_type(&ext) {
                             let name = match path.file_stem() {
                                 Some(s) => s.to_os_string().into_string().unwrap(),
-                                _ => item.0.clone(),
+                                _ => item_name.clone(),
                             };
-                            let chonk = (name.clone(), ext.clone(), String::new(), Some(&item.1));
+                            let chonk =
+                                (name.clone(), ext.clone(), String::new(), Some(item_buffer));
                             // println!("unpack🤡chonk {:?}", chonk.0);
                             if ext == "ron" || ext == "json" {
                                 configs.push(chonk);
@@ -119,25 +161,29 @@ pub fn unpack(
     match map.get("scripts") {
         Some(dir) => {
             loggy.log(LogType::Config, &format!("unpacking {} scripts", dir.len()));
-            for item in dir {
-                match Path::new(&item.0).extension() {
+            for (item_name, item_buffer) in dir {
+                match Path::new(&item_name).extension() {
                     Some(e) => {
-                        let file_name = &item.0;
-                        let buffer = match std::str::from_utf8(&item.1.as_slice()) {
+                        let file_name = &item_name;
+                        let buffer = match std::str::from_utf8(&item_buffer.as_slice()) {
                             Ok(v) => v,
                             Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
                         };
                         if e == "lua" {
-                            loggy.log(
-                                LogType::LuaSys,
-                                &format!("loading script {}", buffer.to_string()),
-                            );
+                            if debug {
+                                loggy.log(
+                                    LogType::LuaSys,
+                                    &format!("loading script {}", file_name), //buffer.to_string()),
+                                );
+                            }
                             handle_script(buffer, lua_master);
                         } else {
-                            loggy.log(
-                                LogType::Config,
-                                &format!("skipping file type {}", file_name),
-                            );
+                            if debug {
+                                loggy.log(
+                                    LogType::Config,
+                                    &format!("skipping file type {}", file_name),
+                                );
+                            }
                         }
                     }
                     _ => {}
@@ -152,18 +198,55 @@ fn handle_script(buffer: &str, lua_master: &LuaCore) {
     lua_master.async_load(&buffer.to_string());
 }
 
+pub fn show_config() {
+    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    if !p.exists() {
+        println!("config not found, creating one");
+        make_config();
+    }
+    open_dir_from_path(&p)
+}
+
+pub fn make_config() {
+    let p = determine_path(Some(".petrichor64".to_owned()));
+    if !p.exists() {
+        fs::create_dir_all(p).unwrap();
+    }
+    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    if !p.exists() {
+        fs::write(
+            p,
+            r#"
+-- dev = true
+-- alias = {
+--   a = "load apps/tillys-silly-uwu-quest",
+--   crt = "attr{modernize=0}",
+-- }"#,
+        )
+        .unwrap();
+    }
+}
+
+pub fn check_config() -> bool {
+    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    p.exists()
+}
 pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) {
-    let p = PathBuf::new().join("config.lua");
+    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
     if p.exists() {
         if let Ok(buffer) = std::fs::read_to_string(p) {
             lua.load(&buffer.to_string());
 
             globals.debug = eval_bool(lua.func("dev"));
             if let LuaResponse::Table(t) = lua.func("alias") {
-                loggy.log(LogType::Config, &format!("{} aliases", t.len()));
+                if globals.debug {
+                    loggy.log(LogType::Config, &format!("{} aliases", t.len()));
+                }
                 // crate::lg!("{:?} aliases", t);
                 for (k, v) in t {
-                    loggy.log(LogType::Config, &format!("{} -> {}", k, v));
+                    if globals.debug {
+                        loggy.log(LogType::Config, &format!("{} -> {}", k, v));
+                    }
                     globals.aliases.insert(k, v);
                 }
             }
@@ -199,32 +282,26 @@ pub fn check_for_auto() -> Option<String> {
 
 pub fn determine_path(directory: Option<String>) -> PathBuf {
     #[cfg(not(debug_assertions))]
-    let current = match std::env::current_exe() {
-        Ok(mut cur) => {
-            cur.pop();
-            cur
-        }
-        Err(er) => PathBuf::from("."),
+    let current = match dirs::home_dir() {
+        Some(cur) => cur,
+        None => PathBuf::from(".").to_path_buf(),
     };
 
     #[cfg(debug_assertions)]
     let current = PathBuf::from(".");
+
     match directory {
         Some(s) => {
             let new_dir = current.join(s);
-            // if new_dir.is_dir() {
-            //     new_dir
-            // } else {
-            //     current
-            // }
+
             new_dir
         }
         None => current,
     }
 }
 
-pub fn make_directory(directory: String, loggy: &mut Loggy) {
-    let root = determine_path(Some(directory));
+pub fn make_directory(directory: &str, loggy: &mut Loggy) {
+    let root = determine_path(Some(directory.to_string()));
     if !root.exists() {
         fs::create_dir_all(&root).unwrap();
     }
@@ -243,7 +320,7 @@ pub fn make_directory(directory: String, loggy: &mut Loggy) {
         "
 example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
 sky()
-fill(1, 1, .4, 1)
+fill('FF5')
 gui()
 function main()
     log('main runs once everything has loaded')
@@ -256,6 +333,7 @@ end",
     .unwrap();
 
     crate::texture::simple_square(16, assets.join("example.png"), loggy);
+    crate::texture::simple_square(16, root.join("icon.png"), loggy);
 }
 
 pub fn walk_files(
@@ -592,6 +670,49 @@ fn parse_assets(
             );
         }
     }
+}
+
+pub fn open_dir(s: &str) {
+    let p = determine_path(Some(s.to_string()));
+    let p2 = if p.exists() { p } else { determine_path(None) };
+    open_dir_from_path(&p2);
+}
+pub fn open_dir_from_path(p: &Path) {
+    use std::process::Command;
+    Command::new("open").arg(p).spawn();
+}
+
+pub fn get_logo() -> Vec<u8> {
+    #[cfg(not(windows))]
+    macro_rules! sp {
+        () => {
+            "/"
+        };
+    }
+
+    #[cfg(windows)]
+    macro_rules! sp {
+        () => {
+            r#"\"#
+        };
+    }
+    include_bytes!(concat!("..", sp!(), "logo.game.png")).to_vec()
+}
+pub fn get_b() -> Vec<u8> {
+    #[cfg(not(windows))]
+    macro_rules! sp {
+        () => {
+            "/"
+        };
+    }
+
+    #[cfg(windows)]
+    macro_rules! sp {
+        () => {
+            r#"\"#
+        };
+    }
+    include_bytes!(concat!("..", sp!(), "b.game.png")).to_vec()
 }
 
 // fn process_image_asset(path,file_name,buffer:Option<ec<u8>>){
