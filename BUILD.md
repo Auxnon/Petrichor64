@@ -8,6 +8,8 @@ run binyaren to reduce binary size even further?
 
 # WINDOWS
 
+PS: `& "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x86\rc.exe" assets\resources.rc`
+
 # MAC
 
 PreReq: `cargo install cargo-bundle`
