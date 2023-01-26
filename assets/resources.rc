@@ -1,1 +1,24 @@
 exe_icon ICON ".\petrichor-icon.ico"
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION    0,2,0,0
+    PRODUCTVERSION 0,2,0,0
+{
+    BLOCK "StringFileInfo"
+    {
+        BLOCK "040904b0"
+        {
+            VALUE "CompanyName",        "MakeAvoy\0"
+            VALUE "FileDescription",    "Fantasy console and game engine\0"
+            VALUE "FileVersion",        "0.2.0\0"
+            VALUE "LegalCopyright",     "© Nick \"MakeAvoy\" McAvoy 2023. All Rights Reserved\0"
+            VALUE "OriginalFilename",   "Petrichor64.exe\0"
+            VALUE "ProductName",        "Petrichor64\0"
+            VALUE "ProductVersion",     "0.2.0\0"
+        }
+    }
+    BLOCK "VarFileInfo"
+    {
+        VALUE "Translation", 0x409, 1200
+    }
+}
