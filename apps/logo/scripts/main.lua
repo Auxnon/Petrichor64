@@ -1,16 +1,21 @@
 attr { fog = 200. }
 sky()
-fill("000")
+fill("333")
 -- pixel(0, 0, "F00")
 -- pixel(320, 280, "0F0")
 floors = {}
 rain = {}
 drops = {}
 drop_it = 1
-state = 0
+state = -1
 
 function make_model()
     local mx = 0.5
+    smodel("console", { q = {
+        { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 }, { -mx, -mx, .5 },
+        { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
+        { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
+    }, t = { "logo13", "logo17", "logo12" } })
     smodel("ground", { q = {
         { -mx, -mx, .5 }, { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 },
         { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
@@ -48,7 +53,7 @@ function floor()
     for i = -6, 6 do
         for j = -6, 5 do
             local e = spawn("cube", i, j, 0)
-            e:stex("flat" .. irnd(4))
+            e:stex("logo" .. irnd(20, 24))
             floors[#floors + 1] = e
         end
     end
@@ -108,28 +113,34 @@ function rain_loop()
 end
 
 function main()
-    -- cube("test", "flat0")
-    -- example = spawn('cube', 0, 0, -4)
-    -- rain = spawn("example", 0, 0, -3)
-    -- example:stex("flat" .. irnd(4))
+    local t1 = "Drag and drop game file"
+    local t2 = "` opens console, type 'help'"
+    text(t1, "=50% -" .. flr(t1:len() * 10 / 2), 8)
+    text(t2, "=50% -" .. flr(t2:len() * 10 / 2), "=100% - 12")
     anim("plop", { "logo6", "logo7", "logo8", "logo9" })
     make_model()
 
+    console = spawn("console", 0, 0, 1.125)
+    console.rz = 6 * tau / 16
+    console.rx = tau / 48
+
+    cam { pos = { 0, -8, 3 }, rot = { pi / 2, -0.1 } }
+end
+
+function drop()
+    clr()
+    console:kill()
     logo1 = spawn("ground", 0, 0, 1.125)
     logoA = spawn("drops", -0.25, 0, 8.125)
     logoB = spawn("drops", 0, 0, 8.125)
     logoC = spawn("drops", 0.25, 0, 8.125)
     logo3 = spawn("clouds", 0, 0, 4.125)
 
-    -- logo:stex("example")
-    -- example.scale = 2
     logo1.rz = 6 * tau / 16
     logo1.rx = tau / 48
-    -- logo2.rz = 6 * tau / 16
-    -- logo2.rx = tau / 48
     logo3.rz = 6 * tau / 16
     logo3.rx = tau / 48
-    cam { pos = { 0, -8, 3 }, rot = { pi / 2, -0.1 } }
+    state = 0
 end
 
 function make_title()
@@ -144,7 +155,8 @@ function make_title()
     local r = spawn("logo4", 1.75, 0, h)
     local l64 = spawn("logo5", 2.25, 0, h)
     gui()
-    text("Interpreted Game System", 44, "=100% -20")
+    local t = "Interpreted Game System"
+    text(t, "=50% - " .. flr(10 * t:len() / 2), "=100% -20")
 end
 
 function loop()
@@ -178,6 +190,11 @@ function loop()
             state = 5
             logoC.z = 1.25
             make_title()
+        end
+    elseif state >= 5 then
+        state = state + 1
+        if state > 200 then
+            quit(1)
         end
     end
 
