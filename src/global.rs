@@ -38,6 +38,10 @@ pub struct Global {
     pub state_delay: u32,
     pub is_state_changed: bool,
     pub locked: bool,
+    /** Whether we're in a boot or empty game state, showing the virtual console */
+    pub boot_state: bool,
+    /** Intial load or drag and drop intiated an animation sequence that upon completion will load this string if available */
+    pub pending_load: Option<String>,
     // pub loaded_directory: Option<String>,
 }
 impl Global {
@@ -73,6 +77,8 @@ impl Global {
             state_delay: 0,
             is_state_changed: false,
             locked: false,
+            boot_state: true,
+            pending_load: None,
             // loaded_directory: None,
         }
     }
@@ -96,6 +102,8 @@ impl Global {
         self.delayed = 0;
         self.iteration = 0;
         self.screen_effects = ScreenBinds::new();
+        // self.boot_state = false;
+        self.pending_load = None;
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
@@ -125,6 +133,7 @@ pub enum StateChange {
     MouseGrabOn,
     MouseGrabOff,
     Quit,
+    Config,
 }
 pub enum GuiStyle {
     Aspect,

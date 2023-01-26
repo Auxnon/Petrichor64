@@ -714,7 +714,7 @@ impl Core {
                     );
                 }
                 MainCommmand::Clear() => self.gui.clean(),
-                MainCommmand::Model(name, texture, v, i, u, style) => {
+                MainCommmand::Model(name, texture, v, i, u, style, tx) => {
                     self.model_manager.upsert_model(
                         &self.device,
                         &self.tex_manager,
@@ -1033,15 +1033,13 @@ fn main() {
     let mut core = pollster::block_on(Core::new(Rc::clone(&rwindow)));
 
     crate::command::load_empty(&mut core);
-    crate::asset::parse_config(
-        &mut core.global,
-        core.bundle_manager.get_lua(),
-        &mut core.loggy,
-    );
 
-    // unsafe {
-    //     tracy::startup_tracy();
-    // }
+    core.loggy.clear();
+
+    core.global.state_changes.push(StateChange::Config);
+    // DEV a little delay trick to ensure any pending requests in our "console" app are completed before the following state change is made
+    core.global.state_delay = 3;
+    core.global.is_state_changed = true;
     let mut bits: ControlState = ([false; 256], [0.; 10]);
 
     match crate::asset::check_for_auto() {
@@ -1119,12 +1117,22 @@ fn main() {
                         StateChange::Quit => {
                             *control_flow = ControlFlow::Exit;
                         }
+                        StateChange::Config => {
+                            crate::asset::parse_config(
+                                &mut core.global,
+                                core.bundle_manager.get_lua(),
+                                &mut core.loggy,
+                            );
+
+                            // core.config = crate::config::Config::new();
+                            // core.config.load();
+                            // core.config.apply(&mut core);
+                        }
                     }
                 }
                 core.check_fullscreen();
             }
         }
-
         if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");

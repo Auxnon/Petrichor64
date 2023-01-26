@@ -80,7 +80,7 @@ pub fn get_file_buffer_from_path(path: PathBuf) -> Vec<u8> {
 }
 
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
-pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &String, loggy: &mut Loggy) {
+pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &str, loggy: &mut Loggy) {
     // let zipfile = std::fs::File::open(name).unwrap();
     let mut image = get_file_buffer_from_path(thumb);
     if image.len() > 0 {
