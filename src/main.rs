@@ -1058,7 +1058,7 @@ fn main() {
 
     core.global.state_changes.push(StateChange::Config);
     // DEV a little delay trick to ensure any pending requests in our "console" app are completed before the following state change is made
-    core.global.state_delay = 3;
+    core.global.state_delay = 8;
     core.global.is_state_changed = true;
     let mut bits: ControlState = ([false; 256], [0.; 10]);
 
