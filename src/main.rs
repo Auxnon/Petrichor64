@@ -860,6 +860,10 @@ impl Core {
                 MainCommmand::Quit(u) => {
                     // println!("quit {}", u);
                     if u > 0 {
+                        println!(
+                            "quit with pending load {} {:?}",
+                            u, self.global.pending_load
+                        );
                         match &self.global.pending_load {
                             Some(l) => {
                                 mutations.push((id, MainCommmand::Load(l.to_owned())));
@@ -904,8 +908,9 @@ impl Core {
                 match m {
                     MainCommmand::Reload() => crate::command::reload(self, id),
                     MainCommmand::Quit(u) => {
-                        crate::command::hard_reset(self);
-                        crate::command::load_empty(self);
+                        //DEV if a load quit is triggered and then the lua context spams it too fast it technically quits to empty comnsole. should ahve it be code based or not trigger too quickly
+                        // crate::command::hard_reset(self);
+                        // crate::command::load_empty(self);
                     }
                     MainCommmand::Subload(file, is_overlay) => {
                         crate::command::load(self, Some(file), None, None, Some((id, is_overlay)));
