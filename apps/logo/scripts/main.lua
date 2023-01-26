@@ -11,22 +11,22 @@ state = -1
 
 function make_model()
     local mx = 0.5
-    smodel("console", { q = {
+    model("console", { q = {
         { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 }, { -mx, -mx, .5 },
         { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
         { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
     }, t = { "logo13", "logo17", "logo12" } })
-    smodel("ground", { q = {
+    model("ground", { q = {
         { -mx, -mx, .5 }, { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 },
         { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
         { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
     }, t = { "logo11", "logo10", "logo10" } })
-    smodel("drops", { q = {
+    model("drops", { q = {
 
         { -mx, -mx, 1.5 }, { mx, mx, 1.5 }, { mx, mx, .5 }, { -mx, -mx, .5 },
 
     }, t = { "logo18" } })
-    smodel("clouds", { q = {
+    model("clouds", { q = {
         { -mx, -mx, 1.5 }, { mx, -mx, 1.5 }, { mx, mx, 1.5 }, { -mx, mx, 1.5 },
         { -mx, -mx, 1.625 }, { mx, -mx, 1.625 }, { mx, mx, 1.625 }, { -mx, mx, 1.625 },
         { -mx, -mx, 1.75 }, { mx, -mx, 1.75 }, { mx, mx, 1.75 }, { -mx, mx, 1.75 },
@@ -53,7 +53,7 @@ function floor()
     for i = -6, 6 do
         for j = -6, 5 do
             local e = spawn("cube", i, j, 0)
-            e:stex("logo" .. irnd(20, 24))
+            e:tex("logo" .. irnd(20, 24))
             floors[#floors + 1] = e
         end
     end
