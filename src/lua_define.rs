@@ -52,6 +52,7 @@ pub enum LuaTalk {
     AsyncLoad(String),
     Resize(u32, u32),
     Die,
+    Drop(String),
 }
 
 pub struct LuaCore {
@@ -79,6 +80,7 @@ impl LuaCore {
         pitcher: Sender<MainPacket>,
         loggy: Sender<(LogType, String)>,
         singer: SoundSender,
+        debug: bool,
         dangerous: bool,
     ) -> LuaHandle {
         let (rec, lua_handle) = start(
@@ -88,6 +90,7 @@ impl LuaCore {
             pitcher,
             loggy,
             singer,
+            debug,
             dangerous,
         );
         self.to_lua_tx = rec;
@@ -169,6 +172,9 @@ impl LuaCore {
     pub fn call_main(&self) {
         self.to_lua_tx.send(LuaTalk::Main);
     }
+    pub fn call_drop(&self, s: String) {
+        self.to_lua_tx.send(LuaTalk::Drop(s));
+    }
 
     pub fn call_loop(&self, bits: ControlState) {
         self.to_lua_tx.send(LuaTalk::Loop(bits));
@@ -194,6 +200,7 @@ fn start(
     pitcher: Sender<MainPacket>,
     loggy: Sender<(LogType, String)>,
     singer: SoundSender,
+    debug: bool,
     dangerous: bool,
 ) -> (Sender<LuaTalk>, LuaHandle) {
     let (sender, reciever) = channel::<
@@ -256,10 +263,12 @@ fn start(
 
         let globals = lua_ctx.globals();
 
-        loggy.send((
-            LogType::LuaSys,
-            "new controller connector starting".to_owned(),
-        ));
+        if debug {
+            loggy.send((
+                LogType::LuaSys,
+                "new controller connector starting".to_owned(),
+            ));
+        }
         let mut gilrs = Gilrs::new().unwrap();
         for (_id, gamepad) in gilrs.gamepads() {
             loggy.send((
@@ -296,11 +305,14 @@ fn start(
                 ));
             }
             _ => {
-                loggy.send((LogType::LuaSys, "lua commands initialized".to_owned()));
+                if debug {
+                    loggy.send((LogType::LuaSys, "lua commands initialized".to_owned()));
+                }
             }
         }
-
-        loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()));
+        if debug {
+            loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()));
+        }
         for m in reciever {
             // let (s1, s2, bit_in, channel) = m;
             while let Some(Event {
@@ -528,6 +540,19 @@ fn start(
                 }
                 LuaTalk::Resize(w, h) => {
                     gui_handle.borrow_mut().resize(w, h);
+                }
+                LuaTalk::Drop(s) => {
+                    let res = lua_ctx
+                        .load(&format!("drop('{}')", s))
+                        .eval::<mlua::Value>();
+                    if let Err(e) = res {
+                        if let Some(d) = lua_ctx.inspect_stack(1) {
+                            println!("stack {:?}", d.stack());
+                            println!("er line is {}", d.curr_line());
+                        };
+                        async_sender
+                            .send((bundle_id, crate::MainCommmand::AsyncError(format!("{}", e))));
+                    }
                 }
             }
 

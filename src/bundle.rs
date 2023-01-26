@@ -302,13 +302,17 @@ impl BundleManager {
     // }
 
     pub fn get_lua(&mut self) -> &LuaCore {
+        &self.get_main_bundle().lua
+        // &self.bundles.get(&0).unwrap().lua
+    }
+    pub fn get_main_bundle(&mut self) -> &Bundle {
         match self.bundles.get(&self.console_bundle_target) {
-            Some(bundle) => &bundle.lua,
+            Some(bundle) => &bundle,
             None => {
                 if self.bundles.len() > 0 {
                     let bundle = self.bundles.values().next().unwrap();
                     self.console_bundle_target = bundle.id;
-                    &bundle.lua
+                    &bundle
                 } else {
                     panic!("No bundles loaded!");
                 }

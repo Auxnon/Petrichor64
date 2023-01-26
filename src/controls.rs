@@ -48,7 +48,14 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
     match input_helper.dropped_file() {
         // TODO drag and drop
-        Some(path) => println!("dropped file {}", path.as_os_str().to_string_lossy()),
+        Some(path) => {
+            let s = path.as_os_str().to_string_lossy().to_string();
+            println!("dropped file {}", s);
+            if core.global.boot_state {
+                core.global.pending_load = Some(s.clone());
+            }
+            core.bundle_manager.get_main_bundle().lua.call_drop(s)
+        }
         _ => {}
     }
 
