@@ -727,7 +727,10 @@ impl Core {
                         u,
                         style,
                         &mut self.loggy,
+                        self.global.debug,
                     );
+
+                    tx.send(0);
                     // name, v, i, u);
                 }
                 MainCommmand::ListModel(s, bundles, tx) => {

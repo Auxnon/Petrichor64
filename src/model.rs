@@ -307,17 +307,20 @@ impl ModelManager {
         uvs: Vec<[f32; 2]>,
         tex_style: TextureStyle,
         loggy: &mut Loggy,
+        debug: bool,
     ) {
-        loggy.log(
-            LogType::Model,
-            &format!(
-                "Build inline model {} from {} verts, {} inds and texture {:?}",
-                name,
-                verts.len(),
-                inds.len(),
-                texture
-            ),
-        );
+        if debug {
+            loggy.log(
+                LogType::Model,
+                &format!(
+                    "Build inline model {} from {} verts, {} inds and texture {:?}",
+                    name,
+                    verts.len(),
+                    inds.len(),
+                    texture
+                ),
+            );
+        }
         let t_count = texture.len();
         let vertices = if uvs.len() == verts.len() || t_count > 0 {
             if t_count == 1 {

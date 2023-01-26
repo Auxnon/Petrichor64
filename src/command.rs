@@ -383,63 +383,45 @@ pub fn init_lua_sys(
     // let switch = Arc::clone(&switch_board);
 
     let pitcher = main_pitcher.clone();
-    lua!(
-        "cube",
-        move |_,
-              (name, t, w, n, e, s, b): (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>
-        )| {
-            // let mutex = &mut switch.write();
-            let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
-            // println!("this far-1");
+    // lua!(
+    //     "cube",
+    //     move |_,
+    //           (name, t, w, n, e, s, b): (
+    //         String,
+    //         String,
+    //         Option<String>,
+    //         Option<String>,
+    //         Option<String>,
+    //         Option<String>,
+    //         Option<String>
+    //     )| {
+    //         // let mutex = &mut switch.write();
+    //         let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+    //         // println!("this far-1");
 
-            pitcher.send((
-                bundle_id,
-                MainCommmand::Make(
-                    vec![
-                        name,
-                        t.clone(),
-                        b.unwrap_or(t.clone()),
-                        e.unwrap_or(t.clone()),
-                        w.unwrap_or(t.clone()),
-                        s.unwrap_or(t.clone()),
-                        n.unwrap_or(t),
-                    ],
-                    tx,
-                ),
-            ));
-            if let Err(err) = rx.recv() {
-                return Err(make_err(&err.to_string()));
-            }
-            // match rx.recv() {
-            //     Ok(_) => {}
-            //     Err(_) => {}
-            // }
-            // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
-            // mutex.dirty = true;
-            // drop(mutex);
+    //         // match rx.recv() {
+    //         //     Ok(_) => {}
+    //         //     Err(_) => {}
+    //         // }
+    //         // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
+    //         // mutex.dirty = true;
+    //         // drop(mutex);
 
-            // while (match switch.try_read() {
-            //     Some(r) => r.dirty,
-            //     None => true,
-            // }) {
-            //     // println!("waiting for make_queue to empty");
-            //     // std::thread::sleep(std::time::Duration::from_millis(10));
-            // }
-            // println!("MAKE {:?}", mutex.make_queue);
-            // crate::model::edit_cube(name, [t, e, n, w, s, b]);
-            // let mut mutex = &mut switch.write();
-            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
-            Ok(1)
-        },
-        "Create a new cube model based on 6 textures"
-    );
+    //         // while (match switch.try_read() {
+    //         //     Some(r) => r.dirty,
+    //         //     None => true,
+    //         // }) {
+    //         //     // println!("waiting for make_queue to empty");
+    //         //     // std::thread::sleep(std::time::Duration::from_millis(10));
+    //         // }
+    //         // println!("MAKE {:?}", mutex.make_queue);
+    //         // crate::model::edit_cube(name, [t, e, n, w, s, b]);
+    //         // let mut mutex = &mut switch.write();
+    //         // mutex.tile_queue.push((t, vec4(0., x, y, z)));
+    //         Ok(1)
+    //     },
+    //     "Create a new cube model based on 6 textures"
+    // );
 
     let sender = world_sender.clone();
     lua!(
@@ -1093,16 +1075,28 @@ pub fn init_lua_sys(
     lua!(
         "smodel",
         move |_, (name, t): (String, Table)| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+
             match t.get::<_, Vec<[f32; 3]>>("q") {
                 Ok(quads) => {
-                    // println!("got quads {}", quads.len());
                     let (v, uv, i) = convert_quads(quads);
                     match t.get::<_, Vec<String>>("t") {
                         Ok(texture) => {
                             pitcher.send((
                                 bundle_id,
-                                MainCommmand::Model(name, texture, v, i, uv, TextureStyle::Quad),
+                                MainCommmand::Model(
+                                    name,
+                                    texture,
+                                    v,
+                                    i,
+                                    uv,
+                                    TextureStyle::Quad,
+                                    tx,
+                                ),
                             ));
+                            if let Err(err) = rx.recv() {
+                                return Err(make_err(&err.to_string()));
+                            }
                         }
                         _ => {
                             Err::<(), &str>("This type of model requires a texture");
@@ -1111,28 +1105,73 @@ pub fn init_lua_sys(
                 }
                 _ => {
                     // println!("got no quads");
-                    let v = t.get::<_, Vec<[f32; 3]>>("v")?;
-                    if v.len() > 0 {
-                        let i = match t.get::<_, Vec<u32>>("i") {
-                            Ok(o) => o,
-                            _ => vec![],
-                        };
-                        let u = match t.get::<_, Vec<[f32; 2]>>("u") {
-                            Ok(o) => o,
-                            _ => vec![],
-                        };
-                        match t.get::<_, Vec<String>>("t") {
-                            Ok(texture) => {
-                                pitcher.send((
-                                    bundle_id,
-                                    MainCommmand::Model(name, texture, v, i, u, TextureStyle::Tri),
-                                ));
+                    let vin = t.get::<_, Vec<[f32; 3]>>("v");
+                    match vin {
+                        Ok(v) => {
+                            if v.len() > 0 {
+                                let i = match t.get::<_, Vec<u32>>("i") {
+                                    Ok(o) => o,
+                                    _ => vec![],
+                                };
+                                let u = match t.get::<_, Vec<[f32; 2]>>("u") {
+                                    Ok(o) => o,
+                                    _ => vec![],
+                                };
+                                match t.get::<_, Vec<String>>("t") {
+                                    Ok(texture) => {
+                                        pitcher.send((
+                                            bundle_id,
+                                            MainCommmand::Model(
+                                                name,
+                                                texture,
+                                                v,
+                                                i,
+                                                u,
+                                                TextureStyle::Tri,
+                                                tx,
+                                            ),
+                                        ));
+                                        if let Err(err) = rx.recv() {
+                                            return Err(make_err(&err.to_string()));
+                                        }
+                                    }
+                                    _ => {
+                                        Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                                        // return Ok(());
+                                    }
+                                };
                             }
-                            _ => {
-                                Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
-                                // return Ok(());
-                            }
-                        };
+                        }
+                        _ => {
+                            match t.get::<_, Vec<String>>("t") {
+                                Ok(texture) => {
+                                    if texture.len() > 0 {
+                                        let t = texture[0].clone();
+                                        pitcher.send((
+                                            bundle_id,
+                                            MainCommmand::Make(
+                                                vec![
+                                                    name,
+                                                    t.clone(),
+                                                    texture.get(1).unwrap_or(&t).to_string(),
+                                                    texture.get(2).unwrap_or(&t).to_string(),
+                                                    texture.get(3).unwrap_or(&t).to_string(),
+                                                    texture.get(4).unwrap_or(&t).to_string(),
+                                                    texture.get(5).unwrap_or(&t).to_string(),
+                                                ],
+                                                tx,
+                                            ),
+                                        ));
+                                        if let Err(err) = rx.recv() {
+                                            return Err(make_err(&err.to_string()));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                                }
+                            };
+                        }
                     }
                 }
             }
@@ -1452,6 +1491,7 @@ pub fn load(
         core.pitcher.clone(),
         core.loggy.make_sender(),
         (),
+        core.global.debug,
         false,
     );
     let debug = core.global.debug;
@@ -1847,6 +1887,7 @@ pub enum MainCommmand {
         Vec<u32>,
         Vec<[f32; 2]>,
         TextureStyle,
+        SyncSender<u8>,
     ),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
@@ -1854,13 +1895,14 @@ pub enum MainCommmand {
     LoopComplete(Option<(image::RgbaImage, bool)>),
     Reload(),
     BundleDropped(BundleResources),
+    Load(String),
     Subload(String, bool),
     WorldSync(Vec<Chunk>, bool),
     Null(),
     Stats(),
     //for testing
     Meta(usize),
-    Quit(),
+    Quit(u8),
 }
 
 pub fn num(x: Value) -> LuaResponse {
