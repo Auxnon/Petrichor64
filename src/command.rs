@@ -64,28 +64,39 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 .log(LogType::Config, &core.bundle_manager.list_bundles());
         }
         "pack" => {
+            // new: path? name?
             // name, path, cartridge pic
+            let (regular, comHash) = if segments.len() > 1 {
+                getComHash(segments[1..].to_vec(), ["o", "n", "i", "c"].to_vec())
+            } else {
+                (vec![], HashMap::new())
+            };
+
+            let currentGameDir = main_bundle.directory.clone();
             crate::asset::pack(
                 &mut core.tex_manager,
                 &mut core.model_manager,
                 &mut core.world,
                 bundle_id,
-                lua,
-                &if segments.len() > 1 {
-                    format!("{}.game.png", segments[1])
-                } else {
-                    "game.png".to_string()
-                },
-                if segments.len() > 2 {
-                    Some(segments[2].to_string())
-                } else {
-                    None
-                },
-                if segments.len() > 3 {
-                    Some(segments[3].to_string())
-                } else {
-                    None
-                },
+                &main_bundle.lua,
+                comHash,
+                regular,
+                currentGameDir,
+                // &if segments.len() > 1 {
+                //     format!("{}.game.png", segments[1])
+                // } else {
+                //     "game.png".to_string()
+                // },
+                // if segments.len() > 2 {
+                //     Some(segments[2].to_string())
+                // } else {
+                //     None
+                // },
+                // if segments.len() > 3 {
+                //     Some(segments[3].to_string())
+                // } else {
+                //     None
+                // },
                 &mut core.loggy,
                 core.global.debug,
             );
@@ -113,6 +124,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                     .log(LogType::ConfigError, "unpack <file without .game.png>");
             }
         }
+
         "load" => {
             hard_reset(core);
             load(
@@ -129,6 +141,20 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 None,
             );
         }
+        "exit" => {
+            hard_reset(core);
+            load_empty(core);
+        }
+        "bartholomew" => {
+            hard_reset(core);
+            load(
+                core,
+                Some("b".to_string()),
+                Some(crate::asset::get_b()),
+                None,
+                None,
+            );
+        }
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
         "atlas" => {
@@ -141,19 +167,21 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         }
         "ls" => {
             let s = if segments.len() > 1 {
-                segments[1].to_string().clone()
+                Some(segments[1].to_string().clone())
             } else {
-                ".".to_string()
+                None
             };
-            let path = Path::new(&s);
+            let path = crate::asset::determine_path(s);
 
             match path.read_dir() {
                 Ok(read) => {
-                    let dir = read
-                        .filter(Result::is_ok)
-                        .map(|e| format!("{:?}", e.unwrap().path()))
-                        .join(",");
-                    core.loggy.log(LogType::Config, &dir);
+                    for r in read {
+                        if let Ok(e) = r {
+                            if let Some(p) = e.path().file_stem() {
+                                core.loggy.log(LogType::Config, &format!("{:?}", p));
+                            }
+                        }
+                    }
                 }
                 Err(er) => {
                     core.loggy
@@ -171,9 +199,11 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "new" => {
             if segments.len() > 1 {
                 let name = segments[1].to_string();
-                crate::asset::make_directory(name.clone(), &mut core.loggy);
+                crate::asset::make_directory(&name, &mut core.loggy);
                 core.loggy
                     .log(LogType::Config, &format!("created directory {}", name));
+                hard_reset(core);
+                load(core, Some(name), None, None, None);
             } else {
                 core.loggy.log(LogType::Config, "new <name>");
             }
@@ -255,6 +285,11 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
             }
         }
         "stats" => core.world.stats(),
+        "help" => {
+            for c in com_list {
+                core.loggy.log(LogType::Config, c);
+            }
+        }
         &_ => return false,
     }
     true
@@ -1437,11 +1472,42 @@ pub fn load_empty(core: &mut Core) {
         core.pitcher.clone(),
         core.loggy.make_sender(),
         (),
+        core.global.debug,
         false,
     );
-    let default = "function main() end function loop() end";
-    bundle.lua.async_load(&default.to_string());
+
+    let payload = crate::asset::get_logo();
+    crate::asset::unpack(
+        &mut core.tex_manager,
+        &mut core.model_manager,
+        &mut core.world,
+        bundle.id,
+        &bundle.lua,
+        &core.device,
+        "empty",
+        payload,
+        &mut core.loggy,
+        core.global.debug,
+    );
+
+    core.tex_manager
+        .refinalize(&core.queue, &core.master_texture);
+    // DEV  TODO
+    // for e in &mut entity_manager.entities {
+    //     e.hot_reload();
+    // }
+    // let dir = match &bundle.directory {
+    //     Some(s) => s.clone(),
+    //     None => "_".to_string(),
+    // };
+
+    // core.bundle_manager.call_main(bundle_id);
+    // bundle.call_main();
+
+    // let default = "function main() end function loop() end";
+    // bundle.lua.async_load(&default.to_string());
     bundle.call_main();
+    core.global.boot_state = true;
 }
 
 /**
@@ -1535,7 +1601,13 @@ pub fn load(
                 } else {
                     match path.file_name() {
                         Some(file_name) => {
-                            let new_path = format!("{}.game.png", file_name.to_str().unwrap_or(""));
+                            let ff = file_name.to_str().unwrap_or("");
+                            let new_path = if ff.contains(".") {
+                                ff.to_string()
+                            } else {
+                                format!("{}.game.png", ff)
+                            };
+
                             // println!("it is {}", new_path);
                             drop(file_name);
                             path.set_file_name(new_path);
@@ -2100,4 +2172,36 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
 
 fn make_err(s: &str) -> mlua::prelude::LuaError {
     return mlua::Error::RuntimeError(s.to_string());
+}
+/** Convert string command into easy to use hashmap */
+fn getComHash(svec: Vec<&str>, paired: Vec<&str>) -> (Vec<String>, HashMap<String, String>) {
+    let mut comhash = HashMap::new();
+    let mut current = "";
+    let mut regular = vec![];
+    let mut pending = false;
+    for s in svec {
+        if pending {
+            if s.starts_with("-") {
+                comhash.insert(current.to_string(), "".to_string());
+                current = &s[1..];
+            } else {
+                comhash.insert(current.to_string(), s.to_string());
+                pending = false;
+                current = "";
+            }
+        } else {
+            if s.starts_with("-") {
+                let c = &s[1..];
+                if paired.contains(&c) {
+                    current = c;
+                    pending = true;
+                } else {
+                    comhash.insert(c.to_string(), "".to_string());
+                }
+            } else {
+                regular.push(s.to_string());
+            }
+        }
+    }
+    (regular, comhash)
 }
