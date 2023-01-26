@@ -127,7 +127,7 @@ impl Gui {
             size: [d.0, d.1],
             dirty: true,
             output: false,
-            console_background: image::Rgba([255, 255, 255, 0]),
+            console_background: image::Rgba([47, 47, 47, 255]),
             local_gui_params: GuiParams::new(),
         }
     }
