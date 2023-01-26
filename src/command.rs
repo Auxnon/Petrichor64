@@ -218,11 +218,37 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "new" => {
             if segments.len() > 1 {
                 let name = segments[1].to_string();
-                crate::asset::make_directory(&name, &mut core.loggy);
-                core.loggy
-                    .log(LogType::Config, &format!("created directory {}", name));
-                hard_reset(core);
-                load(core, Some(name), None, None, None);
+
+                let tout = main_bundle.lua.func("help(true)");
+                if let LuaResponse::TableOfTuple(t) = tout {
+                    for (k, (a, b)) in t.iter() {
+                        println!("### {}::{}::{}", k, a, b);
+                    }
+                    // let mut com = vec![];
+                    // let mut cur_com = "";
+                    // let mut cur_desc = "";
+                    // let mut alt = false;
+                    // for (k, c) in t.iter() {
+                    //     if !alt {
+                    //         cur_com = k;
+                    //         cur_desc = c;
+                    //         alt = true;
+                    //     } else {
+                    //         com.push((cur_com.to_string(), (cur_desc.to_string(), c.to_owned())));
+                    //         alt = false;
+                    //     }
+                    // }
+                    crate::asset::make_directory(&name, &t, &mut core.loggy);
+                    core.loggy
+                        .log(LogType::Config, &format!("created directory {}", name));
+                    hard_reset(core);
+                    load(core, Some(name), None, None, None);
+                } else {
+                    core.loggy.log(
+                        LogType::ConfigError,
+                        "Problem making directory ( bad table)",
+                    );
+                }
             } else {
                 core.loggy.log(LogType::Config, "new <name>");
             }
@@ -358,12 +384,14 @@ pub fn init_lua_sys(
         &loggy,
     );
 
-    let mut command_map: Vec<(String, String)> = vec![];
+    let mut command_map: Vec<(String, (String, String))> = vec![];
 
     // lua_globals.set("_ents", lua_ctx.create_table()?);
     lua_globals.set("pi", std::f64::consts::PI);
     lua_globals.set("tau", std::f64::consts::PI * 2.0);
-    lua_ctx.load("add=table.insert del=table.remove").exec()?;
+    lua_ctx
+        .load("add=table.insert del=table.remove print=log")
+        .exec()?;
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -372,8 +400,8 @@ pub fn init_lua_sys(
 
     #[macro_export]
     macro_rules! lua {
-        ($name:expr,$closure:expr,$desc:expr) => {
-            command_map.push(($name.to_string(), $desc.to_string()));
+        ($name:expr,$closure:expr,$desc:expr,$exam:expr) => {
+            command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
             res(
                 $name,
                 lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
@@ -387,23 +415,23 @@ pub fn init_lua_sys(
             // }
         };
     }
+    // DEV todo
+    // lua!("time", |_, (): ()| Ok(17), "Get the time.");
 
-    lua!("time", |_, (): ()| Ok(17), "Get the time.");
-
-    lua!(
-        "point",
-        |_, (): ()| {
-            // let mut mutex = crate::ent_master.lock();
-            // let entity_manager = mutex.get_mut().unwrap();
-            // if entity_manager.entities.len() > 0 {
-            //     let p = entity_manager.entities[0].pos;
-            //     Ok((p.x, p.y, p.z))
-            // } else {
-            Ok((0., 0., 0.))
-            // }
-        },
-        "Get a point"
-    );
+    // lua!(
+    //     "point",
+    //     |_, (): ()| {
+    //         // let mut mutex = crate::ent_master.lock();
+    //         // let entity_manager = mutex.get_mut().unwrap();
+    //         // if entity_manager.entities.len() > 0 {
+    //         //     let p = entity_manager.entities[0].pos;
+    //         //     Ok((p.x, p.y, p.z))
+    //         // } else {
+    //         Ok((0., 0., 0.))
+    //         // }
+    //     },
+    //     "Get a point"
+    // );
 
     let aux_loggy = loggy.clone();
     lua!(
@@ -412,7 +440,10 @@ pub fn init_lua_sys(
             aux_loggy.send((LogType::Lua, s));
             Ok(())
         },
-        "Prints string to console"
+        "Prints string to console",
+        "
+---@param message string
+function log(message) end"
     );
 
     // lua!(
@@ -497,40 +528,60 @@ pub fn init_lua_sys(
             World::set_tile(&sender, tile, x, y, z, ro);
             Ok(1)
         },
-        "Set a tile within 3d space."
+        "Set a tile within 3d space. Nil asset deletes.",
+        "
+---@param asset string
+---@param x integer
+---@param y integer
+---@param z integer
+---@param rot integer?
+function tile(asset, x, y, z, rot) end"
     );
 
     let sender = world_sender.clone();
     lua!(
-        "drop_chunk",
+        "dchunk",
         move |_, (x, y, z): (i32, i32, i32)| {
             // let mutex = &mut switch.write();
             // mutex.dirty = true;
             World::drop_chunk(&sender, x, y, z);
             Ok(1)
         },
-        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes"
+        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes",
+        "
+---@param x integer
+---@param y integer
+---@param z integer
+function dchunk( x, y, z) end"
     );
 
     let sender = world_sender.clone();
     lua!(
-        "clear_tiles",
+        "dtiles",
         move |_, (): ()| {
             // let mutex = &mut switch.write();
             // mutex.dirty = true;
             World::clear_tiles(&sender);
             Ok(1)
         },
-        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes"
+        "Remove all tiles from the world",
+        "
+function dtiles() end"
     );
 
     // MARK
     // BLUE TODO this function is expensive? if called twice in one cycle it ruins key press checks??
     let sender = world_sender.clone();
     lua!(
-        "is_tile",
+        "istile",
         move |_, (x, y, z): (i32, i32, i32)| { Ok(World::is_tile(&sender, x, y, z)) },
-        "Set a tile within 3d space and immediately trigger a redraw."
+        "Check if a tile is present at a given location",
+        "
+---@param x integer 
+---@param y integer
+---@param z integer
+---@return boolean
+function istile(x, y, z) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -545,10 +596,14 @@ pub fn init_lua_sys(
             pitcher.send((bundle_id, MainCommmand::Anim(name, items, anim_speed)));
             Ok(true)
         },
-        "Set an animation"
+        "Set an animation by passing in series of textures",
+        "   
+---@param name string
+---@param items string[]
+---@param speed number?
+function anim(name, items, speed) end"
     );
 
-    // let pitchy = Arc::new(pitcher);
     let dkeys = diff_keys.clone();
     lua!(
         "key",
@@ -558,7 +613,12 @@ pub fn init_lua_sys(
                 _ => Ok(keys.borrow()[key_match(key)]),
             }
         },
-        "Check if key is held down"
+        "Check if key is held down",
+        "   
+---@param key string
+---@param volatile boolean? only true on first frame of key press
+---@return boolean
+function key(key, volatile) end"
     );
 
     lua!(
@@ -576,7 +636,10 @@ pub fn init_lua_sys(
             // .join("");
             Ok(h)
         },
-        "Check if key is held down"
+        "Get a string of all keys pressed",
+        "   
+---@return string
+function input() end"
     );
 
     lua!(
@@ -601,20 +664,42 @@ pub fn init_lua_sys(
 
             Ok(t)
         },
-        " Get mouse position from 0.-1."
+        " Get mouse position, delta, button states, and unprojected vector",
+        "
+---@class Mouse
+---@field x number
+---@field y number
+---@field dx number delta x
+---@field dy number delta y
+---@field m1 boolean mouse 1
+---@field m2 boolean mouse 2
+---@field m3 boolean mouse 3
+---@field vx number unprojection x
+---@field vy number unprojection y
+---@field vz number unprojection z
+---@return Mouse
+function mouse() end"
     );
 
     let gam = Rc::clone(&gamepad);
     lua!(
         "button",
         move |_, button: String| { Ok(gam.borrow().check(button) != 0.) },
-        "Check if button is held down"
+        "Check if gamepad button is held down",
+        "
+---@param button string
+---@return boolean
+function button(button) end"
     );
 
     lua!(
         "analog",
         move |_, button: String| { Ok(gamepad.borrow().check(button)) },
-        "Check how much a button is pressed, axis gives value between -1 and 1"
+        "Check how much a gamepad is pressed, axis gives value between -1 and 1",
+        "
+---@param button string
+---@return number
+function analog(button) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -641,7 +726,15 @@ pub fn init_lua_sys(
             // })
             Ok(wrapped)
         },
-        "Spawn an entity"
+        "Spawn an entity from an asset",
+        "
+---@param asset string
+---@param x number
+---@param y number
+---@param z number
+---@param scale number?
+---@return Entity
+function spawn(asset, x, y, z, scale) end"
     );
     let pitcher = main_pitcher.clone();
     lua!(
@@ -663,7 +756,11 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Groups an entity onto another entity"
+        "Groups an entity onto another entity",
+        "
+---@param parent Entity
+---@param child Entity
+function group(parent, child) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -715,8 +812,12 @@ pub fn init_lua_sys(
 
             // let wrapped = Arc::new(std::sync::Mutex::new(ent));
         },
-        "Kills an entity"
+        "Removes an entity",
+        "
+---@param ent Entity | integer
+function kill(ent) end"
     );
+
     let pitcher = main_pitcher.clone();
     lua!(
         "reload",
@@ -728,7 +829,9 @@ pub fn init_lua_sys(
             }
             Ok(())
         },
-        "Reset lua context"
+        "Reset lua context",
+        "
+function reload() end"
     );
 
     /**
@@ -750,7 +853,10 @@ pub fn init_lua_sys(
             // switch.write().dirty = true;
             Ok(())
         },
-        "Set the CRT parameters"
+        "Set various app state parameters",
+        "
+---@param attributes Attributes
+function attr(attributes) end"
     );
 
     // let switch = Arc::clone(&switch_board);
@@ -786,7 +892,10 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Set the camera position and/or rotation"
+        "Set the camera position and/or rotation",
+        "
+---@param params CamParams
+function cam(params) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -806,7 +915,11 @@ pub fn init_lua_sys(
             }
             Ok(())
         },
-        "Make sound"
+        "Make sound",
+        "
+---@param freq number
+---@param length number?
+function sound(freq, length) end"
     );
     let sing = singer.clone();
     lua!(
@@ -843,7 +956,10 @@ pub fn init_lua_sys(
             }
             Ok(())
         },
-        "Make song"
+        "Make a song",
+        "   
+---@param notes number[][] | number[] nested array first is frequency, second is length
+function song(notes) end"
     );
 
     let sing = singer.clone();
@@ -855,16 +971,19 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Stop sounds on channel"
+        "Stop sounds on channel",
+        "
+---@param channel number
+function silence(channel) end"
     );
 
     lua!(
         "instr",
-        move |_, (notes, half): (Vec<f32>, Option<bool>)| {
+        move |_, (freqs, half): (Vec<f32>, Option<bool>)| {
             #[cfg(feature = "audio")]
             singer.send(SoundCommand::MakeInstrument(Instrument::new(
                 0,
-                notes,
+                freqs,
                 match half {
                     Some(h) => h,
                     None => false,
@@ -873,14 +992,18 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Make sound"
+        "Make an instrument",
+        "
+---@param freqs number[]
+---@param half boolean? subsequent freqs are half the previous  
+function instr(notes, half) end"
     );
 
-    lua!(
-        "bg",
-        move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
-        ""
-    );
+    // lua!(
+    //     "bg",
+    //     move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
+    //     ""
+    // );
 
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
@@ -893,7 +1016,10 @@ pub fn init_lua_sys(
             gui.borrow_mut().fill(c);
             Ok(1)
         },
-        "Set background color"
+        "Set background color of raster",
+        "   
+---@param rgb number[] | string rgba number array or hex string
+function fill(rgb) end"
     );
 
     let gui = gui_in.clone();
@@ -905,7 +1031,12 @@ pub fn init_lua_sys(
             // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
             Ok(1)
         },
-        "Set color of pixel at x,y"
+        "Set color of pixel at x,y",
+        "
+---@param x integer 
+---@param y integer
+---@param rgb number[] | string rgba number array or hex string
+function pixel(x, y, rgb) end"
     );
 
     // let pitcher = main_pitcher.clone();
@@ -917,7 +1048,9 @@ pub fn init_lua_sys(
             gui.borrow_mut().target_sky();
             Ok(())
         },
-        "Set skybox as draw target"
+        "Set skybox as draw target",
+        "   
+function sky() end"
     );
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
@@ -928,7 +1061,9 @@ pub fn init_lua_sys(
             gui.borrow_mut().target_gui();
             Ok(())
         },
-        "Set gui as draw target"
+        "Set front screen (gui) as draw target",
+        "
+function gui() end"
     );
 
     // let pitcher = main_pitcher.clone();
@@ -941,7 +1076,14 @@ pub fn init_lua_sys(
                 .rect(num(x), num(y), num(w), num(h), c, None);
             Ok(())
         },
-        "Draw a rectangle on the gui"
+        "Draw a rectangle on the draw target",
+        "
+---@param x number
+---@param y number
+---@param w number
+---@param h number
+---@param rgb number[]? | string? rgba number array or hex string
+function rect(x, y, w, h, rgb) end"
     );
 
     let gui = gui_in.clone();
@@ -953,7 +1095,15 @@ pub fn init_lua_sys(
                 .rect(num(x), num(y), num(w), num(h), c, Some(num(ro)));
             Ok(())
         },
-        "Draw a rounded rectangle on the gui"
+        "Draw a rounded rectangle on the draw target",
+        "   
+---@param x number
+---@param y number
+---@param w number
+---@param h number
+---@param ro number radius of corners
+---@param rgb number[]? | string? rgba number array or hex string
+function rrect(x, y, w, h, ro, rgb) end"
     );
 
     // let pitcher = main_pitcher.clone();
@@ -970,7 +1120,14 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Draw a line on the gui"
+        "Draw a line on the draw target",
+        "
+---@param x number
+---@param y number  
+---@param x2 number
+---@param y2 number
+---@param rgb number[]? | string? rgba number array or hex string
+function line(x, y, x2, y2, rgb) end"
     );
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
@@ -1006,12 +1163,19 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Draw text on the gui at position"
+        "Draw text on the gui at position",
+        "
+---@param txt string
+---@param x number
+---@param y number
+---@param rgb number[]? | string? rgba number array or hex string
+---@param typeset string? font name or size 
+function text(txt, x, y, rgb, typeset) end"
     );
     // let pitcher = main_pitcher.clone();
     let gui = gui_in.clone();
     lua!(
-        "dimg",
+        "img",
         move |_, (im, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
             // println!("got image {}x{} w len {}", w, h, len);
             // if let Value::UserData(imm) = im {
@@ -1069,12 +1233,17 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Draw image on the gui at position"
+        "Draw image on the gui at position",
+        "
+---@param im userdata  
+---@param x number?  
+---@param y number?
+function img(im, x, y) end"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "simg",
+        "tex",
         move |_, (name, im): (String, AnyUserData)| {
             // println!("got image {}x{} w len {}", w, h, len);
             // if let Value::UserData(imm) = im {
@@ -1084,7 +1253,11 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "Draw image on the gui at position"
+        "Sets image data as a texture",
+        "
+---@param asset string
+---@param im userdata
+function tex(asset, im) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1111,7 +1284,11 @@ pub fn init_lua_sys(
             };
             Ok(limg)
         },
-        "Get image buffer userdata for editing"
+        "Get image buffer userdata for editing or drawing",
+        "
+---@param asset string  
+---@return userdata
+function gimg(asset) end"
     );
 
     let gui = gui_in.clone();
@@ -1123,12 +1300,17 @@ pub fn init_lua_sys(
 
             Ok(lua_img)
         },
-        "Get image buffer userdata for editing"
+        "Create new image buffer userdata, does not set as asset",
+        "
+---@param w integer
+---@param h integer
+---@return userdata
+function nimg(w, h) end"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "smodel",
+        "model",
         move |_, (name, t): (String, Table)| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
 
@@ -1233,7 +1415,11 @@ pub fn init_lua_sys(
 
             Ok(())
         },
-        "create a model <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>"
+        "insert model data into an assett <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
+        "
+---@param asset string
+---@param t ModelData
+function model(asset, t) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1247,7 +1433,12 @@ pub fn init_lua_sys(
                 _ => Ok(vec![]),
             }
         },
-        "List models by search"
+        "List models by search",
+        "
+---@param model string  
+---@param bundle integer?
+---@return string[]
+function lmodel(model, bundle) end"
     );
 
     // let pitcher = main_pitcher.clone();
@@ -1259,7 +1450,9 @@ pub fn init_lua_sys(
             gui.borrow_mut().clean();
             Ok(())
         },
-        "Clear the gui"
+        "Clear the draw target",
+        "
+function clr() end"
     );
 
     // TODO modulo bias?
@@ -1275,8 +1468,14 @@ pub fn init_lua_sys(
                 _ => Ok(rand::random::<f32>()),
             }
         },
-        "Random"
+        "Random float from 0-1, or provide a range",
+        "
+---@param a number?
+---@param b number?
+---@return number
+function rnd(a, b) end"
     );
+
     lua!(
         "irnd",
         move |_, (a, b): (Option<i32>, Option<i32>)| {
@@ -1288,26 +1487,70 @@ pub fn init_lua_sys(
                 _ => Ok(rand::random::<i32>()),
             }
         },
-        "An imperfect random number generator for integers. May suffer from modulo bias and constrained to 32 floating point max for now "
+        "An imperfect random number generator for integers. May suffer from modulo bias, only i32",
+        "
+---@param a integer?
+---@param b integer?
+---@return integer
+function irnd(a, b) end"
     );
 
     lua!(
         "flr",
         move |_, f: f32| { Ok(f.floor() as i32) },
-        "Floor value"
+        "Floor value",
+        "
+---@param f number
+---@return integer
+function flr(f) end"
     );
+
     lua!(
         "ceil",
         move |_, f: f32| { Ok(f.ceil() as i32) },
-        "Ceil value"
+        "Ceil value",
+        "
+---@param f number
+---@return integer
+function ceil(f) end"
     );
-    lua!("abs", move |_, f: f32| { Ok(f.abs()) }, "Absolute value");
-    lua!("cos", move |_, f: f32| { Ok(f.cos()) }, "Cosine value");
-    lua!("sin", move |_, f: f32| { Ok(f.sin()) }, "Sine value");
+
+    lua!(
+        "abs",
+        move |_, f: f32| { Ok(f.abs()) },
+        "Absolute value",
+        "
+---@param f number
+---@return number
+function abs(f) end"
+    );
+
+    lua!(
+        "cos",
+        move |_, f: f32| { Ok(f.cos()) },
+        "Cosine value",
+        "
+---@param f number  
+---@return number
+function cos(f) end"
+    );
+    lua!(
+        "sin",
+        move |_, f: f32| { Ok(f.sin()) },
+        "Sine value",
+        "
+---@param f number
+---@return number
+function sin(f) end"
+    );
     lua!(
         "sqrt",
         move |_, f: f32| { Ok(f.sqrt()) },
-        "Squareroot value"
+        "Squareroot value",
+        "
+---@param f number
+---@return number
+function sqrt(f) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1317,7 +1560,10 @@ pub fn init_lua_sys(
             pitcher.send((bundle_id, MainCommmand::Subload(str, false)));
             Ok(())
         },
-        "load a sub bundle"
+        "Load a sub bundle",
+        "
+---@param str string
+function subload(str) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1327,7 +1573,10 @@ pub fn init_lua_sys(
             pitcher.send((bundle_id, MainCommmand::Subload(str, true)));
             Ok(())
         },
-        "load an overlaying bundle"
+        "load an overlaying bundle",
+        "   
+---@param str string
+function overload(str) end"
     );
 
     lua!(
@@ -1352,7 +1601,8 @@ pub fn init_lua_sys(
             }
             Ok(())
         },
-        "Send UDP"
+        "Send UDP",
+        "-- Coming soon"
     );
     lua!(
         "recv",
@@ -1376,7 +1626,8 @@ pub fn init_lua_sys(
             }
             Ok(vec![0., 0., 0.])
         },
-        "Recieve UDP"
+        "Recieve UDP",
+        "-- Coming soon"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1387,25 +1638,35 @@ pub fn init_lua_sys(
             Ok(())
             //
         },
-        "I guess blow up the lua core?"
+        "Hard quit or exit to console",
+        "
+---@param u integer? >0 soft quits
+function quit(u) end"
     );
 
     // REMEMBER this always has to be at the end
     let command_map_clone = command_map.clone();
     lua!(
         "help",
-        move |lu, (): ()| {
+        move |lu, (b): (bool)| {
             if let Ok(t) = lu.create_table() {
                 t.set("help", "list all lua commands. In fact, the command used by this program to list this very command")?;
-                for (k, v) in command_map_clone.iter() {
-                    t.set(k.to_string(), v.to_string())?;
+                for (k, (desc, examp)) in command_map_clone.iter() {
+                    if b {
+                        t.set(k.to_string(), [desc.to_string(), examp.to_string()])?;
+                    } else {
+                        t.set(k.to_string(), desc.to_string())?;
+                    }
                 }
                 Ok(t)
             } else {
                 Err(mlua::Error::RuntimeError("no table".to_string()))
             }
         },
-        "List all commands"
+        "List all commands",
+        "
+---@return table
+function help() end"
     );
 
     Ok(())

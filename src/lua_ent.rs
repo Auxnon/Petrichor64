@@ -58,7 +58,7 @@ impl UserData for LuaEnt {
             Ok(())
         });
 
-        methods.add_method_mut("stex", |_, this, tex: String| {
+        methods.add_method_mut("tex", |_, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;

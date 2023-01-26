@@ -300,7 +300,11 @@ pub fn determine_path(directory: Option<String>) -> PathBuf {
     }
 }
 
-pub fn make_directory(directory: &str, loggy: &mut Loggy) {
+pub fn make_directory(
+    directory: &str,
+    command_map: &HashMap<String, (String, String)>,
+    loggy: &mut Loggy,
+) {
     let root = determine_path(Some(directory.to_string()));
     if !root.exists() {
         fs::create_dir_all(&root).unwrap();
@@ -317,7 +321,8 @@ pub fn make_directory(directory: &str, loggy: &mut Loggy) {
 
     fs::write(
         scripts.join("main.lua"),
-        "
+        get_codec_version_string()
+            + "
 example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
 sky()
 fill('FF5')
@@ -331,6 +336,8 @@ function loop()
 end",
     )
     .unwrap();
+
+    fs::write(scripts.join("ignore.lua"), make_codec_file(command_map));
 
     crate::texture::simple_square(16, assets.join("example.png"), loggy);
     crate::texture::simple_square(16, root.join("icon.png"), loggy);
@@ -442,20 +449,25 @@ pub fn walk_files(
                         let s = e.to_ascii_lowercase();
                         let file_name = &entry.into_os_string().into_string().unwrap();
                         if s == "lua" {
-                            loggy.log(LogType::Config, &format!("reading script {}", file_name));
+                            if file_name.ends_with("ignore.lua") {
+                                loggy.log(LogType::Config, "skipping ignore script");
+                            } else {
+                                loggy
+                                    .log(LogType::Config, &format!("reading script {}", file_name));
 
-                            let input_path = Path::new("")
-                                .join(file_name.to_owned())
-                                .with_extension("lua");
+                                let input_path = Path::new("")
+                                    .join(file_name.to_owned())
+                                    .with_extension("lua");
 
-                            // let name = crate::asset::get_file_name(input_path.to_owned());
-                            let st = fs::read_to_string(input_path).unwrap_or_default();
+                                // let name = crate::asset::get_file_name(input_path.to_owned());
+                                let st = fs::read_to_string(input_path).unwrap_or_default();
 
-                            // println!("script item is {}", st);
-                            if device.is_some() {
-                                handle_script(st.as_str(), lua_master)
+                                // println!("script item is {}", st);
+                                if device.is_some() {
+                                    handle_script(st.as_str(), lua_master)
+                                }
+                                paths.push(file_name.to_owned());
                             }
-                            paths.push(file_name.to_owned());
                         } else {
                             loggy.log(
                                 LogType::ConfigError,
@@ -742,3 +754,74 @@ pub fn get_b() -> Vec<u8> {
 //     crate::log::log(format!("📦assets::{}", str));
 //     println!("📦assets::{}", str);
 // }
+pub fn get_codec_version_string() -> String {
+    "-- Codec 1.0.0 \"Applesauce\"".to_owned()
+}
+
+pub fn make_codec_file(command_map: &HashMap<String, (String, String)>) -> String {
+    let mut s = get_codec_version_string()
+        + "
+---@class Mouse
+---@field x number
+---@field y number
+---@field dx number delta x
+---@field dy number delta y
+---@field m1 boolean mouse 1
+---@field m2 boolean mouse 2
+---@field m3 boolean mouse 3
+---@field vx number unprojection x
+---@field vy number unprojection y
+---@field vz number unprojection z
+---@return Mouse
+
+---@class Attributes
+---@field resolution number artificial resolution
+---@field lock boolean
+---@field fog number 0 is off
+---@field fullscreen boolean
+---@field mouse_grab boolean
+---@field size integer[] width, height of window
+---@field title string
+---@field modernize boolean must be false or 0 for the remainder to work
+---@field dark number
+---@field glitch number[]
+---@field curvature number
+---@field flatness number
+---@field high number
+---@field low number
+---@field bleed number
+
+---@class CamParams
+---@field pos number[]? x, y, z
+---@field rot number[]? azimuth, altitude
+
+--- @class ModelData
+--- @field t string[]? texture assets
+--- @field q number[][]? quads
+--- @field v number[][]? vertices
+--- @field u number[][]? uvs
+--- @field i number[][]? indicies
+
+--- @class Entity
+--- @field x number x position
+--- @field y number y position
+--- @field z number z position
+--- @field rx number rotation x
+--- @field ry number rotation y
+--- @field rz number rotation z
+--- @field vx number velocity x
+--- @field vy number velocity y
+--- @field vz number velocity z
+--- @field flipped number texture flip x axis
+--- @field scale number uniform scale factor 1 is 100%
+--- @field id integer assigned by engine, killable
+--- @field tex function string asset
+--- @field anim function string animation
+--- @field kill function destroy entity
+
+";
+    for (name, (desc, examp)) in command_map {
+        s += &format!("-- {}\n{}\n\n\n", desc.trim(), examp.trim());
+    }
+    s
+}

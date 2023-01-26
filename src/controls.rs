@@ -50,10 +50,13 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         // TODO drag and drop
         Some(path) => {
             let s = path.as_os_str().to_string_lossy().to_string();
-            println!("dropped file {}", s);
             if core.global.boot_state {
                 core.global.pending_load = Some(s.clone());
             }
+            // println!(
+            //     "dropped file {} {} {:?}",
+            //     s, core.global.boot_state, core.global.pending_load
+            // );
             core.bundle_manager.get_main_bundle().lua.call_drop(s)
         }
         _ => {}
@@ -133,7 +136,6 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                             LuaResponse::Number(n) => n.to_string(),
                             LuaResponse::Integer(i) => i.to_string(),
                             LuaResponse::Boolean(b) => b.to_string(),
-                            LuaResponse::Nil => "nil".to_string(),
                             LuaResponse::Table(t) => {
                                 let mut s = String::new();
                                 s.push_str("{");
@@ -147,6 +149,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                                 ltype = LogType::LuaError;
                                 e
                             } // LuaResponse::Function(f) => format!("function: {}", f),
+
+                            _ => "nil".to_string(), // LuaResponse::Nil
                         };
 
                         core.loggy.log(ltype, &result);

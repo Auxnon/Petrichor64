@@ -39,6 +39,7 @@ pub enum LuaResponse {
     Integer(i32),
     Boolean(bool),
     Table(HashMap<String, String>),
+    TableOfTuple(HashMap<String, (String, String)>),
     Nil,
     Error(String),
 }
@@ -494,24 +495,54 @@ fn start(
                                 mlua::Value::Boolean(b) => LuaResponse::Boolean(b),
                                 mlua::Value::Table(t) => {
                                     let mut hash: HashMap<String, String> = HashMap::new();
+                                    let mut hash2: HashMap<String, (String, String)> =
+                                        HashMap::new();
                                     for (i, pair) in
                                         t.pairs::<mlua::Value, mlua::Value>().enumerate()
                                     {
                                         if let Ok((k, v)) = pair {
                                             if let mlua::Value::String(key) = k {
-                                                if let mlua::Value::String(val) = v {
-                                                    hash.insert(
-                                                        format!(
-                                                            "{}",
-                                                            key.to_str().unwrap_or(&i.to_string())
-                                                        ),
-                                                        format!("{}", val.to_str().unwrap_or("")),
-                                                    );
+                                                match v {
+                                                    mlua::Value::String(val) => {
+                                                        hash.insert(
+                                                            format!(
+                                                                "{}",
+                                                                key.to_str()
+                                                                    .unwrap_or(&i.to_string())
+                                                            ),
+                                                            format!(
+                                                                "{}",
+                                                                val.to_str().unwrap_or("")
+                                                            ),
+                                                        );
+                                                    }
+                                                    mlua::Value::Table(tt) => {
+                                                        if tt.raw_len() == 2 {
+                                                            hash2.insert(
+                                                                format!(
+                                                                    "{}",
+                                                                    key.to_str()
+                                                                        .unwrap_or(&i.to_string())
+                                                                ),
+                                                                (
+                                                                    tt.get::<_, String>(1)
+                                                                        .unwrap_or("".to_owned()),
+                                                                    tt.get::<_, String>(2)
+                                                                        .unwrap_or("".to_owned()),
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                    _ => {}
                                                 }
                                             }
                                         }
                                     }
-                                    LuaResponse::Table(hash)
+                                    if hash2.len() > 0 {
+                                        LuaResponse::TableOfTuple(hash2)
+                                    } else {
+                                        LuaResponse::Table(hash)
+                                    }
                                 }
                                 mlua::Value::Function(_) => {
                                     LuaResponse::String("[function]".to_string())
