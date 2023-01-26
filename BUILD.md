@@ -12,7 +12,9 @@ run binyaren to reduce binary size even further?
 
 PreReq: `cargo install cargo-bundle`
 
-- Game `cargo bundle --features=include_auto --release`
+- Game `bash
+cargo bundle --features=include_auto --release
+codesign -s "Apple Development: nicholasmcavoy89@gmail.com (M7KS95955P)" target/release/bundle/osx/Petrichor64.app/ `
 
 # LINUX / STEAMDECK
 

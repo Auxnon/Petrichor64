@@ -1,9 +1,11 @@
-## 0.5
+## UNRELEASED
 
-- first versioned release
-- lua: udp testing via `send` and `recv`
-- fixed asset loading for auto games and auto binded binary
+- removed some unnecessary console printing
 
-## 0.4
+## 0.2
 
-- ????
+- first standalone release
+
+## 0.1
+
+- Only released bundled in the Potion Commotion game

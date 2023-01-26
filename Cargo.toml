@@ -55,6 +55,7 @@ gilrs ="0.10.1"
 serde_json ="1.0.87"
 tokio = { version = "1.21.2", features = ["full"], optional=true }
 tokio-util= { version = "0.7.4", features = ["codec"],optional=true } 
+dirs="4.0.0"
 
 futures="0.3.25"
 # wasm-bindgen = "0.2.83"
@@ -77,14 +78,26 @@ futures="0.3.25"
 # deb_depends = []
 # sx_frameworks = []
 
+# [package.metadata.bundle]
+# name = "SoundMaker"
+# identifier = "com.makeavoy.soundmaker"
+# icon = ["jumper_icon.png"]
+# version = "0.1"
+# resources = []
+# copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2022. All rights reserved."
+# category = "Game"
+# short_description = "Sound editor"
+# deb_depends = []
+# osx_frameworks = []
+
 [package.metadata.bundle]
-name = "SoundMaker"
-identifier = "com.makeavoy.soundmaker"
-icon = ["jumper_icon.png"]
-version = "0.1"
+name = "Petrichor64"
+identifier = "com.makeavoy.petrichor64"
+icon = ["petrichor-icon.png"]
+version = "0.2"
 resources = []
 copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2022. All rights reserved."
 category = "Game"
-short_description = "Sound editor"
+short_description = "Fantasy game console and engine"
 deb_depends = []
 osx_frameworks = []
