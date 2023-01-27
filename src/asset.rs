@@ -321,7 +321,7 @@ pub fn make_directory(
 
     fs::write(
         scripts.join("main.lua"),
-        get_codec_version_string()
+        get_codex_version_string()
             + "
 example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
 sky()
@@ -337,7 +337,7 @@ end",
     )
     .unwrap();
 
-    fs::write(scripts.join("ignore.lua"), make_codec_file(command_map));
+    fs::write(scripts.join("ignore.lua"), make_codex_file(command_map));
 
     crate::texture::simple_square(16, assets.join("example.png"), loggy);
     crate::texture::simple_square(16, root.join("icon.png"), loggy);
@@ -754,12 +754,12 @@ pub fn get_b() -> Vec<u8> {
 //     crate::log::log(format!("📦assets::{}", str));
 //     println!("📦assets::{}", str);
 // }
-pub fn get_codec_version_string() -> String {
-    "-- Codec 1.0.0 \"Applesauce\"".to_owned()
+pub fn get_codex_version_string() -> String {
+    "-- Codex 1.0.0 \"Applesauce\"".to_owned()
 }
 
-pub fn make_codec_file(command_map: &HashMap<String, (String, String)>) -> String {
-    let mut s = get_codec_version_string()
+pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> String {
+    let mut s = get_codex_version_string()
         + "
 ---@class Mouse
 ---@field x number

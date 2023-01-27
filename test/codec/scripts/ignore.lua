@@ -1,4 +1,4 @@
--- Codec 1.0.0 "Applesauce"
+-- Codex 1.0.0 "Applesauce"
 -- this file is ignored at runtime, we can use this to define commands for a LSP
 -- Feel free to add to this file knowing it will not be bundled with the game or application
 
