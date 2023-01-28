@@ -687,7 +687,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
         // COPY_DST means that we want to copy data to this texture
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         label: Some("diffuse_texture"),
-        // view_formats: &[],
+        view_formats: &[],
     });
 
     queue.write_texture(
@@ -749,7 +749,7 @@ pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, 
             | wgpu::TextureUsages::RENDER_ATTACHMENT,
         // | wgpu::TextureUsages::COPY_SRC,
         label: Some("post_texture"),
-        // view_formats: &[],
+        view_formats: &[],
     });
 
     let diffuse_texture_view = tex.create_view(&wgpu::TextureViewDescriptor::default());

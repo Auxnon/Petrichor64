@@ -63,7 +63,7 @@ pub fn render_loop(
     instance_buffers: &InstanceBuffer,
 ) -> Result<(), wgpu::SurfaceError> {
     // frame!("Render");
-    let output = core.surface.get_current_texture()?;
+    // let output = core.surface.get_current_texture()?;
 
     let view = output
         .texture
@@ -276,6 +276,7 @@ pub fn render_loop(
 
     core.queue.submit(iter::once(encoder.finish()));
     // frame!("encoder.finish()");
+    let output = core.surface.get_current_texture()?;
     output.present();
 
     // frame!("END RENDER");

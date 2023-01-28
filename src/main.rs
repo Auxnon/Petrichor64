@@ -138,6 +138,7 @@ fn create_depth_texture(
         format: wgpu::TextureFormat::Depth32Float,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         label: Some("depth"),
+        view_formats: &[],
     });
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -149,7 +150,7 @@ fn create_depth_texture(
         min_filter: wgpu::FilterMode::Linear,
         mipmap_filter: wgpu::FilterMode::Nearest,
         compare: Some(wgpu::CompareFunction::LessEqual), // 5.
-        lod_min_clamp: -100.0,
+        lod_min_clamp: 0.0,
         lod_max_clamp: 100.0,
         ..Default::default()
     });
@@ -168,8 +169,14 @@ impl Core {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(window) };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            // label: Some("instance"),
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
+        });
+
+        // wgpu::Backends::all());
+        let surface = unsafe { instance.create_surface(window).unwrap() };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -210,10 +217,12 @@ impl Core {
             format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: wgpu::PresentMode::Immediate,
             alpha_mode: CompositeAlphaMode::Opaque,
+            view_formats: vec![],
         };
 
+        // TODO match
         surface.configure(&device, &config);
 
         let entity_uniform_size = mem::size_of::<EntityUniforms>() as wgpu::BufferAddress;

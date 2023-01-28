@@ -318,15 +318,8 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
     let lumen_threshold:f32=adj[1][3]; //0.2
 
 
-    var uv: vec2<f32>;
     var output: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     
-    var vv: f32;
-    var fade: f32;
-    var xx: f32;
-    var yy: f32;
-    var rr: f32;
-    var tuv: vec2<f32>;
     var limit: vec2<f32>;
     
   
