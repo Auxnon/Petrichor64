@@ -542,7 +542,7 @@ impl Core {
 
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
-            .build_with_target_rate(120.0); // limit to X FPS if possible
+            .build_with_target_rate(60.0); // limit to X FPS if possible
 
         #[cfg(feature = "audio")]
         let (stream, singer) = sound::init();
@@ -1014,7 +1014,7 @@ impl Core {
         if let Some(fps) = self.loop_helper.report_rate() {
             self.global.fps = fps;
         }
-        self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
+        // self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
 
         // match self.loop_helper.report_rate() {
         //     Some(t) => println!("now we over {}", t),
@@ -1050,6 +1050,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
     win.set_title("Petrichor");
+
     let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
     let rwindow = Rc::new(win);
 
@@ -1095,7 +1096,7 @@ fn main() {
     let mut updated_bundles = FxHashMap::default();
 
     event_loop.run(move |event, _, control_flow| {
-        core.loop_helper.loop_start();
+        // core.loop_helper.loop_start();
         if !core.global.console {
             controls::bit_check(&event, &mut bits);
             bits.1[0] = core.global.mouse_pos.x;
@@ -1113,51 +1114,7 @@ fn main() {
             rwindow.set_cursor_grab(CursorGrabMode::None);
             core.global.mouse_grabbed_state = false;
         }
-        if core.global.is_state_changed {
-            if core.global.state_delay > 0 {
-                core.global.state_delay -= 1;
-                // println!("delaying state change {} ", core.global.state_delay);
-            } else {
-                core.global.is_state_changed = false;
-                let states: Vec<StateChange> = core.global.state_changes.drain(..).collect();
-                for state in states {
-                    match state {
-                        // StateChange::Fullscreen => {core.check_fullscreen();
-                        StateChange::MouseGrabOn => {
-                            rwindow.set_cursor_visible(false);
-                            rwindow.set_cursor_position(center).unwrap();
-                            rwindow
-                                .set_cursor_grab(CursorGrabMode::Confined)
-                                .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
-                            core.global.mouse_grabbed_state = true;
-                        }
-                        StateChange::MouseGrabOff => {
-                            rwindow.set_cursor_visible(true);
-                            rwindow.set_cursor_grab(CursorGrabMode::None);
-                            core.global.mouse_grabbed_state = false;
-                        }
-                        StateChange::Resized => {
-                            core.debounced_resize();
-                        }
-                        StateChange::Quit => {
-                            *control_flow = ControlFlow::Exit;
-                        }
-                        StateChange::Config => {
-                            crate::asset::parse_config(
-                                &mut core.global,
-                                core.bundle_manager.get_lua(),
-                                &mut core.loggy,
-                            );
 
-                            // core.config = crate::config::Config::new();
-                            // core.config.load();
-                            // core.config.apply(&mut core);
-                        }
-                    }
-                }
-                core.check_fullscreen();
-            }
-        }
         if core.input_manager.update(&event) {
             controls::controls_evaluate(&mut core, control_flow);
             // frame!("START");
@@ -1167,24 +1124,23 @@ fn main() {
             // frame!();
         }
 
-        // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
-        // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
-        if let Some(buff) = core.update(&mut updated_bundles) {
-            instance_buffers = buff;
-        }
-        core.bundle_manager.call_loop(&mut updated_bundles, bits);
-
-        match core.render(&instance_buffers) {
-            Ok(_) => {}
-            // Reconfigure the surface if lost
-            Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-            // The system is out of memory, we should probably quit
-            Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-            // All other errors (Outdated, Timeout) should be resolved by the next frame
-            Err(e) => eprintln!("{:?}", e),
-        }
+        // match core.render(&instance_buffers) {
+        //     Ok(_) => {}
+        //     // Reconfigure the surface if lost
+        //     Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+        //     // The system is out of memory, we should probably quit
+        //     Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+        //     // All other errors (Outdated, Timeout) should be resolved by the next frame
+        //     Err(e) => eprintln!("{:?}", e),
+        // }
 
         match event {
+            Event::RedrawEventsCleared => {
+                core.loop_helper.loop_start(); //
+                                               // #[cfg(not(target_arch = "wasm32"))]
+
+                rwindow.request_redraw();
+            }
             Event::WindowEvent {
                 ref event,
                 window_id: _,
@@ -1205,6 +1161,74 @@ fn main() {
 
                 _ => {}
             },
+            Event::RedrawRequested(_) => {
+                if core.global.is_state_changed {
+                    if core.global.state_delay > 0 {
+                        core.global.state_delay -= 1;
+                        // println!("delaying state change {} ", core.global.state_delay);
+                    } else {
+                        core.global.is_state_changed = false;
+                        let states: Vec<StateChange> =
+                            core.global.state_changes.drain(..).collect();
+                        for state in states {
+                            match state {
+                                // StateChange::Fullscreen => {core.check_fullscreen();
+                                StateChange::MouseGrabOn => {
+                                    rwindow.set_cursor_visible(false);
+                                    rwindow.set_cursor_position(center).unwrap();
+                                    rwindow.set_cursor_grab(CursorGrabMode::Confined).or_else(
+                                        |_| rwindow.set_cursor_grab(CursorGrabMode::Locked),
+                                    );
+                                    core.global.mouse_grabbed_state = true;
+                                }
+                                StateChange::MouseGrabOff => {
+                                    rwindow.set_cursor_visible(true);
+                                    rwindow.set_cursor_grab(CursorGrabMode::None);
+                                    core.global.mouse_grabbed_state = false;
+                                }
+                                StateChange::Resized => {
+                                    core.debounced_resize();
+                                }
+                                StateChange::Quit => {
+                                    *control_flow = ControlFlow::Exit;
+                                }
+                                StateChange::Config => {
+                                    crate::asset::parse_config(
+                                        &mut core.global,
+                                        core.bundle_manager.get_lua(),
+                                        &mut core.loggy,
+                                    );
+
+                                    // core.config = crate::config::Config::new();
+                                    // core.config.load();
+                                    // core.config.apply(&mut core);
+                                }
+                            }
+                        }
+                        core.check_fullscreen();
+                    }
+                }
+
+                // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
+                // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+                if let Some(buff) = core.update(&mut updated_bundles) {
+                    instance_buffers = buff;
+                }
+                core.bundle_manager.call_loop(&mut updated_bundles, bits);
+
+                match core.render(&instance_buffers) {
+                    Ok(_) => {}
+                    // Reconfigure the surface if lost
+                    // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+                    // The system is out of memory, we should probably quit
+                    // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                    // All other errors (Outdated, Timeout) should be resolved by the next frame
+                    // Err(e) => eprintln!("{:?}", e),
+                    _ => {}
+                };
+
+                core.loop_helper.loop_sleep();
+            }
             _ => {}
         }
     });

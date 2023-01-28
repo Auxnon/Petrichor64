@@ -389,9 +389,6 @@ pub fn init_lua_sys(
     // lua_globals.set("_ents", lua_ctx.create_table()?);
     lua_globals.set("pi", std::f64::consts::PI);
     lua_globals.set("tau", std::f64::consts::PI * 2.0);
-    lua_ctx
-        .load("add=table.insert del=table.remove print=log")
-        .exec()?;
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -1668,6 +1665,10 @@ function quit(u) end"
 ---@return table
 function help() end"
     );
+
+    lua_ctx
+        .load("add=table.insert del=table.remove print=log")
+        .exec()?;
 
     Ok(())
 }
