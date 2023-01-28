@@ -31,7 +31,7 @@ function loop()
     elseif key("d") then
         player.x = player.x + 0.1
     end
-    campos(player.x, player.y, player.z)
+    cam { pos = { player.x, player.y, player.z } }
     local t = input()
     if #t > 0 then
         print(t)
