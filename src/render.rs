@@ -65,10 +65,6 @@ pub fn render_loop(
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
-    let view = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-
     // TODO is this expensive? only sometimes?
     core.gui.render(
         &core.queue,
@@ -251,6 +247,11 @@ pub fn render_loop(
     //     texture_extent,
     // );
 
+    let output = core.surface.get_current_texture()?;
+
+    let view = output
+        .texture
+        .create_view(&wgpu::TextureViewDescriptor::default());
     encoder.push_debug_group("Post Render");
     {
         let mut post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -276,7 +277,6 @@ pub fn render_loop(
 
     core.queue.submit(iter::once(encoder.finish()));
     // frame!("encoder.finish()");
-    let output = core.surface.get_current_texture()?;
     output.present();
 
     // frame!("END RENDER");
