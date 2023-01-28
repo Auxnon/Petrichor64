@@ -198,6 +198,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                             } //st.push(*c),
                         },
                         winit_input_helper::TextChar::Back => {
+                            #[cfg(target_os = "windows")]
+                            core.loggy.back();
                             // crate::log::back();
                             // neg += 1;
                             // st.remove(st.len() - 1);
