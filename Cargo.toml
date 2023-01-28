@@ -23,7 +23,7 @@ audio=["cpal"]
 
 [dependencies]
 #wgpu = { version = "0.12", features = ["webgl"],optional=true }
-wgpu = { version = "0.14.2", optional=true, features = ["webgl","emscripten"] }
+wgpu = { version = "0.14.2", optional=true }
 cpal={ version ="0.14.1", optional=true }
 bytemuck= { version = "1.12.2", features = ["derive"] }
 
@@ -94,7 +94,7 @@ futures="0.3.25"
 name = "Petrichor64"
 identifier = "com.makeavoy.petrichor64"
 icon = ["petrichor-icon.png"]
-version = "0.2.1"
+version = "0.2.2"
 resources = []
 copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2023. All rights reserved."
 category = "Game"
