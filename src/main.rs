@@ -1,4 +1,6 @@
+// #![windows_subsystem = "console"]
 #![windows_subsystem = "windows"]
+#![allow(warnings)]
 use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
@@ -166,7 +168,7 @@ impl Core {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::Backends::DX12);
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
