@@ -25,8 +25,9 @@ pub struct LuaEnt {
     pub dead: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
-    // pub sender: Option<Sender<(u8, MainCommmand)>>,
-    // pub cloned: bool,
+    pub offset: [f64; 3], // pub meta: mlua::Table,
+                          // pub sender: Option<Sender<(u8, MainCommmand)>>,
+                          // pub cloned: bool,
 }
 
 impl UserData for LuaEnt {
@@ -143,6 +144,11 @@ impl UserData for LuaEnt {
             Ok(this.flipped = flipped)
         });
 
+        fields.add_field_method_get("offset", |_, this| Ok(this.offset));
+        fields.add_field_method_set("offset", |_, this, offset: [f64; 3]| {
+            Ok(this.offset = offset)
+        });
+
         fields.add_field_method_set("scale", |_, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, this| Ok(this.id));
@@ -221,7 +227,8 @@ impl LuaEnt {
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
-            // cloned: false,
+            offset: [0., 0., 0.], // meta: mlua::Table::new(),
+                                  // cloned: false,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -275,6 +282,8 @@ impl Clone for LuaEnt {
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
+            offset: self.offset,
+            // meta: self.meta.clone(),
             // sender: None,
             // cloned: true,
         }
