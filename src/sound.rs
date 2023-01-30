@@ -1,4 +1,7 @@
-use std::{sync::mpsc::{channel, Receiver, Sender}, collections::VecDeque};
+use std::{
+    collections::VecDeque,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 //use byte_slice_cast::AsByteSlice;
 
@@ -124,22 +127,21 @@ where
     let volume_speed = 0.001;
     let fade_speed = 0.00005;
     // if duration is less than this then start lowering volume by volume_speed
-    let volume_fade_threshold=0.;//(1.0/volume_speed)*fade_speed;
-    // let mut vol = 1.;
-    // let mut occupied = [false; 16];
-    let mut sound_channels:[VecDeque<Note>;16] = Default::default();
-    let mut current_notes:[Option<Note>;16]=[None;16];
-    let mut last_notes:[Option<Note>;16]=[None;16];
+    let volume_fade_threshold = 0.; //(1.0/volume_speed)*fade_speed;
+                                    // let mut vol = 1.;
+                                    // let mut occupied = [false; 16];
+    let mut sound_channels: [VecDeque<Note>; 16] = Default::default();
+    let mut current_notes: [Option<Note>; 16] = [None; 16];
+    let mut last_notes: [Option<Note>; 16] = [None; 16];
     let mut buffer = vec![];
     let mut once = false;
     let mut record = false;
     let mut buffer_count = 1;
     let mut buffer_sum = 0.;
 
-
     // |x| if x.sin()>0. {1.} else {-1.};
-    let sqr_wave=Vec::from_iter((1..63 as usize).map(|x| if x%2==0 {440.} else {0.}));
-    let square_wave= Instrument::new(99,sqr_wave,true);
+    let sqr_wave = Vec::from_iter((1..63 as usize).map(|x| if x % 2 == 0 { 440. } else { 0. }));
+    let square_wave = Instrument::new(99, sqr_wave, true);
 
     // let mut notes = vec![];
 
@@ -219,8 +221,11 @@ where
         total / 2.397
     };
 
-    let mut instruments: FxHashMap<usize,Instrument> = FxHashMap::default();
-    instruments.insert(0,Instrument::new(0,vec![0.8,0.,0.8,0.,0.8,0.,0.8,0.],true));
+    let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
+    instruments.insert(
+        0,
+        Instrument::new(0, vec![0.8, 0., 0.8, 0., 0.8, 0., 0.8, 0.], true),
+    );
     let mut amps: Vec<f32> = vec![];
     let mut instrument_diviser = 1.;
 
@@ -230,7 +235,8 @@ where
     //DEV whether to mult by ii in iteration and then div, or just div.
 
     //BLUE instrument
-    let musician = |a: f32, instr:&Instrument| { //amp: &Vec<f32>,
+    let musician = |a: f32, instr: &Instrument| {
+        //amp: &Vec<f32>,
         let mut total = 0.;
         for (i, n) in instr.freqs.iter().enumerate() {
             let ii = (i + 1) as f32;
@@ -249,7 +255,7 @@ where
     // };
 
     let mut func = musician;
-    let mut audience_countdown=0;
+    let mut audience_countdown = 0;
     let mut next_value = move || {
         sample_clock = (sample_clock + 1.0); // % sample_rate as f64;
 
@@ -258,12 +264,12 @@ where
         // println!("byte {}", b.len());
         //let f = [(sample_clock) as usize] as f32
 
-        if audience_countdown> 2000{
-            audience_countdown=0;
-        
-        match audience.try_recv() {
-            Ok(packet) => {
-                match packet {
+        if audience_countdown > 2000 {
+            audience_countdown = 0;
+
+            match audience.try_recv() {
+                Ok(packet) => {
+                    match packet {
                     SoundCommand::PlayNote(note,ichannel) => {
 
                         // occupied[note as usize] = true;
@@ -286,13 +292,10 @@ where
                         println!("chain {}",notes.len());
                         let channel=0;
                         sound_channels[channel].extend(notes);
-                       
                         // for note in notes {
                         //     sound_channels[channel].push(note);
                         // }
-                        
                     }
-                  
                     SoundCommand::MakeInstrument(mut inst) => {
                         // println!("instrument {}", inst);
                         // instrument = inst;
@@ -330,7 +333,7 @@ where
 
                     }
                     SoundCommand::Stop(ichannel)=>{
-                        sound_channels[ichannel].clear();   
+                        sound_channels[ichannel].clear();
                         current_notes[ichannel]=None;
 
                     }
@@ -357,7 +360,7 @@ where
                     //     //volume_speed = speed;
                     // },
                 }
-              
+
                     // if !once && !record {
                     //     // record = true;
                     // } else if !once {
@@ -367,16 +370,13 @@ where
                     //     buffer.clear();
                     //     // once = true;
                     // }
-                  
-
-            
-            }
-            _ => {
-                // println!("no packet");
-            }
-        };
-    }
-    audience_countdown+=1;
+                }
+                _ => {
+                    // println!("no packet");
+                }
+            };
+        }
+        audience_countdown += 1;
 
         let mut all_waves = 0.;
         let mut master_volume = 0.1;
@@ -396,78 +396,73 @@ where
         //     );
         // }
 
-        match &mut current_notes[0]{
-            Some(note)=>{
+        match &mut current_notes[0] {
+            Some(note) => {
                 // note, timer, current_level aka volume, channel
-                note.duration-=fade_speed;
+                note.duration -= fade_speed;
                 // note.volume
                 let instr = instruments.get(&note.instrument).unwrap_or(&square_wave);
 
+                let totes = cycler * note.frequency * instr.base_freq;
 
-                let totes = cycler * note.frequency*instr.base_freq;
-
-                match &mut last_notes[0]{
-                    Some(last_note)=>{
+                match &mut last_notes[0] {
+                    Some(last_note) => {
                         let last_instr = instruments.get(&note.instrument).unwrap_or(&square_wave);
-                        if last_note.instrument != note.instrument{
+                        if last_note.instrument != note.instrument {
                             last_amp = 0.;
                         }
-                        let last_totes = cycler * last_note.frequency*last_instr.base_freq;
-                        let v1=last_note.volume;
-                        let v2=1. -v1; 
-                        all_waves += func(totes, instr) * note.volume * master_volume*v2 + func(last_totes, last_instr) * master_volume*v1;   
-                        last_note.volume-=volume_speed;
-                        if last_note.volume<=0.{
-                            last_notes[0]=None;
+                        let last_totes = cycler * last_note.frequency * last_instr.base_freq;
+                        let v1 = last_note.volume;
+                        let v2 = 1. - v1;
+                        all_waves += func(totes, instr) * note.volume * master_volume * v2
+                            + func(last_totes, last_instr) * master_volume * v1;
+                        last_note.volume -= volume_speed;
+                        if last_note.volume <= 0. {
+                            last_notes[0] = None;
                         }
-                    },
-                    None=>{
+                    }
+                    None => {
                         all_waves +=
                         // choose
                         // square(cycler * last_amp) * volume * master_volume;
                         func(totes, instr) * note.volume * master_volume;
                     }
                 }
-          
 
-            //   square(totes)* volume * master_volume;
+                //   square(totes)* volume * master_volume;
 
-            
-            // if note.1 > 0. {
-            //     if note.2 < 1. {
-            //         note.2 += volume_speed;
-            //     }
-            //     true
-            // } else {
-            //     if note.2 > 0. {
-            //         note.2 -= volume_speed;
-            //         true
-            //     } else {
-            //         occupied[note.3] = false;
-            //         false
-            //     }
-            // }
+                // if note.1 > 0. {
+                //     if note.2 < 1. {
+                //         note.2 += volume_speed;
+                //     }
+                //     true
+                // } else {
+                //     if note.2 > 0. {
+                //         note.2 -= volume_speed;
+                //         true
+                //     } else {
+                //         occupied[note.3] = false;
+                //         false
+                //     }
+                // }
 
                 if note.duration <= 0. {
-                    last_notes[0]=current_notes[0];
+                    last_notes[0] = current_notes[0];
                     current_notes[0] = sound_channels[0].pop_front();
                     if let Some(n) = current_notes[0] {
-                        print!("freq {} dur{} ", n.frequency,n.duration);
+                        print!("freq {} dur{} ", n.frequency, n.duration);
                     }
-                   
-                }else if note.duration <=volume_fade_threshold{
+                } else if note.duration <= volume_fade_threshold {
                     note.volume -= volume_speed;
                 }
             }
-            None=>{
+            None => {
                 current_notes[0] = sound_channels[0].pop_front();
                 if let Some(n) = current_notes[0] {
-                    print!("freq {} dur{} ", n.frequency,n.duration);
+                    print!("freq {} dur{} ", n.frequency, n.duration);
                 }
             }
         }
-
-       
 
         let abs = all_waves.abs();
         if abs > 1. {
@@ -551,7 +546,6 @@ where
         err_fn,
     )?;
 
-
     // DEV ????
     // std::thread::spawn(move || {
     //     stream.play()?;
@@ -612,12 +606,12 @@ pub struct Instrument {
 }
 
 impl Instrument {
-    pub fn new(name: usize, freqs: Vec<f32>, half: bool,) -> Self {
+    pub fn new(name: usize, freqs: Vec<f32>, half: bool) -> Self {
         Self {
             name,
             freqs,
             half,
-            divisor: 1.,    
+            divisor: 1.,
             base_freq: 1.,
         }
     }
