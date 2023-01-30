@@ -761,6 +761,8 @@ pub fn get_codex_version_string() -> String {
 pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> String {
     let mut s = get_codex_version_string()
         + "
+---@diagnostic disable: duplicate-doc-field, missing-return
+
 ---@class Mouse
 ---@field x number
 ---@field y number
