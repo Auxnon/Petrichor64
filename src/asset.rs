@@ -16,6 +16,10 @@ use crate::{
     Core,
 };
 
+pub fn get_codex_version_string() -> String {
+    "-- Codex 1.0.2 \"Applesauce\"".to_owned()
+}
+
 pub fn pack(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
@@ -754,10 +758,6 @@ pub fn get_b() -> Vec<u8> {
 //     crate::log::log(format!("📦assets::{}", str));
 //     println!("📦assets::{}", str);
 // }
-pub fn get_codex_version_string() -> String {
-    "-- Codex 1.0.0 \"Applesauce\"".to_owned()
-}
-
 pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> String {
     let mut s = get_codex_version_string()
         + "
