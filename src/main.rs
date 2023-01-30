@@ -1083,8 +1083,11 @@ fn main() {
         Some(s) => {
             core.global.console = false;
             core.gui.disable_console();
-            crate::command::hard_reset(&mut core);
-            crate::command::load_from_string(&mut core, Some(s));
+            // crate::command::hard_reset(&mut core);
+
+            core.global.pending_load = Some(s.clone());
+            // crate::command::load_from_string(&mut core, Some(s));
+            core.bundle_manager.get_lua().call_drop(s);
         }
         _ => {
             #[cfg(feature = "include_auto")]
