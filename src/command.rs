@@ -663,17 +663,6 @@ function input() end"
         },
         " Get mouse position, delta, button states, and unprojected vector",
         "
----@class Mouse
----@field x number
----@field y number
----@field dx number delta x
----@field dy number delta y
----@field m1 boolean mouse 1
----@field m2 boolean mouse 2
----@field m3 boolean mouse 3
----@field vx number unprojection x
----@field vy number unprojection y
----@field vz number unprojection z
 ---@return Mouse
 function mouse() end"
     );
@@ -993,7 +982,7 @@ function silence(channel) end"
         "
 ---@param freqs number[]
 ---@param half boolean? subsequent freqs are half the previous  
-function instr(notes, half) end"
+function instr(freqs, half) end"
     );
 
     // lua!(
