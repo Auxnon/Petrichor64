@@ -276,9 +276,50 @@ pub fn is_valid_type(s: &String) -> bool {
 }
 
 pub fn check_for_auto() -> Option<String> {
-    let p = PathBuf::new().join("auto.game.png");
+    let mut p;
+    #[cfg(target_os = "macos")]
+    {
+        // if it's built it's 2 levels up, if it's bundled it's 4 levels up
+        let pp = std::env::current_exe()
+            .unwrap()
+            .join("..")
+            .join("..")
+            .join("..");
+        let p1 = pp.join("..");
+        let absolute = p1.canonicalize().unwrap();
+        // println!("checking for auto {:?}", absolute);
+        p = absolute.join("auto.game.png");
+
+        // also check one level down into the app bundle
+        if !p.exists() {
+            let absolute = pp.canonicalize().unwrap();
+            p = absolute.join("auto.game.png");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    match std::env::current_exe() {
+        Ok(pp) => {
+            p = pp.join("auto.game.png");
+        }
+        Err(_) => {
+            return None;
+        }
+    }
+    // p = std::env::current_exe().unwrap().join("auto.game.png");
+    // let p = dirs::.unwrap().join("auto.game.png");
+    // for a in p.read_dir().unwrap() {
+    //     println!("checking for auto {:?}", a);
+    // }
+
+    // let p = PathBuf::new().join("..").join("auto.game.png");
+    // println!("checking for auto {:?}", p);
+
+    // #[cfg(not(target_os = "macos"))]
+    // let p = PathBuf::new().join("auto.game.png");
+
     if p.exists() {
-        Some("auto".to_string())
+        Some(p.to_str().unwrap().to_owned())
     } else {
         None
     }
