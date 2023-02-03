@@ -97,24 +97,8 @@ impl UserData for LuaEnt {
         methods.add_method("get_tex", |_, this, ()| Ok(this.tex.clone()));
 
         methods.add_method("get_y", |_, this, ()| Ok(this.y));
-        methods.add_method("kill", |lu, this, ()| {
-            // lu.call_function::<_, ()>("kill_ent", (this.get_id(),))?;
-
-            //             lua.load(r#"
-            //     assert(myobject.val == 123)
-            //     myobject:add(7)
-            //     assert(myobject.val == 130)
-            //     assert(myobject + 10 == 140)
-            // "#).exec()?;
-            // lu.load(&format!("kill(1)", this.get_id())).exec()?;
-            match lu.globals().get::<&str, mlua::Function>("kill") {
-                Ok(kill) => {
-                    kill.call::<_, ()>((this.get_id(),))?;
-                }
-                Err(e) => {
-                    println!("kill error: {}", e);
-                }
-            }
+        methods.add_method_mut("kill", |lu, this, ()| {
+            this.kill();
             Ok(Nil)
         });
     }
@@ -272,6 +256,10 @@ impl LuaEnt {
     pub fn clear_dirt(&mut self) {
         self.dirty = false;
         self.flags = 0;
+    }
+    pub fn kill(&mut self) {
+        self.flags |= LuaEntFlags::Dead;
+        self.dirty = true;
     }
 }
 

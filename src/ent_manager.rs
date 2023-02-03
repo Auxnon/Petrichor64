@@ -7,10 +7,11 @@ use std::{
 
 use crate::{
     ent::EntityUniforms,
+    lua_ent::LuaEntFlags,
     model::{Instance, Model, ModelManager},
     texture::TexManager,
 };
-use glam::vec3;
+use glam::{vec3, vec4};
 use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
 use wgpu::util::DeviceExt;
@@ -115,15 +116,6 @@ impl EntManager {
         self.hash_dirty = true
     }
 
-    pub fn kill_ent(&mut self, id: u64) {
-        self.ent_array.retain(|e| {
-            let ee = e.0.lock().unwrap();
-            !(ee.get_id() == id || ee.dead)
-        });
-        // self.entities.remove(&id);
-        self.hash_dirty = true
-    }
-
     /** Set child as having parent.
      * Locate and lock the lua ent in iteration, then ensure the parent is located earlier on the array.
      *  Will reorder by placing the parent earlier on the array, just before the child.
@@ -199,13 +191,6 @@ impl EntManager {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
         for (alent, ent, uni_ref) in self.ent_array.iter() {
             if let Ok(lent) = alent.lock() {
-                if lent.dead {
-                    // self.kill_ent(lent.get_id());
-                    println!("dead ent {}", lent.get_id());
-                }
-
-                //     }
-
                 // for (lent, ent, uni_ref) in lua_ent_array.iter() {
                 let parent = match lent.parent {
                     Some(u) => mats.get(&u),
@@ -377,10 +362,11 @@ impl EntManager {
         tm: &TexManager,
         mm: &ModelManager,
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
-        // let mut v: Vec<LuaEnt> = vec![];
         let mut failed = 0;
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
-        for (lent, ent, uni_ref) in self.ent_array.iter_mut() {
+
+        // for (lent, ent, uni_ref) in self.ent_array.iter_mut() {
+        self.ent_array.retain_mut(|(lent, ent, uni_ref)| {
             match lent.lock() {
                 Ok(mut l) => {
                     let parent = match l.parent {
@@ -388,12 +374,35 @@ impl EntManager {
                         None => None,
                     };
                     if l.is_dirty() {
-                        failed += 1;
-                        if l.dead {
-                            println!("dead");
-                            continue;
+                        let flags = l.get_flags();
+
+                        if flags & LuaEntFlags::Dead == LuaEntFlags::Dead {
+                            self.hash_dirty = true;
+                            return false;
                         }
                         l.clear_dirt();
+
+                        if flags & LuaEntFlags::Asset == LuaEntFlags::Asset {
+                            let asset = l.get_asset();
+                            ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
+                                Some(m) => {
+                                    ent.tex = vec4(0., 0., 1., 1.);
+                                    m
+                                }
+                                None => {
+                                    if let Some(t) = tm.get_tex_or_not(&asset) {
+                                        ent.tex = t;
+                                    }
+                                    &mm.CUBE
+                                }
+                            });
+                            self.hash_dirty = true;
+                        }
+
+                        if flags & LuaEntFlags::Tex == LuaEntFlags::Tex {
+                            ent.tex = tm.get_tex(l.get_tex());
+                            ent.remove_anim();
+                        }
 
                         if l.is_anim() {
                             match tm.animations.get(l.get_tex()) {
@@ -402,9 +411,6 @@ impl EntManager {
                                 }
                                 _ => {}
                             }
-                        } else {
-                            ent.tex = tm.get_tex(l.get_tex());
-                            ent.remove_anim();
                         }
                     } else {
                         // println!("not dirty");
@@ -414,9 +420,12 @@ impl EntManager {
                     uni_ref.replace(uni);
                     mats.insert(l.get_id(), mat);
                 }
-                _ => {}
+                _ => {
+                    failed += 1;
+                }
             }
-        }
+            return true;
+        });
 
         let instance_buffers = self
             .render_hash

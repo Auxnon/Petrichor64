@@ -749,54 +749,13 @@ function spawn(asset, x, y, z, scale) end"
 function group(parent, child) end"
     );
 
-    let pitcher = main_pitcher.clone();
     lua!(
         "kill",
-        move |lu, (ent): (Value)| {
-            //Arc<std::sync::Mutex<LuaEnt>>
-            let id = match ent {
-                Value::UserData(g) => {
-                    // let gg = g.borrow().unwrap();
-
-                    // match g.borrow()
-
-                    // .downcast_ref::<LuaEnt>() {
-                    //     Ok(ll) => {}
-                    //     _ => {}
-                    // }
-
-                    // // g.into()
-                    // let en:Arc<std::sync::Mutex<LuaEnt>> = g.into();
-                    // g.take()
-
-                    // match g.get_named_user_value::<_, u64>("id") {
-                    //     Ok(g) => g,
-                    //     _ => 0,
-                    // }
-                    // println!("userdata is {}", g.is::<Arc<std::sync::Mutex<LuaEnt>>>());
-                    match g.borrow::<Arc<std::sync::Mutex<LuaEnt>>>() {
-                        Ok(r) => {
-                            // println!("internal");
-                            r.lock().unwrap().get_id()
-                        }
-                        Err(_) => 0,
-                    }
-
-                    // g.borrow_mut()
-                    //     .downcast_mut::<Arc<std::sync::Mutex<LuaEnt>>>()
-                    //     .unwrap();
-                }
-                Value::Integer(n) => n as u64,
-                Value::Number(n) => n as u64,
-                _ => 0,
-            };
-            // println!("ent id {}", id);
-            match pitcher.send((bundle_id, MainCommmand::Kill(id))) {
-                Ok(_) => Ok(()),
-                Err(er) => Err(make_err("Unable to kill entity")),
+        move |_, ent: Arc<std::sync::Mutex<LuaEnt>>| {
+            if let Ok(mut r) = ent.lock() {
+                r.kill();
             }
-
-            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            Ok(())
         },
         "Removes an entity",
         "
@@ -825,18 +784,12 @@ function reload() end"
      *  use to store an entity between context, for moving entities between games maybe?
      *  lua.create_registry_value(t)
      */
-    // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
     lua!(
         "attr",
         move |_, table: Table| {
-            // pitcher.send(MainCommmand::Globals(table));
-
             let hash = table_hasher(table);
-            // println!("crt {:?}", hash);
             pitcher.send((bundle_id, MainCommmand::Globals(hash)));
-
-            // switch.write().dirty = true;
             Ok(())
         },
         "Set various app state parameters",
@@ -845,7 +798,6 @@ function reload() end"
 function attr(attributes) end"
     );
 
-    // let switch = Arc::clone(&switch_board);
     let pitcher = main_pitcher.clone();
     lua!(
         "cam",
@@ -2223,7 +2175,6 @@ pub enum MainCommmand {
     Anim(String, Vec<String>, u32),
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Group(u64, u64, SyncSender<bool>),
-    Kill(u64),
     Model(
         String,
         Vec<String>,

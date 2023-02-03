@@ -797,6 +797,7 @@ pub fn get_b() -> Vec<u8> {
         };
     }
 
+    // TODO when cross compiling for windows you'll need this to be the other slash... should be a different build process
     #[cfg(windows)]
     macro_rules! sp {
         () => {
