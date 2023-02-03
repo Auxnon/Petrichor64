@@ -21,13 +21,19 @@ pub struct LuaEnt {
     tex: String,
     anim: bool,
     dirty: bool,
+    flags: u8,
     pub flipped: bool,
-    pub dead: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
     pub offset: [f64; 3], // pub meta: mlua::Table,
                           // pub sender: Option<Sender<(u8, MainCommmand)>>,
                           // pub cloned: bool,
+}
+pub mod LuaEntFlags {
+    pub const None: u8 = 0b0;
+    pub const Tex: u8 = 0b1;
+    pub const Asset: u8 = 0b10;
+    pub const Dead: u8 = 0b100;
 }
 
 impl UserData for LuaEnt {
@@ -62,12 +68,12 @@ impl UserData for LuaEnt {
         methods.add_method_mut("tex", |_, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
+                // this.flags |= LuaEntFlags::Tex;
                 this.dirty = true;
             } else if this.anim {
                 this.anim = false;
                 this.dirty = true;
             }
-
             Ok(true)
         });
         methods.add_method_mut("anim", |_, this, (tex, force): (String, Option<bool>)| {
@@ -152,6 +158,16 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("scale", |_, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, this| Ok(this.id));
+
+        fields.add_field_method_get("asset", |_, this| Ok(this.asset.clone()));
+        fields.add_field_method_set("asset", |_, this, asset: String| {
+            if this.asset != asset {
+                this.asset = asset;
+                this.flags |= LuaEntFlags::Asset;
+                this.dirty = true;
+            }
+            Ok(())
+        });
     }
 }
 
@@ -223,12 +239,12 @@ impl LuaEnt {
             tex: String::new(),
             dirty: false,
             anim: false,
-            dead: false,
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
             offset: [0., 0., 0.], // meta: mlua::Table::new(),
-                                  // cloned: false,
+            flags: 0,
+            // cloned: false,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -244,6 +260,9 @@ impl LuaEnt {
     pub fn get_tex(&self) -> &String {
         &self.tex
     }
+    pub fn get_flags(&self) -> u8 {
+        self.flags
+    }
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
@@ -252,6 +271,7 @@ impl LuaEnt {
     }
     pub fn clear_dirt(&mut self) {
         self.dirty = false;
+        self.flags = 0;
     }
 }
 
@@ -278,11 +298,11 @@ impl Clone for LuaEnt {
             tex: self.tex.clone(),
             dirty: false,
             anim: self.anim,
-            dead: false,
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
             offset: self.offset,
+            flags: self.flags,
             // meta: self.meta.clone(),
             // sender: None,
             // cloned: true,
