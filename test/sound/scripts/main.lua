@@ -6,7 +6,7 @@ attr({
     flatness = 4.,
     curvature = 0.8,
     resolution = 720,
-    glitch = 4.
+    glitch = { 4. },
 })
 -- asong = { "F", "_" }
 -- last = ""
@@ -64,7 +64,7 @@ function main()
 
 
     for i = 1, 12 do
-        dimg(poof, rnd(), rnd() / 3.)
+        img(poof, rnd(), rnd() / 3.)
         --     spawn("poofy", rnd(-12., 12.), 18, rnd(1., 8.))
     end
     gui()
@@ -191,7 +191,7 @@ function loop()
         text(overlay, m.x, m.y - 1 / 16)
     end
 
-    campos(camera.x, camera.y, camera.z)
+    cam { pos = { camera.x, camera.y, camera.z } }
 
 end
 
@@ -224,7 +224,7 @@ function make_noise()
 end
 
 function activate()
-    silence()
+    silence(0)
     if mode_type then
         print("Notes")
         send_notes()
@@ -241,9 +241,9 @@ function send_instr()
         print "full"
     end
     -- iterate over bars
-    for j = 1, #bars do
-        print("p" .. bars[j])
-    end
+    -- for j = 1, #bars do
+    --     print("p" .. bars[j])
+    -- end
     instr(bars, half_enabled)
     sound(440., 2.)
 end

@@ -3,7 +3,6 @@ items = {}
 --- @type Entity | nil
 item_grabbed = nil
 
-
 --- @class Vector
 --- @field x number
 --- @field y number
@@ -49,8 +48,6 @@ function check_items()
             item_grabbed.y = cursor.y
             item_grabbed.z = cursor.z
         end
-
-
     end
 end
 

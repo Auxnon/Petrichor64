@@ -1,6 +1,8 @@
 sky()
 fill("FF0")
 
+attr { modernize = false, glitch = { 0.1, 0.5, 0 }, curvature = 0.97, resolution = 480 }
+
 board_size = 2
 function tern(a, b, c)
     if a then

@@ -53,7 +53,7 @@ function floor()
     for i = -6, 6 do
         for j = -6, 5 do
             local e = spawn("cube", i, j, 0)
-            e:tex("logo" .. irnd(20, 24))
+            e.tex = "logo" .. irnd(20, 24)
             floors[#floors + 1] = e
         end
     end

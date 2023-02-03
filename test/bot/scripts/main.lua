@@ -1,11 +1,11 @@
 example = spawn('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
 player = { x = 0, y = 0, z = -2, vx = 0, vy = 0, vz = 0 }
-cam = { x = 0, y = 0, z = 0 }
+cm = { x = 0, y = 0, z = 0 }
 rot = { x = 0, y = 0 }
 srot = { x = 0, y = 0 }
 m = { x = 0, y = 0 }
 
-attr { mouse_grab = 1 } --fullscreen = 1
+attr { mouse_grab = true } --fullscreen = 1
 absolute_speed = 0
 
 aim = spawn("screen", 0, 0, 0)
@@ -36,8 +36,9 @@ function model_test()
     --     { t = "square", v = v, i = i, u = u })
 
 
-    smodel("thing",
-        { t = "square", v = { { -0.8, -1, 0 }, { 0.8, -1, 0 }, { 0.8, 1, 0 }, { -0.8, 1, 0 } }, i = { 0, 1, 2, 0, 2, 3 },
+    model("thing",
+        { t = { "square" }, v = { { -0.8, -1, 0 }, { 0.8, -1, 0 }, { 0.8, 1, 0 }, { -0.8, 1, 0 } },
+            i = { 0, 1, 2, 0, 2, 3 },
             uv = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } } })
 end
 
@@ -199,8 +200,8 @@ function imgey()
         else
             rimg:text("B", -1, 4)
         end
-        simg("screen", sqimg)
-        simg("red", rimg)
+        tex("screen", sqimg)
+        tex("red", rimg)
     end
 
 end
@@ -251,7 +252,7 @@ function loop()
 
     end
 
-    if is_tile(player.x, player.y, player.z) then
+    if istile(player.x, player.y, player.z) then
         player.vz = player.vz + 0.02
     elseif player.z > 0 then
         player.vz = player.vz - 0.02
@@ -271,14 +272,14 @@ function loop()
     player.vy = player.vy * friction
     player.vz = player.vz * friction
     place(bot, player)
-    bot.rot_z = srot.x + pi / 2.
+    bot.rz = srot.x + pi / 2.
 
 
 
 
-    cam.x = player.x - math.cos(srot.x) * 12
-    cam.y = player.y - math.sin(srot.x) * 12
-    cam.z = player.z + pheight
+    cm.x = player.x - math.cos(srot.x) * 12
+    cm.y = player.y - math.sin(srot.x) * 12
+    cm.z = player.z + pheight
 
     make_thing()
     move_things()
@@ -322,10 +323,10 @@ function loop()
         if b.t < 0 then
             b.ent:kill()
             table.remove(bullets, i)
-            if not is_tile(b.ent.x, b.ent.y, b.ent.z) then
+            if not istile(b.ent.x, b.ent.y, b.ent.z) then
                 tile("red", b.ent.x, b.ent.y, b.ent.z)
             end
-        elseif is_tile(b.ent.x, b.ent.y, b.ent.z) then
+        elseif istile(b.ent.x, b.ent.y, b.ent.z) then
             b.ent:kill()
             table.remove(bullets, i)
             tile("red", b.ent.x - b.vx, b.ent.y - b.vy, b.ent.z - b.vz)
@@ -334,7 +335,7 @@ function loop()
         elseif b.ent.z < -2 then
             b.ent:kill()
             table.remove(bullets, i)
-            if not is_tile(b.ent.x, b.ent.y, b.ent.z) then
+            if not istile(b.ent.x, b.ent.y, b.ent.z) then
                 tile("red", b.ent.x, b.ent.y, b.ent.z)
             end
         end
@@ -343,8 +344,8 @@ function loop()
 
 
 
-    camrot(srot.x, srot.y)
-    campos(cam.x, cam.y, cam.z)
+    cam { pos = { cm.x, cm.y, cm.z }, rot = { srot.x, srot.y } }
+
 
     clr()
     text("x " .. flr(player.x * 100) / 100, 0, 30) --s.. "  y " .. flr(player.y * 100))

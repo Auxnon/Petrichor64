@@ -25,24 +25,25 @@ sky()
 fill("9bbc0f") --cadc9f
 gui()
 
-dimg(gimg("speech"), "=50%-32", 4)
+img(gimg("speech"), "=50%-32", 4)
 -- text("test",)
 function main()
 	for key, val in pairs(t) do
 		t[key] = "bip" .. val
 		-- print(t[key])
 	end
-	cube("leaves", t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside)
+	model("leaves", { t = { t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside } })
 	t.leaves = "leaves"
-	cube("wallbend", t.topbend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	model("wallbend", { t = { t.topbend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallbend = "wallbend"
-	cube("wallstraight", t.topstraight, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	model("wallstraight", { t = { t.topstraight, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallstraight = "wallstraight"
-	cube("wallend", t.topend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall)
+	model("wallend", { t = { t.topend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallend = "wallend"
-	cube("door", t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall)
+	model("door", { t = { t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall } })
 	t.door = "door"
-	feller = spawn('wall', 4, 0, 1)
+	feller = spawn('wallbend', 4, 0, 1)
+	feller.offset = { -.5, -.5, -.5 }
 	feller2 = spawn('bip3', 4, 0, 1)
 	if true then
 
@@ -112,6 +113,29 @@ first_click = true
 remove_mode = false
 cpos = { 0, -8, 8 }
 sp = 0.1
+block_iterator = 1
+block_selection = "wallbend"
+block_rot = 0
+block_level = 1
+
+
+function cycle_blocks()
+	local it = 1
+	for k, v in pairs(t) do
+		if it == block_iterator then
+			feller.asset = v
+			block_selection = v
+			print(v)
+		end
+		it = it + 1
+	end
+	block_iterator = block_iterator + 1
+
+	if block_iterator > it then
+		block_iterator = 1
+	end
+end
+
 function loop()
 	-- example.x = example.x + rnd() * 0.1 - 0.05
 	-- example.z = example.z + rnd() * 0.1 - 0.05
@@ -125,7 +149,7 @@ function loop()
 	local vz = m.vz * vv + cpos[3]
 
 	local f = -(cpos[3]) / (m.vz)
-	local p = { x = cpos[1] + f * m.vx, y = cpos[2] + f * m.vy, z = 1 + cpos[3] + f * m.vz }
+	local p = { x = cpos[1] + f * m.vx, y = cpos[2] + f * m.vy, z = block_level + cpos[3] + f * m.vz }
 	-- print(x, y, z)
 	feller2.x = vx
 	feller2.y = vy
@@ -134,16 +158,27 @@ function loop()
 	local yy = flr(p.y + .5)
 	local zz = flr(p.z + .5)
 
-	feller.x = xx - .5
-	feller.y = yy - .5
-	feller.z = zz - .5
+	feller.x = xx
+	feller.y = yy
+	feller.z = zz
+	if m.m2 then
+		if first_click then
+			first_click = false
+			block_rot = block_rot + 1
+			if block_rot > 3 then
+				block_rot = 0
+			end
+			feller.rz = tau / 4 * block_rot
+		end
+	end
 	if m.m1 then
 
 
 		if first_click then
 			first_click = false
-			-- print("" .. is_tile(xx, yy, 1))
-			if is_tile(xx, yy, 1) then
+
+
+			if istile(xx, yy, block_level) then
 				remove_mode = true
 				print "remove"
 			else
@@ -160,13 +195,17 @@ function loop()
 			last_pos[1] = xx
 			last_pos[2] = xx
 			if remove_mode then
-				tile(0, xx, yy, 1)
+				tile(0, xx, yy, block_level)
 			else
-				tile(t.wall, xx, yy, 1)
+				tile(block_selection, xx, yy, block_level, block_rot)
 			end
 		end
-	else
+	elseif not m.m2 then
 		first_click = true
+	end
+
+	if key("1", true) then
+		cycle_blocks()
 	end
 
 	-- cam { pos = cpos, rot = { 0, tau / 2 } }
@@ -181,6 +220,13 @@ function loop()
 	elseif key("s") then
 		cpos[1] = cpos[1] + sin(rr) * sp
 		cpos[2] = cpos[2] - cos(rr) * sp
+	end
+
+	if key("q", true) then
+		block_level = block_level + 1
+	end
+	if key("e", true) then
+		block_level = block_level - 1
 	end
 	if key("space") then
 		cpos[1] = 0

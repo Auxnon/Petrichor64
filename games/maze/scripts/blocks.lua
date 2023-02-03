@@ -58,13 +58,16 @@ function block(i, j, k, label)
             end
         else
             -- print(label:sub(1, 1) .. " and ", label:sub(2))
-            spawn(label:sub(1, 1), i - .1, j, k + .6)
-            spawn(label:sub(2), i + .1, j, k + .6)
+            local t = spawn(label:sub(1, 1), i - .2, j, k + .6)
+            t.scale = 2
+            local t = spawn(label:sub(2), i + .2, j, k + .6)
+            t.scale = 2
         end
 
     else
         -- print(label:sub(1, 1) .. " only")
-        spawn(label:sub(1, 1), i, j, k + .6)
+        local t = spawn(label:sub(1, 1), i, j, k + .6)
+        t.scale = 2
     end
 
 
