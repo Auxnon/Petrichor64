@@ -322,20 +322,32 @@ impl ModelManager {
             );
         }
         let t_count = texture.len();
-        let vertices = if uvs.len() == verts.len() || t_count > 0 {
+        let uvs_match_v = uvs.len() == verts.len();
+        let vertices = if uvs_match_v || t_count > 0 {
             if t_count == 1 {
                 let uv_adjust = tex_manager.get_tex(&texture[0]);
                 // loggy.log(LogType::Model, &format!("uv_adjust: {:?}", uv_adjust));
-                verts
-                    .iter()
-                    .enumerate()
-                    .map(|(i, pos)| {
-                        let uv = uvs[i];
-                        let mut vv = vertexx(*pos, [0, 0, 0], uv);
-                        vv.texture(uv_adjust);
-                        vv
-                    })
-                    .collect::<Vec<Vertex>>()
+                if !uvs_match_v {
+                    verts
+                        .iter()
+                        .map(|pos| {
+                            let mut vv = vertexx(*pos, [0, 0, 0], [0., 0.]);
+                            vv.texture(uv_adjust);
+                            vv
+                        })
+                        .collect::<Vec<Vertex>>()
+                } else {
+                    verts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, pos)| {
+                            let uv = uvs[i];
+                            let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                            vv.texture(uv_adjust);
+                            vv
+                        })
+                        .collect::<Vec<Vertex>>()
+                }
             } else {
                 let step_size = match tex_style {
                     TextureStyle::Quad => 4,
