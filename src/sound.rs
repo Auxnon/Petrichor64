@@ -138,6 +138,10 @@ where
     let mut record = false;
     let mut buffer_count = 1;
     let mut buffer_sum = 0.;
+    let mut echo = 0.;
+    let mut echo_buffer = [0.; 1000];
+    let echo_delay = 4400;
+    let mut echo_counter = 0;
 
     // |x| if x.sin()>0. {1.} else {-1.};
     let sqr_wave = Vec::from_iter((1..63 as usize).map(|x| if x % 2 == 0 { 440. } else { 0. }));
@@ -520,6 +524,23 @@ where
         // let totes = cycler * hertz;
 
         // square(totes)
+        // make echo
+
+        // YELLOW muffle effect
+        // all_waves += echo;
+        // echo = all_waves / 1.001;
+
+        //echo
+
+        // if echo_counter >= echo_delay {
+        // for i in 0..echo_buffer.len() - 1 {
+        //     echo_buffer[i] = echo_buffer[i + 1] / 1.001;
+        // }
+        // echo_buffer[echo_buffer.len() - 1] = all_waves;
+        // all_waves += echo_buffer[0] / 1.001;
+        // } else {
+        //     echo_counter += 1;
+        // }
 
         if record {
             buffer_sum += all_waves * 256.;

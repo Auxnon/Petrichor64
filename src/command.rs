@@ -1732,6 +1732,7 @@ pub fn load_empty(core: &mut Core) {
         core.pitcher.clone(),
         core.loggy.make_sender(),
         core.singer.clone(),
+        core.global.debug,
         false,
     );
     #[cfg(not(feature = "audio"))]
@@ -1817,6 +1818,7 @@ pub fn load(
         core.pitcher.clone(),
         core.loggy.make_sender(),
         core.singer.clone(),
+        core.global.debug,
         false,
     );
     #[cfg(not(feature = "audio"))]

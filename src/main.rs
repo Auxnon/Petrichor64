@@ -1,6 +1,6 @@
 // #![windows_subsystem = "console"]
 #![windows_subsystem = "windows"]
-#![allow(warnings)]
+// #![allow(warnings)]
 use bundle::BundleManager;
 use bytemuck::{Pod, Zeroable};
 use command::MainCommmand;
@@ -778,7 +778,6 @@ impl Core {
                     self.ent_manager.group(parent, child);
                     tx.send(true);
                 }
-                MainCommmand::Kill(id) => self.ent_manager.kill_ent(id),
                 MainCommmand::Globals(table) => {
                     for (k, v) in table.iter() {
                         match k.as_str() {
