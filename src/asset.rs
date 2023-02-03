@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use regex::Regex;
 use wgpu::Device;
 
 use crate::{
@@ -198,8 +199,33 @@ pub fn unpack(
     }
 }
 
-fn handle_script(buffer: &str, lua_master: &LuaCore) {
+fn handle_script(buffer: &str, lua_master: &LuaCore) -> [u16; 3] {
+    let mut ver = [0, 0, 0];
+    let l = buffer.lines();
+    let reg = Regex::new(r"[0-9]+").unwrap();
+    l.take(5).for_each(|line| {
+        if line.starts_with("--") && line.to_lowercase().contains("codex") {
+            let v = line.split(".").collect::<Vec<&str>>();
+            ver[0] = to_num(&v, 0, &reg);
+            ver[1] = to_num(&v, 1, &reg);
+            ver[2] = to_num(&v, 2, &reg);
+        }
+    });
     lua_master.async_load(&buffer.to_string());
+    ver
+}
+
+fn to_num(s: &Vec<&str>, n: usize, reg: &Regex) -> u16 {
+    match s.get(n) {
+        Some(m) => match reg.find(m) {
+            Some(mm) => {
+                let ss = mm.as_str();
+                ss.parse::<u16>().unwrap_or(0)
+            }
+            None => 0,
+        },
+        None => 0,
+    }
 }
 
 pub fn show_config() {
@@ -414,6 +440,7 @@ pub fn walk_files(
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
     let mut configs = vec![];
     let mut paths = vec![];
+    let mut version = [0; 3];
 
     match read_dir(&assets_path) {
         Ok(dir) => {
@@ -509,7 +536,13 @@ pub fn walk_files(
 
                                 // println!("script item is {}", st);
                                 if device.is_some() {
-                                    handle_script(st.as_str(), lua_master)
+                                    let ver = handle_script(st.as_str(), lua_master);
+                                    if ver[0] > version[0]
+                                        || ver[1] > version[1]
+                                        || ver[2] > version[2]
+                                    {
+                                        version = ver;
+                                    }
                                 }
                                 paths.push(file_name.to_owned());
                             }
@@ -531,6 +564,7 @@ pub fn walk_files(
         }
     }
 
+    loggy.log(LogType::Config, &format!("app version is {:?}", version));
     //.expect("Scripts directory failed to load")
     paths
 }
