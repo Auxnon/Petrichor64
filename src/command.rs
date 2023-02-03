@@ -1068,7 +1068,7 @@ function gui() end"
 ---@param y number
 ---@param w number
 ---@param h number
----@param rgb number[]? | string? rgba number array or hex string
+---@param rgb number[] | string? rgba number array or hex string
 function rect(x, y, w, h, rgb) end"
     );
 
@@ -1088,7 +1088,7 @@ function rect(x, y, w, h, rgb) end"
 ---@param w number
 ---@param h number
 ---@param ro number radius of corners
----@param rgb number[]? | string? rgba number array or hex string
+---@param rgb number[] | string? rgba number array or hex string
 function rrect(x, y, w, h, ro, rgb) end"
     );
 
@@ -1112,7 +1112,7 @@ function rrect(x, y, w, h, ro, rgb) end"
 ---@param y number  
 ---@param x2 number
 ---@param y2 number
----@param rgb number[]? | string? rgba number array or hex string
+---@param rgb number[] | string? rgba number array or hex string
 function line(x, y, x2, y2, rgb) end"
     );
     // let pitcher = main_pitcher.clone();
@@ -1154,7 +1154,7 @@ function line(x, y, x2, y2, rgb) end"
 ---@param txt string
 ---@param x number
 ---@param y number
----@param rgb number[]? | string? rgba number array or hex string
+---@param rgb number[] | string? rgba number array or hex string
 ---@param typeset string? font name or size 
 function text(txt, x, y, rgb, typeset) end"
     );

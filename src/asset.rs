@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub fn get_codex_version_string() -> String {
-    "-- Codex 1.0.2 \"Applesauce\"".to_owned()
+    "-- Codex 2.0.0 \"Avocado\"".to_owned()
 }
 
 pub fn pack(
@@ -843,7 +843,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
---- @field i number[][]? indicies
+--- @field i integer[][]? indicies
 
 --- @class Entity
 --- @field x number x position
@@ -858,7 +858,8 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field flipped number texture flip x axis
 --- @field scale number uniform scale factor 1 is 100%
 --- @field id integer assigned by engine, killable
---- @field tex function string asset
+--- @field tex string texture asset
+--- @field asset string model or blocked texture asset
 --- @field anim function string animation
 --- @field kill function destroy entity
 
