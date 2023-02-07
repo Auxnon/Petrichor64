@@ -8,7 +8,7 @@
       "name": "(Windows) Launch",
       "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceRoot}/target/debug/Petrichor.exe",
+      "program": "${workspaceRoot}/target/debug/Petrichor64.exe",
       "args": [],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
