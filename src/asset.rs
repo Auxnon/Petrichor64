@@ -839,7 +839,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
         + "
 ---@diagnostic disable: duplicate-doc-field, missing-return
 
----@class Mouse
+---@class mouse
 ---@field x number
 ---@field y number
 ---@field dx number delta x
@@ -850,9 +850,9 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 ---@field vx number unprojection x
 ---@field vy number unprojection y
 ---@field vz number unprojection z
----@return Mouse
+---@return mouse
 
----@class Attributes
+---@class attributes
 ---@field resolution number artificial resolution
 ---@field lock boolean
 ---@field fog number 0 is off
@@ -869,18 +869,18 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 ---@field low number
 ---@field bleed number
 
----@class CamParams
+---@class cam_params
 ---@field pos number[]? x, y, z
 ---@field rot number[]? azimuth, altitude
 
---- @class ModelData
+--- @class model_data
 --- @field t string[]? texture assets
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
 --- @field i integer[][]? indicies
 
---- @class Entity
+--- @class entity
 --- @field x number x position
 --- @field y number y position
 --- @field z number z position
@@ -895,8 +895,22 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field id integer assigned by engine, killable
 --- @field tex string texture asset
 --- @field asset string model or blocked texture asset
---- @field anim function string animation
---- @field kill function destroy entity
+--- @field anim fun(animation:string,force?:boolean) change animation, force marks change even if already playing
+--- @field kill fun() destroy entity
+
+--- @alias gunit number | integer | string
+--- @alias rgb number[] | integer[] | string
+
+--- @class image
+--- @field line fun(x:gunit, y:gunit, x2:gunit, y2:gunit, rgb?:rgb) draw line on image
+--- @field rect fun(x:gunit, y:gunit, w:gunit, h:gunit, rgb?:rgb) draw rectangle on image
+--- @field rrect fun(x:gunit, y:gunit, w:gunit, h:gunit,ro:gunit, rgb?:rgb) draw rounded rectangle on image
+--- @field text fun(txt:string, x?:gunit, y?:gunit, rgb?:rgb) draw text on image
+--- @field img fun(im:image, x?:gunit, y?:gunit) draw another image on image
+--- @field clr fun() clear image
+--- @field fill fun(rgb?:rgb) fill image with color
+--- @field raw fun():integer[] image return raw pixel data
+--- @field copy fun():image clones to new image
 
 ";
     for (name, (desc, examp)) in command_map {

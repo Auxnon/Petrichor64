@@ -663,7 +663,7 @@ function input() end"
         },
         " Get mouse position, delta, button states, and unprojected vector",
         "
----@return Mouse
+---@return mouse
 function mouse() end"
     );
 
@@ -719,7 +719,7 @@ function analog(button) end"
 ---@param y number
 ---@param z number
 ---@param scale number?
----@return Entity
+---@return entity
 function spawn(asset, x, y, z, scale) end"
     );
     let pitcher = main_pitcher.clone();
@@ -744,8 +744,8 @@ function spawn(asset, x, y, z, scale) end"
         },
         "Groups an entity onto another entity",
         "
----@param parent Entity
----@param child Entity
+---@param parent entity
+---@param child entity
 function group(parent, child) end"
     );
 
@@ -759,7 +759,7 @@ function group(parent, child) end"
         },
         "Removes an entity",
         "
----@param ent Entity | integer
+---@param ent entity | integer
 function kill(ent) end"
     );
 
@@ -832,7 +832,7 @@ function attr(attributes) end"
         },
         "Set the camera position and/or rotation",
         "
----@param params CamParams
+---@param params cam_params
 function cam(params) end"
     );
 
@@ -1173,7 +1173,7 @@ function text(txt, x, y, rgb, typeset) end"
         },
         "Draw image on the gui at position",
         "
----@param im userdata  
+---@param im image  
 ---@param x number?  
 ---@param y number?
 function img(im, x, y) end"
@@ -1194,7 +1194,7 @@ function img(im, x, y) end"
         "Sets image data as a texture",
         "
 ---@param asset string
----@param im userdata
+---@param im image
 function tex(asset, im) end"
     );
 
@@ -1203,17 +1203,12 @@ function tex(asset, im) end"
     lua!(
         "gimg",
         move |lu, name: String| {
-            //Err(mlua::prelude::LuaError::external("Failed to get image"))
-            //Err(mlua::prelude::LuaError::external("Core did not respond"))
             let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, RgbaImage)>(0);
             let limg = match pitcher.send((bundle_id, MainCommmand::GetImg(name, tx))) {
                 Ok(o) => match rx.recv() {
                     Ok((w, h, im)) => {
                         let lua_img =
                             LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
-                        // table.set("w", d.0)?;
-                        // table.set("h", d.1)?;
-                        // table.set("data", d.2)?;
                         lua_img
                     }
                     _ => LuaImg::empty(),
@@ -1225,7 +1220,7 @@ function tex(asset, im) end"
         "Get image buffer userdata for editing or drawing",
         "
 ---@param asset string  
----@return userdata
+---@return image
 function gimg(asset) end"
     );
 
@@ -1242,7 +1237,7 @@ function gimg(asset) end"
         "
 ---@param w integer
 ---@param h integer
----@return userdata
+---@return image
 function nimg(w, h) end"
     );
 
@@ -1277,13 +1272,14 @@ function nimg(w, h) end"
                             Err::<(), &str>("This type of model requires a texture");
                         }
                     }
+                    Ok("Building model in quad mode")
                 }
                 _ => {
                     // println!("got no quads");
                     let vin = t.get::<_, Vec<[f32; 3]>>("v");
                     match vin {
                         Ok(v) => {
-                            if v.len() > 0 {
+                            if v.len() > 2 {
                                 let i = match t.get::<_, Vec<u32>>("i") {
                                     Ok(o) => o,
                                     _ => vec![],
@@ -1309,13 +1305,15 @@ function nimg(w, h) end"
                                         if let Err(err) = rx.recv() {
                                             return Err(make_err(&err.to_string()));
                                         }
+                                        return Ok("Building model in vert mode")
                                     }
                                     _ => {
-                                        Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                                        return Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                         // return Ok(());
                                     }
-                                };
+                                }
                             }
+                            Err(make_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
                         }
                         _ => {
                             match t.get::<_, Vec<String>>("t") {
@@ -1341,29 +1339,32 @@ function nimg(w, h) end"
                                             return Err(make_err(&err.to_string()));
                                         }
                                     }
+                                    Ok("Building model in texture mode")
                                 }
                                 _ => {
-                                    Err::<(),&str>("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >");
+                                    // Err::<(),&str>
+                                    Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                 }
-                            };
+                            }
                         }
                     }
                 }
             }
 
-            Ok(())
+            
         },
         "insert model data into an assett <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
         "
 ---@param asset string
----@param t ModelData
+---@param t model_data
+---@return string stating what mode the model was built in
 function model(asset, t) end"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
         "lmodel",
-        move |lu, (model, bundle): (String, Option<u8>)| {
+        move |_, (model, bundle): (String, Option<u8>)| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(0);
             pitcher.send((bundle_id, MainCommmand::ListModel(model, bundle, tx)));
             match rx.recv() {
@@ -1392,6 +1393,17 @@ function lmodel(model, bundle) end"
         "
 function clr() end"
     );
+// MARK
+    // let pitcher = main_pitcher.clone(); 
+    // lua!(
+    //     "cam",
+    //     move |_, (x, y, z, rx, ry, rz, fov, near, far): (f32, f32, f32, f32, f32, f32, f32, f32, f32)| {
+    //         pitcher.send((bundle_id, MainCommmand::Camera(x, y, z, rx, ry, rz, fov, near, far)));
+    //         O    k(())
+    //     },
+    //     "Set the camera position and rotation",
+    //     ""
+    // );
 
     // TODO modulo bias?
     // let mut rng = rand::thread_rng();

@@ -133,7 +133,7 @@ impl UserData for LuaImg {
             },
         );
         methods.add_method_mut(
-            "dimg",
+            "img",
             |_, this, (img, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
                 if let Ok(limg) = img.borrow::<LuaImg>() {
                     direct_image(
