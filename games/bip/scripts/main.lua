@@ -12,6 +12,15 @@ t = {
 	treetop = 17,
 	trunk = 18,
 }
+t2 = {}
+
+e = {
+	birb = 1,
+	otter = 2,
+	kiwi = 3,
+	badger = 4,
+	bun = 5
+}
 
 
 
@@ -30,7 +39,9 @@ img(gimg("speech"), "=50%-32", 4)
 function main()
 	for key, val in pairs(t) do
 		t[key] = "bip" .. val
-		-- print(t[key])
+	end
+	for key, val in pairs(e) do
+		e[key] = "bip" .. val
 	end
 	model("leaves", { t = { t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside } })
 	t.leaves = "leaves"
@@ -42,9 +53,18 @@ function main()
 	t.wallend = "wallend"
 	model("door", { t = { t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall } })
 	t.door = "door"
-	feller = spawn('wallbend', 4, 0, 1)
+	feller = spawn('door', 4, 0, 1)
 	feller.offset = { -.5, -.5, -.5 }
 	feller2 = spawn('bip3', 4, 0, 1)
+
+	t2.leaves = t.leaves
+	t2.wallbend = t.wallbend
+	t2.wallstraight = t.wallstraight
+	t2.wallend = t.wallend
+	t2.door = t.door
+	t2.floor = t.floor
+	t2.grass1 = t.grass1
+
 	if true then
 
 		local gsize = 24;
@@ -114,14 +134,17 @@ remove_mode = false
 cpos = { 0, -8, 8 }
 sp = 0.1
 block_iterator = 1
-block_selection = "wallbend"
+ent_iterator = 1
+block_selection = "door"
+ent_selection = "bip3"
 block_rot = 0
 block_level = 1
+entity_mode = false
 
 
 function cycle_blocks()
 	local it = 1
-	for k, v in pairs(t) do
+	for k, v in pairs(t2) do
 		if it == block_iterator then
 			feller.asset = v
 			block_selection = v
@@ -134,6 +157,25 @@ function cycle_blocks()
 	if block_iterator > it then
 		block_iterator = 1
 	end
+end
+
+function cycle_ents()
+	local it = 1
+	for k, v in pairs(e) do
+		if it == ent_iterator then
+			feller.asset = "plane"
+			feller.tex = v
+			ent_selection = v
+			print(v)
+		end
+		it = it + 1
+	end
+	ent_iterator = ent_iterator + 1
+
+	if ent_iterator > it then
+		ent_iterator = 1
+	end
+
 end
 
 function loop()
@@ -171,8 +213,8 @@ function loop()
 			feller.rz = tau / 4 * block_rot
 		end
 	end
-	if m.m1 then
 
+	if m.m1 then
 
 		if first_click then
 			first_click = false
@@ -194,10 +236,15 @@ function loop()
 		else
 			last_pos[1] = xx
 			last_pos[2] = xx
-			if remove_mode then
-				tile(0, xx, yy, block_level)
+			if entity_mode then
+				spawn(ent_selection, xx, yy, block_level)
 			else
-				tile(block_selection, xx, yy, block_level, block_rot)
+
+				if remove_mode then
+					tile(0, xx, yy, block_level)
+				else
+					tile(block_selection, xx, yy, block_level, block_rot)
+				end
 			end
 		end
 	elseif not m.m2 then
@@ -205,8 +252,22 @@ function loop()
 	end
 
 	if key("1", true) then
-		cycle_blocks()
+		if not entity_mode then
+			cycle_blocks()
+		else
+			feller.offset = { -.5, -.5, -.5 }
+		end
+		entity_mode = false
 	end
+	if key("2", true) then
+		if entity_mode then
+			cycle_ents()
+		else
+			feller.offset = { 0, 0, 0 }
+		end
+		entity_mode = true
+	end
+
 
 	-- cam { pos = cpos, rot = { 0, tau / 2 } }
 	if key("a") then
