@@ -750,13 +750,14 @@ impl Core {
                 }
                 MainCommmand::Make(m, tx) => {
                     if m.len() == 7 {
+                        // change order to match expecations from the front end
                         let m2 = vec![
                             m[1].clone(),
-                            m[2].clone(),
-                            m[3].clone(),
-                            m[4].clone(),
-                            m[5].clone(),
                             m[6].clone(),
+                            m[2].clone(),
+                            m[4].clone(),
+                            m[3].clone(),
+                            m[5].clone(),
                         ];
                         self.model_manager.edit_cube(
                             &mut self.world,
@@ -1059,7 +1060,7 @@ fn main() {
         .with_inner_size(winit::dpi::LogicalSize::new(640i32, 480i32))
         .build(&event_loop)
         .unwrap();
-    win.set_title("Petrichor");
+    win.set_title("Petrichor64");
 
     let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
     let rwindow = Rc::new(win);
