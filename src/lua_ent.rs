@@ -65,17 +65,6 @@ impl UserData for LuaEnt {
             Ok(())
         });
 
-        methods.add_method_mut("tex", |_, this, tex: String| {
-            if this.tex != tex {
-                this.tex = tex;
-                // this.flags |= LuaEntFlags::Tex;
-                this.dirty = true;
-            } else if this.anim {
-                this.anim = false;
-                this.dirty = true;
-            }
-            Ok(true)
-        });
         methods.add_method_mut("anim", |_, this, (tex, force): (String, Option<bool>)| {
             let t = this.tex.clone();
             this.tex = tex;
@@ -93,10 +82,6 @@ impl UserData for LuaEnt {
             Ok(true)
         });
 
-        methods.add_method("is_dirty", |_, this, ()| Ok(this.dirty));
-        methods.add_method("get_tex", |_, this, ()| Ok(this.tex.clone()));
-
-        methods.add_method("get_y", |_, this, ()| Ok(this.y));
         methods.add_method_mut("kill", |lu, this, ()| {
             this.kill();
             Ok(Nil)
@@ -142,7 +127,18 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("scale", |_, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, this| Ok(this.id));
-
+        fields.add_field_method_get("tex", |_, this| Ok(this.tex.clone()));
+        fields.add_field_method_set("tex", |_, this, tex: String| {
+            if this.tex != tex {
+                this.tex = tex;
+                this.dirty = true;
+                this.flags |= LuaEntFlags::Tex;
+            } else if this.anim {
+                this.anim = false;
+                this.dirty = true;
+            }
+            Ok(())
+        });
         fields.add_field_method_get("asset", |_, this| Ok(this.asset.clone()));
         fields.add_field_method_set("asset", |_, this, asset: String| {
             if this.asset != asset {
