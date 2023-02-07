@@ -858,7 +858,7 @@ pub fn direct_text(
 
     for (i, line) in txt.lines().enumerate() {
         let ly = yy + i as i32 * (LETTER_SIZE as i32 + 2);
-        let mut lx = xx + (LETTER_SIZE) as i32;
+        let mut lx = xx + (0) as i32;
         for c in line.chars() {
             let mut ind = c as u32;
             if ind > 255 {
