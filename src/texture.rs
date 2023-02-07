@@ -20,6 +20,9 @@ const SLASH: char = '\\';
 #[cfg(not(target_os = "windows"))]
 const SLASH: char = '/';
 
+const MAX_WIDTH: u32 = 2048;
+const MAX_HEIGHT: u32 = 2048;
+
 pub struct TexTuple {
     pub view: TextureView,
     pub sampler: Sampler,
@@ -74,18 +77,18 @@ impl Clone for Anim {
 impl TexManager {
     pub fn new() -> TexManager {
         TexManager {
-            atlas: ImageBuffer::new(1024, 1024),
+            atlas: ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT),
             atlas_pos: UVec4::new(0, 0, 0, 0),
-            atlas_dim: UVec2::new(1024, 1024),
+            atlas_dim: UVec2::new(MAX_WIDTH, MAX_HEIGHT),
             dictionary: HashMap::new(),
             animations: HashMap::default(),
             bundle_lookup: FxHashMap::default(),
         }
     }
     pub fn reset(&mut self) {
-        let img: RgbaImage = ImageBuffer::new(1024, 1024);
-        self.atlas_dim.x = 1024;
-        self.atlas_dim.y = 1024;
+        let img: RgbaImage = ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT);
+        self.atlas_dim.x = MAX_WIDTH;
+        self.atlas_dim.y = MAX_HEIGHT;
         self.atlas_pos.x = 0;
         self.atlas_pos.y = 0;
         self.atlas_pos.z = 0;
@@ -99,8 +102,8 @@ impl TexManager {
         match image::save_buffer_with_format(
             "atlas.png",
             &self.atlas,
-            1024,
-            1024,
+            MAX_WIDTH,
+            MAX_HEIGHT,
             image::ColorType::Rgba8,
             image::ImageFormat::Png,
         ) {
