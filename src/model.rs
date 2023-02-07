@@ -309,6 +309,7 @@ impl ModelManager {
         loggy: &mut Loggy,
         debug: bool,
     ) {
+        // println!("upsert model {} debug is {}", name, debug);
         if debug {
             loggy.log(
                 LogType::Model,
@@ -535,6 +536,8 @@ impl ModelManager {
         self.DICTIONARY.clear();
         self.DICTIONARY
             .insert("cube".to_string(), self.cube_model());
+        self.DICTIONARY
+            .insert("plane".to_string(), self.plane_model());
     }
 }
 #[repr(C)]
