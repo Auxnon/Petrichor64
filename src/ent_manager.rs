@@ -386,10 +386,20 @@ impl EntManager {
                             let asset = l.get_asset();
                             ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
                                 Some(m) => {
+                                    // println!("found model for {} it's {}", asset, m.name);
+
+                                    // billboard
+                                    if asset == "plane" {
+                                        ent.effects.x = 1.;
+                                    } else {
+                                        ent.effects.x = 0.;
+                                    }
+
                                     ent.tex = vec4(0., 0., 1., 1.);
                                     m
                                 }
                                 None => {
+                                    // println!("no model found for {}", asset);
                                     if let Some(t) = tm.get_tex_or_not(&asset) {
                                         ent.tex = t;
                                     }
