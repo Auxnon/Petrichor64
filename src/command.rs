@@ -1353,7 +1353,7 @@ function nimg(w, h) end"
 
             
         },
-        "insert model data into an assett <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
+        "insert model data into an asset <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
         "
 ---@param asset string
 ---@param t model_data
