@@ -93,7 +93,7 @@ impl ModelManager {
         Rc::clone(&self.PLANE)
     }
 
-    pub fn get_model(&self, str: &String) -> Rc<Model> {
+    pub fn get_model(&self, str: &str) -> Rc<Model> {
         if str == "plane" {
             return self.plane_model();
         }
@@ -308,7 +308,7 @@ impl ModelManager {
         tex_style: TextureStyle,
         loggy: &mut Loggy,
         debug: bool,
-    ) {
+    ) -> Option<String> {
         // println!("upsert model {} debug is {}", name, debug);
         if debug {
             loggy.log(
@@ -399,7 +399,11 @@ impl ModelManager {
             Self::build_complex_model(device, &name.to_lowercase(), None, vertices, indicies);
 
         world.index_model(bundle_id, &model.base_name, Rc::clone(&model));
-        self.DICTIONARY.insert(model.base_name.clone(), model);
+
+        match self.DICTIONARY.insert(model.base_name.clone(), model) {
+            Some(m) => Some(m.base_name.clone()),
+            _ => None,
+        }
     }
 
     /** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */

@@ -474,6 +474,19 @@ impl EntManager {
         //     }
         // }
     }
+
+    pub fn check_for_model_change(&mut self, model_manager: &ModelManager, model: &str) {
+        let mut change = false;
+        for (_, e, _) in self.ent_array.iter_mut() {
+            if e.model.base_name == model {
+                e.model = model_manager.get_model(model);
+                change = true;
+            }
+        }
+        if change {
+            self.hash_dirty = true;
+        }
+    }
 }
 // use crate::model::Model;
 

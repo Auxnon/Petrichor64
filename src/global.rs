@@ -134,6 +134,7 @@ pub enum StateChange {
     MouseGrabOff,
     Quit,
     Config,
+    ModelChange(String),
 }
 pub enum GuiStyle {
     Aspect,

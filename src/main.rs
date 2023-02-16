@@ -726,7 +726,7 @@ impl Core {
                 }
                 MainCommmand::Clear() => self.gui.clean(),
                 MainCommmand::Model(name, texture, v, i, u, style, tx) => {
-                    self.model_manager.upsert_model(
+                    let res = self.model_manager.upsert_model(
                         &self.device,
                         &self.tex_manager,
                         &mut self.world,
@@ -740,6 +740,10 @@ impl Core {
                         &mut self.loggy,
                         self.global.debug,
                     );
+                    if let Some(m) = res {
+                        self.global.state_changes.push(StateChange::ModelChange(m));
+                        self.global.is_state_changed = true;
+                    }
 
                     tx.send(0);
                     // name, v, i, u);
@@ -1216,6 +1220,11 @@ fn main() {
                                     // core.config = crate::config::Config::new();
                                     // core.config.load();
                                     // core.config.apply(&mut core);
+                                }
+                                StateChange::ModelChange(id) => {
+                                    core.ent_manager
+                                        .check_for_model_change(&core.model_manager, &id);
+                                    // crate::command::reload(&mut core, id);
                                 }
                             }
                         }
