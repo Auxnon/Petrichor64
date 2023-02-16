@@ -2361,6 +2361,8 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
     let mut uv = vec![];
     let mut ind: Vec<u32> = vec![];
     let max = (q.len() / 4);
+    println!("quad max {}", max);
+
     for i in 0..max {
         let i = i * 4;
         let v1 = q[i];
@@ -2368,27 +2370,191 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
         let v3 = q[i + 2];
         let v4 = q[i + 3];
 
-        let v1to2length =
+        // minus v1
+        let v2= [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]];
+        let v3= [v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]];
+        let v4= [v4[0] - v1[0], v4[1] - v1[1], v4[2] - v1[2]];
+        let v1= [0., 0., 0.];
+
+        let v1length =
             ((v2[0] - v1[0]).powi(2) + (v2[1] - v1[1]).powi(2) + (v2[2] - v1[2]).powi(2)).sqrt();
-        let v2to3length =
+        let v2length =
             ((v3[0] - v2[0]).powi(2) + (v3[1] - v2[1]).powi(2) + (v3[2] - v2[2]).powi(2)).sqrt();
 
-        let (w, h) = if v1to2length > v2to3length {
-            (1., v2to3length / v1to2length)
-        } else {
-            (v1to2length / v2to3length, 1.)
+        let v3length =
+            ((v4[0] - v3[0]).powi(2) + (v4[1] - v3[1]).powi(2) + (v4[2] - v3[2]).powi(2)).sqrt();
+
+        let v4length =
+            ((v1[0] - v4[0]).powi(2) + (v1[1] - v4[1]).powi(2) + (v1[2] - v4[2]).powi(2)).sqrt();
+            
+            // get direction of v1 to v2
+        let v1dir = [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]];
+       
+        // get direction of v2 to v3
+        let v2dir = [v3[0] - v2[0], v3[1] - v2[1], v3[2] - v2[2]];
+        // get direction of v3 to v4 but reverse
+        let v3dir = [v4[0] - v3[0], v4[1] - v3[1], v4[2] - v3[2]];
+        // get direction of v4 to v1 but reverse
+        let v4dir = [v1[0] - v4[0], v1[1] - v4[1], v1[2] - v4[2]];
+
+         // normalize
+         let v1dir = if v1length>0. {[
+            v1dir[0] / v1length,
+            v1dir[1] / v1length,
+            v1dir[2] / v1length,
+        ]} else {
+            [0.,0.,0.]
         };
+       
+       let v2dir = if v2length>0. {[
+            v2dir[0] / v2length,
+            v2dir[1] / v2length,
+            v2dir[2] / v2length,
+        ]} else {
+            [0.,0.,0.]
+        };
+        let v3dir = if v3length>0. {[
+            v3dir[0] / v3length,
+            v3dir[1] / v3length,
+            v3dir[2] / v3length,
+        ]} else {
+            [0.,0.,0.]
+        };
+        let v4dir = if v4length>0. {[
+            v4dir[0] / v4length,
+            v4dir[1] / v4length,
+            v4dir[2] / v4length,
+        ]} else {
+            [0.,0.,0.]
+        };
+        // rotate v2dir to v1dir
+        // let v2dir = [
+        //     v2dir[0] - v1dir[0] * (v2dir[0] * v1dir[0] + v2dir[1] * v1dir[1] + v2dir[2] * v1dir[2]),
+        //     v2dir[1] - v1dir[1] * (v2dir[0] * v1dir[0] + v2dir[1] * v1dir[1] + v2dir[2] * v1dir[2]),
+        //     v2dir[2] - v1dir[2] * (v2dir[0] * v1dir[0] + v2dir[1] * v1dir[1] + v2dir[2] * v1dir[2]),
+        // ];
+
+        // align v3dir to v1dir
+        // let v3dir = [
+        //     v3dir[0] - v1dir[0] * (v3dir[0] * v1dir[0] + v3dir[1] * v1dir[1] + v3dir[2] * v1dir[2]),
+        //     v3dir[1] - v1dir[1] * (v3dir[0] * v1dir[0] + v3dir[1] * v1dir[1] + v3dir[2] * v1dir[2]),
+        //     v3dir[2] - v1dir[2] * (v3dir[0] * v1dir[0] + v3dir[1] * v1dir[1] + v3dir[2] * v1dir[2]),
+        // ];
+
+        // align v4dir to v1dir
+        // let v4dir = [
+        //     v4dir[0] - v1dir[0] * (v4dir[0] * v1dir[0] + v4dir[1] * v1dir[1] + v4dir[2] * v1dir[2]),
+        //     v4dir[1] - v1dir[1] * (v4dir[0] * v1dir[0] + v4dir[1] * v1dir[1] + v4dir[2] * v1dir[2]),
+        //     v4dir[2] - v1dir[2] * (v4dir[0] * v1dir[0] + v4dir[1] * v1dir[1] + v4dir[2] * v1dir[2]),
+        // ];
+
+        let v1dirx= v1dir[0] * v1length;
+        let v1diry=v1dir[2] * v1length;
+
+        // get v3 aligned x and y distance
+        let v3dirx= v3dir[0] * v3length;
+        let v3diry=v3dir[2] * v3length;
+        // get v2 aligned y and y distance
+        let v2diry=v2dir[2] * v2length;
+        let v2dirx=v2dir[0] * v2length;
+        // get v4 aligned x and y distance
+        let v4diry=v4dir[2] * v4length;
+        let v4dirx=v4dir[0] * v4length;
+        println!("v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}", v1dir, v2dir, v3dir, v4dir);
+        println!("v1length {:?} v2length {:?} v3length {:?} v4length {:?}", v1length, v2length, v3length, v4length);
+
+        let n1=[0.,0.];
+        let n2=[v1dirx,v1diry];
+        let n3=[n2[0]+v2dirx,n2[1]+v2diry];
+        let n4=[n3[0]+v3dirx,n3[1]+v3diry];
+        // assert!(n4[0]==v4dirx);
+        // assert!(n4[1]==v4diry);
+        println!("x n4 vs dir {} {}",n4[0],v4dirx);
+        println!("y n4 vs dir {} {}",n4[1],v4diry);
+
+
+        let mut xs=[n1[0],n2[0],n3[0],n4[0]];
+        let mut ys=[n1[1],n2[1],n3[1],n4[1]];
+
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let minx=xs[0];
+        let maxx=xs[3];
+        let miny=ys[0];
+        let maxy=ys[3];
+        let rangex=maxx-minx;
+        let rangey=maxy-miny;
+
+
+        // let (x2,x3)=if v2dirx>v3dirx{
+        //     (v2dirx/v3dirx,1. )
+        // }else{
+        //     (1.,v3dirx/v2dirx)
+        // };
+        
+        // let (x1,x4)=
+        // if v4dirx <0. // we start with v4 on the left
+        // {
+        //     (-v4dirx,0. )
+        // }else{
+        //     (0.,v4dirx)
+        // };
+        // let (x2,x3)= if v3dirx<v2dirx{
+        //     (v3dirx/v2dirx,1. )
+        // }else{
+        //     (1.,v2dirx/v3dirx)
+        // };
+
+        // let (y1,y2)= if v2diry<0.{
+        //     (-v2diry,0.)
+        // }else{
+        //     (0.,v2diry)
+        // };
+
+        // let (y3,y4)= if v4diry<v3diry{
+        // (v4diry/v3diry,1. )
+        // }else{
+        //     (1.,v3diry/v4diry)
+        
+        // };
+        
+
+
+        // let (w1,w2)= if v3dirx> v2diry {
+        //     (1., v2diry / v3dirx)
+        // } else {
+        //     (v3dirx / v2diry, 1.)
+        // };
+
+
+        // let (h1,h2)= if v2length> v4diry {
+        //     (1., v4diry / v2length)
+        // } else {
+        //     (v2length / v4diry, 1.)
+        // };
+
+        let u1=[(-minx/rangex),(-miny/rangey)];
+        let u2=[(n2[0]-minx)/rangex,(n2[1]-miny)/rangey];
+        let u3=[(n3[0]-minx)/rangex,(n3[1]-miny)/rangey];
+        let u4=[(n4[0]-minx)/rangex,(n4[1]-miny)/rangey];
+       
+        println!("v1 {:?} v2 {:?} v3 {:?} v4 {:?}", v1, v2, v3, v4);
+        println!("2 [{:?}, {:?}] 3 [{:?} , {:?}] 4 [{:?} {:?}]", v2dirx, v2diry, v3dirx, v3diry, v4dirx, v4diry);
+        println!("n1 [{:?}, {:?}] n2 [{:?} , {:?}] n3 [{:?} {:?}] n4 [{:?} {:?}]", n1[0], n1[1], n2[0], n2[1], n3[0], n3[1], n4[0], n4[1]);
+        println!("minx {:?} maxx {:?} miny {:?} maxy {:?}", minx, maxx, miny, maxy);
+        println!("f1 [{:?}, {:?}] f2 [{:?} , {:?}] f3 [{:?} {:?}] f4 [{:?} {:?}]", u1[0], u1[1], u2[0], u2[1], u3[0], u3[1], u4[0], u4[1]);
         // let v1dir=[v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
 
-        vec.push(v1);
-        vec.push(v2);
-        vec.push(v3);
-        vec.push(v4);
+        vec.push(q[i ]);
+        vec.push(q[i + 1]);
+        vec.push(q[i + 2]);
+        vec.push(q[i + 3]);
 
-        uv.push([0., 0.]);
-        uv.push([w, 0.]);
-        uv.push([w, h]);
-        uv.push([0., h]);
+        uv.push(u1);
+        uv.push(u2);
+        uv.push(u3);
+        uv.push(u4);
 
         // uv.push([0., h]);
         // uv.push([w, h]);
