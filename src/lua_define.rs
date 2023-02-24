@@ -488,7 +488,8 @@ fn start(
                             // let output = format!("{:?}", o);
                             let output = match o {
                                 mlua::Value::String(str) => {
-                                    LuaResponse::String(format!("{:?}", str))
+                                    let s = str.to_str().unwrap_or(&"").to_string();
+                                    LuaResponse::String(s)
                                 }
                                 mlua::Value::Integer(i) => LuaResponse::Integer(i),
                                 mlua::Value::Number(n) => LuaResponse::Number(n),
