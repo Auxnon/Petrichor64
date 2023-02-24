@@ -1,7 +1,7 @@
 
 [package]
 name = "Petrichor64"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 resolver = "2"
 description = "Cross platform lua interpreting game engine"
@@ -11,6 +11,9 @@ strip = true  # Automatically strip symbols from the binary.
 opt-level = "z"  # Optimize for size.
 lto = true
 panic ="abort"
+
+[profile.release-nightly]
+inherits = "release"
 
 [features]
 default=["headed","audio"] # "online_capable"
@@ -94,7 +97,7 @@ regex="1.7.1"
 name = "Petrichor64"
 identifier = "com.makeavoy.petrichor64"
 icon = ["petrichor-icon.png"]
-version = "0.2.4"
+version = "0.3.0"
 resources = []
 copyright = "Copyright (c) Nick \"MakeAvoy\" McAvoy 2023. All rights reserved."
 category = "Game"
