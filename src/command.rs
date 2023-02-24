@@ -1351,7 +1351,6 @@ function nimg(w, h) end"
                 }
             }
 
-            
         },
         "insert model data into an asset <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
         "
@@ -1393,8 +1392,7 @@ function lmodel(model, bundle) end"
         "
 function clr() end"
     );
-// MARK
-    // let pitcher = main_pitcher.clone(); 
+    // let pitcher = main_pitcher.clone();
     // lua!(
     //     "cam",
     //     move |_, (x, y, z, rx, ry, rz, fov, near, far): (f32, f32, f32, f32, f32, f32, f32, f32, f32)| {

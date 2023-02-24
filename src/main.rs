@@ -1211,11 +1211,15 @@ fn main() {
                                     *control_flow = ControlFlow::Exit;
                                 }
                                 StateChange::Config => {
-                                    crate::asset::parse_config(
+                                    let res = crate::asset::parse_config(
                                         &mut core.global,
                                         core.bundle_manager.get_lua(),
                                         &mut core.loggy,
                                     );
+                                    if let Some(s) = res {
+                                        println!("hi config: {:?}", s);
+                                        crate::command::init_con_sys(&mut core, &s);
+                                    }
 
                                     // core.config = crate::config::Config::new();
                                     // core.config.load();

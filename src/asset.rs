@@ -261,8 +261,9 @@ pub fn check_config() -> bool {
     let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
     p.exists()
 }
-pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) {
+pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> Option<String> {
     let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    let mut result = None;
     if p.exists() {
         if let Ok(buffer) = std::fs::read_to_string(p) {
             lua.load(&buffer.to_string());
@@ -280,11 +281,15 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) {
                     globals.aliases.insert(k, v);
                 }
             }
+            if let LuaResponse::String(s) = lua.func("init") {
+                result = Some(s);
+            }
             if globals.debug {
                 loggy.log(LogType::Config, &"dev is enabled");
             }
         };
     }
+    return result;
 }
 
 fn eval_bool(res: LuaResponse) -> bool {
