@@ -16,3 +16,5 @@ alias = {
     g = "load games/bip",
     em = "load test/emodel",
 }
+
+-- init = "load apps/logo"

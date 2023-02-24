@@ -1,0 +1,25 @@
+{
+    "title": "Petrichor64",
+    "background": "../assets/bg-point.png",
+    "format": "UDZO",
+    "contents": [
+        {
+            "x": 320,
+            "y": 320,
+            "type": "link",
+            "path": "/Applications"
+        },
+        {
+            "x": 0,
+            "y": 0,
+            "type": "file",
+            "path": "../dist/Petrichor64.app"
+        }
+    ],
+    "window": {
+        "size": {
+            "width": 512,
+            "height": 512
+        }
+    }
+}

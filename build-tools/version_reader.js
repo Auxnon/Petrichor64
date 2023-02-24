@@ -13,7 +13,7 @@ if (first !== second) {
   //   console.log("Version mismatch, fixing");
   const index = next.index;
   const newT = t.slice(0, index) + t.slice(index).replace(second, first);
-  //   fs.writeFileSync("Cargo.toml", newT);
+  fs.writeFileSync("Cargo.toml", newT);
 }
 process.stdout.write(first);
 // const first = it.next().value[1];
