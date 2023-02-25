@@ -1,15 +1,15 @@
---- @type Entity[]
+--- @type entity[]
 items = {}
---- @type Entity | nil
+--- @type entity | nil
 item_grabbed = nil
 
---- @class Vector
+--- @class vector
 --- @field x number
 --- @field y number
 --- @field z number
 
---- @param item Entity
---- @param pos Vector
+--- @param item entity
+--- @param pos vector
 function within_range(item, pos)
     if pos.x > item.x - 1 and pos.x < item.x + 1 then
         if pos.y > item.y - 1 and pos.y < item.y + 1 then

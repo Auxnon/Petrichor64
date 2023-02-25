@@ -28,6 +28,7 @@ use parking_lot::Mutex;
 
 use std::{
     cell::RefCell,
+    cmp::Ordering,
     collections::HashMap,
     path::Path,
     rc::Rc,
@@ -2558,57 +2559,78 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
         let mut xs = [n1[0], n2[0], n3[0], n4[0]];
         let mut ys = [n1[1], n2[1], n3[1], n4[1]];
 
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut fail = false;
+        xs.sort_by(|a, b| match a.partial_cmp(b) {
+            Some(x) => x,
+            None => {
+                fail = true;
+                Ordering::Less
+            }
+        });
+        ys.sort_by(|a, b| match a.partial_cmp(b) {
+            Some(x) => x,
+            None => {
+                fail = true;
+                Ordering::Less
+            }
+        });
+        if !fail {
+            let minx = xs[0];
+            let maxx = xs[3];
+            let miny = ys[0];
+            let maxy = ys[3];
+            let rangex = maxx - minx;
+            let rangey = maxy - miny;
 
-        let minx = xs[0];
-        let maxx = xs[3];
-        let miny = ys[0];
-        let maxy = ys[3];
-        let rangex = maxx - minx;
-        let rangey = maxy - miny;
+            let mut u1 = [(-minx / rangex), (-miny / rangey)];
+            let mut u2 = [(n2[0] - minx) / rangex, (n2[1] - miny) / rangey];
+            let mut u3 = [(n3[0] - minx) / rangex, (n3[1] - miny) / rangey];
+            let mut u4 = [(n4[0] - minx) / rangex, (n4[1] - miny) / rangey];
+            // println!("u1 {:?} u2 {:?} u3 {:?} u4 {:?}", u1, u2, u3, u4);
 
-        let mut u1 = [(-minx / rangex), (-miny / rangey)];
-        let mut u2 = [(n2[0] - minx) / rangex, (n2[1] - miny) / rangey];
-        let mut u3 = [(n3[0] - minx) / rangex, (n3[1] - miny) / rangey];
-        let mut u4 = [(n4[0] - minx) / rangex, (n4[1] - miny) / rangey];
-        println!("u1 {:?} u2 {:?} u3 {:?} u4 {:?}", u1, u2, u3, u4);
+            // scale to fit quads aspect but the larger axis is always 1
+            if rangex < rangey {
+                let scale = rangex / rangey;
+                u1[0] *= scale;
+                u2[0] *= scale;
+                u3[0] *= scale;
+                u4[0] *= scale;
+            } else {
+                let scale = rangey / rangex;
+                u1[1] *= scale;
+                u2[1] *= scale;
+                u3[1] *= scale;
+                u4[1] *= scale;
+            };
+            // println!("resized u1 {:?} u2 {:?} u3 {:?} u4 {:?}", u1, u2, u3, u4);
 
-        // scale to fit quads aspect but the larger axis is always 1
-        if rangex < rangey {
-            let scale = rangex / rangey;
-            u1[0] *= scale;
-            u2[0] *= scale;
-            u3[0] *= scale;
-            u4[0] *= scale;
+            // println!("v1 {:?} v2 {:?} v3 {:?} v4 {:?}", v1, v2, v3, v4);
+            // println!("2 [{:?}, {:?}] 3 [{:?} , {:?}] 4 [{:?} {:?}]", v2dirx, v2diry, v3dirx, v3diry, v4dirx, v4diry);
+            // println!("n1 [{:?}, {:?}] n2 [{:?} , {:?}] n3 [{:?} {:?}] n4 [{:?} {:?}]", n1[0], n1[1], n2[0], n2[1], n3[0], n3[1], n4[0], n4[1]);
+            // println!(
+            //     "minx {:?} maxx {:?} miny {:?} maxy {:?}",
+            //     minx, maxx, miny, maxy
+            // );
+            // println!("rangex {:?} rangey {:?}", rangex, rangey);
+            // println!("f1 [{:?}, {:?}] f2 [{:?}, {:?}] f3 [{:?}, {:?}] f4 [{:?}, {:?}]", u1[0], u1[1], u2[0], u2[1], u3[0], u3[1], u4[0], u4[1]);
+            // let v1dir=[v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
+
+            uv.push(u1);
+            uv.push(u2);
+            uv.push(u3);
+            uv.push(u4);
         } else {
-            let scale = rangey / rangex;
-            u1[1] *= scale;
-            u2[1] *= scale;
-            u3[1] *= scale;
-            u4[1] *= scale;
-        };
-        println!("resized u1 {:?} u2 {:?} u3 {:?} u4 {:?}", u1, u2, u3, u4);
+            //default to basic ugly unwrap
+            uv.push([0., 1.]);
+            uv.push([1., 1.]);
+            uv.push([1., 0.]);
+            uv.push([0., 0.]);
+        }
 
-        // println!("v1 {:?} v2 {:?} v3 {:?} v4 {:?}", v1, v2, v3, v4);
-        // println!("2 [{:?}, {:?}] 3 [{:?} , {:?}] 4 [{:?} {:?}]", v2dirx, v2diry, v3dirx, v3diry, v4dirx, v4diry);
-        // println!("n1 [{:?}, {:?}] n2 [{:?} , {:?}] n3 [{:?} {:?}] n4 [{:?} {:?}]", n1[0], n1[1], n2[0], n2[1], n3[0], n3[1], n4[0], n4[1]);
-        println!(
-            "minx {:?} maxx {:?} miny {:?} maxy {:?}",
-            minx, maxx, miny, maxy
-        );
-        println!("rangex {:?} rangey {:?}", rangex, rangey);
-        // println!("f1 [{:?}, {:?}] f2 [{:?}, {:?}] f3 [{:?}, {:?}] f4 [{:?}, {:?}]", u1[0], u1[1], u2[0], u2[1], u3[0], u3[1], u4[0], u4[1]);
-        // let v1dir=[v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2]];
         vec.push(q[i]);
         vec.push(q[i + 1]);
         vec.push(q[i + 2]);
         vec.push(q[i + 3]);
-
-        uv.push(u1);
-        uv.push(u2);
-        uv.push(u3);
-        uv.push(u4);
 
         ind.push(i as u32);
         ind.push((i + 1) as u32);
