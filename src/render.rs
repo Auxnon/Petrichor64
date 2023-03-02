@@ -77,7 +77,8 @@ pub fn render_loop(
 
     // frame!("ent build::end");
 
-    core.global.smooth_cam_pos = core.global.smooth_cam_pos * 0.1 + core.global.cam_pos * 0.9;
+    // TODO smotoh cam is ironically really shaky with a rotated  lookat camera
+    core.global.smooth_cam_pos = core.global.cam_pos; // core.global.smooth_cam_pos * 0.1 + core.global.cam_pos * 0.9;
     let cam_pos = if core.global.debug {
         core.global.smooth_cam_pos + core.global.debug_camera_pos
     } else {
