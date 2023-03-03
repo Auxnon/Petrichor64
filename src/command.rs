@@ -1251,7 +1251,32 @@ function nimg(w, h) end"
 
             match t.get::<_, Vec<[f32; 3]>>("q") {
                 Ok(quads) => {
-                    let (v, uv, i) = convert_quads(quads);
+
+                        let (v, uv, i) =
+                        match t.get::<_, Vec<[f32;2]>>("u") {
+                            Ok(uvi)=>{
+                                let inds= t.get::<_, Vec<u32>>("i").unwrap_or_else(|_|{
+                                    let mut ind = Vec::new();
+                                    let mut i = 0;
+                                    for _ in 0..quads.len() {
+                                        ind.push(i as u32);
+                                        ind.push((i + 1) as u32);
+                                        ind.push((i + 2) as u32);
+                                        ind.push((i + 2) as u32);
+                                        ind.push((i + 3) as u32);
+                                        ind.push(i as u32);
+                                        i += 4;
+                                    }
+                                    ind
+                                });
+                                (quads, uvi, inds)
+
+                               
+                            }
+                            _=>{
+    convert_quads(quads)
+                            }
+                        };
                     match t.get::<_, Vec<String>>("t") {
                         Ok(texture) => {
                             pitcher.send((
