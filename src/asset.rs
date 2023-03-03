@@ -852,6 +852,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 ---@field m1 boolean mouse 1
 ---@field m2 boolean mouse 2
 ---@field m3 boolean mouse 3
+-- @field scroll number scroll delta
 ---@field vx number unprojection x
 ---@field vy number unprojection y
 ---@field vz number unprojection z

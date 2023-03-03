@@ -18,7 +18,7 @@ const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
 
-pub type ControlState = ([bool; 256], [f32; 10]);
+pub type ControlState = ([bool; 256], [f32; 11]);
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {

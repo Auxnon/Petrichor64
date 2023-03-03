@@ -1081,7 +1081,7 @@ fn main() {
     // DEV a little delay trick to ensure any pending requests in our "console" app are completed before the following state change is made
     core.global.state_delay = 8;
     core.global.is_state_changed = true;
-    let mut bits: ControlState = ([false; 256], [0.; 10]);
+    let mut bits: ControlState = ([false; 256], [0.; 11]);
 
     match crate::asset::check_for_auto() {
         Some(s) => {
@@ -1124,9 +1124,10 @@ fn main() {
             bits.1[4] = core.global.mouse_buttons[0];
             bits.1[5] = core.global.mouse_buttons[1];
             bits.1[6] = core.global.mouse_buttons[2];
-            bits.1[7] = core.global.cursor_projected_pos.x;
-            bits.1[8] = core.global.cursor_projected_pos.y;
-            bits.1[9] = core.global.cursor_projected_pos.z;
+            bits.1[7] = core.global.scroll_delta;
+            bits.1[8] = core.global.cursor_projected_pos.x;
+            bits.1[9] = core.global.cursor_projected_pos.y;
+            bits.1[10] = core.global.cursor_projected_pos.z;
         } else if core.global.mouse_grabbed_state {
             rwindow.set_cursor_visible(true);
             rwindow.set_cursor_grab(CursorGrabMode::None);

@@ -356,7 +356,7 @@ pub fn init_lua_sys(
     singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
-    mice: Rc<RefCell<[f32; 12]>>,
+    mice: Rc<RefCell<[f32; 13]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
@@ -655,9 +655,11 @@ function input() end"
             t.set("m1", m[6] > 0.)?;
             t.set("m2", m[7] > 0.)?;
             t.set("m3", m[8] > 0.)?;
-            t.set("vx", m[9])?;
-            t.set("vy", m[10])?;
-            t.set("vz", m[11])?;
+            t.set("scroll", m[9])?; 
+
+            t.set("vx", m[10])?;
+            t.set("vy", m[11])?;
+            t.set("vz", m[12])?;
 
             Ok(t)
         },

@@ -49,7 +49,7 @@ impl Bundle {
     }
     pub fn call_main(&self) {
         self.lua.call_main();
-        self.lua.call_loop(([false; 256], [0.; 10]));
+        self.lua.call_loop(([false; 256], [0.; 11]));
     }
     pub fn shutdown(&self) {
         self.lua.die();

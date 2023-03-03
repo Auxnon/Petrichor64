@@ -245,7 +245,7 @@ fn start(
     // let lua_thread =
     let thread_join = thread::spawn(move || {
         let keys = [false; 256];
-        let mice = [0.; 12];
+        let mice = [0.; 13];
 
         let keys_mutex = Rc::new(RefCell::new(keys));
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
@@ -468,6 +468,7 @@ fn start(
                         mouse_state[7],
                         mouse_state[8],
                         mouse_state[9],
+                        mouse_state[10],
                     ];
                     drop(mm);
                     // mouse_state;
