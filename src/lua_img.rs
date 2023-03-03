@@ -6,7 +6,7 @@ use mlua::{AnyUserData, UserData, UserDataMethods, Value};
 
 use crate::{
     command::{num, numop, NumCouple},
-    gui::{direct_fill, direct_image, direct_line, direct_rect, direct_text},
+    gui::{direct_fill, direct_image, direct_line, direct_pixel, direct_rect, direct_text},
 };
 
 pub struct LuaImg {
@@ -145,6 +145,19 @@ impl UserData for LuaImg {
                         this.height,
                     );
                 }
+                Ok(())
+            },
+        );
+        methods.add_method_mut(
+            "pixel",
+            |_, this, (x, y, rgb): (u32, u32, Option<Value>)| {
+                let c = match rgb {
+                    Some(rgba) => get_color(rgba),
+                    _ => vec4(1., 1., 1., 1.),
+                };
+
+                direct_pixel(&mut this.image, x, y, this.width, this.height, c.to_array());
+
                 Ok(())
             },
         );

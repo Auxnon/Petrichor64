@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub fn get_codex_version_string() -> String {
-    "-- Codex 2.0.0 \"Avocado\"".to_owned()
+    "-- Codex 2.1.0 \"Avocado\"".to_owned()
 }
 
 pub fn pack(
@@ -913,6 +913,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field rrect fun(x:gunit, y:gunit, w:gunit, h:gunit,ro:gunit, rgb?:rgb) draw rounded rectangle on image
 --- @field text fun(txt:string, x?:gunit, y?:gunit, rgb?:rgb) draw text on image
 --- @field img fun(im:image, x?:gunit, y?:gunit) draw another image on image
+--- @field pixel fun(x:integer, y:integer,rgb?:rgb) draw pixel directly on image
 --- @field clr fun() clear image
 --- @field fill fun(rgb?:rgb) fill image with color
 --- @field raw fun():integer[] image return raw pixel data

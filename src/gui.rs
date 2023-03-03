@@ -559,14 +559,15 @@ impl GuiMorsel {
         let s = self.size;
         println!("morself gui {} {}", s[0], s[1]);
 
-        self.get_targ()
-            .get_pixel_mut(x.min(s[0] - 1), y.min(s[1] - 1))
-            .0 = [
-            (rgb.x * 255.) as u8,
-            (rgb.y * 255.) as u8,
-            (rgb.z * 255.) as u8,
-            (rgb.w * 255.) as u8,
-        ];
+        direct_pixel(self.get_targ(), s[0], s[1], x, y, rgb.to_array());
+        // self.get_targ()
+        //     .get_pixel_mut(x.min(s[0] - 1), y.min(s[1] - 1))
+        //     .0 = [
+        //     (rgb.x * 255.) as u8,
+        //     (rgb.y * 255.) as u8,
+        //     (rgb.z * 255.) as u8,
+        //     (rgb.w * 255.) as u8,
+        // ];
     }
     pub fn resize(&mut self, w: u32, h: u32) {
         self.size = [w, h];
@@ -877,6 +878,24 @@ pub fn direct_text(
             lx += (LETTER_SIZE + 1) as i32;
         }
     }
+}
+
+pub fn direct_pixel(
+    target: &mut RgbaImage,
+    x: u32,
+    y: u32,
+    iwidth: u32,
+    iheight: u32,
+    rgb: [f32; 4],
+) {
+    target
+        .get_pixel_mut(x.min(iwidth - 1), y.min(iheight - 1))
+        .0 = [
+        (rgb[0] * 255.) as u8,
+        (rgb[1] * 255.) as u8,
+        (rgb[2] * 255.) as u8,
+        (rgb[3] * 255.) as u8,
+    ];
 }
 
 pub fn direct_image(
