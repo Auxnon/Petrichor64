@@ -1,5 +1,16 @@
 ## UNRELEASED
 
+## 0.3.1
+
+- Disabled "smooth" camera movement as it was ironically shakey
+- Added bad quad data failsafes
+- Models with quads can have optional uvs and indexes changed directly just like triangle based models. 4 UV coords per quad. Indexes still optional.
+- Mouse command has scroll delta `mouse().scroll`
+- Img raster can use pixel command to set individual pixels, not super efficient
+- Bug prevented sky raster from updating at the same time as the main raster
+- Clearing sky raster actually works now
+- Codex 2.1
+
 ## 0.3.0
 
 - First big update!
