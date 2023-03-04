@@ -590,10 +590,10 @@ impl GuiMorsel {
 
     /* Clean off the main raster */
     pub fn clean(&mut self) {
-        // self.main.
-
-        self.main = RgbaImage::new(self.size[0], self.size[1]);
-        self.dirty = true;
+        let sx = self.size[0];
+        let sy = self.size[1];
+        // clear image to transparent
+        self.get_targ().copy_from(&RgbaImage::new(sx, sy), 0, 0);
     }
 
     pub fn target_gui(&mut self) {
