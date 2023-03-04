@@ -22,8 +22,10 @@ pub struct Bundle {
     pub lua: LuaCore,
     pub children: Vec<u8>,
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
+    /** acts as a counter for for a frame skipped due to performance or intentionally */
     pub skips: u16,
     pub skipped_control_state: Option<ControlState>,
+    /** How many frames do we want to intentionally skip to bring our fps down? Not great */
     pub frame_split: u16,
 }
 
@@ -352,6 +354,15 @@ impl BundleManager {
     // pub fn get_bundle(&self, id: u8) -> Option<&Bundle> {
     //     self.bundles.get(id as usize)
     // }
+    pub fn stats(&self) -> String {
+        format!(
+            "bundles: {} call order: {}, main rasters: {}, sky rasters: {}",
+            self.bundles.len(),
+            self.call_order.len(),
+            self.main_rasters.len(),
+            self.sky_rasters.len()
+        )
+    }
 }
 
 fn combine_states(mut old: ControlState, bits: ControlState) -> ControlState {
