@@ -2224,7 +2224,7 @@ pub enum MainCommmand {
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
     AsyncError(String),
-    LoopComplete(Option<(image::RgbaImage, bool)>),
+    LoopComplete((Option<image::RgbaImage>, Option<image::RgbaImage>)),
     Reload(),
     BundleDropped(BundleResources),
     Load(String),

@@ -892,24 +892,22 @@ impl Core {
                     self.global.is_state_changed = true;
                 }
                 MainCommmand::LoopComplete(img_result) => {
-                    match img_result {
-                        Some((img, is_sky)) => {
-                            let raster_id = if is_sky { 1 } else { 0 };
-
-                            if !self.bundle_manager.is_single() {
-                                self.bundle_manager.set_raster(id, raster_id, img);
-                                mutations.push((id, MainCommmand::Meta(raster_id)));
-                            } else {
-                                self.gui.replace_image(img, is_sky);
-                            }
+                    if let Some(main) = img_result.0 {
+                        if !self.bundle_manager.is_single() {
+                            self.bundle_manager.set_raster(id, 0, main);
+                            mutations.push((id, MainCommmand::Meta(0)));
+                        } else {
+                            self.gui.replace_image(main, false);
                         }
-                        _ => {}
                     }
-                    // if let Some(reff) = completed_bundles.get_mut(&id) {
-                    //     *reff += 1;
-                    // } else {
-                    //     completed_bundles.insert(id, 1);
-                    // }
+                    if let Some(sky) = img_result.1 {
+                        if !self.bundle_manager.is_single() {
+                            self.bundle_manager.set_raster(id, 1, sky);
+                            mutations.push((id, MainCommmand::Meta(1)));
+                        } else {
+                            self.gui.replace_image(sky, true);
+                        }
+                    }
                     completed_bundles.insert(id, true);
                     loop_complete = true;
                 }

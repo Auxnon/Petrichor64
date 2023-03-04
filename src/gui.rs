@@ -8,7 +8,7 @@ use crate::{
     lua_define::LuaResponse,
     texture::{TexManager, TexTuple},
 };
-use image::{ImageBuffer, RgbaImage};
+use image::{GenericImage, ImageBuffer, RgbaImage};
 use imageproc::drawing::{draw_filled_circle_mut, draw_filled_rect_mut};
 use wgpu::{BindGroup, Device, Queue, Sampler, Texture, TextureView};
 
@@ -616,15 +616,21 @@ impl GuiMorsel {
     pub fn new_image(w: u32, h: u32) -> RgbaImage {
         RgbaImage::new(w, h)
     }
-    pub fn send_state(&mut self) -> Option<(RgbaImage, bool)> {
+    pub fn send_state(&mut self) -> (Option<RgbaImage>, Option<RgbaImage>) {
         if self.dirty {
             self.dirty = false;
-            return Some((self.main.clone(), false));
+            if self.dirty_sky {
+                self.dirty_sky = false;
+                (Some(self.main.clone()), Some(self.sky.clone()))
+            } else {
+                (Some(self.main.clone()), None)
+            }
         } else if self.dirty_sky {
             self.dirty_sky = false;
-            return Some((self.sky.clone(), true));
+            (None, Some(self.sky.clone()))
+        } else {
+            (None, None)
         }
-        None
     }
 }
 
