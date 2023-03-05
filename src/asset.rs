@@ -688,7 +688,17 @@ fn parse_assets(
                                         a.1.iter()
                                             .map(|t| tex_manager.get_tex(&t))
                                             .collect::<Vec<glam::Vec4>>();
-                                    tex_manager.set_anims(&compound, v, 8, a.2);
+                                    if v.len() > 0 {
+                                        tex_manager.set_anims(&compound, v, 8, a.2);
+                                    } else {
+                                        loggy.log(
+                                            LogType::ConfigError,
+                                            &format!(
+                                                "0 frames in animation {}, disposing",
+                                                compound
+                                            ),
+                                        );
+                                    }
                                 }
                             }
                         }
