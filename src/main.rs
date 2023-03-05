@@ -715,14 +715,21 @@ impl Core {
                         .iter()
                         .map(|i| self.tex_manager.get_tex(i))
                         .collect_vec();
-                    self.tex_manager.animations.insert(
-                        name,
-                        crate::texture::Anim {
-                            frames,
-                            speed,
-                            once: false,
-                        },
-                    );
+                    if frames.len() == 0 {
+                        self.loggy.log(
+                            LogType::TextureError,
+                            &format!("Animation {} has no frames, not storing", name),
+                        );
+                    } else {
+                        self.tex_manager.animations.insert(
+                            name,
+                            crate::texture::Anim {
+                                frames,
+                                speed,
+                                once: false,
+                            },
+                        );
+                    }
                 }
                 MainCommmand::Clear() => self.gui.clean(),
                 MainCommmand::Model(name, texture, v, i, u, style, tx) => {

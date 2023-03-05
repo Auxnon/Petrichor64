@@ -184,13 +184,20 @@ fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
 
                             let frames: Vec<u64> = match idir {
                                 "ping-pong" => {
-                                    let mut v = (ifrom..ito).collect::<Vec<u64>>();
-                                    v.extend((ifrom..(ito - 1)).rev());
+                                    let mut v = (ifrom..ito + 1).collect::<Vec<u64>>();
+                                    v.extend((ifrom..(ito)).rev());
                                     v
                                 }
-                                "reverse" => (ifrom..ito).rev().collect(),
-                                _ => (ifrom..ito).collect(),
+                                "reverse" => (ifrom..ito + 1).rev().collect(),
+                                _ => (ifrom..ito + 1).collect(),
                             };
+
+                            // println!(
+                            //     "🟣we got a json anim {} {} {:?}",
+                            //     name,
+                            //     frames.len(),
+                            //     frames
+                            // );
 
                             anims.push((
                                 name.to_string(),

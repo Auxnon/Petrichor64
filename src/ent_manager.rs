@@ -415,7 +415,8 @@ impl EntManager {
                         }
 
                         if l.is_anim() {
-                            match tm.animations.get(l.get_tex()) {
+                            let t = l.get_tex();
+                            match tm.animations.get(t) {
                                 Some(t) => {
                                     ent.set_anim(t.clone(), iteration);
                                 }

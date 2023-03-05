@@ -272,7 +272,6 @@ impl<'lua> Ent {
         ];
         let uv_mod = match &self.anim {
             Some(anim) => {
-                // println!("len {} and {}",anim.frames.len(),(iteration.checked_sub(rhs)-self.anim_it) % (anim.frames.len() as u32 * anim.speed) as u64);
                 let diff = match iteration.checked_sub(self.anim_it) {
                     Some(u) => u,
                     _ => 0,
@@ -299,7 +298,6 @@ impl<'lua> Ent {
                 } else {
                     [self.tex.x, self.tex.y, self.tex.z, self.tex.w]
                 }
-                // println!("t {:?}",t);
             }
         };
 
