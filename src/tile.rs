@@ -84,6 +84,37 @@ impl Layer {
         // );
         c.dirty = true;
     }
+    pub fn get_tile(
+        &self,
+        instance: &WorldInstance,
+        ix: i32,
+        iy: i32,
+        iz: i32,
+    ) -> (Option<(String, u8)>) {
+        let t = match self.get_chunk(ix, iy, iz) {
+            Some(c) => {
+                println!("chunk exists {} {} {} named {}", ix, iy, iz, c.key);
+                let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
+                    + iy.rem_euclid(CHUNK_SIZE))
+                    * CHUNK_SIZE)
+                    + iz.rem_euclid(CHUNK_SIZE)) as usize;
+                c.cells[index]
+            }
+            _ => (0, 0),
+        };
+
+        if t.0 == 0 {
+            None
+        } else {
+            match instance.get_model_by_index(t.0) {
+                Some(m) => Some((m, t.1)),
+                _ => match instance.get_tex_by_index(t.0) {
+                    Some(tex) => Some((tex, t.1)),
+                    _ => None,
+                },
+            }
+        }
+    }
 
     /** Set multiple tiles from a large array */
     pub fn set_tile_from_buffer(&mut self, instance: &WorldInstance, buffer: &Vec<(String, Vec4)>) {

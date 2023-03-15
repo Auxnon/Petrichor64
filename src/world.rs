@@ -25,9 +25,19 @@ pub enum TileCommand {
     // Make((String, String, String, String, String, String, String)),
     Set(Vec<(String, IVec4)>),
     Drop(IVec3),
+    /** Retrieve changes before rendering */
     Check(),
-    /** Simply get whether a tile is present at position or not */
+    /** Get string model asset at position if any */
+    Get(IVec3),
+    /** Simply get whether a tile is present at position or not, slightly cheaper then Get */
     Is(IVec3),
+    /** Find first occurence in a direction until limit is reached*/
+    First(String, IVec3, IVec3, u32),
+    /* Compute a path from point A to B with a integer gravity (0,0,0 for none) a step size, 0 for flat, and a limit to search before giving up */
+    Path(IVec3, IVec3, IVec3, u32, u32),
+    /** Apply a mobility score for a block type */
+    MapScore(String, u32),
+    //WFC()
     /** Apply a texture string and it's vector uv map to our hash and create new index within the world if it doesn't exist*/
     MapTex(String, u32),
     /** Apply a model string and it's arc<model> to our hash and create new index within the world if it doesn't exist*/
@@ -40,6 +50,7 @@ pub enum TileCommand {
 pub enum TileResponse {
     Success(bool),
     Mapped(u32),
+    Found(Option<(String, u8)>),
     Chunks(Vec<Chunk>, bool),
 }
 
@@ -49,8 +60,10 @@ pub struct WorldInstance {
     pub COUNTER: u32,
     /** map our texture strings to their integer value for fast lookup and 3d grid insertion*/
     pub INT_TEX_DICTIONARY: HashMap<String, u32>,
+    pub INT_TEX_REVERSE_DICTIONARY: HashMap<u32, String>,
     // pub INT_TEX_MAP: FxHashMap<u32, Vec4>,
     pub INT_MODEL_DICTIONARY: HashMap<String, u32>,
+    pub INT_MODEL_REVERSE_DICTIONARY: HashMap<u32, String>,
     // pub INT_MODEL_MAP: FxHashMap<u32, Arc<OnceCell<Model>>>,
 }
 
@@ -60,8 +73,10 @@ impl WorldInstance {
             bundle_id,
             COUNTER: 2,
             INT_TEX_DICTIONARY: HashMap::new(),
+            INT_TEX_REVERSE_DICTIONARY: HashMap::new(),
             // INT_TEX_MAP: FxHashMap::default(),
             INT_MODEL_DICTIONARY: HashMap::new(),
+            INT_MODEL_REVERSE_DICTIONARY: HashMap::new(),
             // INT_MODEL_MAP: FxHashMap::default(),
         }
     }
@@ -79,7 +94,8 @@ impl WorldInstance {
     /** Create a simple numerical key for our texture and uv and map it, returning that numerical key*/
     fn index_texture(&mut self, key: String) -> u32 {
         let ind = self.COUNTER;
-        self.INT_TEX_DICTIONARY.insert(key, ind);
+        self.INT_TEX_DICTIONARY.insert(key.clone(), ind);
+        self.INT_TEX_REVERSE_DICTIONARY.insert(ind, key);
         self.COUNTER += 1;
         ind
     }
@@ -99,11 +115,24 @@ impl WorldInstance {
             None => None,
         }
     }
+    pub fn get_model_by_index(&self, index: u32) -> Option<String> {
+        match self.INT_MODEL_REVERSE_DICTIONARY.get(&index) {
+            Some(u) => Some(u.clone()),
+            None => None,
+        }
+    }
+    pub fn get_tex_by_index(&self, index: u32) -> Option<String> {
+        match self.INT_TEX_REVERSE_DICTIONARY.get(&index) {
+            Some(u) => Some(u.clone()),
+            None => None,
+        }
+    }
 
     /** Create a simple numerical key for our model and map it, returning that numerical key*/
     fn index_model(&mut self, key: String) -> u32 {
         let ind = self.COUNTER;
-        self.INT_MODEL_DICTIONARY.insert(key, ind);
+        self.INT_MODEL_DICTIONARY.insert(key.clone(), ind);
+        self.INT_MODEL_REVERSE_DICTIONARY.insert(ind, key);
         self.COUNTER += 1;
         ind
     }
@@ -263,6 +292,14 @@ impl World {
                         layer.stats();
                         res_handle(response.send(TileResponse::Success(true)), &loggy);
                     }
+                    (TileCommand::Get(tile), response) => {
+                        let res =
+                            layer.get_tile(&instance, tile.x as i32, tile.y as i32, tile.z as i32);
+                        res_handle(response.send(TileResponse::Found(res)), &loggy)
+                    }
+                    _ => {
+                        todo!("world command")
+                    }
                 }
             }
         });
@@ -393,6 +430,25 @@ impl World {
                 _ => false,
             },
             _ => false,
+        }
+    }
+    pub fn get_tile(
+        sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Option<(String, u8)> {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+
+        match sender.send((TileCommand::Get(ivec3(x, y, z)), tx)) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Found(s)) => {
+                    // println!("is tile {} {} {} {}", x, y, z, b);
+                    s
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 

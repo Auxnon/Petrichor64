@@ -581,6 +581,25 @@ function dtiles() end"
 function istile(x, y, z) end"
     );
 
+    let sender = world_sender.clone();
+    lua!(
+        "gtile",
+        move |_, (x, y, z): (i32, i32, i32)| {
+            let t = World::get_tile(&sender, x, y, z);
+            Ok(match t {
+                Some(s) => s.0,
+                None => "".to_string(),
+            })
+        },
+        "Return the asset name of the tile at a given location",
+        "
+---@param x integer 
+---@param y integer
+---@param z integer
+---@return string
+function gtile(x, y, z) end"
+    );
+
     let pitcher = main_pitcher.clone();
     lua!(
         "anim",
@@ -655,7 +674,7 @@ function input() end"
             t.set("m1", m[6] > 0.)?;
             t.set("m2", m[7] > 0.)?;
             t.set("m3", m[8] > 0.)?;
-            t.set("scroll", m[9])?; 
+            t.set("scroll", m[9])?;
 
             t.set("vx", m[10])?;
             t.set("vy", m[11])?;
@@ -952,7 +971,6 @@ function instr(freqs, half) end"
         move |_, rgb: mlua::Value| {
             // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
             let c = get_color(rgb);
-            println!("fill");
             gui.borrow_mut().fill(c);
             Ok(1)
         },
