@@ -5,6 +5,7 @@ struct VertexOutput {
     @location(2) tex_coords: vec2<f32>,
     @location(3) vpos:vec4<f32>,
     @location(4) specs:vec4<f32>,
+    @location(5) time:f32,
 };
 
 struct InstanceInput {
@@ -38,16 +39,6 @@ var t_diffuse: texture_2d<f32>;
 var s_diffuse: sampler;
 
 
-// struct Entity {
-//     matrix: mat4x4<f32>;
-//     color: vec4<f32>;
-//     uv_mod:vec4<f32>;
-//     effects:vec4<u32>;
-// };
-
-// @group(1), binding(0)
-// var<uniform> ent: Entity;
-
 @vertex
 fn vs_main(
     @location(0) position: vec4<i32>,
@@ -61,6 +52,8 @@ fn vs_main(
     let billboarded=false;
     // let tex_coords=instance.uv;
     // let w = ent.matrix;
+
+    // w is our model matrix
     let w=mat4x4<f32>(
         instance.model_matrix_0,
         instance.model_matrix_1,
@@ -69,12 +62,11 @@ fn vs_main(
     );
     let world_pos =  w *vec4<f32>(position); 
     var out: VertexOutput;
-    out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(normal.xyz);
     out.world_position = world_pos;
     let v=globals.view_mat;
 
 
-    //globals.view_proj
+    // globals.view_proj
     let pos=vec4<f32>(position);
     //    out.proj_position = globals.view_proj * world_pos;
 
@@ -97,9 +89,11 @@ fn vs_main(
             vec4<f32>(0.,0.,0.,1.),
         );
 
+    out.world_normal =  mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(0.,1.,0.);
         // out.proj_position=globals.proj_mat*(globals.view_mat*billbo*w*vec4<f32>(1.,1.,1.,1.)+ pos);
     out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.,0.,0.,1./bb)+roo*vec4<f32>(pos.x,pos.y,0.,0.));
     }else{
+    out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * (vec3<f32>(normal.xyz)/100.);
         out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
     }
     let uv_mod=instance.uv_mod;
@@ -109,6 +103,9 @@ fn vs_main(
   
     out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0][0],world_pos.w); 
     out.specs=globals.specs;
+    out.time=globals.adjustments[0][0];
+    // FragPos = vec3(model * vec4(aPos, 1.0));
+    // out.frag_pos=vec3<f32>(world_pos.x,world_pos.y,world_pos.z,1.);
     return out;
 }
 
@@ -146,39 +143,46 @@ struct FragmentOutput {
 
 var<private> f_color: vec4<f32>;
 
-fn main_2(in:VertexOutput) {
+@fragment
+fn fs_main( in: VertexOutput) -> FragmentOutput {
     //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
     // let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
     // let v=abs((10.*in.vpos.z+0.01)/10.)%3.;
     // let v=1.-min(1.,length(in.world_position.xyz - in.specs.xyz)%10.);
 
     // let start=120.;
+
+    // in.world_position.xyz
+    let t=in.time/2.;
+    let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
+    let light_color=vec3<f32>(1.,1.,1.);
+    let norm = normalize(in.world_normal);
+    let light_dir = normalize(light_pos - in.world_position.xyz); 
+    let diff = max(dot(norm, light_dir), .1);
+    let diffuse = light_color;//diff *  
+    // vec3 result = (ambient + diffuse) * objectColor;
+// FragColor = vec4(result, 1.0);
    
     f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
-    // f_color=f_color*v; //vec4<f32>(v,v,v,1.0);
-    // if (v<0.5){
-    //     discard;
-    // }
-    // f_color=vec4<f32>(v,v,v,1.); 
+   
     if( in.specs.w>0.){
         let end=in.specs.w;
         let dist=length(in.world_position.xyz-in.specs.xyz);      
         // let v= clamp((end - dist) / (end - start), 0.0, 1.0);
         let v= clamp((end - dist) / (  32.), 0.0, 1.0);
+        // if (v<0.5){
+        // discard;
+        //  }
         f_color.a*=v;
     }
-   
-    return;
-}
 
-@fragment
-fn fs_main( in: VertexOutput) -> FragmentOutput {
-    main_2(in); 
     let e3: vec4<f32> = f_color;
     if (e3.a < 0.1) {
         discard;
     }
-    return FragmentOutput(e3);
+
+
+    return FragmentOutput(e3*vec4<f32>(diffuse,1.));
 }
 
 @fragment
@@ -317,13 +321,9 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
     let glitchy_line: f32 =adj[3][2]; // 0.2
     let lumen_threshold:f32=adj[1][3]; //0.2
 
-
     var output: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     
     var limit: vec2<f32>;
-    
-  
-
 
     var AR=resolution.x/resolution.y;
 
