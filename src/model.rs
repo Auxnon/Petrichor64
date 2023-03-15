@@ -303,6 +303,7 @@ impl ModelManager {
         name: &str,
         texture: Vec<String>,
         verts: Vec<[f32; 3]>,
+        fnorms: Vec<[f32; 3]>,
         inds: Vec<u32>,
         uvs: Vec<[f32; 2]>,
         tex_style: TextureStyle,
@@ -324,6 +325,25 @@ impl ModelManager {
         }
         let t_count = texture.len();
         let uvs_match_v = uvs.len() == verts.len();
+        let norms = if fnorms.len() != verts.len() {
+            let mut norms = Vec::new();
+            for _ in 0..verts.len() {
+                norms.push([0, 0, 0]);
+            }
+            norms
+        } else {
+            fnorms
+                .iter()
+                .map(|n| {
+                    [
+                        (n[0] * 100.) as i8,
+                        (n[1] * 100.) as i8,
+                        (n[2] * 100.) as i8,
+                    ]
+                })
+                .collect::<Vec<[i8; 3]>>()
+        };
+        let single_texture = t_count == 1;
         let vertices = if uvs_match_v || t_count > 0 {
             if t_count == 1 {
                 let uv_adjust = tex_manager.get_tex(&texture[0]);
@@ -331,9 +351,10 @@ impl ModelManager {
                 if !uvs_match_v {
                     verts
                         .iter()
-                        .map(|pos| {
-                            let mut vv = vertexx(*pos, [0, 0, 0], [0., 0.]);
-                            vv.texture(uv_adjust);
+                        .enumerate()
+                        .map(|(i, pos)| {
+                            let mut vv = vertexx(*pos, norms[i], [0., 0.]);
+                            // vv.texture(uv_adjust);
                             vv
                         })
                         .collect::<Vec<Vertex>>()
@@ -343,7 +364,8 @@ impl ModelManager {
                         .enumerate()
                         .map(|(i, pos)| {
                             let uv = uvs[i];
-                            let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                            let n = norms[i];
+                            let mut vv = vertexx(*pos, n, uv);
                             vv.texture(uv_adjust);
                             vv
                         })
@@ -371,7 +393,7 @@ impl ModelManager {
                             current_tex = uv_adjusts[tex_cycle];
                         }
                         // println!("ctex {}: {:?}", i, current_tex);
-                        let mut vv = vertexx(*pos, [0, 0, 0], uv);
+                        let mut vv = vertexx(*pos, norms[i], uv);
                         vv.texture(current_tex);
                         vv
                     })
@@ -380,10 +402,8 @@ impl ModelManager {
         } else {
             verts
                 .iter()
-                .map(|pos| {
-                    let mut vv = vertexx(*pos, [0, 0, 0], [0., 0.]);
-                    vv
-                })
+                .enumerate()
+                .map(|(i, pos)| vertexx(*pos, norms[i], [0., 0.]))
                 .collect::<Vec<Vertex>>()
         };
         let indicies = if inds.len() == 0 {
@@ -579,16 +599,24 @@ impl Vertex {
         let x = self._pos[0];
         self._pos[0] = 16 - self._pos[1];
         self._pos[1] = x;
+        let nx = self._normal[0];
+        self._normal[0] = -self._normal[1];
+        self._normal[1] = nx;
     }
     pub fn rotp180(&mut self) {
         self._pos[0] = 16 - self._pos[0];
         self._pos[1] = 16 - self._pos[1];
+        self._normal[0] = -self._normal[0];
+        self._normal[1] = -self._normal[1];
     }
     pub fn rotp270(&mut self) {
         //+x -> +y, +y-> -x
         let x = self._pos[0];
         self._pos[0] = self._pos[1];
         self._pos[1] = 16 - x;
+        let nx = self._normal[0];
+        self._normal[0] = self._normal[1];
+        self._normal[1] = -nx;
     }
     pub fn texture(&mut self, uv: Vec4) {
         self._tex[0] = (self._tex[0] * uv.z) + uv.x;

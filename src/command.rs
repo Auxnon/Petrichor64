@@ -30,7 +30,6 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashMap,
-    path::Path,
     rc::Rc,
     sync::{
         mpsc::{Sender, SyncSender},
@@ -1263,14 +1262,14 @@ function nimg(w, h) end"
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "model",
-        move |_, (name, t): (String, Table)| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+            "model",
+            move |_, (name, t): (String, Table)| {
+                let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
 
-            match t.get::<_, Vec<[f32; 3]>>("q") {
-                Ok(quads) => {
+                match t.get::<_, Vec<[f32; 3]>>("q") {
+                    Ok(quads) => {
 
-                        let (v, uv, i) =
+                        let (v,n, uv, i) =
                         match t.get::<_, Vec<[f32;2]>>("u") {
                             Ok(uvi)=>{
                                 let inds= t.get::<_, Vec<u32>>("i").unwrap_or_else(|_|{
@@ -1287,123 +1286,139 @@ function nimg(w, h) end"
                                     }
                                     ind
                                 });
-                                (quads, uvi, inds)
+                                let norms=t.get::<_, Vec<[f32;3]>>("n").unwrap_or_else(|_|{
+                                    let mut norms = Vec::new();
+                                    for _ in 0..quads.len() {
+                                        norms.push([0., 0., 0.]);
+                                        norms.push([0., 0., 0.]);
+                                        norms.push([0., 0., 0.]);
+                                        norms.push([0., 0., 0.]);
+                                    }
+                                    norms
+                                });
+                                (quads,norms, uvi, inds)
 
-                               
+
                             }
                             _=>{
     convert_quads(quads)
                             }
                         };
-                    match t.get::<_, Vec<String>>("t") {
-                        Ok(texture) => {
-                            pitcher.send((
-                                bundle_id,
-                                MainCommmand::Model(
-                                    name,
-                                    texture,
-                                    v,
-                                    i,
-                                    uv,
-                                    TextureStyle::Quad,
-                                    tx,
-                                ),
-                            ));
-                            if let Err(err) = rx.recv() {
-                                return Err(make_err(&err.to_string()));
+                        match t.get::<_, Vec<String>>("t") {
+                            Ok(texture) => {
+                                pitcher.send((
+                                    bundle_id,
+                                    MainCommmand::Model(
+                                        name,
+                                        texture,
+                                        v,
+                                        n,
+                                        i,
+                                        uv,
+                                        TextureStyle::Quad,
+                                        tx,
+                                    ),
+                                ));
+                                if let Err(err) = rx.recv() {
+                                    return Err(make_err(&err.to_string()));
+                                }
+                            }
+                            _ => {
+                                Err::<(), &str>("This type of model requires a texture");
                             }
                         }
-                        _ => {
-                            Err::<(), &str>("This type of model requires a texture");
-                        }
+                        Ok("Building model in quad mode")
                     }
-                    Ok("Building model in quad mode")
-                }
-                _ => {
-                    // println!("got no quads");
-                    let vin = t.get::<_, Vec<[f32; 3]>>("v");
-                    match vin {
-                        Ok(v) => {
-                            if v.len() > 2 {
-                                let i = match t.get::<_, Vec<u32>>("i") {
-                                    Ok(o) => o,
-                                    _ => vec![],
-                                };
-                                let u = match t.get::<_, Vec<[f32; 2]>>("u") {
-                                    Ok(o) => o,
-                                    _ => vec![],
-                                };
+                    _ => {
+                        // println!("got no quads");
+                        let vin = t.get::<_, Vec<[f32; 3]>>("v");
+                        match vin {
+                            Ok(v) => {
+                                if v.len() > 2 {
+                                    let i = match t.get::<_, Vec<u32>>("i") {
+                                        Ok(o) => o,
+                                        _ => vec![],
+                                    };
+                                    let u = match t.get::<_, Vec<[f32; 2]>>("u") {
+                                        Ok(o) => o,
+                                        _ => vec![],
+                                    };
+                                    let n = match t.get::<_, Vec<[f32; 3]>>("n") {
+                                        Ok(o) => o,
+                                        _ => vec![],
+                                    };
+                                    match t.get::<_, Vec<String>>("t") {
+                                        Ok(texture) => {
+                                            pitcher.send((
+                                                bundle_id,
+                                                MainCommmand::Model(
+                                                    name,
+                                                    texture,
+                                                    v,
+                                                    n,
+                                                    i,
+                                                    u,
+                                                    TextureStyle::Tri,
+                                                    tx,
+                                                ),
+                                            ));
+                                            if let Err(err) = rx.recv() {
+                                                return Err(make_err(&err.to_string()));
+                                            }
+                                            return Ok("Building model in vert mode")
+                                        }
+                                        _ => {
+                                            return Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
+                                            // return Ok(());
+                                        }
+                                    }
+                                }
+                                Err(make_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
+                            }
+                            _ => {
                                 match t.get::<_, Vec<String>>("t") {
                                     Ok(texture) => {
-                                        pitcher.send((
-                                            bundle_id,
-                                            MainCommmand::Model(
-                                                name,
-                                                texture,
-                                                v,
-                                                i,
-                                                u,
-                                                TextureStyle::Tri,
-                                                tx,
-                                            ),
-                                        ));
-                                        if let Err(err) = rx.recv() {
-                                            return Err(make_err(&err.to_string()));
+                                        if texture.len() > 0 {
+                                            let t = texture[0].clone();
+                                            pitcher.send((
+                                                bundle_id,
+                                                MainCommmand::Make(
+                                                    vec![
+                                                        name,
+                                                        t.clone(),
+                                                        texture.get(1).unwrap_or(&t).to_string(),
+                                                        texture.get(2).unwrap_or(&t).to_string(),
+                                                        texture.get(3).unwrap_or(&t).to_string(),
+                                                        texture.get(4).unwrap_or(&t).to_string(),
+                                                        texture.get(5).unwrap_or(&t).to_string(),
+                                                    ],
+                                                    tx,
+                                                ),
+                                            ));
+                                            if let Err(err) = rx.recv() {
+                                                return Err(make_err(&err.to_string()));
+                                            }
                                         }
-                                        return Ok("Building model in vert mode")
+                                        Ok("Building model in texture mode")
                                     }
                                     _ => {
-                                        return Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
-                                        // return Ok(());
+                                        // Err::<(),&str>
+                                        Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                     }
-                                }
-                            }
-                            Err(make_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
-                        }
-                        _ => {
-                            match t.get::<_, Vec<String>>("t") {
-                                Ok(texture) => {
-                                    if texture.len() > 0 {
-                                        let t = texture[0].clone();
-                                        pitcher.send((
-                                            bundle_id,
-                                            MainCommmand::Make(
-                                                vec![
-                                                    name,
-                                                    t.clone(),
-                                                    texture.get(1).unwrap_or(&t).to_string(),
-                                                    texture.get(2).unwrap_or(&t).to_string(),
-                                                    texture.get(3).unwrap_or(&t).to_string(),
-                                                    texture.get(4).unwrap_or(&t).to_string(),
-                                                    texture.get(5).unwrap_or(&t).to_string(),
-                                                ],
-                                                tx,
-                                            ),
-                                        ));
-                                        if let Err(err) = rx.recv() {
-                                            return Err(make_err(&err.to_string()));
-                                        }
-                                    }
-                                    Ok("Building model in texture mode")
-                                }
-                                _ => {
-                                    // Err::<(),&str>
-                                    Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                 }
                             }
                         }
                     }
                 }
-            }
 
-        },
-        "insert model data into an asset <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
-        "
+            },
+            "insert model data into an asset <name:string, {v=[float,float,float][],i=int[],u=[float,float][]}>",
+            "
 ---@param asset string
 ---@param t model_data
 ---@return string stating what mode the model was built in
 function model(asset, t) end"
-    );
+        );
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -2234,6 +2249,7 @@ pub enum MainCommmand {
         String,
         Vec<String>,
         Vec<[f32; 3]>,
+        Vec<[f32; 3]>,
         Vec<u32>,
         Vec<[f32; 2]>,
         TextureStyle,
@@ -2400,9 +2416,10 @@ fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
     data
 }
 
-fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
+fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
     let mut vec = vec![];
     let mut uv = vec![];
+    let mut norms = vec![];
     let mut ind: Vec<u32> = vec![];
     let max = q.len() / 4;
 
@@ -2647,7 +2664,13 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
                 u3[1] *= scale;
                 u4[1] *= scale;
             };
-            // println!("resized u1 {:?} u2 {:?} u3 {:?} u4 {:?}", u1, u2, u3, u4);
+
+            // let u1y = u1[1];
+            // let u2y = u2[1];
+            // u1[1] = u4[1];
+            // u2[1] = u3[1];
+            // u3[1] = u2y;
+            // u4[1] = u1y;
 
             // println!("v1 {:?} v2 {:?} v3 {:?} v4 {:?}", v1, v2, v3, v4);
             // println!("2 [{:?}, {:?}] 3 [{:?} , {:?}] 4 [{:?} {:?}]", v2dirx, v2diry, v3dirx, v3diry, v4dirx, v4diry);
@@ -2672,6 +2695,11 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
             uv.push([0., 0.]);
         }
 
+        norms.push(quad_norm);
+        norms.push(quad_norm);
+        norms.push(quad_norm);
+        norms.push(quad_norm);
+
         vec.push(q[i]);
         vec.push(q[i + 1]);
         vec.push(q[i + 2]);
@@ -2684,7 +2712,7 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
         ind.push((i + 3) as u32);
         ind.push(i as u32);
     }
-    (vec, uv, ind)
+    (vec, norms, uv, ind)
 }
 
 fn make_err(s: &str) -> mlua::prelude::LuaError {

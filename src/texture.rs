@@ -56,13 +56,13 @@ pub struct Anim {
 }
 
 impl Anim {
-    pub fn empty() -> Anim {
-        Anim {
-            frames: vec![],
-            speed: 16,
-            once: false,
-        }
-    }
+    // pub fn empty() -> Anim {
+    //     Anim {
+    //         frames: vec![],
+    //         speed: 16,
+    //         once: false,
+    //     }
+    // }
 }
 impl Clone for Anim {
     fn clone(&self) -> Anim {

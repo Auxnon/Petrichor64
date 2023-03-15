@@ -732,7 +732,7 @@ impl Core {
                     }
                 }
                 MainCommmand::Clear() => self.gui.clean(),
-                MainCommmand::Model(name, texture, v, i, u, style, tx) => {
+                MainCommmand::Model(name, texture, v, n, i, u, style, tx) => {
                     let res = self.model_manager.upsert_model(
                         &self.device,
                         &self.tex_manager,
@@ -741,6 +741,7 @@ impl Core {
                         &name,
                         texture,
                         v,
+                        n,
                         i,
                         u,
                         style,
