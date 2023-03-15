@@ -238,10 +238,36 @@ pub fn get_color(x: mlua::Value) -> Vec4 {
             _ => vec4(0., 0., 0., 0.),
         },
         mlua::Value::Table(t) => {
-            let r = t.get::<_, f32>("1").unwrap_or(0.);
-            let g = t.get::<_, f32>("2").unwrap_or(0.);
-            let b = t.get::<_, f32>("3").unwrap_or(0.);
-            let a = t.get::<_, f32>("4").unwrap_or(1.);
+            let tt = t
+                .sequence_values::<f32>()
+                .filter_map(|f| match f {
+                    Ok(v) => Some(v),
+                    _ => None,
+                })
+                .collect::<Vec<f32>>();
+
+            let mut r = *tt.get(0).unwrap_or(&0.);
+            let g = *tt.get(1).unwrap_or(&0.);
+            let b = *tt.get(2).unwrap_or(&0.);
+            let a = *tt.get(3).unwrap_or(&1.);
+            if r > 1. {
+                r = r / 255.;
+            }
+            if g > 1. {
+                r = g / 255.;
+            }
+            if b > 1. {
+                r = b / 255.;
+            }
+            if a > 1. {
+                r = a / 255.;
+            }
+
+            // let r = t.get::<_, f32>("1").unwrap_or(0.);
+            // let g = t.get::<_, f32>("2").unwrap_or(0.);
+            // let b = t.get::<_, f32>("3").unwrap_or(0.);
+            // let a = t.get::<_, f32>("4").unwrap_or(1.);
+            // println!("got color {} {} {} {}", r, g, b, a);
             vec4(r, g, b, a)
         }
         _ => vec4(1., 1., 1., 1.),
