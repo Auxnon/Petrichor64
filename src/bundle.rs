@@ -90,6 +90,7 @@ impl BundleManager {
         self.bundles.len() == 1
     }
 
+    /** send resize event to each active bundle */
     pub fn resize(&mut self, width: u32, height: u32) {
         for bundle in self.bundles.values_mut() {
             bundle.resize(width, height);

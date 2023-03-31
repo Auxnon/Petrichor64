@@ -2,9 +2,16 @@
 
 ## 0.3.1
 
+- Notification system
+- Much smaller error output, hopeully easier to read in console or notifications
+- New font!
+- Text can now be colored!
+- gtile command to get asset/texture at tile position, use for checking what's placed where
+
 - Disabled "smooth" camera movement as it was ironically shakey
 - Added bad quad data failsafes
 - Models with quads can have optional uvs and indexes changed directly just like triangle based models. 4 UV coords per quad. Indexes still optional.
+- Initial work for lighting systems, able to include normals in model data
 - Mouse command has scroll delta `mouse().scroll`
 - Img raster can use pixel command to set individual pixels, not super efficient
 - Bug prevented sky raster from updating at the same time as the main raster

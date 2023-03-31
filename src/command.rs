@@ -821,7 +821,7 @@ function attr(attributes) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "cam",
-        move |_, (table): (Table)| {
+        move |_, table: Table| {
             let pos = match table.get("pos") {
                 Ok(v) => match v {
                     Value::Table(t) => {
