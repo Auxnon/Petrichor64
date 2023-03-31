@@ -136,6 +136,119 @@ impl Layer {
             _ => false,
         }
     }
+    /** Search at i position in d direction until tile of type is located, fail if search limit amount reached */
+    pub fn first_tile(
+        &self,
+        instance: &WorldInstance,
+        tile: Option<String>,
+        mut ix: i32,
+        mut iy: i32,
+        mut iz: i32,
+        dx: i32,
+        dy: i32,
+        dz: i32,
+        limit: u32,
+    ) -> Option<[i32; 3]> {
+        if limit == 0 {
+            return None;
+        }
+        if dx == 0 && dy == 0 && dz == 0 {
+            return None;
+        }
+        let target = match tile {
+            Some(t) => {
+                if t.len() == 0 {
+                    0
+                } else {
+                    match instance.get_model_index(&t) {
+                        Some(model_index) => model_index,
+                        _ => instance.get_tex_index(&t),
+                    }
+                }
+            }
+            _ => 0,
+        };
+        // let target = if tlen == 0 {
+        //     0
+        // } else {
+        //     match instance.get_model_index(&tile) {
+        //         Some(model_index) => model_index,
+        //         _ => instance.get_tex_index(&tile),
+        //     }
+        // };
+        let mut rx = ix.div_euclid(CHUNK_SIZE);
+        let mut ry = iy.div_euclid(CHUNK_SIZE);
+        let mut rz = iz.div_euclid(CHUNK_SIZE);
+        let sx = rx * CHUNK_SIZE;
+        let sy = ry * CHUNK_SIZE;
+        let sz = rz * CHUNK_SIZE;
+
+        let mut px = (ix - sx) as u16;
+        let mut py = (iy - sy) as u16;
+        let mut pz = (iz - sz) as u16;
+
+        let mut i = 0;
+
+        loop {
+            if i > limit {
+                return None;
+            }
+            let key = format!("{}:{}:{}", rx, ry, rz);
+            match self.chunks.get(&key) {
+                Some(c) => match c.first_tile(
+                    target, px, py, pz, &mut ix, &mut iy, &mut iz, dx, dy, dz, &mut i, limit,
+                ) {
+                    (None, Some(t)) => {
+                        // if we hit a chunk boundary
+                        rx += t[0] as i32;
+                        ry += t[1] as i32;
+                        rz += t[2] as i32;
+                        px = (ix - (rx * CHUNK_SIZE)) as u16;
+                        py = (iy - (ry * CHUNK_SIZE)) as u16;
+                        pz = (iz - (rz * CHUNK_SIZE)) as u16;
+                    }
+                    (Some(t), _) => {
+                        return Some([t[0], t[1], t[2]]);
+                    }
+                    (None, None) => return None,
+                },
+                None => {
+                    if target == 0 {
+                        return Some([ix, iy, iz]);
+                    }
+
+                    rx += dx;
+                    ry += dy;
+                    rz += dz;
+                    if dx != 0 {
+                        ix += dx * CHUNK_SIZE;
+                    }
+                    if dy != 0 {
+                        iy += dy * CHUNK_SIZE;
+                    }
+                    if dz != 0 {
+                        iz += dz * CHUNK_SIZE;
+                    }
+                    i += CHUNK_SIZE as u32;
+                }
+            };
+        }
+        // loop
+        // match self.get_chunk(ix, iy, iz) {
+        //     Some(c) => {
+        //         let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
+        //             + iy.rem_euclid(CHUNK_SIZE))
+        //             * CHUNK_SIZE)
+        //             + iz.rem_euclid(CHUNK_SIZE)) as usize;
+        //         if c.cells[index].0 > 0 {
+        //             Some(c.cells[index])
+        //         } else {
+        //             None
+        //         }
+        //     }
+        //     _ => None,
+        // }
+    }
 
     /** If a chunk exists */
     pub fn drop_chunk(&mut self, x: i32, y: i32, z: i32) -> Option<String> {
@@ -238,6 +351,64 @@ impl Chunk {
 
     pub fn zero_cells(&mut self) {
         self.cells = [(0, 0); (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize];
+    }
+
+    /** Chunk based first tile linear search. Do not pass a 0,0,0 direction or we're just wasting time */
+    pub fn first_tile(
+        &self,
+        target: u32,
+        x: u16,
+        y: u16,
+        z: u16,
+        ox: &mut i32,
+        oy: &mut i32,
+        oz: &mut i32,
+        dx: i32,
+        dy: i32,
+        dz: i32,
+        current_iterator: &mut u32,
+        limit: u32,
+    ) -> (Option<[i32; 3]>, Option<[i8; 3]>) {
+        let i = current_iterator;
+        let mut ix = x as i32;
+        let mut iy = y as i32;
+        let mut iz = z as i32;
+
+        loop {
+            if *i >= limit {
+                return (None, None);
+            }
+            *i += 1;
+            ix += dx;
+            *ox += dx;
+            if ix < 0 {
+                return (None, Some([-1, 0, 0]));
+            }
+            if ix >= CHUNK_SIZE as i32 {
+                return (None, Some([1, 0, 0]));
+            }
+            iy += dy;
+            *oy += dy;
+            if iy < 0 {
+                return (None, Some([0, -1, 0]));
+            }
+            if iy >= CHUNK_SIZE as i32 {
+                return (None, Some([0, 1, 0]));
+            }
+            iz += dz;
+            *oz += dz;
+            if iz < 0 {
+                return (None, Some([0, 0, -1]));
+            }
+            if iz >= CHUNK_SIZE as i32 {
+                return (None, Some([0, 0, 1]));
+            }
+
+            let index = ((((ix * CHUNK_SIZE as i32) + iy) * CHUNK_SIZE as i32) + iz) as usize;
+            if self.cells[index].0 == target {
+                return (Some([*ox, *oy, *oz]), None);
+            }
+        }
     }
 }
 

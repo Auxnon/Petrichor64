@@ -598,6 +598,27 @@ function istile(x, y, z) end"
 ---@return string
 function gtile(x, y, z) end"
     );
+    let sender = world_sender.clone();
+    lua!(
+        "ftile",
+        move |l, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
+            let tt = if t.len() == 0 { None } else { Some(t) };
+            match World::first_tile(&sender, tt, x, y, z, dx, dy, dz, 100) {
+                Some(v) => l.create_table_from(vec![(0, v[0]), (1, v[1]), (2, v[2])].into_iter()),
+                None => {
+                    let f: Vec<(usize, i32)> = vec![];
+                    l.create_table_from(f.into_iter())
+                }
+            }
+        },
+        "Find first occurence of a tile in a given direction",
+        "
+---@param x integer 
+---@param y integer
+---@param z integer
+---@return string
+function gtile(x, y, z) end"
+    );
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -1651,6 +1672,15 @@ function overload(str) end"
 ---@param u integer? >0 soft quits
 function quit(u) end"
     );
+
+    //     lua!(
+    //         "error",
+    //         move |_, (): ()| { Ok(()) },
+    //         "Get current errors for a bundle",
+    //         "
+    // ---@return string
+    // function error() end"
+    //     );
 
     // REMEMBER this always has to be at the end
     let command_map_clone = command_map.clone();

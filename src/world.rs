@@ -32,7 +32,7 @@ pub enum TileCommand {
     /** Simply get whether a tile is present at position or not, slightly cheaper then Get */
     Is(IVec3),
     /** Find first occurence in a direction until limit is reached*/
-    First(String, IVec3, IVec3, u32),
+    First(Option<String>, IVec3, IVec3, u32),
     /* Compute a path from point A to B with a integer gravity (0,0,0 for none) a step size, 0 for flat, and a limit to search before giving up */
     Path(IVec3, IVec3, IVec3, u32, u32),
     /** Apply a mobility score for a block type */
@@ -52,6 +52,7 @@ pub enum TileResponse {
     Mapped(u32),
     Found(Option<(String, u8)>),
     Chunks(Vec<Chunk>, bool),
+    Location(Option<[i32; 3]>),
 }
 
 pub struct WorldInstance {
@@ -297,6 +298,12 @@ impl World {
                             layer.get_tile(&instance, tile.x as i32, tile.y as i32, tile.z as i32);
                         res_handle(response.send(TileResponse::Found(res)), &loggy)
                     }
+                    (TileCommand::First(tile, pos, dir, limit), response) => {
+                        let res = layer.first_tile(
+                            &instance, tile, pos.x, pos.y, pos.z, dir.x, dir.y, dir.z, limit,
+                        );
+                        res_handle(response.send(TileResponse::Location(res)), &loggy)
+                    }
                     _ => {
                         todo!("world command")
                     }
@@ -445,6 +452,33 @@ impl World {
                 Ok(TileResponse::Found(s)) => {
                     // println!("is tile {} {} {} {}", x, y, z, b);
                     s
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+    pub fn first_tile(
+        sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
+        tile: Option<String>,
+        x: i32,
+        y: i32,
+        z: i32,
+        dx: i32,
+        dy: i32,
+        dz: i32,
+        limit: u32,
+    ) -> Option<[i32; 3]> {
+        let (tx, rx) = sync_channel::<TileResponse>(0);
+
+        match sender.send((
+            TileCommand::First(tile, ivec3(x, y, z), ivec3(dx, dy, dz), limit),
+            tx,
+        )) {
+            Ok(_) => match rx.recv() {
+                Ok(TileResponse::Location(l)) => {
+                    // println!("is tile {} {} {} {}", x, y, z, b);
+                    l
                 }
                 _ => None,
             },
