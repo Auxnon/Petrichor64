@@ -299,13 +299,13 @@ impl Gui {
 
                 draw_filled_rect_mut(
                     &mut self.console,
-                    imageproc::rect::Rect::at((x - 1) as i32, (y - 1) as i32)
-                        .of_size(LETTER_SIZE + 2, LETTER_SIZE + 2 as u32),
+                    imageproc::rect::Rect::at((x) as i32, (y - 1) as i32)
+                        .of_size(LETTER_SIZE + 1, LETTER_SIZE + 2 as u32),
                     self.console_background,
                 );
                 //sub.to_image().
                 image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);
-                x += (LETTER_SIZE + 1) as i64;
+                x += (LETTER_SIZE - 1) as i64;
             }
         }
 
