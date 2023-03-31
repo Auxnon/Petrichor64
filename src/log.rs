@@ -157,7 +157,7 @@ impl Loggy {
     /** SYS: log out */
     pub fn log(&mut self, log_type: LogType, str: &str) {
         self._print(str, false);
-        println!("log {}", str);
+        println!("~{}", str);
     }
 
     /** SYS: Well this looks dumb, just take my word for it*/

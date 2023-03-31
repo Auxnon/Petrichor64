@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, rc::Rc};
 
-use glam::Vec4;
+use glam::{vec4, Vec4};
 
 use crate::{
     global::GuiParams,
@@ -8,11 +8,15 @@ use crate::{
     lua_define::LuaResponse,
     texture::{TexManager, TexTuple},
 };
-use image::{GenericImage, ImageBuffer, RgbaImage};
+use image::{
+    imageops::{crop_imm, overlay, ColorMap},
+    GenericImage, ImageBuffer, Rgba, RgbaImage,
+};
 use imageproc::drawing::{draw_filled_circle_mut, draw_filled_rect_mut};
 use wgpu::{BindGroup, Device, Queue, Sampler, Texture, TextureView};
 
 const LETTER_SIZE: u32 = 8;
+const NOTIF_WIDTH: u32 = 320;
 
 // pub enum GuiUnit {
 //     Percent(f32),
@@ -38,6 +42,8 @@ pub struct Gui {
     console: RgbaImage,
     /** skybox raster */
     sky: RgbaImage,
+    notif: RgbaImage,
+    raw: RgbaImage,
 
     time: f32,
     pub letters: RgbaImage,
@@ -48,7 +54,11 @@ pub struct Gui {
     dirty: bool,
     dirty_sky: bool,
     target_sky: bool,
-    output: bool,
+    /** output console to gui */
+    output_console: bool,
+    active_notifs: Vec<Notif>,
+    notifcations_enabled: bool,
+    notifications_dirty: bool,
     pub local_gui_params: GuiParams,
 }
 
@@ -120,15 +130,20 @@ impl Gui {
             sky: gui_image.clone(),
             dirty_sky: false,
             target_sky: false,
-            main: gui_image,
+            main: gui_image.clone(),
+            raw: gui_image,
+            notif: RgbaImage::new(NOTIF_WIDTH, 128),
             text: "".to_string(),
             letters,
             time: 0.,
             size: [d.0, d.1],
             dirty: true,
-            output: false,
+            output_console: false,
             console_background: image::Rgba([47, 47, 47, 255]),
             local_gui_params: GuiParams::new(),
+            active_notifs: vec![Notif::new("test1"), Notif::new("test2")],
+            notifcations_enabled: true,
+            notifications_dirty: true,
         }
     }
 
@@ -350,12 +365,12 @@ impl Gui {
 
     pub fn enable_console(&mut self, loggy: &Loggy) {
         self.text = loggy.get();
-        self.output = true;
+        self.output_console = true;
         self.apply_console_out_text();
     }
     pub fn disable_console(&mut self) {
         self.text = "".to_string();
-        self.output = false;
+        self.output_console = false;
         self.apply_console_out_text();
     }
     // pub fn overlay_image(&mut self, image: &RgbaImage) {
@@ -369,6 +384,7 @@ impl Gui {
             self.dirty_sky = true;
         } else {
             self.main = img;
+            self.process_notifications(false);
             self.dirty = true;
         }
     }
@@ -396,6 +412,12 @@ impl Gui {
         );
         self.sky = image::imageops::resize(
             &self.sky,
+            size.0,
+            size.1,
+            image::imageops::FilterType::Nearest,
+        );
+        self.raw = image::imageops::resize(
+            &self.raw,
             size.0,
             size.1,
             image::imageops::FilterType::Nearest,
@@ -436,16 +458,27 @@ impl Gui {
 
     pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
-        if loggy.is_dirty_and_listen() && self.output {
+        if loggy.is_dirty_and_listen() && self.output_console {
             self.text = loggy.get();
             self.apply_console_out_text();
             loggy.clean();
         }
+        self.process_notifications(false);
         if self.dirty {
-            let raster = if self.output {
+            let raster = if self.output_console {
                 &self.console
             } else {
                 &self.main
+            };
+
+            let final_raster = if self.notifications_dirty {
+                self.notifications_dirty = false;
+                image::imageops::replace(&mut self.raw, raster, 0, 0);
+                image::imageops::overlay(&mut self.raw, &self.notif, 0, 0);
+                &self.raw
+            } else {
+                // println!("not dirty");
+                raster
             };
             // println!(
             //     "raster size console {} {:?} stored size{:?}",
@@ -453,8 +486,9 @@ impl Gui {
             //     raster.dimensions(),
             //     self.size
             // );
-            crate::texture::write_tex(queue, &self.overlay_texture.texture, raster);
+            crate::texture::write_tex(queue, &self.overlay_texture.texture, &final_raster);
             self.dirty = false;
+        } else {
         }
         if self.dirty_sky {
             crate::texture::write_tex(queue, &self.sky_texture.texture, &self.sky);
@@ -471,6 +505,121 @@ impl Gui {
             RgbaImage::new(self.size[0], self.size[1]),
             self.size,
         )
+    }
+
+    pub fn process_notifications(&mut self, force: bool) {
+        let mut should = false;
+        if self.notifcations_enabled {
+            for n in self.active_notifs.iter_mut() {
+                if force || n.dest != n.position {
+                    if !should {
+                        self.notif = RgbaImage::new(NOTIF_WIDTH, 128);
+                        should = true;
+                    }
+                    n.position -= (n.position - n.dest) / 20;
+                    // if n.image.is_none() {
+                    //     n.render(&self.letters, self.size);
+                    // }
+
+                    // //guaranteed to be Some so unwrap ref
+                    // if let Some(im) = &n.image {
+                    //     image::imageops::replace(&mut self.notif, im, 0, n.position as i64);
+                    //     // image::imageops::overlay(&mut self.notif, im, 0, n.position as i64);
+                    // }
+
+                    direct_text_raw(
+                        &mut self.notif,
+                        &self.letters,
+                        self.size[0],
+                        self.size[1],
+                        &n.message,
+                        0,
+                        n.position,
+                        vec4(1., 1., 0., 1.),
+                    );
+
+                    // println!("notif pos {} dest {}", n.position, n.dest);
+                } else {
+                    println!("still");
+                }
+            }
+        }
+
+        if should {
+            self.dirty = true;
+            self.notifications_dirty = true;
+            // self.main.dr(&self.notif, 0, 0);
+        }
+        // self.mai
+    }
+
+    pub fn push_notif(&mut self, s: &str) {
+        let mut n = Notif::new(s);
+        n.position = -20;
+        self.active_notifs.push(n);
+        let len = self.active_notifs.len();
+        // remove first element if there are more than 5
+        if len > 5 {
+            self.active_notifs.remove(0);
+        }
+        self.active_notifs
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, no)| {
+                no.dest = ((len - i) * 10) as i32;
+            });
+        // for (i, no) in self.active_notifs.iter_mut().enumerate() {
+        //     if i > 2 {
+        //         no.expired = true;
+        //     }
+
+        // }
+        // if self.active_notifs.len() > 1 {
+        //     self.queued_notifs.push(n);
+        // } else {
+        //     self.active_notifs.push(n);
+        // }
+    }
+}
+
+struct Notif {
+    message: String,
+    lifetime: u16,
+    error: bool,
+    dest: i32,
+    position: i32,
+    expired: bool,
+    image: Option<RgbaImage>,
+}
+
+impl Notif {
+    pub fn new(s: &str) -> Notif {
+        Notif {
+            message: s.to_string(),
+            lifetime: 120,
+            error: false,
+            position: 0,
+            dest: 0,
+            expired: false,
+            image: None,
+        }
+    }
+    pub fn render(&mut self, letters: &RgbaImage, size: [u32; 2]) {
+        println!("rendering notif: {}", self.message);
+        let mut img = RgbaImage::new(NOTIF_WIDTH, 64);
+        let count = direct_text_raw(
+            &mut img,
+            &letters,
+            size[0],
+            size[1],
+            &self.message,
+            0,
+            0,
+            vec4(1., 1., 0., 1.),
+        );
+        // println!("count {}", count);
+        crop_imm(&mut img, 0, 0, NOTIF_WIDTH, count * 16);
+        self.image = Some(img);
     }
 }
 
@@ -552,7 +701,7 @@ impl GuiMorsel {
             x,
             y,
             c,
-        )
+        );
     }
 
     pub fn pixel(&mut self, x: u32, y: u32, rgb: Vec4) {
@@ -850,6 +999,7 @@ pub fn direct_line(
     );
 }
 
+/** evaluate position with GuiUnits then draw letters over image. Returns the line count */
 pub fn direct_text(
     target: &mut RgbaImage,
     letters: &Rc<RgbaImage>,
@@ -859,10 +1009,32 @@ pub fn direct_text(
     x: LuaResponse,
     y: LuaResponse,
     c: Vec4,
-) {
+) -> u32 {
     let xx = eval(x, width);
     let yy = eval(y, height);
+    direct_text_raw(target, letters.borrow(), width, height, txt, xx, yy, c)
+}
 
+/** Even rawer! Just hand us the i32 positions. Returns the line count */
+pub fn direct_text_raw(
+    target: &mut RgbaImage,
+    letters: &RgbaImage,
+    width: u32,
+    height: u32,
+    txt: &str,
+    xx: i32,
+    yy: i32,
+    color: Vec4,
+) -> u32 {
+    let map = TextMap {
+        new_color: image::Rgba([
+            (color.x * 255.) as u8,
+            (color.y * 255.) as u8,
+            (color.z * 255.) as u8,
+            (color.w * 255.) as u8,
+        ]),
+    };
+    let mut count: u32 = 0;
     for (i, line) in txt.lines().enumerate() {
         let ly = yy + i as i32 * (LETTER_SIZE as i32 + 2);
         let mut lx = xx + (0) as i32;
@@ -874,18 +1046,40 @@ pub fn direct_text(
             let index_x = ind % 16;
             let index_y = ind / 16;
             let sub: image::SubImage<&RgbaImage> = image::imageops::crop_imm(
-                letters.borrow(),
+                letters,
                 index_x * LETTER_SIZE,
                 index_y * LETTER_SIZE,
                 LETTER_SIZE,
                 LETTER_SIZE,
             );
-            image::imageops::overlay(target, &mut sub.to_image(), lx.into(), ly.into());
-            lx += (LETTER_SIZE + 1) as i32;
+            // change color of sub to red
+            let mut im = sub.to_image();
+            // image::imageops::colorops::index_colors(image, color_map)
+            // subi.pixels().for_each(|p| {
+            //     let mut p = p.0;
+            //     p[0] = (c.x * 255.) as u8;
+            //     p[1] = (c.y * 255.) as u8;
+            //     p[2] = (c.z * 255.) as u8;
+            //     p[3] = (c.w * 255.) as u8;
+            // });
+            // image::imageops::colorops::rep lace(&mut subi, c.into());
+            // let mut indices: RgbaImage = ImageBuffer::new(im.width(), im.height());
+            for pixel in im.pixels_mut() {
+                map.map_color(pixel);
+                //*idx = Luma(
+            }
+
+            // let r: RgbaImage = image::imageops::colorops::index_colors(&mut subi, &map);
+
+            image::imageops::overlay(target, &im, lx.into(), ly.into());
+            lx += (LETTER_SIZE + 0) as i32;
         }
+        count += 1;
     }
+    count
 }
 
+/** Directly draw pixel to image position */
 pub fn direct_pixel(
     target: &mut RgbaImage,
     x: u32,
@@ -904,6 +1098,7 @@ pub fn direct_pixel(
     ];
 }
 
+/** Directly draw image to image using GuiUnits for position. Uses source image dimensions */
 pub fn direct_image(
     target: &mut RgbaImage,
     source: &RgbaImage,
@@ -930,4 +1125,22 @@ pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4) {
         imageproc::rect::Rect::at(0, 0).of_size(width, height),
         color,
     );
+}
+
+struct TextMap {
+    new_color: Rgba<u8>,
+}
+impl ColorMap for TextMap {
+    fn index_of(&self, color: &Self::Color) -> usize {
+        // color.
+        todo!()
+    }
+
+    fn map_color(&self, color: &mut Self::Color) {
+        if color.0[3] > 0 {
+            *color = self.new_color;
+        }
+    }
+
+    type Color = Rgba<u8>;
 }

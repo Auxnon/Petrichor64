@@ -9,6 +9,7 @@ use crate::{
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
+use itertools::Itertools;
 use mlua::{
     prelude::LuaError,
     Lua,
@@ -422,18 +423,18 @@ fn start(
                     //=== async functions error handler will debounce since we deal with rapid event looping ===
                     match res {
                         Err(e) => {
-                            debounce_error_string = format!("{}", e);
+                            debounce_error_string = formatError(e);
                             debounce_error_counter += 1;
                             if debounce_error_counter >= 60 {
                                 debounce_error_counter = 0;
-                                match lua_ctx.inspect_stack(1) {
-                                    Some(d) => {
-                                        // d.names().name
-                                        println!("stack {:?}", d.stack());
-                                        println!("er line is {}", d.curr_line());
-                                    }
-                                    _ => {}
-                                };
+                                // match lua_ctx.inspect_stack(1) {
+                                //     Some(d) => {
+                                //         // d.names().name
+                                //         println!("stack {:?}", d.stack());
+                                //         println!("er line is {}", d.curr_line());
+                                //     }
+                                //     _ => {}
+                                // };
                                 async_sender.send((
                                     bundle_id,
                                     crate::MainCommmand::AsyncError(debounce_error_string),
@@ -775,4 +776,31 @@ fn start(
         }
     });
     (sender, thread_join)
+}
+
+fn formatError(e: mlua::Error) -> String {
+    // e.provide(demand)
+    let s = e.to_string();
+    s.split("\n")
+        .filter_map(|p| {
+            if let Some((_, trace)) = p.split_once("]") {
+                if trace.len() > 0 {
+                    let parts: Vec<&str> = trace.split(":").collect();
+                    let plen = parts.len();
+                    if plen > 2 {
+                        let code = parts.get(1).unwrap();
+                        let mes = parts.get(2).unwrap();
+
+                        return Some(code.to_string() + &mes.replace("function", "fn"));
+                    } else if plen == 1 {
+                        return Some("?".to_owned() + parts[0]);
+                    } else {
+                        return Some("?".to_owned());
+                    }
+                    // return Some(trace);
+                }
+            }
+            None
+        })
+        .join(" >")
 }

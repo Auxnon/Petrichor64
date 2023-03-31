@@ -851,16 +851,9 @@ impl Core {
                     }
                 }
                 MainCommmand::AsyncError(e) => {
-                    let ee = e
-                        .split_inclusive(|c| c == '[' || c == ']')
-                        .enumerate()
-                        .filter(|(i, s)| i % 2 == 0)
-                        .map(|x| x.1)
-                        .join("...]");
-                    let s = format!("async error: {}", ee);
-                    // println!("{}", s);
+                    let s = format!("!!{}", e);
+                    self.gui.push_notif(&s);
                     self.loggy.log(LogType::LuaError, &s);
-                    // crate::log::log(s);
                 }
                 MainCommmand::BundleDropped(b) => {
                     completed_bundles.remove(&id);
