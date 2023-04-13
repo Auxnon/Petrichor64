@@ -17,8 +17,9 @@ use crate::{
     Core,
 };
 
+// 2.1.0 Avocado
 pub fn get_codex_version_string() -> String {
-    "-- Codex 2.1.0 \"Avocado\"".to_owned()
+    "-- Codex 3.0.0 \"Artichoke\"".to_owned()
 }
 
 pub fn pack(
@@ -399,12 +400,10 @@ pub fn make_directory(
         scripts.join("main.lua"),
         get_codex_version_string()
             + "
-example = spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
-sky()
-fill('FF5')
-gui()
+example = make('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
+sky:fill('FF5')
 function main()
-    log('main runs once everything has loaded')
+    cout 'main runs once everything has loaded'
 end
 function loop()
     example.x = example.x + rnd() * 0.1 - 0.05
@@ -853,6 +852,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
     let mut s = get_codex_version_string()
         + "
 ---@diagnostic disable: duplicate-doc-field, missing-return
+---@meta
 
 ---@class mouse
 ---@field x number
@@ -911,23 +911,32 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field id integer assigned by engine, killable
 --- @field tex string texture asset
 --- @field asset string model or blocked texture asset
---- @field anim fun(animation:string,force?:boolean) change animation, force marks change even if already playing
---- @field kill fun() destroy entity
+--- @field anim fun(self:entity,animation:string,force?:boolean) change animation, force marks change even if already playing
+--- @field kill fun(self:entity) destroy entity
 
 --- @alias gunit number | integer | string
 --- @alias rgb number[] | integer[] | string
 
 --- @class image
---- @field line fun(x:gunit, y:gunit, x2:gunit, y2:gunit, rgb?:rgb) draw line on image
---- @field rect fun(x:gunit, y:gunit, w:gunit, h:gunit, rgb?:rgb) draw rectangle on image
---- @field rrect fun(x:gunit, y:gunit, w:gunit, h:gunit,ro:gunit, rgb?:rgb) draw rounded rectangle on image
+--- @field line fun(self:image, x:gunit, y:gunit, x2:gunit, y2:gunit, rgb?:rgb) draw line on image
+--- @field rect fun(self:image, x:gunit, y:gunit, w:gunit, h:gunit, rgb?:rgb) draw rectangle on image
+--- @field rrect fun(self:image ,x:gunit, y:gunit, w:gunit, h:gunit,ro:gunit, rgb?:rgb) draw rounded rectangle on image
 --- @field text fun(txt:string, x?:gunit, y?:gunit, rgb?:rgb) draw text on image
---- @field img fun(im:image, x?:gunit, y?:gunit) draw another image on image
---- @field pixel fun(x:integer, y:integer,rgb?:rgb) draw pixel directly on image
---- @field clr fun() clear image
---- @field fill fun(rgb?:rgb) fill image with color
---- @field raw fun():integer[] image return raw pixel data
---- @field copy fun():image clones to new image
+--- @field img fun(self:image, im:image, x?:gunit, y?:gunit) draw another image on image
+--- @field pixel fun(self:image, x:integer, y:integer,rgb?:rgb) draw pixel directly on image
+--- @field clr fun(self:image) clear image
+--- @field fill fun(self:image, rgb?:rgb) fill image with color
+--- @field raw fun(self:image):integer[] image return raw pixel data
+--- @field copy fun(self:image):image clones to new image
+
+--- @type number ~3.1457
+pi = nil
+--- @type number ~6.2914
+tau = nil
+--- @type image image raster for the front screen
+gui = nil
+--- @type image image raster for the back screen or 'sky'
+sky = nil
 
 ";
     for (name, (desc, examp)) in command_map {

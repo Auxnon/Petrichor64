@@ -209,9 +209,10 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
             }
         }
         "ugh" => {
-            // TODO ugh?
+            core.loggy.log(LogType::Sys, "heh, ya");
         }
         "clear" => core.loggy.clear(),
+        "cls" => core.loggy.clear(),
         "test" => {
             core.loggy.log(LogType::Config, "that test worked, yipee");
         }
@@ -380,9 +381,10 @@ pub fn init_lua_sys(
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
 
-    // lua_globals.set("_ents", lua_ctx.create_table()?);
     lua_globals.set("pi", std::f64::consts::PI);
     lua_globals.set("tau", std::f64::consts::PI * 2.0);
+    lua_globals.set("gui", main_rast);
+    lua_globals.set("sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -392,41 +394,30 @@ pub fn init_lua_sys(
     #[macro_export]
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr,$exam:expr) => {
+            #[cfg(debug_assertions)]
+            {
+                let _f = include_bytes!(concat!("../guide/", $name, ".md"));
+                // read to string
+                // let st = std::str::from_utf8(f).unwrap();
+                // let ar = st.split("```").collect::<Vec<&str>>();
+                // if ar.len() > 2 {
+                //     let s = ar[1].to_string();
+                //     let exam = s.trim();
+                //     assert_eq!(exam, $exam);
+                // }
+            }
             command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
             res(
                 $name,
                 lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
                 &loggy,
             );
-
-            // fn $func_name() {
-            //     // The `stringify!` macro converts an `ident` into a string.
-            //     println!("You called {:?}()",
-            //              stringify!($func_name));
-            // }
         };
     }
-    // DEV todo
-    // lua!("time", |_, (): ()| Ok(17), "Get the time.");
-
-    // lua!(
-    //     "point",
-    //     |_, (): ()| {
-    //         // let mut mutex = crate::ent_master.lock();
-    //         // let entity_manager = mutex.get_mut().unwrap();
-    //         // if entity_manager.entities.len() > 0 {
-    //         //     let p = entity_manager.entities[0].pos;
-    //         //     Ok((p.x, p.y, p.z))
-    //         // } else {
-    //         Ok((0., 0., 0.))
-    //         // }
-    //     },
-    //     "Get a point"
-    // );
 
     let aux_loggy = loggy.clone();
     lua!(
-        "log",
+        "cout",
         move |_, s: String| {
             aux_loggy.send((LogType::Lua, s));
             Ok(())
@@ -434,79 +425,13 @@ pub fn init_lua_sys(
         "Prints string to console",
         "
 ---@param message string
-function log(message) end"
+function cout(message) end"
     );
-
-    // lua!(
-    //     "push",
-    //     move |_, n: f64| {
-    //         // let ents = lua.globals().get::<&str, Table>("_ents")?;
-    //         // ents.macro_export
-
-    //         let mut guard = crate::ent_master.write();
-    //         let eman = guard.get_mut().unwrap();
-
-    //         let ents = &eman.ent_table;
-    //         for wrapped_ent in &mut ents.iter() {
-    //             let mut eg = wrapped_ent.lock().unwrap();
-    //             eg.x += n;
-    //         }
-
-    //         Ok(())
-    //     },
-    //     "Pushes entities"
-    // );
-
-    // let switch = Arc::clone(&switch_board);
-
-    let pitcher = main_pitcher.clone();
-    // lua!(
-    //     "cube",
-    //     move |_,
-    //           (name, t, w, n, e, s, b): (
-    //         String,
-    //         String,
-    //         Option<String>,
-    //         Option<String>,
-    //         Option<String>,
-    //         Option<String>,
-    //         Option<String>
-    //     )| {
-    //         // let mutex = &mut switch.write();
-    //         let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
-    //         // println!("this far-1");
-
-    //         // match rx.recv() {
-    //         //     Ok(_) => {}
-    //         //     Err(_) => {}
-    //         // }
-    //         // mutex.make_queue.push(vec![name, t, b, e, w, s, n]);
-    //         // mutex.dirty = true;
-    //         // drop(mutex);
-
-    //         // while (match switch.try_read() {
-    //         //     Some(r) => r.dirty,
-    //         //     None => true,
-    //         // }) {
-    //         //     // println!("waiting for make_queue to empty");
-    //         //     // std::thread::sleep(std::time::Duration::from_millis(10));
-    //         // }
-    //         // println!("MAKE {:?}", mutex.make_queue);
-    //         // crate::model::edit_cube(name, [t, e, n, w, s, b]);
-    //         // let mut mutex = &mut switch.write();
-    //         // mutex.tile_queue.push((t, vec4(0., x, y, z)));
-    //         Ok(1)
-    //     },
-    //     "Create a new cube model based on 6 textures"
-    // );
 
     let sender = world_sender.clone();
     lua!(
         "tile",
         move |_, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
-            // core.world.set_tile(format!("grid"), 0, 0, 16 * 0);
-            // let mut mutex = &mut switch.write();
-            // mutex.tile_queue.push((t, vec4(0., x, y, z)));
             let tile = match t {
                 Value::String(s) => s.to_str().unwrap_or("").to_string(),
                 _ => "".to_string(),
@@ -531,33 +456,20 @@ function tile(asset, x, y, z, rot) end"
 
     let sender = world_sender.clone();
     lua!(
-        "dchunk",
-        move |_, (x, y, z): (i32, i32, i32)| {
-            // let mutex = &mut switch.write();
-            // mutex.dirty = true;
-            World::drop_chunk(&sender, x, y, z);
+        "dtile",
+        move |_, (x, y, z): (Option<i32>, Option<i32>, Option<i32>)| {
+            match (x, y, z) {
+                (xx,yy,zz) => World::drop_chunk(&sender, xx.unwrap_or(0), yy.unwrap_or(0), zz.unwrap_or(0)),
+                (None,None,None) => World::clear_tiles(&sender),
+            }
             Ok(1)
         },
-        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes",
+        "Crude deletion of a 16x16x16 chunk. Extremely efficient for large area tile changes. Not including arguments delete all tiles.",
         "
----@param x integer
----@param y integer
----@param z integer
-function dchunk( x, y, z) end"
-    );
-
-    let sender = world_sender.clone();
-    lua!(
-        "dtiles",
-        move |_, (): ()| {
-            // let mutex = &mut switch.write();
-            // mutex.dirty = true;
-            World::clear_tiles(&sender);
-            Ok(1)
-        },
-        "Remove all tiles from the world",
-        "
-function dtiles() end"
+---@param x? integer
+---@param y? integer
+---@param z? integer
+function dtile( x, y, z) end"
     );
 
     // MARK
@@ -653,7 +565,7 @@ function key(key, volatile) end"
     );
 
     lua!(
-        "input",
+        "cin",
         move |_, _: ()| {
             let h: String = diff_keys
                 .borrow()
@@ -662,19 +574,16 @@ function key(key, volatile) end"
                 .filter_map(|(i, k)| if *k { key_unmatch(i) } else { None })
                 .collect();
 
-            // .filter(|(k, v)| **v)
-            // .map(|(k, v)| char::from_u32((87 + k) as u32).unwrap())
-            // .join("");
             Ok(h)
         },
         "Get a string of all keys pressed",
         "   
 ---@return string
-function input() end"
+function cin() end"
     );
 
     lua!(
-        "mouse",
+        "mus",
         move |lu, (): ()| {
             let t = lu.create_table()?;
             let m = mice.borrow();
@@ -700,33 +609,33 @@ function input() end"
         " Get mouse position, delta, button states, and unprojected vector",
         "
 ---@return mouse
-function mouse() end"
+function mus() end"
     );
 
     let gam = Rc::clone(&gamepad);
     lua!(
-        "button",
+        "btn",
         move |_, button: String| { Ok(gam.borrow().check(button) != 0.) },
         "Check if gamepad button is held down",
         "
 ---@param button string
 ---@return boolean
-function button(button) end"
+function btn(button) end"
     );
 
     lua!(
-        "analog",
+        "abtn",
         move |_, button: String| { Ok(gamepad.borrow().check(button)) },
         "Check how much a gamepad is pressed, axis gives value between -1 and 1",
         "
 ---@param button string
 ---@return number
-function analog(button) end"
+function abtn(button) end"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "spawn",
+        "make",
         move |lua, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
             // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
             let id = *ent_counter.lock();
@@ -756,11 +665,11 @@ function analog(button) end"
 ---@param z number
 ---@param scale number?
 ---@return entity
-function spawn(asset, x, y, z, scale) end"
+function make(asset, x, y, z, scale) end"
     );
     let pitcher = main_pitcher.clone();
     lua!(
-        "group",
+        "lot",
         move |_, (parent,child ): (Arc<std::sync::Mutex<LuaEnt>>,Arc<std::sync::Mutex<LuaEnt>>)| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
             let parentId=parent.lock().unwrap().get_id();
@@ -782,7 +691,7 @@ function spawn(asset, x, y, z, scale) end"
         "
 ---@param parent entity
 ---@param child entity
-function group(parent, child) end"
+function lot(parent, child) end"
     );
 
     lua!(
@@ -801,7 +710,7 @@ function kill(ent) end"
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "reload",
+        "init",
         move |_, (): ()| {
             // println!("hit reset");
             match pitcher.send((bundle_id, MainCommmand::Reload())) {
@@ -810,7 +719,7 @@ function kill(ent) end"
             }
             Ok(())
         },
-        "Reset lua context",
+        "Resets lua context and reloads all assets and scripts fresh",
         "
 function reload() end"
     );
@@ -877,7 +786,7 @@ function cam(params) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
-        "sound",
+        "note",
         move |_, (freq, length): (f32, Option<f32>)| {
             #[cfg(feature = "audio")]
             {
@@ -889,7 +798,7 @@ function cam(params) end"
             }
             Ok(())
         },
-        "Make sound",
+        "Make a sound or note",
         "
 ---@param freq number
 ---@param length number?
@@ -938,7 +847,7 @@ function song(notes) end"
 
     let sing = singer.clone();
     lua!(
-        "silence",
+        "mute",
         move |_, (channel): (Option<usize>)| {
             #[cfg(feature = "audio")]
             sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
@@ -948,7 +857,7 @@ function song(notes) end"
         "Stop sounds on channel",
         "
 ---@param channel number
-function silence(channel) end"
+function mute(channel) end"
     );
 
     lua!(
@@ -973,253 +882,187 @@ function silence(channel) end"
 function instr(freqs, half) end"
     );
 
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "fill",
+    //         move |_, rgb: mlua::Value| {
+    //             let c = get_color(rgb);
+    //             gui.borrow_mut().fill(c);
+    //             Ok(1)
+    //         },
+    //         "Set background color of raster",
+    //         "
+    // ---@param rgb number[] | string rgba number array or hex string
+    // function fill(rgb) end"
+    //     );
+
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "pixel",
+    //         move |_, (x, y, rgb): (u32, u32, mlua::Value,)| {
+    //             let c = get_color(rgb);
+    //             gui.borrow_mut().pixel(x, y, c);
+    //             Ok(1)
+    //         },
+    //         "Set color of pixel at x,y",
+    //         "
+    // ---@param x integer
+    // ---@param y integer
+    // ---@param rgb number[] | string rgba number array or hex string
+    // function pixel(x, y, rgb) end"
+    //     );
+
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "sky",
+    //         move |_, (): ()| {
+    //             gui.borrow_mut().target_sky();
+    //             Ok(())
+    //         },
+    //         "Set skybox as draw target",
+    //         "
+    // function sky() end"
+    //     );
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "gui",
+    //         move |_, (): ()| {
+    //             gui.borrow_mut().target_gui();
+    //             Ok(())
+    //         },
+    //         "Set front screen (gui) as draw target",
+    //         "
+    // function gui() end"
+    //     );
+
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "rect",
+    //         move |_, (x, y, w, h, rgb): (Value, Value, Value, Value, Value,)| {
+    //             let c = get_color(rgb);
+    //             gui.borrow_mut()
+    //                 .rect(num(x), num(y), num(w), num(h), c, None);
+    //             Ok(())
+    //         },
+    //         "Draw a rectangle on the draw target",
+    //         "
+    // ---@param x number
+    // ---@param y number
+    // ---@param w number
+    // ---@param h number
+    // ---@param rgb number[] | string? rgba number array or hex string
+    // function rect(x, y, w, h, rgb) end"
+    //     );
+
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "rrect",
+    //         move |_, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value,)| {
+    //             let c = get_color(rgb);
+    //             gui.borrow_mut()
+    //                 .rect(num(x), num(y), num(w), num(h), c, Some(num(ro)));
+    //             Ok(())
+    //         },
+    //         "Draw a rounded rectangle on the draw target",
+    //         "
+    // ---@param x number
+    // ---@param y number
+    // ---@param w number
+    // ---@param h number
+    // ---@param ro number radius of corners
+    // ---@param rgb number[] | string? rgba number array or hex string
+    // function rrect(x, y, w, h, ro, rgb) end"
+    //     );
+
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "line",
+    //         move |_, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Option<Value>,)| {
+    //             let color = match rgb {
+    //                 Some(rgba) => get_color(rgba),
+    //                 None => vec4(1., 1., 1., 1.),
+    //             };
+    //             gui.borrow_mut()
+    //                 .line(num(x), num(y), num(x2), num(y2), color);
+
+    //             Ok(())
+    //         },
+    //         "Draw a line on the draw target",
+    //         "
+    // ---@param x number
+    // ---@param y number
+    // ---@param x2 number
+    // ---@param y2 number
+    // ---@param rgb number[] | string? rgba number array or hex string
+    // function line(x, y, x2, y2, rgb) end"
+    //     );
+
+    // let gui = gui_in.clone();
     // lua!(
-    //     "bg",
-    //     move |_, (x, y, z, w): (mlua::Value, Option<f32>, Option<f32>, Option<f32>)| { Ok(1) },
-    //     ""
-    // );
-
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "fill",
-        move |_, rgb: mlua::Value| {
-            // pitcher.send((bundle_id, MainCommmand::Fill(get_color(r, g, b, a))));
-            let c = get_color(rgb);
-            gui.borrow_mut().fill(c);
-            Ok(1)
-        },
-        "Set background color of raster",
-        "   
----@param rgb number[] | string rgba number array or hex string
-function fill(rgb) end"
-    );
-
-    let gui = gui_in.clone();
-    lua!(
-        "pixel",
-        move |_, (x, y, rgb): (u32, u32, mlua::Value,)| {
-            let c = get_color(rgb);
-            gui.borrow_mut().pixel(x, y, c);
-            // pitcher.send((bundle_id, MainCommmand::Pixel(x, y, get_color(r, g, b, a))));
-            Ok(1)
-        },
-        "Set color of pixel at x,y",
-        "
----@param x integer 
----@param y integer
----@param rgb number[] | string rgba number array or hex string
-function pixel(x, y, rgb) end"
-    );
-
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "sky",
-        move |_, (): ()| {
-            // pitcher.send((bundle_id, MainCommmand::Sky()));
-            gui.borrow_mut().target_sky();
-            Ok(())
-        },
-        "Set skybox as draw target",
-        "   
-function sky() end"
-    );
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "gui",
-        move |_, (): ()| {
-            // pitcher.send((bundle_id, MainCommmand::Gui()));
-            gui.borrow_mut().target_gui();
-            Ok(())
-        },
-        "Set front screen (gui) as draw target",
-        "
-function gui() end"
-    );
-
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "rect",
-        move |_, (x, y, w, h, rgb): (Value, Value, Value, Value, Value,)| {
-            let c = get_color(rgb);
-            gui.borrow_mut()
-                .rect(num(x), num(y), num(w), num(h), c, None);
-            Ok(())
-        },
-        "Draw a rectangle on the draw target",
-        "
----@param x number
----@param y number
----@param w number
----@param h number
----@param rgb number[] | string? rgba number array or hex string
-function rect(x, y, w, h, rgb) end"
-    );
-
-    let gui = gui_in.clone();
-    lua!(
-        "rrect",
-        move |_, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value,)| {
-            let c = get_color(rgb);
-            gui.borrow_mut()
-                .rect(num(x), num(y), num(w), num(h), c, Some(num(ro)));
-            Ok(())
-        },
-        "Draw a rounded rectangle on the draw target",
-        "   
----@param x number
----@param y number
----@param w number
----@param h number
----@param ro number radius of corners
----@param rgb number[] | string? rgba number array or hex string
-function rrect(x, y, w, h, ro, rgb) end"
-    );
-
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "line",
-        move |_, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Option<Value>,)| {
-            let color = match rgb {
-                Some(rgba) => get_color(rgba),
-                None => vec4(1., 1., 1., 1.),
-            };
-            gui.borrow_mut()
-                .line(num(x), num(y), num(x2), num(y2), color);
-
-            Ok(())
-        },
-        "Draw a line on the draw target",
-        "
----@param x number
----@param y number  
----@param x2 number
----@param y2 number
----@param rgb number[] | string? rgba number array or hex string
-function line(x, y, x2, y2, rgb) end"
-    );
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "text",
-        move |_,
-              (txt, x, y, rgb, typeset): (
-            String,
-            Option<Value>,
-            Option<Value>,
-            Option<Value>,
-            Option<Value>
-        )| {
-            let color = match rgb {
-                Some(rgba) => get_color(rgba),
-                None => vec4(1., 1., 1., 1.),
-            };
-            let font = match typeset {
-                Some(t) => match t {
-                    Value::String(s) => match s.to_str() {
-                        Ok(ss) => Some(ss.to_string()),
-                        _ => None,
-                    },
-                    Value::Integer(i) => match i {
-                        8 => Some("8".to_string()),
-                        _ => None,
-                    },
-                    _ => None,
-                },
-                _ => None,
-            };
-            gui.borrow_mut().text(&txt, numop(x), numop(y), color);
-
-            Ok(())
-        },
-        "Draw text on the gui at position",
-        "
----@param txt string
----@param x number
----@param y number
----@param rgb number[] | string? rgba number array or hex string
----@param typeset string? font name or size 
-function text(txt, x, y, rgb, typeset) end"
-    );
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "img",
-        move |_, (im, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
-            // println!("got image {}x{} w len {}", w, h, len);
-            // if let Value::UserData(imm) = im {
-
-            if let Ok(limg) = im.borrow::<LuaImg>() {
-                gui.borrow_mut().draw_image(&limg.image, numop(x), numop(y));
-            };
-
-            // match im {
-            //     mlua::Value::UserData(imm) => {
-            //         if let Ok(limg) = imm.borrow::<LuaImg>() {
-            //             gui.borrow_mut().draw_image(
-            //                 &limg.image,
-            //                 match x {
-            //                     Some(o) => numm(o),
-            //                     _ => (false, 0.),
+    //     "text",
+    //     move |_,
+    //           (txt, x, y, rgb, typeset): (
+    //         String,
+    //         Option<Value>,
+    //         Option<Value>,
+    //         Option<Value>,
+    //         Option<Value>
+    //     )| {
+    //         let color = match rgb {
+    //             Some(rgba) => get_color(rgba),
+    //             None => vec4(1., 1., 1., 1.),
+    //         };
+    //         let font = match typeset {
+    //             Some(t) => match t {
+    //                 Value::String(s) => match s.to_str() {
+    //                     Ok(ss) => Some(ss.to_string()),
+    //                     _ => None,
             //                 },
-            //                 match y {
-            //                     Some(o) => numm(o),
-            //                     _ => (false, 0.),
+    //                 Value::Integer(i) => match i {
+    //                     8 => Some("8".to_string()),
+    //                         _ => None,
+    //                     },
+    //                     _ => None,
             //                 },
-            //             );
-            //         };
-            //     }
-            //     // TODO should we shortcut calling by string?
-            //     // mlua::Value::String(s) => {
-            //     //     lu.call_function::<_, ()>("gimg", (s,))?;
-            //     // }
-            //     _ => {}
-            // }
+    //                 _ => None,
+    //             };
+    //             gui.borrow_mut().text(&txt, numop(x), numop(y), color);
 
-            // };
+    //             Ok(())
+    //         },
+    //         "Draw text on the gui at position",
+    //         "
+    // ---@param txt string
+    // ---@param x number
+    // ---@param y number
+    // ---@param rgb number[] | string? rgba number array or hex string
+    // ---@param typeset string? font name or size
+    // function text(txt, x, y, rgb, typeset) end"
+    //     );
 
-            // if let Ok(img) = im.get::<_, Vec<u8>>("data") {
-            // v    if let Ok(w) = im.get::<_, u32>("w") {
-            //         if let Ok(h) = im.get::<_, u32>("h") {
-            //             let len = img.len();
-            //             if let Some(rgba) = RgbaImage::from_raw(w, h, img) {
-            //                 // println!("got image {}x{} w len {}", w, h, len);
-            //                 gui.borrow_mut().draw_image(
-            //                     &rgba,
-            //                     match x {
-            //                         Some(o) => numm(o),
-            //                         _ => (false, 0.),
-            //                     },
-            //                     match y {
-            //                         Some(o) => numm(o),
-            //                         _ => (false, 0.),
-            //                     },
-            //                 );
-            //             }
-            //         }
-            //     }
-            // }
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "img",
+    //         move |_, (im, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
 
-            Ok(())
-        },
-        "Draw image on the gui at position",
-        "
----@param im image  
----@param x number?  
----@param y number?
-function img(im, x, y) end"
-    );
+    //             if let Ok(limg) = im.borrow::<LuaImg>() {
+    //                 gui.borrow_mut().draw_image(&limg.image, numop(x), numop(y));
+    //             };
+
+    //             Ok(())
+    //         },
+    //         "Draw image on the gui at position",
+    //         "
+    // ---@param im image
+    // ---@param x number?
+    // ---@param y number?
+    // function img(im, x, y) end"
+    //     );
 
     let pitcher = main_pitcher.clone();
     lua!(
         "tex",
         move |_, (name, im): (String, AnyUserData)| {
-            // println!("got image {}x{} w len {}", w, h, len);
-            // if let Value::UserData(imm) = im {
             if let Ok(limg) = im.borrow::<LuaImg>() {
                 pitcher.send((bundle_id, MainCommmand::SetImg(name, limg.image.clone())));
             };
@@ -1278,7 +1121,7 @@ function nimg(w, h) end"
 
     let pitcher = main_pitcher.clone();
     lua!(
-            "model",
+            "mod",
             move |_, (name, t): (String, Table)| {
                 let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
 
@@ -1433,15 +1276,18 @@ function nimg(w, h) end"
 ---@param asset string
 ---@param t model_data
 ---@return string stating what mode the model was built in
-function model(asset, t) end"
+function mod(asset, t) end"
         );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "lmodel",
-        move |_, (model, bundle): (String, Option<u8>)| {
+        "gmod",
+        move |_, (model, bundle): (Option<String>, Option<u8>)| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(0);
-            pitcher.send((bundle_id, MainCommmand::ListModel(model, bundle, tx)));
+            pitcher.send((
+                bundle_id,
+                MainCommmand::ListModel(model.unwrap_or("".to_string()), bundle, tx),
+            ));
             match rx.recv() {
                 Ok(d) => Ok(d),
                 _ => Ok(vec![]),
@@ -1452,23 +1298,21 @@ function model(asset, t) end"
 ---@param model string  
 ---@param bundle integer?
 ---@return string[]
-function lmodel(model, bundle) end"
+function lmod(model, bundle) end"
     );
 
-    // let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
-    lua!(
-        "clr",
-        move |_, _: ()| {
-            // pitcher.send((bundle_id, MainCommmand::Clear()));
-            gui.borrow_mut().clean();
-            Ok(())
-        },
-        "Clear the draw target",
-        "
-function clr() end"
-    );
-    // let pitcher = main_pitcher.clone();
+    //     let gui = gui_in.clone();
+    //     lua!(
+    //         "clr",
+    //         move |_, _: ()| {
+    //             gui.borrow_mut().clean();
+    //             Ok(())
+    //         },
+    //         "Clear the draw target",
+    //         "
+    // function clr() end"
+    //     );
+
     // lua!(
     //     "cam",
     //     move |_, (x, y, z, rx, ry, rz, fov, near, far): (f32, f32, f32, f32, f32, f32, f32, f32, f32)| {
@@ -1577,9 +1421,29 @@ function sin(f) end"
 function sqrt(f) end"
     );
 
+    lua!(
+        "pow",
+        move |_, (f, e): (f32, f32)| { Ok(f.powf(e)) },
+        "Squareroot value",
+        "
+---@param f number target
+---@param e number raise by
+---@return number
+function pow(f,e) end"
+    );
+    lua!(
+        "log",
+        move |_, f: f32| { Ok(f.log10()) },
+        "Base 10 logarithm of the value",
+        "
+---@param f number target
+---@return number
+function log(f) end"
+    );
+
     let pitcher = main_pitcher.clone();
     lua!(
-        "subload",
+        "sub",
         move |_, str: String| {
             pitcher.send((bundle_id, MainCommmand::Subload(str, false)));
             Ok(())
@@ -1587,12 +1451,12 @@ function sqrt(f) end"
         "Load a sub bundle",
         "
 ---@param str string
-function subload(str) end"
+function sub(str) end"
     );
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "overload",
+        "over",
         move |_, str: String| {
             pitcher.send((bundle_id, MainCommmand::Subload(str, true)));
             Ok(())
@@ -1600,7 +1464,7 @@ function subload(str) end"
         "load an overlaying bundle",
         "   
 ---@param str string
-function overload(str) end"
+function over(str) end"
     );
 
     lua!(
@@ -1670,7 +1534,20 @@ function help() end"
     );
 
     lua_ctx
-        .load("add=table.insert del=table.remove print=log")
+        .load(
+            "
+        add=table.insert 
+        del=table.remove 
+        print=cout 
+        fill = function(...) gui:fill(...) end
+        rect = function(...) gui:rect(...) end
+        rrect = function(...) gui:rrect(...) end
+        line = function(...) gui:line(...) end
+        text = function(...) gui:text(...) end
+        img = function(...) gui:img(...) end
+        clr = function(...) gui:clr(...) end
+        ",
+        )
         .exec()?;
 
     Ok(())
@@ -2221,18 +2098,9 @@ pub fn key_unmatch(u: usize) -> Option<char> {
 /** A tuple indicating if it's to be treated as an integer (true,val), or as a float percent (false,val)*/
 pub type NumCouple = (bool, f32);
 pub enum MainCommmand {
-    // Sky(),
-    // Gui(),
-    // Fill(glam::Vec4),
-    // Line(NumCouple, NumCouple, NumCouple, NumCouple, Vec4),
-    // Rect(NumCouple, NumCouple, NumCouple, NumCouple, Vec4),
-    // Text(String, NumCouple, NumCouple),
-    DrawImg(String, LuaResponse, LuaResponse),
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage),
-    Pixel(u32, u32, glam::Vec4),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
-    Clear(),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
@@ -2259,7 +2127,7 @@ pub enum MainCommmand {
     Null(),
     Stats(),
     //for testing
-    Meta(usize),
+    Meta(crate::gui::ScreenIndex),
     Quit(u8),
 }
 
