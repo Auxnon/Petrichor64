@@ -11,13 +11,6 @@ pub struct Loggy {
     receiver: Receiver<(LogType, String)>,
     current_length: usize,
     buffer_dimensions: (usize, usize),
-    // queue: Vec<String>,
-    // static ref BUFFER: Mutex<Vec<String>> = Mutex::new(vec![]);
-    // static ref log_dirty: Mutex<bool> = Mutex::new(false);
-    // static ref HISTORY_BUFFER: Mutex<Vec<String>> = Mutex::new(vec!["".to_string()]);
-    // static ref HISTORY_IT: Mutex<usize> = Mutex::new(0);
-    // static ref OFFSET: Mutex<f32> = Mutex::new(0.);
-    // static ref current_line: Mutex<String> = Mutex::new(String::new());
 }
 
 pub enum LogType {
@@ -38,7 +31,7 @@ pub enum LogType {
     Model,
     ModelError,
     CoreError,
-    Print,
+    Sys,
     Debug,
 }
 
@@ -70,12 +63,6 @@ impl Loggy {
 
         self.log_dirty = true;
     }
-
-    /** USER: adds a new line */
-    // pub fn next_line() {
-    //     BUFFER.lock().push("".to_string());
-    //     *log_dirty.lock() = true;
-    // }
 
     /** USER: clear terminal */
     pub fn clear(&mut self) {
@@ -234,7 +221,6 @@ impl Loggy {
     }
 
     pub fn get(&self) -> String {
-        // println!("get len {}, height{}", BUFFER.lock().len(), height);
         let (width, height) = self.buffer_dimensions;
         let l = self.current_length;
 
@@ -249,8 +235,6 @@ impl Loggy {
             } else {
                 (contro_height - offset, l - offset)
             };
-
-            // println!("offset {} to cap{}", deg, cap);
 
             self.buffer[(deg)..cap].to_vec()
         };
@@ -281,16 +265,6 @@ impl Loggy {
     /** Check for any pending messages and return true if the log has new content or not*/
     pub fn is_dirty_and_listen(&mut self) -> bool {
         self.listen();
-        // let stuff = self
-        //     .receiver
-        //     .try_iter()
-        //     .map(|t| (t))
-        //     .collect::<Vec<(LogType, String)>>();
-        // if stuff.len() > 0 {
-        //     stuff.iter().for_each(|(t, s)| {
-        //         self.log(*t, s);
-        //     })
-        // }
 
         self.log_dirty
     }
@@ -303,15 +277,3 @@ impl Loggy {
         self.sender.clone()
     }
 }
-
-// #[macro_export]
-// macro_rules! lg{
-//     ($($arg:tt)*) => {{
-//            {
-//             let st=format!($($arg)*);
-//             println!("{}",st);
-//             crate::log::log(st);
-//            }
-//        }
-//    }
-// }

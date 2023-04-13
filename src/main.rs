@@ -62,7 +62,6 @@ mod ray;
 mod render;
 #[cfg(feature = "audio")]
 mod sound;
-mod switch_board;
 mod template;
 mod texture;
 mod tile;
