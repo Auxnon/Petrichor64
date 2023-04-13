@@ -1019,13 +1019,13 @@ function instr(freqs, half) end"
     //                 Value::String(s) => match s.to_str() {
     //                     Ok(ss) => Some(ss.to_string()),
     //                     _ => None,
-            //                 },
+    //                 },
     //                 Value::Integer(i) => match i {
     //                     8 => Some("8".to_string()),
     //                         _ => None,
     //                     },
     //                     _ => None,
-            //                 },
+    //                 },
     //                 _ => None,
     //             };
     //             gui.borrow_mut().text(&txt, numop(x), numop(y), color);
@@ -1478,7 +1478,7 @@ function over(str) end"
                     Ok(c) => Ok(c),
                     Err(er) => Err(make_err(&format!("Unable to create connection {}", er))),
                 };
-                            }
+            }
             #[cfg(not(feature = "online_capable"))]
             Ok(())
         },
@@ -1619,27 +1619,27 @@ pub fn load_empty(core: &mut Core) {
     #[cfg(feature = "audio")]
     {
         bundle.lua_ctx_handle = Some(bundle.lua.start(
-        bundle.id,
-        resources,
-        world_sender,
-        core.pitcher.clone(),
-        core.loggy.make_sender(),
-        core.singer.clone(),
-        core.global.debug,
-        false,
+            bundle.id,
+            resources,
+            world_sender,
+            core.pitcher.clone(),
+            core.loggy.make_sender(),
+            core.singer.clone(),
+            core.global.debug,
+            false,
         ));
     }
     #[cfg(not(feature = "audio"))]
     {
         bundle.lua_ctx_handle = Some(bundle.lua.start(
-        bundle.id,
-        resources,
-        world_sender,
-        core.pitcher.clone(),
-        core.loggy.make_sender(),
-        (),
-        core.global.debug,
-        false,
+            bundle.id,
+            resources,
+            world_sender,
+            core.pitcher.clone(),
+            core.loggy.make_sender(),
+            (),
+            core.global.debug,
+            false,
         ));
     }
 
@@ -1710,27 +1710,27 @@ pub fn load(
     #[cfg(feature = "audio")]
     {
         bundle.lua_ctx_handle = Some(bundle.lua.start(
-        bundle_id,
-        resources,
-        world_sender,
-        core.pitcher.clone(),
-        core.loggy.make_sender(),
-        core.singer.clone(),
-        core.global.debug,
-        false,
+            bundle_id,
+            resources,
+            world_sender,
+            core.pitcher.clone(),
+            core.loggy.make_sender(),
+            core.singer.clone(),
+            core.global.debug,
+            false,
         ));
     }
     #[cfg(not(feature = "audio"))]
     {
         bundle.lua_ctx_handle = Some(bundle.lua.start(
-        bundle_id,
-        resources,
-        world_sender,
-        core.pitcher.clone(),
-        core.loggy.make_sender(),
-        (),
-        core.global.debug,
-        false,
+            bundle_id,
+            resources,
+            world_sender,
+            core.pitcher.clone(),
+            core.loggy.make_sender(),
+            (),
+            core.global.debug,
+            false,
         ));
     }
     let debug = core.global.debug;
