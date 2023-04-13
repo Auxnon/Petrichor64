@@ -1,6 +1,5 @@
 attr { fog = 200. }
-sky()
-fill("333")
+sky:fill("333")
 -- pixel(0, 0, "F00")
 -- pixel(320, 280, "0F0")
 floors = {}
@@ -11,28 +10,40 @@ state = -1
 
 function make_model()
     local mx = 0.5
-    model("console", { q = {
-        { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 }, { -mx, -mx, .5 },
-        { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
-        { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
-    }, t = { "logo13", "logo17", "logo12" } })
-    model("ground", { q = {
-        { -mx, -mx, .5 }, { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 },
-        { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
-        { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
-    }, t = { "logo11", "logo10", "logo10" } })
-    model("drops", { q = {
+    mod("console", {
+        q = {
+            { mx,  -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 }, { -mx, -mx, .5 },
+            { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
+            { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
+        },
+        t = { "logo13", "logo17", "logo12" }
+    })
+    mod("ground", {
+        q = {
+            { -mx, -mx, .5 }, { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 },
+            { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
+            { -mx, mx, .5 }, { mx, mx, .5 }, { mx, mx, 0 }, { -mx, mx, 0 },
+        },
+        t = { "logo11", "logo10", "logo10" }
+    })
+    mod("drops", {
+        q = {
 
-        { -mx, -mx, 1.5 }, { mx, mx, 1.5 }, { mx, mx, .5 }, { -mx, -mx, .5 },
+            { -mx, -mx, 1.5 }, { mx, mx, 1.5 }, { mx, mx, .5 }, { -mx, -mx, .5 },
 
-    }, t = { "logo18" } })
-    model("clouds", { q = {
-        { -mx, -mx, 1.5 }, { mx, -mx, 1.5 }, { mx, mx, 1.5 }, { -mx, mx, 1.5 },
-        { -mx, -mx, 1.625 }, { mx, -mx, 1.625 }, { mx, mx, 1.625 }, { -mx, mx, 1.625 },
-        { -mx, -mx, 1.75 }, { mx, -mx, 1.75 }, { mx, mx, 1.75 }, { -mx, mx, 1.75 },
-        { -mx, -mx, 1.875 }, { mx, -mx, 1.875 }, { mx, mx, 1.875 }, { -mx, mx, 1.875 },
-        { -mx, -mx, 2 }, { mx, -mx, 2 }, { mx, mx, 2 }, { -mx, mx, 2 },
-    }, t = { "logo16" } })
+        },
+        t = { "logo18" }
+    })
+    mod("clouds", {
+        q = {
+            { -mx, -mx, 1.5 }, { mx, -mx, 1.5 }, { mx, mx, 1.5 }, { -mx, mx, 1.5 },
+            { -mx, -mx, 1.625 }, { mx, -mx, 1.625 }, { mx, mx, 1.625 }, { -mx, mx, 1.625 },
+            { -mx, -mx, 1.75 }, { mx, -mx, 1.75 }, { mx, mx, 1.75 }, { -mx, mx, 1.75 },
+            { -mx, -mx, 1.875 }, { mx, -mx, 1.875 }, { mx, mx, 1.875 }, { -mx, mx, 1.875 },
+            { -mx, -mx, 2 }, { mx, -mx, 2 }, { mx, mx, 2 }, { -mx, mx, 2 },
+        },
+        t = { "logo16" }
+    })
     -- smodel("logo-ground", { q = {
     --     { -mx, -mx, .5 }, { mx, -mx, .5 }, { mx, mx, .5 }, { -mx, mx, .5 },
     --     { -mx, -mx, .5 }, { -mx, mx, .5 }, { -mx, mx, 0 }, { -mx, -mx, 0 },
@@ -52,7 +63,7 @@ end
 function floor()
     for i = -6, 6 do
         for j = -6, 5 do
-            local e = spawn("cube", i, j, 0)
+            local e = make("cube", i, j, 0)
             e.tex = "logo" .. irnd(20, 24)
             floors[#floors + 1] = e
         end
@@ -61,11 +72,11 @@ end
 
 function make_rain()
     for i = 1, 100 do
-        local e = spawn("logo14", rnd(-6, 6), rnd(-6, 6), rnd(7) - 1)
+        local e = make("logo14", rnd(-6, 6), rnd(-6, 6), rnd(7) - 1)
         rain[#rain + 1] = e
     end
     for i = 1, 60 do
-        local e = spawn("plop", rnd(-6, 6), rnd(-6, 6), 8)
+        local e = make("plop", rnd(-6, 6), rnd(-6, 6), 8)
         drops[#drops + 1] = e
     end
 end
@@ -80,11 +91,9 @@ function floor_loop()
             -- e.z = 0
         end
     end
-
 end
 
 function rain_loop()
-
     for i = 1, #rain do
         local e = rain[i]
         e.z = e.z - 0.1
@@ -120,7 +129,7 @@ function main()
     anim("plop", { "logo6", "logo7", "logo8", "logo9" })
     make_model()
 
-    console = spawn("console", 0, 0, 1.125)
+    console = make("console", 0, 0, 1.125)
     console.rz = 6 * tau / 16
     console.rx = tau / 48
 
@@ -130,11 +139,11 @@ end
 function drop()
     clr()
     console:kill()
-    logo1 = spawn("ground", 0, 0, 1.125)
-    logoA = spawn("drops", -0.25, 0, 8.125)
-    logoB = spawn("drops", 0, 0, 8.125)
-    logoC = spawn("drops", 0.25, 0, 8.125)
-    logo3 = spawn("clouds", 0, 0, 4.125)
+    logo1 = make("ground", 0, 0, 1.125)
+    logoA = make("drops", -0.25, 0, 8.125)
+    logoB = make("drops", 0, 0, 8.125)
+    logoC = make("drops", 0.25, 0, 8.125)
+    logo3 = make("clouds", 0, 0, 4.125)
 
     logo1.rz = 6 * tau / 16
     logo1.rx = tau / 48
@@ -144,26 +153,24 @@ function drop()
 end
 
 function make_title()
-    fill("FFF")
+    sky:fill("FFF")
     floor()
     make_rain()
     local h = 4
-    local pe = spawn("logo0", -2.25, 0, h)
-    local tr = spawn("logo1", -1.25, 0, h)
-    local ic = spawn("logo2", -.25, 0, h)
-    local ho = spawn("logo3", .75, 0, h)
-    local r = spawn("logo4", 1.75, 0, h)
-    local l64 = spawn("logo5", 2.25, 0, h)
-    gui()
+    local pe = make("logo0", -2.25, 0, h)
+    local tr = make("logo1", -1.25, 0, h)
+    local ic = make("logo2", -.25, 0, h)
+    local ho = make("logo3", .75, 0, h)
+    local r = make("logo4", 1.75, 0, h)
+    local l64 = make("logo5", 2.25, 0, h)
     local t = "Interpreted Game System"
-    text(t, "=50% - " .. flr(10 * t:len() / 2), "=100% -20")
+    gui:text(t, "=50% - " .. flr(10 * t:len() / 2), "=100% -20")
 end
 
 function loop()
     floor_loop()
     rain_loop()
     if state == 0 then
-
         logo3.z = logo3.z - 0.05
         if logo3.z <= 1.125 then
             state = 1

@@ -8,16 +8,12 @@ attr { modernize = 0,
     bleed = 0.,
     lock = true
 }
-b = spawn('b', -.4, 80, -30.)
+b = make('b', -.4, 80, -30.)
 b.scale = 6
-sky()
-fill("fff")
-gui()
+sky:fill("fff")
 g = 0
 gdir = 1
 sp = 0.02
-function main()
-end
 
 function loop()
     b.y = b.y - sp
