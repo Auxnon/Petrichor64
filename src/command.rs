@@ -8,6 +8,7 @@ use crate::{
     lua_ent::LuaEnt,
     lua_img::{dehex, get_color, LuaImg},
     model::TextureStyle,
+    online::Online,
     pad::Pad,
     tile::Chunk,
     types::ValueMap,
@@ -340,7 +341,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
 }
 
 #[cfg(feature = "online_capable")]
-type OnlineType = Option<(Sender<MovePacket>, Receiver<MovePacket>)>;
+type OnlineType = Rc<RefCell<Online>>;
 #[cfg(not(feature = "online_capable"))]
 type OnlineType = Option<bool>;
 
@@ -351,7 +352,7 @@ pub fn init_lua_sys(
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
-    _net_sender: OnlineType,
+    mut _net_sender: OnlineType,
     singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
@@ -367,12 +368,6 @@ pub fn init_lua_sys(
 // Option<bool>
 {
     println!("init lua sys");
-
-    #[cfg(feature = "online_capable")]
-    let (netout, netin) = match _net_sender {
-        Some((nout, nin)) => (Some(nout), Some(nin)),
-        _ => (None, None),
-    };
 
     let default_func = lua_ctx
         .create_function(|_, _: f32| Ok("placeholder func uwu"))
@@ -1609,54 +1604,22 @@ function overload(str) end"
     );
 
     lua!(
-        "send",
-        move |_, (x, y, z): (f32, f32, f32)| {
+        "conn",
+        move |_, (addr, udp, server): (String, bool, bool)| {
             #[cfg(feature = "online_capable")]
             {
-                match &netout {
-                    Some(nout) => {
-                        // crate::lg!("send from com {},{}", x, y);
-                        match nout.send(vec![x, y, z]) {
-                            Ok(d) => {}
-                            Err(e) => {
-                                // println!("damn we got {}", e);
+                return match _net_sender.borrow_mut().open(&addr, udp, server) {
+                    Ok(c) => Ok(c),
+                    Err(er) => Err(make_err(&format!("Unable to create connection {}", er))),
+                };
                             }
-                        }
-                    }
-                    _ => {
-                        // crate::lg!("ain't got no online");
-                    }
-                }
-            }
+            #[cfg(not(feature = "online_capable"))]
             Ok(())
         },
-        "Send UDP",
-        "-- Coming soon"
-    );
-    lua!(
-        "recv",
-        move |_, _: ()| {
-            #[cfg(feature = "online_capable")]
-            {
-                match &netin {
-                    Some(nin) => {
-                        match nin.try_recv() {
-                            Ok(r) => {
-                                return Ok(r);
-                                // crate::lg!("udp {:?}", r);
-                            }
-                            _ => {}
-                        }
-                    }
-                    _ => {
-                        // crate::lg!("ain't got no online");
-                    }
-                }
-            }
-            Ok(vec![0., 0., 0.])
-        },
-        "Recieve UDP",
-        "-- Coming soon"
+        "Create a new connection to the ip, site, etc. A :port is optional",
+        "
+--- @param addr string
+function conn(addr) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1665,7 +1628,6 @@ function overload(str) end"
         move |_, u: Option<u8>| {
             pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0))));
             Ok(())
-            //
         },
         "Hard quit or exit to console",
         "

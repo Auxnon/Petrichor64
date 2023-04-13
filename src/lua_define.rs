@@ -214,37 +214,15 @@ fn start(
 
     let mut online = false;
     #[cfg(feature = "online_capable")]
-    let mut closer = None;
+            let net = Rc::new(RefCell::new(crate::online::Online::new()));
     #[cfg(not(feature = "online_capable"))]
-    let mut closer: Option<bool> = None;
-    #[cfg(feature = "online_capable")]
-    let net = if false {
-        match crate::online::init() {
-            Ok((nout, nin)) => {
-                match nout.send(vec![0f32; 3]) {
-                    Ok(s) => {
-                        closer = Some(nout.clone());
-                        online = true;
-                    }
-                    Err(e) => println!("pre send failed at {}", e),
-                }
-                Some((nout, nin))
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
+            let net: Option<bool> = None;
 
+            #[cfg(feature = "online_capable")]
+            let netout = net.clone();
     #[cfg(not(feature = "online_capable"))]
-    let net: Option<bool> = None;
+            let netout: Option<bool> = None;
 
-    // let pitchers = Arc::new(pitcher);
-    // let pitch_lusa = Arc::clone(&pitchers);
-
-    loggy.send((LogType::LuaSys, format!("init lua core {}", bundle_id)));
-    // let lua_thread =
-    let thread_join = thread::spawn(move || {
         let keys = [false; 256];
         let mice = [0.; 13];
 
