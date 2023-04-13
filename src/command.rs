@@ -1617,7 +1617,8 @@ pub fn load_empty(core: &mut Core) {
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
     #[cfg(feature = "audio")]
-    bundle.lua.start(
+    {
+        bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
         resources,
         world_sender,
@@ -1626,9 +1627,11 @@ pub fn load_empty(core: &mut Core) {
         core.singer.clone(),
         core.global.debug,
         false,
-    );
+        ));
+    }
     #[cfg(not(feature = "audio"))]
-    bundle.lua.start(
+    {
+        bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
         resources,
         world_sender,
@@ -1637,7 +1640,8 @@ pub fn load_empty(core: &mut Core) {
         (),
         core.global.debug,
         false,
-    );
+        ));
+    }
 
     let payload = crate::asset::get_logo();
     crate::asset::unpack(
@@ -1702,8 +1706,10 @@ pub fn load(
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+
     #[cfg(feature = "audio")]
-    bundle.lua.start(
+    {
+        bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle_id,
         resources,
         world_sender,
@@ -1712,9 +1718,11 @@ pub fn load(
         core.singer.clone(),
         core.global.debug,
         false,
-    );
+        ));
+    }
     #[cfg(not(feature = "audio"))]
-    bundle.lua.start(
+    {
+        bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle_id,
         resources,
         world_sender,
@@ -1723,7 +1731,8 @@ pub fn load(
         (),
         core.global.debug,
         false,
-    );
+        ));
+    }
     let debug = core.global.debug;
 
     // TODO ensure this is reset before load

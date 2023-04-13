@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use crate::{
     controls::ControlState,
     gui::{GuiMorsel, PreGuiMorsel},
-    lua_define::LuaCore,
+    lua_define::{LuaCore, LuaHandle},
     texture::TexManager,
     Core,
 };
@@ -27,6 +27,7 @@ pub struct Bundle {
     pub skipped_control_state: Option<ControlState>,
     /** How many frames do we want to intentionally skip to bring our fps down? Not great */
     pub frame_split: u16,
+    pub lua_ctx_handle: Option<LuaHandle>,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -43,6 +44,7 @@ impl Bundle {
             skips: 0,
             skipped_control_state: None,
             frame_split: 1,
+            lua_ctx_handle: None,
         }
     }
 
