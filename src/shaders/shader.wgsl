@@ -39,6 +39,16 @@ var t_diffuse: texture_2d<f32>;
 var s_diffuse: sampler;
 
 
+@group(1) 
+@binding(0)
+var primary: texture_2d<f32>;
+@group(1) 
+@binding(1)
+var secondary: texture_2d<f32>;
+@group(1) 
+@binding(2)
+var trinary: texture_2d<f32>;
+
 @vertex
 fn vs_main(
     @location(0) position: vec4<i32>,
@@ -197,7 +207,24 @@ fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
     let f=1.;//min(in.screen.x,in.screen.y);
 
     let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
-    f_color=textureSample(t_diffuse, s_diffuse, p);
+    let system=textureSample(t_diffuse, s_diffuse, p);
+    let primary=textureSample(primary, s_diffuse, p);
+    let secondary=textureSample(secondary, s_diffuse, p);
+    let trinary=textureSample(trinary, s_diffuse, p);
+
+    f_color=system;
+    if (system.a<0.1){
+        f_color=primary;
+        if (primary.a<0.1){
+            f_color=secondary;
+            if (secondary.a<0.1){
+                f_color=trinary;
+            }
+        }
+    }
+
+   
+    
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }
 

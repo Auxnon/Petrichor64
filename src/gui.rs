@@ -6,6 +6,7 @@ use crate::{
     global::GuiParams,
     log::{LogType, Loggy},
     lua_define::LuaResponse,
+    lua_img::LuaImg,
     texture::{TexManager, TexTuple},
 };
 use image::{
@@ -27,33 +28,75 @@ const NOTIF_WIDTH: u32 = 320;
 //     ReversePercent(f32),
 // }
 
+pub enum ScreenIndex {
+    System = 0,
+    Primary = 1,
+    Secondary = 2,
+    Trinary = 3,
+    Sky = 4,
+}
+
+struct ScreenLayer {
+    pub index: ScreenIndex,
+    pub texture: TexTuple,
+    pub image: RgbaImage,
+    pub dirty: bool,
+}
+impl ScreenLayer {
+    pub fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: &[u32; 2]) {
+        self.image = RgbaImage::new(size[0], size[1]);
+        self.dirty = true;
+        self.image = image::imageops::resize(
+            &mut self.image,
+            size[0],
+            size[1],
+            image::imageops::FilterType::Nearest,
+        );
+        self.texture = crate::texture::make_tex(device, queue, &self.image);
+    }
+    pub fn check_render(&mut self, queue: &wgpu::Queue) {
+        if self.dirty {
+            crate::texture::write_tex(queue, &self.texture.texture, &self.image);
+            self.dirty = false;
+        }
+    }
+}
+
 pub struct Gui {
     pub gui_pipeline: wgpu::RenderPipeline,
     pub sky_pipeline: wgpu::RenderPipeline,
     pub gui_group: wgpu::BindGroup,
+    pub gui_aux_group: wgpu::BindGroup,
     pub sky_group: wgpu::BindGroup,
     // pub model: Arc<OnceCell<Model>>,
-    pub overlay_texture: TexTuple,
-    pub sky_texture: TexTuple,
-    text: String,
+    system_layer: ScreenLayer,
+    primary_layer: ScreenLayer,
+    secondary_layer: ScreenLayer,
+    trinary_layer: ScreenLayer,
+    sky_layer: ScreenLayer,
+    // primary_texture: TexTuple,
+    // secondary_texture: TexTuple,
+    // trinary_texture: TexTuple,
+    // system_texture: TexTuple,
+    // pub sky_texture: TexTuple,
+    console_string: String,
     /** main game rendered gui raster to stay in memory if toggled to console */
-    main: RgbaImage,
-    /** console raster with current output to stay in memory*/
-    console: RgbaImage,
+    // primary_image: RgbaImage,
+    // secondary_image: RgbaImage,
+    // trinary_image: RgbaImage,
+    /** console or notifications raster with current output to stay in memory*/
+    // system_image: RgbaImage,
     /** skybox raster */
-    sky: RgbaImage,
-    notif: RgbaImage,
-    raw: RgbaImage,
-
+    // sky_image: RgbaImage,
     time: f32,
     pub letters: RgbaImage,
     size: [u32; 2],
-    pub console_background: image::Rgba<u8>,
+    console_background_color: image::Rgba<u8>,
     // console_dity: bool,
     // main_dirty: bool,
-    dirty: bool,
-    dirty_sky: bool,
-    target_sky: bool,
+    // dirty: bool,
+    // dirty_sky: bool,
+    // target_sky: bool,
     /** output console to gui */
     output_console: bool,
     active_notifs: Vec<Notif>,
@@ -66,7 +109,8 @@ impl Gui {
     pub fn new(
         gui_pipeline: wgpu::RenderPipeline,
         sky_pipeline: wgpu::RenderPipeline,
-        main_bind_group_layout: &wgpu::BindGroupLayout,
+        main_layout: &wgpu::BindGroupLayout,
+        gui_aux_layout: &wgpu::BindGroupLayout,
         uniform_buf: &wgpu::Buffer,
         // gui_group: wgpu::BindGroup,
         // overlay_texture: TexTuple,
@@ -78,19 +122,28 @@ impl Gui {
         // gui_img: RgbaImage,
         loggy: &mut Loggy,
     ) -> Gui {
-        let (gui_bundle, gui_image) = init_image(&device, &queue, gui_scaled);
+        let (system_texture, system_image) = init_image(&device, &queue, gui_scaled);
+        let (primary_texture, primary_image) = init_image(&device, &queue, gui_scaled);
+        let (secondary_texture, secondary_image) = init_image(&device, &queue, gui_scaled);
+        let (trinary_texture, trinary_image) = init_image(&device, &queue, gui_scaled);
 
         let (sky_bundle, sky_image) = init_image(&device, &queue, gui_scaled);
 
-        let (gui_group, sky_group) = rebuild_group(
-            &gui_bundle,
+        let (gui_group, gui_aux_group, sky_group) = rebuild_group(
+            [
+                &system_texture,
+                &primary_texture,
+                &secondary_texture,
+                &trinary_texture,
             &sky_bundle,
+            ],
             device,
-            main_bind_group_layout,
+            main_layout,
+            gui_aux_layout,
             uniform_buf,
         );
 
-        let d = gui_image.dimensions();
+        let d = system_image.dimensions();
 
         let letters = match crate::texture::load_img(&"6x6-8unicode.png".to_string(), loggy) {
             Ok(img) => img.into_rgba8(),
@@ -122,24 +175,57 @@ impl Gui {
             gui_pipeline,
             sky_pipeline,
             gui_group,
+            gui_aux_group,
             sky_group,
-            // model: get_model(&"plane".to_string()),
-            overlay_texture: gui_bundle,
-            sky_texture: sky_bundle,
-            console: gui_image.clone(),
-            sky: gui_image.clone(),
-            dirty_sky: false,
-            target_sky: false,
-            main: gui_image.clone(),
-            raw: gui_image,
-            notif: RgbaImage::new(NOTIF_WIDTH, 128),
-            text: "".to_string(),
+            system_layer: ScreenLayer {
+                index: ScreenIndex::System,
+                texture: system_texture,
+                image: system_image,
+                dirty: true,
+            },
+            primary_layer: ScreenLayer {
+                index: ScreenIndex::Primary,
+                texture: primary_texture,
+                image: primary_image,
+                dirty: true,
+            },
+            secondary_layer: ScreenLayer {
+                index: ScreenIndex::Secondary,
+                texture: secondary_texture,
+                image: secondary_image,
+                dirty: true,
+            },
+            trinary_layer: ScreenLayer {
+                index: ScreenIndex::Trinary,
+                texture: trinary_texture,
+                image: trinary_image,
+                dirty: true,
+            },
+            sky_layer: ScreenLayer {
+                index: ScreenIndex::Sky,
+                texture: sky_bundle,
+                image: sky_image,
+                dirty: true,
+            },
+            // sky_texture: sky_bundle,
+            // sky_image,
+            // dirty_sky: false,
+            // target_sky: false,
+            // system_image,
+            // primary_image,
+            // secondary_image,
+            // trinary_image,
+            // system_texture,
+            // primary_texture,
+            // secondary_texture,
+            // trinary_texture,
+            console_string: "".to_string(),
             letters,
             time: 0.,
             size: [d.0, d.1],
-            dirty: true,
+            // dirty: true,
             output_console: false,
-            console_background: image::Rgba([47, 47, 47, 255]),
+            console_background_color: image::Rgba([47, 47, 47, 255]),
             local_gui_params: GuiParams::new(),
             active_notifs: vec![Notif::new("test1"), Notif::new("test2")],
             notifcations_enabled: true,
@@ -149,7 +235,7 @@ impl Gui {
 
     //pub fn type()
     pub fn add_text(&mut self, str: String) {
-        self.text = format!("{}\n{}", self.text, str);
+        self.console_string = format!("{}\n{}", self.console_string, str);
         self.apply_console_out_text();
     }
 
@@ -195,89 +281,52 @@ impl Gui {
         }
     }
 
-    // pub fn direct_text(&mut self, txt: &String, onto_console: bool, x: LuaResponse, y: LuaResponse) {
-    //     let targ = if onto_console {
-    //         &mut self.console
+    // pub fn draw_image(
+    //     &mut self,
+    //     tex_manager: &mut TexManager,
+    //     image: &String,
+    //     onto_system: bool,
+    //     x: LuaResponse,
+    //     y: LuaResponse,
+    // ) {
+    //     let targ = if onto_system {
+    //         &mut self.system_image
     //     } else {
     //         if self.target_sky {
     //             self.dirty_sky = true;
-    //             &mut self.sky
+    //             &mut self.sky_image
     //         } else {
     //             self.dirty = true;
-    //             &mut self.main
+    //             &mut self.primary_image
     //         }
     //     };
-    //     let xx = (x.1 * if x.0 { 1. } else { self.size[0] as f32 }) as i64;
-    //     let yy = (y.1 * if y.0 { 1. } else { self.size[1] as f32 }) as i64;
+    //     let source = tex_manager.get_tex(image);
 
-    //     for (i, line) in txt.lines().enumerate() {
-    //         let ly = yy + i as i64 * (LETTER_SIZE as i64 + 2);
-    //         let mut lx = xx + (LETTER_SIZE) as i64;
-    //         for c in line.chars() {
-    //             let mut ind = c as u32;
-    //             if ind > 255 {
-    //                 ind = 255;
-    //             }
-    //             let index_x = ind % 16;
-    //             let index_y = ind / 16;
-    //             let sub = image::imageops::crop_imm(
-    //                 &self.letters,
-    //                 index_x * LETTER_SIZE,
-    //                 index_y * LETTER_SIZE,
-    //                 LETTER_SIZE,
-    //                 LETTER_SIZE,
-    //             );
-    //             image::imageops::overlay(targ, &mut sub.to_image(), lx, ly);
-    //             lx += (LETTER_SIZE + 1) as i64;
-    //         }
-    //     }
+    //     let w = tex_manager.atlas.width();
+    //     let h = tex_manager.atlas.height();
+    //     let sub = image::imageops::crop_imm(
+    //         &mut tex_manager.atlas,
+    //         (source.x * w as f32) as u32,
+    //         (source.y * h as f32) as u32,
+    //         (source.z * w as f32) as u32,
+    //         (source.w * h as f32) as u32,
+    //     );
+
+    //     direct_image(targ, &sub.to_image(), x, y, self.size[0], self.size[1]);
+
+    //     // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+    //     // self.dirty = true;
     // }
 
-    pub fn draw_image(
-        &mut self,
-        tex_manager: &mut TexManager,
-        image: &String,
-        onto_console: bool,
-        x: LuaResponse,
-        y: LuaResponse,
-    ) {
-        let targ = if onto_console {
-            &mut self.console
-        } else {
-            if self.target_sky {
-                self.dirty_sky = true;
-                &mut self.sky
-            } else {
-                self.dirty = true;
-                &mut self.main
-            }
-        };
-        let source = tex_manager.get_tex(image);
-
-        let w = tex_manager.atlas.width();
-        let h = tex_manager.atlas.height();
-        let sub = image::imageops::crop_imm(
-            &mut tex_manager.atlas,
-            (source.x * w as f32) as u32,
-            (source.y * h as f32) as u32,
-            (source.z * w as f32) as u32,
-            (source.w * h as f32) as u32,
-        );
-
-        direct_image(targ, &sub.to_image(), x, y, self.size[0], self.size[1]);
-
-        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
-        // self.dirty = true;
-    }
-
     pub fn set_console_background_color(&mut self, r: u8, g: u8, b: u8, a: u8) {
-        self.console_background = image::Rgba([r, g, b, a])
+        self.console_background_color = image::Rgba([r, g, b, a])
     }
+
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
-        image::imageops::replace(&mut self.console, &im, 0, 0);
+        image::imageops::replace(&mut self.system_layer.image, &im, 0, 0);
 
-        for (i, line) in self.text.lines().enumerate() {
+        for (i, line) in self.console_string.lines().enumerate() {
             let y = i as i64 * (LETTER_SIZE as i64 + 2);
             let mut x = (LETTER_SIZE) as i64;
             for c in line.chars() {
@@ -298,63 +347,62 @@ impl Gui {
                 );
 
                 draw_filled_rect_mut(
-                    &mut self.console,
+                    &mut self.system_layer.image,
                     imageproc::rect::Rect::at((x) as i32, (y - 1) as i32)
                         .of_size(LETTER_SIZE + 1, LETTER_SIZE + 2 as u32),
-                    self.console_background,
+                    self.console_background_color,
                 );
-                //sub.to_image().
-                image::imageops::overlay(&mut self.console, &mut sub.to_image(), x, y);
+                image::imageops::overlay(&mut self.system_layer.image, &mut sub.to_image(), x, y);
                 x += (LETTER_SIZE - 1) as i64;
             }
         }
 
         // self.console =
         //     image::imageops::huerotate(&mut self.console, rand::thread_rng().gen_range(0..360));
-        self.dirty = true;
+        self.system_layer.dirty = true;
     }
 
-    pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
-        let width = self.size[0];
-        let height = self.size[1];
+    // pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
+    //     let width = self.size[0];
+    //     let height = self.size[1];
 
-        draw_filled_rect_mut(
-            self.get_targ(),
-            imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
-            image::Rgba([
-                (r * 255.) as u8,
-                (g * 255.) as u8,
-                (b * 255.) as u8,
-                (a * 255.) as u8,
-            ]),
-        );
-    }
+    //     draw_filled_rect_mut(
+    //         self.get_targ(),
+    //         imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
+    //         image::Rgba([
+    //             (r * 255.) as u8,
+    //             (g * 255.) as u8,
+    //             (b * 255.) as u8,
+    //             (a * 255.) as u8,
+    //         ]),
+    //     );
+    // }
 
-    pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
-        self.get_targ().get_pixel_mut(x, y).0 = [
-            (r * 255.) as u8,
-            (g * 255.) as u8,
-            (b * 255.) as u8,
-            (a * 255.) as u8,
-        ];
-    }
+    // pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
+    //     self.get_targ().get_pixel_mut(x, y).0 = [
+    //         (r * 255.) as u8,
+    //         (g * 255.) as u8,
+    //         (b * 255.) as u8,
+    //         (a * 255.) as u8,
+    //     ];
+    // }
 
-    fn get_targ(&mut self) -> &mut RgbaImage {
-        if self.target_sky {
-            self.dirty_sky = true;
-            &mut self.sky
-        } else {
-            self.dirty = true;
-            &mut self.main
-        }
-    }
+    // fn get_targ(&mut self) -> &mut RgbaImage {
+    //     if self.target_sky {
+    //         self.dirty_sky = true;
+    //         &mut self.sky_image
+    //     } else {
+    //         self.dirty = true;
+    //         &mut self.primary_image
+    //     }
+    // }
 
     /* Clean off the main raster */
-    pub fn clean(&mut self) {
-        println!("cleaning {:?}", self.size);
-        self.main = RgbaImage::new(self.size[0], self.size[1]);
-        self.dirty = true;
-    }
+    // pub fn clean(&mut self) {
+    //     println!("cleaning {:?}", self.size);
+    //     self.main = RgbaImage::new(self.size[0], self.size[1]);
+    //     self.dirty = true;
+    // }
 
     pub fn get_console_size(&self) -> (u32, u32) {
         (
@@ -364,12 +412,12 @@ impl Gui {
     }
 
     pub fn enable_console(&mut self, loggy: &Loggy) {
-        self.text = loggy.get();
+        self.console_string = loggy.get();
         self.output_console = true;
         self.apply_console_out_text();
     }
     pub fn disable_console(&mut self) {
-        self.text = "".to_string();
+        self.console_string = "".to_string();
         self.output_console = false;
         self.apply_console_out_text();
     }
@@ -377,79 +425,69 @@ impl Gui {
     //     image::imageops::overlay(&mut self.main, image, 0, 0);
     //     self.dirty = true;
     // }
-    pub fn replace_image(&mut self, img: RgbaImage, is_sky: bool) {
+    pub fn replace_image(&mut self, img: RgbaImage, index: ScreenIndex) {
         // println!("replacing image of size {:?}", img.dimensions());
-        if is_sky {
-            self.sky = img;
-            self.dirty_sky = true;
-        } else {
-            self.main = img;
-            self.process_notifications(false);
-            self.dirty = true;
+        match index {
+            ScreenIndex::System => {
+                self.system_layer.image = img;
+                self.system_layer.dirty = true;
+        }
+            ScreenIndex::Primary => {
+                self.primary_layer.image = img;
+                self.primary_layer.dirty = true;
+    }
+            ScreenIndex::Secondary => {
+                self.secondary_layer.image = img;
+                self.secondary_layer.dirty = true;
+            }
+            ScreenIndex::Trinary => {
+                self.trinary_layer.image = img;
+                self.trinary_layer.dirty = true;
+            }
+            ScreenIndex::Sky => {
+                self.sky_layer.image = img;
+                self.sky_layer.dirty = true;
+            }
         }
     }
+
     pub fn resize(
         &mut self,
         size: (u32, u32),
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        main_bind_group_layout: &wgpu::BindGroupLayout,
+        main_layout: &wgpu::BindGroupLayout,
+        gui_aux_layout: &wgpu::BindGroupLayout,
         uniform_buf: &wgpu::Buffer,
     ) {
         self.size = [size.0, size.1];
-        // TODO
-        self.main = image::imageops::resize(
-            &self.main,
-            size.0,
-            size.1,
-            image::imageops::FilterType::Nearest,
-        );
-        self.console = image::imageops::resize(
-            &self.console,
-            size.0,
-            size.1,
-            image::imageops::FilterType::Nearest,
-        );
-        self.sky = image::imageops::resize(
-            &self.sky,
-            size.0,
-            size.1,
-            image::imageops::FilterType::Nearest,
-        );
-        self.raw = image::imageops::resize(
-            &self.raw,
-            size.0,
-            size.1,
-            image::imageops::FilterType::Nearest,
-        );
+        // resize all layer fields
+        self.system_layer.resize(device, queue, &self.size);
+        self.primary_layer.resize(device, queue, &self.size);
+        self.secondary_layer.resize(device, queue, &self.size);
+        self.trinary_layer.resize(device, queue, &self.size);
+        self.sky_layer.resize(device, queue, &self.size);
 
-        self.overlay_texture = crate::texture::make_tex(device, queue, &self.main);
-        self.sky_texture = crate::texture::make_tex(device, queue, &self.sky);
-
-        let (gui_group, sky_group) = rebuild_group(
-            &self.overlay_texture,
-            &self.sky_texture,
+        let (gui_group, gui_aux_group, sky_group) = rebuild_group(
+            [
+                &self.system_layer.texture,
+                &self.primary_layer.texture,
+                &self.secondary_layer.texture,
+                &self.trinary_layer.texture,
+                &self.sky_layer.texture,
+            ],
             device,
-            main_bind_group_layout,
+            main_layout,
+            gui_aux_layout,
             uniform_buf,
         );
         self.gui_group = gui_group;
         self.sky_group = sky_group;
+        self.gui_aux_group = gui_aux_group;
 
-        // self.main.self.main = RgbaImage::new(size[0], size[1]);
-        // self.console = RgbaImage::new(size[0], size[1]);
-        // self.sky = RgbaImage::new(size[0], size[1]);
-        println!(
-            "resize to {:?} {:?} {:?} {:?}",
-            size,
-            self.main.dimensions(),
-            self.console.dimensions(),
-            self.sky.dimensions()
-        );
-
+        if self.output_console {
         self.apply_console_out_text();
-        self.dirty = true;
-        self.dirty_sky = true;
+        }
     }
 
     pub fn change_layout(&mut self, gui_params: GuiParams) {
@@ -459,41 +497,47 @@ impl Gui {
     pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
         if loggy.is_dirty_and_listen() && self.output_console {
-            self.text = loggy.get();
+            self.console_string = loggy.get();
             self.apply_console_out_text();
             loggy.clean();
         }
         self.process_notifications(false);
-        if self.dirty {
-            let raster = if self.output_console {
-                &self.console
-            } else {
-                &self.main
-            };
 
-            let final_raster = if self.notifications_dirty {
-                self.notifications_dirty = false;
-                image::imageops::replace(&mut self.raw, raster, 0, 0);
-                image::imageops::overlay(&mut self.raw, &self.notif, 0, 0);
-                &self.raw
-            } else {
-                // println!("not dirty");
-                raster
-            };
-            // println!(
-            //     "raster size console {} {:?} stored size{:?}",
-            //     self.output,
-            //     raster.dimensions(),
-            //     self.size
-            // );
-            crate::texture::write_tex(queue, &self.overlay_texture.texture, &final_raster);
-            self.dirty = false;
-        } else {
-        }
-        if self.dirty_sky {
-            crate::texture::write_tex(queue, &self.sky_texture.texture, &self.sky);
-            self.dirty_sky = false;
-        }
+        self.system_layer.check_render(queue);
+        self.primary_layer.check_render(queue);
+        self.secondary_layer.check_render(queue);
+        self.trinary_layer.check_render(queue);
+        self.sky_layer.check_render(queue);
+        // if self.dirty {
+        //     let raster = if self.output_console {
+        //         &self.console
+        //     } else {
+        //         &self.main
+        //     };
+
+        //     let final_raster = if self.notifications_dirty {
+        //         self.notifications_dirty = false;
+        //         // image::imageops::replace(&mut self.raw, raster, 0, 0);
+        //         // image::imageops::overlay(&mut self.raw, &self.notif, 0, 0);
+        //         &self.raw
+        //     } else {
+        //         // println!("not dirty");
+        //         raster
+        //     };
+        //     // println!(
+        //     //     "raster size console {} {:?} stored size{:?}",
+        //     //     self.output,
+        //     //     raster.dimensions(),
+        //     //     self.size
+        //     // );
+        //     crate::texture::write_tex(queue, &self.overlay_texture.texture, &raster);
+        //     self.dirty = false;
+        // } else {
+        // }
+        // if self.dirty_sky {
+        //     crate::texture::write_tex(queue, &self.sky_texture.texture, &self.sky_image);
+        //     self.dirty_sky = false;
+        // }
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
@@ -510,13 +554,14 @@ impl Gui {
     pub fn process_notifications(&mut self, force: bool) {
         let mut should = false;
         if self.notifcations_enabled {
-            for n in self.active_notifs.iter_mut() {
+            for (i, n) in self.active_notifs.iter_mut().enumerate() {
                 if force || n.dest != n.position {
+                    n.position -= (n.position - n.dest) / 20;
+                    if !self.output_console {
                     if !should {
-                        self.notif = RgbaImage::new(NOTIF_WIDTH, 128);
+                            self.system_layer.image = RgbaImage::new(self.size[0], self.size[1]);
                         should = true;
                     }
-                    n.position -= (n.position - n.dest) / 20;
                     // if n.image.is_none() {
                     //     n.render(&self.letters, self.size);
                     // }
@@ -528,29 +573,33 @@ impl Gui {
                     // }
 
                     direct_text_raw(
-                        &mut self.notif,
+                            &mut self.system_layer.image,
                         &self.letters,
                         self.size[0],
                         self.size[1],
                         &n.message,
                         0,
                         n.position,
-                        vec4(1., 1., 0., 1.),
+                            if i % 2 == 0 {
+                                vec4(1., 0., 1., 1.)
+                            } else {
+                                vec4(1., 0., 0., 1.)
+                            },
                     );
+                    }
 
                     // println!("notif pos {} dest {}", n.position, n.dest);
                 } else {
-                    println!("still");
+                    // println!("still");
                 }
             }
         }
 
         if should {
-            self.dirty = true;
+            self.system_layer.dirty = true;
             self.notifications_dirty = true;
             // self.main.dr(&self.notif, 0, 0);
         }
-        // self.mai
     }
 
     pub fn push_notif(&mut self, s: &str) {

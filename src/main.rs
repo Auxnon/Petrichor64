@@ -7,6 +7,7 @@ use command::MainCommmand;
 use controls::ControlState;
 use ent_manager::{EntManager, InstanceBuffer};
 use global::{Global, GuiParams, StateChange};
+use gui::ScreenIndex;
 use itertools::Itertools;
 use lua_define::{LuaCore, MainPacket};
 use model::ModelManager;
@@ -78,7 +79,6 @@ pub struct Core {
     config: wgpu::SurfaceConfiguration,
     depth_texture: wgpu::TextureView,
     size: winit::dpi::PhysicalSize<u32>,
-    switch_board: Arc<RwLock<SwitchBoard>>,
     global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     #[cfg(feature = "audio")]
@@ -94,7 +94,8 @@ pub struct Core {
     entity_bind_group: BindGroup,
     entity_uniform_buf: Buffer,
     main_bind_group: BindGroup,
-    main_bind_group_layout: wgpu::BindGroupLayout,
+    main_layout: wgpu::BindGroupLayout,
+    gui_aux_layout: wgpu::BindGroupLayout,
     master_texture: Texture,
     gui: Gui,
     post: Post,
@@ -240,8 +241,7 @@ impl Core {
 
         // let index_format = wgpu::IndexFormat::Uint16;
 
-        let entity_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let entity_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -255,7 +255,7 @@ impl Core {
                 label: Some("entity bind group layout"),
             });
         let entity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &entity_bind_group_layout,
+            layout: &entity_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -272,19 +272,18 @@ impl Core {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
         });
 
-        let uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
+        let main_uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
 
-        let main_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let main_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("main bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
+                        min_binding_size: wgpu::BufferSize::new(main_uniform_size), //wgpu::BufferSize::new(64),
                         },
                         count: None,
                     },
@@ -307,6 +306,43 @@ impl Core {
                 ],
             });
 
+        // let gui_uniform_size = mem::size_of::<GuiUniforms>() as wgpu::BufferAddress;
+        let gui_aux_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gui secondary bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
         let (mx_view, mx_persp, _mx_model) = render::generate_matrix(
             size.width as f32 / size.height as f32,
             vec3(0., 0., 0.),
@@ -327,21 +363,10 @@ impl Core {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let flat_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Sky Render Pipeline Layout"),
-            bind_group_layouts: &[&main_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    // &main_bind_group_layout,
-                    &main_bind_group_layout,
-                    &entity_bind_group_layout,
-                    // &main_bind_group_layout,
-                ], //&bind_group_layout
+                bind_group_layouts: &[&main_layout, &entity_layout],
                 push_constant_ranges: &[],
             });
 
@@ -407,7 +432,7 @@ impl Core {
 
         let depth = create_depth_texture(&config, &device);
 
-        let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
+        // let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
 
         let global = Global::new();
 
@@ -416,13 +441,10 @@ impl Core {
         let psize = winit::dpi::PhysicalSize::new(1280, 960);
         let gui_scaled = Self::compute_gui_size(&global.gui_params, psize);
         println!("gui_scaled: {:?}", gui_scaled);
-        // let (gui_bundle, gui_image) = gui::init_image(&device, &queue, gui_scaled);
-
-        // let (sky_bundle, sky_image) = gui::init_image(&device, &queue, gui_scaled);
 
         // Create main bind group
         let main_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &main_bind_group_layout,
+            layout: &main_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -440,9 +462,17 @@ impl Core {
             label: None,
         });
 
+        // =================== GUI Pipeline ===================
+
+        let gui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Gui Render Pipeline Layout"),
+            bind_group_layouts: &[&main_layout, &gui_aux_layout],
+            push_constant_ranges: &[],
+        });
+
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Gui Pipeline"),
-            layout: Some(&flat_pipeline_layout),
+            layout: Some(&gui_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "gui_vs_main",
@@ -486,9 +516,17 @@ impl Core {
             multiview: None,
         });
 
+        // =================== Sky Pipeline ===================
+
+        let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Sky Render Pipeline Layout"),
+            bind_group_layouts: &[&main_layout],
+            push_constant_ranges: &[],
+        });
+
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Sky Pipeline"),
-            layout: Some(&flat_pipeline_layout),
+            layout: Some(&sky_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "sky_vs_main",
@@ -532,7 +570,8 @@ impl Core {
         let mut gui = Gui::new(
             gui_pipeline,
             sky_pipeline,
-            &main_bind_group_layout,
+            &main_layout,
+            &gui_aux_layout,
             &uniform_buf,
             &device,
             &queue,
@@ -547,7 +586,14 @@ impl Core {
             gui.enable_console(&loggy)
         }
 
-        let post = Post::new(&config, &device, &shader, &uniform_buf, uniform_size);
+        let post = Post::new(
+            &config,
+            &device,
+            &shader,
+            &main_layout,
+            &uniform_buf,
+            // main_uniform_size,
+        );
 
         let world = World::new(loggy.make_sender());
 
@@ -584,11 +630,12 @@ impl Core {
             // perspective_matrix: mx_persp,
             render_pipeline,
             global,
-            switch_board: Arc::clone(&switch_board),
+            // switch_board: Arc::clone(&switch_board),
             post,
             gui,
             main_bind_group,
-            main_bind_group_layout,
+            main_layout,
+            gui_aux_layout,
             entity_bind_group,
             entity_uniform_buf,
             #[cfg(feature = "audio")]
@@ -631,7 +678,8 @@ impl Core {
         self.surface.configure(&self.device, &self.config);
         let d = create_depth_texture(&self.config, &self.device);
         self.depth_texture = d.1;
-        self.post.resize(&self.device, new_size, &self.uniform_buf);
+        self.post
+            .resize(&self.device, new_size, &self.uniform_buf, &self.main_layout);
         let gui_scaled = Self::compute_gui_size(&self.global.gui_params, new_size);
         // println!(
         //     "gui resize {} {} new size {} {}",
@@ -641,7 +689,8 @@ impl Core {
             gui_scaled,
             &self.device,
             &self.queue,
-            &self.main_bind_group_layout,
+            &self.main_layout,
+            &self.gui_aux_layout,
             &self.uniform_buf,
         );
         let (con_w, con_h) = self.gui.get_console_size();
@@ -896,17 +945,17 @@ impl Core {
                     if let Some(main) = img_result.0 {
                         if !self.bundle_manager.is_single() {
                             self.bundle_manager.set_raster(id, 0, main);
-                            mutations.push((id, MainCommmand::Meta(0)));
+                            mutations.push((id, MainCommmand::Meta(ScreenIndex::Primary)));
                         } else {
-                            self.gui.replace_image(main, false);
+                            self.gui.replace_image(main, ScreenIndex::Primary);
                         }
                     }
                     if let Some(sky) = img_result.1 {
                         if !self.bundle_manager.is_single() {
                             self.bundle_manager.set_raster(id, 1, sky);
-                            mutations.push((id, MainCommmand::Meta(1)));
+                            mutations.push((id, MainCommmand::Meta(ScreenIndex::Sky)));
                         } else {
-                            self.gui.replace_image(sky, true);
+                            self.gui.replace_image(sky, gui::ScreenIndex::Sky);
                         }
                     }
                     completed_bundles.insert(id, true);
@@ -936,9 +985,12 @@ impl Core {
                     }
                     MainCommmand::Meta(d) => {
                         if only_one_gui_sync {
-                            match self.bundle_manager.get_rasters(d) {
+                            match self.bundle_manager.get_rasters(match d {
+                                ScreenIndex::Primary => 0,
+                                _ => 1,
+                            }) {
                                 Some(rasters) => {
-                                    self.gui.replace_image(rasters, d == 0);
+                                    self.gui.replace_image(rasters, d);
                                 }
                                 None => {}
                             }

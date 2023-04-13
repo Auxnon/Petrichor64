@@ -150,8 +150,6 @@ pub fn render_loop(
 
     encoder.push_debug_group("World Render");
     {
-        let switch = core.switch_board.read();
-        let bg = switch.background;
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -159,10 +157,10 @@ pub fn render_loop(
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: bg.x as f64,
-                        g: bg.y as f64,
-                        b: bg.z as f64,
-                        a: bg.w as f64,
+                        r: 0.,
+                        g: 0.,
+                        b: 0.,
+                        a: 1.,
                     }),
                     store: true,
                 },
@@ -179,7 +177,7 @@ pub fn render_loop(
 
         //skybox space
         {
-            render_pass.set_pipeline(&core.gui.gui_pipeline);
+            render_pass.set_pipeline(&core.gui.sky_pipeline);
             render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
             render_pass.draw(0..4, 0..4);
         }
@@ -223,6 +221,8 @@ pub fn render_loop(
         {
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
+            render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
+
             render_pass.draw(0..4, 0..4);
 
             // frame!("render pass");

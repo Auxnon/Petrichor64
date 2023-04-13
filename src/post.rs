@@ -5,7 +5,6 @@ const RENDER_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unor
 
 pub struct Post {
     pub post_bind_group: BindGroup,
-    pub post_bind_group_layout: wgpu::BindGroupLayout,
     pub post_pipeline: wgpu::RenderPipeline,
     pub post_texture_view: wgpu::TextureView,
     post_sampler: wgpu::Sampler,
@@ -48,52 +47,16 @@ impl Post {
         config: &wgpu::SurfaceConfiguration,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
+        main_layout: &wgpu::BindGroupLayout,
         uniform_buf: &Buffer,
-        uniform_size: u64,
     ) -> Post {
-        // let (post_texture_view, post_sampler, post_texture, post_image) =
-        //     gui::init_image(&device, &queue, size.width as f32 / size.height as f32);
-
         let (post_texture_view, post_sampler, post_texture) =
             crate::texture::render_sampler(&device, (config.width, config.height));
 
         let (post_pipeline, post_bind_group_layout) = {
-            let bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("post bind group layout"),
-                    entries: &[
-                        // TODO remove this
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&bind_group_layout],
+                bind_group_layouts: &[&main_layout],
                 push_constant_ranges: &[],
             });
             (
@@ -108,26 +71,13 @@ impl Post {
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
                         entry_point: "post_fs_main",
-                        // targets: &[RENDER_TARGET_FORMAT.into()],
                         targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
-                            // blend: Some(wgpu::BlendState {
-                            //     color: wgpu::BlendComponent::OVER,
-                            //     alpha: wgpu::BlendComponent::OVER,
-                            // }),
+
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                            // blend: Some(wgpu::Blend {
-                            //     src_factor: wgpu::BlendFactor::One,
-                            //     dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            //     operation: wgpu::BlendOperation::Add,
-                            // }),
-                            // write_mask: wgpu::ColorWrites::ALL,
+
                             write_mask: wgpu::ColorWrites::ALL,
-                        })], // &[wgpu::ColorTargetState {
-                             //     format: config.format,
-                             //     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                             //     write_mask: wgpu::ColorWrites::ALL,
-                             // }],
+                        })],
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology: wgpu::PrimitiveTopology::TriangleStrip,
@@ -154,21 +104,9 @@ impl Post {
                     multisample: wgpu::MultisampleState::default(),
                     multiview: None,
                 }),
-                bind_group_layout,
+                main_layout,
             )
         };
-
-        // wgpu::BindGroupLayoutEntry {
-        //     binding: 0,
-        //     visibility: wgpu::ShaderStages::VERTEX,
-        //     ty: wgpu::BindingType::Buffer {
-        //         ty: wgpu::BufferBindingType::Uniform,
-        //         has_dynamic_offset: false,
-        //         min_binding_size: wgpu::BufferSize::new(uniform_size), //wgpu::BufferSize::new(64),
-        //     },
-        //     count: None,
-
-        // },
 
         // TODO this should be updated every time window resized i believe
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -193,31 +131,27 @@ impl Post {
         Post {
             post_bind_group,
             post_pipeline,
-            post_bind_group_layout,
+
             post_texture_view,
-            // uniform_buf,
-            // post_image,
+
             post_texture,
-            // post_texture_view,
             post_sampler,
         }
     }
 
-    pub fn resize(&mut self, device: &wgpu::Device, size: PhysicalSize<u32>, uniform_buf: &Buffer) {
-        // println!("2resize {} {}", size.width, size.height);
-        // crate::texture::update_render_tex(
-        //     device,
-        //     queue,
-        //     &self.post_texture,
-        //     (size.width, size.height),
-        // );
-
+    pub fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        size: PhysicalSize<u32>,
+        uniform_buf: &Buffer,
+        main_group_layout: &wgpu::BindGroupLayout,
+    ) {
         let (post_texture_view, post_sampler, post_texture) =
             crate::texture::render_sampler(device, (size.width, size.height));
 
         self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post bind group"),
-            layout: &self.post_bind_group_layout,
+            layout: main_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -236,38 +170,5 @@ impl Post {
         self.post_texture_view = post_texture_view;
         self.post_sampler = post_sampler;
         self.post_texture = post_texture;
-
-        // self.post_sampler = post_sampler;
-        // self.post_texture = post_texture;
-        // println!("3resize done");
-
-        // let view = match surface.get_current_texture() {
-        //     Ok(output) => output
-        //         .texture
-        //         .create_view(&wgpu::TextureViewDescriptor::default()),
-        //     Err(e) => {
-        //         println!("{:?}", e);
-        //         panic!("");
-        //     }
-        // };
-
-        // self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     label: Some("post bind group"),
-        //     layout: &self.post_bind_group_layout,
-        //     entries: &[
-        //         wgpu::BindGroupEntry {
-        //             binding: 0,
-        //             resource: self.uniform_buf.as_entire_binding(),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 1,
-        //             resource: wgpu::BindingResource::TextureView(&view),
-        //         },
-        //         wgpu::BindGroupEntry {
-        //             binding: 2,
-        //             resource: wgpu::BindingResource::Sampler(&self.post_sampler),
-        //         },
-        //     ],
-        // });
     }
 }
