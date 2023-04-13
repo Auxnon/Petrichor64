@@ -10,6 +10,7 @@ use crate::{
 };
 
 pub struct LuaImg {
+    pub dirty: bool,
     pub bundle_id: u8,
     pub width: u32,
     pub height: u32,
@@ -26,6 +27,7 @@ impl LuaImg {
         letters: Rc<RgbaImage>,
     ) -> Self {
         Self {
+            dirty: true,
             bundle_id,
             image,
             width,
@@ -35,6 +37,7 @@ impl LuaImg {
     }
     pub fn empty() -> Self {
         Self {
+            dirty: false,
             bundle_id: 0,
             image: RgbaImage::new(1, 1),
             width: 1,
@@ -44,12 +47,19 @@ impl LuaImg {
     }
     pub fn clone(&self) -> Self {
         Self {
+            dirty: self.dirty,
             bundle_id: self.bundle_id,
             image: self.image.clone(),
             width: self.width,
             height: self.height,
             letters: self.letters.clone(),
         }
+    }
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        crate::gui::resizer(&mut self.image, width, height);
+        self.dirty = true;
     }
 }
 

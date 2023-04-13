@@ -353,6 +353,8 @@ pub fn init_lua_sys(
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
+    main_rast: Rc<RefCell<LuaImg>>,
+    sky_rast: Rc<RefCell<LuaImg>>,
     mut _net_sender: OnlineType,
     singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
@@ -1575,7 +1577,7 @@ pub fn hard_reset(core: &mut Core) {
 
     core.tex_manager.reset();
     core.model_manager.reset();
-    core.gui.clean();
+    // core.gui.clean(); //TODO
 
     core.world.destroy_it_all();
     core.global.clean();
@@ -1591,9 +1593,8 @@ pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
         core.tex_manager.remove_bundle_content(bundle_id);
         core.tex_manager
             .rebuild_atlas(&mut core.world, &mut core.loggy);
-        // core.tex_manager.reset();
         core.model_manager.reset();
-        core.gui.clean();
+        // core.gui.clean(); // TODO
         core.world.destroy(bundle_id);
         core.global.clean();
         core.ent_manager.reset_by_bundle(bundle_id);

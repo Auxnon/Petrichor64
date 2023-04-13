@@ -135,7 +135,7 @@ impl Gui {
                 &primary_texture,
                 &secondary_texture,
                 &trinary_texture,
-            &sky_bundle,
+                &sky_bundle,
             ],
             device,
             main_layout,
@@ -431,11 +431,11 @@ impl Gui {
             ScreenIndex::System => {
                 self.system_layer.image = img;
                 self.system_layer.dirty = true;
-        }
+            }
             ScreenIndex::Primary => {
                 self.primary_layer.image = img;
                 self.primary_layer.dirty = true;
-    }
+            }
             ScreenIndex::Secondary => {
                 self.secondary_layer.image = img;
                 self.secondary_layer.dirty = true;
@@ -486,7 +486,7 @@ impl Gui {
         self.gui_aux_group = gui_aux_group;
 
         if self.output_console {
-        self.apply_console_out_text();
+            self.apply_console_out_text();
         }
     }
 
@@ -558,34 +558,34 @@ impl Gui {
                 if force || n.dest != n.position {
                     n.position -= (n.position - n.dest) / 20;
                     if !self.output_console {
-                    if !should {
+                        if !should {
                             self.system_layer.image = RgbaImage::new(self.size[0], self.size[1]);
-                        should = true;
-                    }
-                    // if n.image.is_none() {
-                    //     n.render(&self.letters, self.size);
-                    // }
+                            should = true;
+                        }
+                        // if n.image.is_none() {
+                        //     n.render(&self.letters, self.size);
+                        // }
 
-                    // //guaranteed to be Some so unwrap ref
-                    // if let Some(im) = &n.image {
-                    //     image::imageops::replace(&mut self.notif, im, 0, n.position as i64);
-                    //     // image::imageops::overlay(&mut self.notif, im, 0, n.position as i64);
-                    // }
+                        // //guaranteed to be Some so unwrap ref
+                        // if let Some(im) = &n.image {
+                        //     image::imageops::replace(&mut self.notif, im, 0, n.position as i64);
+                        //     // image::imageops::overlay(&mut self.notif, im, 0, n.position as i64);
+                        // }
 
-                    direct_text_raw(
+                        direct_text_raw(
                             &mut self.system_layer.image,
-                        &self.letters,
-                        self.size[0],
-                        self.size[1],
-                        &n.message,
-                        0,
-                        n.position,
+                            &self.letters,
+                            self.size[0],
+                            self.size[1],
+                            &n.message,
+                            0,
+                            n.position,
                             if i % 2 == 0 {
                                 vec4(1., 0., 1., 1.)
                             } else {
                                 vec4(1., 0., 0., 1.)
                             },
-                    );
+                        );
                     }
 
                     // println!("notif pos {} dest {}", n.position, n.dest);
@@ -677,159 +677,148 @@ pub struct GuiMorsel {
     pub letters: Rc<RgbaImage>,
     dirty: bool,
     dirty_sky: bool,
-    pub main: RgbaImage,
-    pub sky: RgbaImage,
-    target_sky: bool,
+    // pub main: RgbaImage,
+    // pub sky: RgbaImage,
+    // target_sky: bool,
     pub size: [u32; 2],
 }
 
 impl GuiMorsel {
-    pub fn new((letters, main, sky, size): PreGuiMorsel) -> Self {
+    pub fn new(letters: RgbaImage, size: [u32; 2]) -> Self {
         // letters: Rc<RgbaImage>, main: RgbaImage, sky: RgbaImage, size: [u32; 2]
+        let letters = Rc::new(letters);
         Self {
-            letters: Rc::new(letters),
+            letters,
             dirty: true,
             dirty_sky: true,
-            main,
-            sky,
-            target_sky: false,
+            // main,
+            // sky,
             size,
         }
     }
 
-    pub fn fill(&mut self, c: Vec4) {
-        let width = self.size[0];
-        let height = self.size[1];
-        direct_fill(self.get_targ(), width, height, c);
-    }
+    // pub fn fill(&mut self, c: Vec4) {
+    //     let width = self.size[0];
+    //     let height = self.size[1];
+    //     direct_fill(self.get_targ(), width, height, c);
+    // }
 
-    pub fn rect(
-        &mut self,
-        x: LuaResponse,
-        y: LuaResponse,
-        w: LuaResponse,
-        h: LuaResponse,
-        c: Vec4,
-        corner: Option<LuaResponse>,
-    ) {
-        let width = self.size[0];
-        let height = self.size[1];
+    // pub fn rect(
+    //     &mut self,
+    //     x: LuaResponse,
+    //     y: LuaResponse,
+    //     w: LuaResponse,
+    //     h: LuaResponse,
+    //     c: Vec4,
+    //     corner: Option<LuaResponse>,
+    // ) {
+    //     let width = self.size[0];
+    //     let height = self.size[1];
 
-        direct_rect(self.get_targ(), width, height, x, y, w, h, c, corner)
-    }
+    //     direct_rect(self.get_targ(), width, height, x, y, w, h, c, corner)
+    // }
 
-    pub fn line(
-        &mut self,
-        x1: LuaResponse,
-        y1: LuaResponse,
-        x2: LuaResponse,
-        y2: LuaResponse,
-        c: Vec4,
-    ) {
-        let width = self.size[0];
-        let height = self.size[1];
+    // pub fn line(
+    //     &mut self,
+    //     x1: LuaResponse,
+    //     y1: LuaResponse,
+    //     x2: LuaResponse,
+    //     y2: LuaResponse,
+    //     c: Vec4,
+    // ) {
+    //     let width = self.size[0];
+    //     let height = self.size[1];
 
-        direct_line(self.get_targ(), width, height, x1, y1, x2, y2, c)
-    }
+    //     direct_line(self.get_targ(), width, height, x1, y1, x2, y2, c)
+    // }
 
-    pub fn text(&mut self, txt: &str, x: LuaResponse, y: LuaResponse, c: Vec4) {
-        let targ = if self.target_sky {
-            self.dirty_sky = true;
-            &mut self.sky
-        } else {
-            self.dirty = true;
-            &mut self.main
-        };
+    // pub fn text(&mut self, txt: &str, x: LuaResponse, y: LuaResponse, c: Vec4) {
+    //     let targ = if self.target_sky {
+    //         self.dirty_sky = true;
+    //         &mut self.sky
+    //     } else {
+    //         self.dirty = true;
+    //         &mut self.main
+    //     };
 
-        direct_text(
-            targ,
-            &self.letters,
-            self.size[0],
-            self.size[1],
-            txt,
-            x,
-            y,
-            c,
-        );
-    }
+    //     direct_text(
+    //         targ,
+    //         &self.letters,
+    //         self.size[0],
+    //         self.size[1],
+    //         txt,
+    //         x,
+    //         y,
+    //         c,
+    //     );
+    // }
 
-    pub fn pixel(&mut self, x: u32, y: u32, rgb: Vec4) {
-        let s = self.size;
-        println!("morself gui {} {}", s[0], s[1]);
+    // pub fn pixel(&mut self, x: u32, y: u32, rgb: Vec4) {
+    //     let s = self.size;
+    //     println!("morself gui {} {}", s[0], s[1]);
 
-        direct_pixel(self.get_targ(), s[0], s[1], x, y, rgb.to_array());
-        // self.get_targ()
-        //     .get_pixel_mut(x.min(s[0] - 1), y.min(s[1] - 1))
-        //     .0 = [
-        //     (rgb.x * 255.) as u8,
-        //     (rgb.y * 255.) as u8,
-        //     (rgb.z * 255.) as u8,
-        //     (rgb.w * 255.) as u8,
-        // ];
-    }
+    //     direct_pixel(self.get_targ(), s[0], s[1], x, y, rgb.to_array());
+
+    // }
     pub fn resize(&mut self, w: u32, h: u32) {
         self.size = [w, h];
         println!("morself gui {} {}", w, h);
-        self.main = image::imageops::resize(&self.main, w, h, image::imageops::FilterType::Nearest);
-        self.sky = image::imageops::resize(&self.sky, w, h, image::imageops::FilterType::Nearest);
-        self.dirty = true;
-        self.dirty_sky = true;
-    }
-
-    pub fn draw_image(&mut self, image: &RgbaImage, x: LuaResponse, y: LuaResponse) {
-        let xx = eval(x, self.size[0]);
-        let yy = eval(y, self.size[1]);
-
-        image::imageops::overlay(self.get_targ(), image, xx as i64, yy as i64);
-
-        // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
+        // self.main = image::imageops::resize(&self.main, w, h, image::imageops::FilterType::Nearest);
+        // self.sky = image::imageops::resize(&self.sky, w, h, image::imageops::FilterType::Nearest);
         // self.dirty = true;
+        // self.dirty_sky = true;
     }
+
+    // pub fn draw_image(&mut self, image: &RgbaImage, x: LuaResponse, y: LuaResponse) {
+    //     let xx = eval(x, self.size[0]);
+    //     let yy = eval(y, self.size[1]);
+    //     image::imageops::overlay(self.get_targ(), image, xx as i64, yy as i64);
+    // }
 
     /* Clean off the main raster */
-    pub fn clean(&mut self) {
-        let sx = self.size[0];
-        let sy = self.size[1];
-        // clear image to transparent
-        self.get_targ().copy_from(&RgbaImage::new(sx, sy), 0, 0);
-    }
+    // pub fn clean(&mut self) {
+    //     let sx = self.size[0];
+    //     let sy = self.size[1];
+    //     // clear image to transparent
+    //     self.get_targ().copy_from(&RgbaImage::new(sx, sy), 0, 0);
+    // }
 
-    pub fn target_gui(&mut self) {
-        self.target_sky = false;
-    }
-    pub fn target_sky(&mut self) {
-        self.target_sky = true;
-    }
+    // pub fn target_gui(&mut self) {
+    //     self.target_sky = false;
+    // }
+    // pub fn target_sky(&mut self) {
+    //     self.target_sky = true;
+    // }
 
-    fn get_targ(&mut self) -> &mut RgbaImage {
-        if self.target_sky {
-            self.dirty_sky = true;
-            &mut self.sky
-        } else {
-            self.dirty = true;
-            &mut self.main
-        }
-    }
+    // fn get_targ(&mut self) -> &mut RgbaImage {
+    //     if self.target_sky {
+    //         self.dirty_sky = true;
+    //         &mut self.sky
+    //     } else {
+    //         self.dirty = true;
+    //         &mut self.main
+    //     }
+    // }
 
     pub fn new_image(w: u32, h: u32) -> RgbaImage {
         RgbaImage::new(w, h)
     }
-    pub fn send_state(&mut self) -> (Option<RgbaImage>, Option<RgbaImage>) {
-        if self.dirty {
-            self.dirty = false;
-            if self.dirty_sky {
-                self.dirty_sky = false;
-                (Some(self.main.clone()), Some(self.sky.clone()))
-            } else {
-                (Some(self.main.clone()), None)
-            }
-        } else if self.dirty_sky {
-            self.dirty_sky = false;
-            (None, Some(self.sky.clone()))
-        } else {
-            (None, None)
-        }
-    }
+    //     pub fn send_state(&mut self) -> (Option<RgbaImage>, Option<RgbaImage>) {
+    //         if self.dirty {
+    //             self.dirty = false;
+    //             if self.dirty_sky {
+    //                 self.dirty_sky = false;
+    //                 (Some(self.main.clone()), Some(self.sky.clone()))
+    //             } else {
+    //                 (Some(self.main.clone()), None)
+    //             }
+    //         } else if self.dirty_sky {
+    //             self.dirty_sky = false;
+    //             (None, Some(self.sky.clone()))
+    //         } else {
+    //             (None, None)
+    //         }
+    //     }
 }
 
 pub fn eval(val: LuaResponse, l: u32) -> i32 {
@@ -885,14 +874,14 @@ pub fn eval(val: LuaResponse, l: u32) -> i32 {
 }
 
 pub fn rebuild_group(
-    gui_bundle: &TexTuple,
-    sky_bundle: &TexTuple,
+    gui_bundles: [&TexTuple; 5],
     device: &Device,
-    main_bind_group_layout: &wgpu::BindGroupLayout,
+    main_layout: &wgpu::BindGroupLayout,
+    gui_aux_layout: &wgpu::BindGroupLayout,
     uniform_buf: &wgpu::Buffer,
-) -> (BindGroup, BindGroup) {
+) -> (BindGroup, BindGroup, BindGroup) {
     let gui_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &main_bind_group_layout,
+        layout: &main_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -900,18 +889,36 @@ pub fn rebuild_group(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(&gui_bundle.view),
+                resource: wgpu::BindingResource::TextureView(&gui_bundles[0].view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(&gui_bundle.sampler),
+                resource: wgpu::BindingResource::Sampler(&gui_bundles[0].sampler),
+            },
+        ],
+        label: None,
+    });
+    let gui_aux_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &gui_aux_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&gui_bundles[1].view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&gui_bundles[2].view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&gui_bundles[3].view),
             },
         ],
         label: None,
     });
 
     let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        layout: &main_bind_group_layout,
+        layout: &main_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -919,16 +926,16 @@ pub fn rebuild_group(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(&sky_bundle.view),
+                resource: wgpu::BindingResource::TextureView(&gui_bundles[4].view),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Sampler(&sky_bundle.sampler),
+                resource: wgpu::BindingResource::Sampler(&gui_bundles[4].sampler),
             },
         ],
         label: None,
     });
-    (gui_group, sky_group)
+    (gui_group, gui_aux_group, sky_group)
 }
 
 fn adeval(st: &str, l: u32) -> i32 {
@@ -1192,4 +1199,9 @@ impl ColorMap for TextMap {
     }
 
     type Color = Rgba<u8>;
+}
+
+/** Mutate the image proided to the dimensions */
+pub fn resizer(im: &mut RgbaImage, w: u32, h: u32) {
+    *im = image::imageops::resize(im, w, h, image::imageops::FilterType::Nearest);
 }

@@ -29,7 +29,6 @@ use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple
 use crate::{gui::Gui, log::LogType};
 use glam::{vec2, vec3, Mat4};
 use parking_lot::RwLock;
-use switch_board::SwitchBoard;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, Texture};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
@@ -49,6 +48,8 @@ mod ent_manager;
 mod global;
 mod gui;
 mod log;
+#[cfg(feature = "online_capable")]
+mod lua_connection;
 mod lua_define;
 mod lua_ent;
 mod lua_img;
@@ -241,18 +242,18 @@ impl Core {
         // let index_format = wgpu::IndexFormat::Uint16;
 
         let entity_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(entity_uniform_size),
-                    },
-                    count: None,
-                }],
-                label: Some("entity bind group layout"),
-            });
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(entity_uniform_size),
+                },
+                count: None,
+            }],
+            label: Some("entity bind group layout"),
+        });
         let entity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &entity_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -274,36 +275,36 @@ impl Core {
         let main_uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
 
         let main_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("main bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
+            label: Some("main bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
                         min_binding_size: wgpu::BufferSize::new(main_uniform_size), //wgpu::BufferSize::new(64),
-                        },
-                        count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, //wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         // let gui_uniform_size = mem::size_of::<GuiUniforms>() as wgpu::BufferAddress;
         let gui_aux_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -740,9 +741,7 @@ impl Core {
                         self.global.simple_cam_rot = rot;
                     }
                 }
-                MainCommmand::DrawImg(s, x, y) => {
-                    self.gui.draw_image(&mut self.tex_manager, &s, false, x, y)
-                }
+
                 MainCommmand::GetImg(s, tx) => {
                     tx.send(self.tex_manager.get_img(&s));
                 }
@@ -757,7 +756,6 @@ impl Core {
                     self.tex_manager
                         .refinalize(&self.queue, &self.master_texture);
                 }
-                MainCommmand::Pixel(x, y, v) => self.gui.pixel(x, y, v.x, v.y, v.z, v.w),
                 MainCommmand::Anim(name, items, speed) => {
                     let frames = items
                         .iter()
@@ -779,7 +777,6 @@ impl Core {
                         );
                     }
                 }
-                MainCommmand::Clear() => self.gui.clean(),
                 MainCommmand::Model(name, texture, v, n, i, u, style, tx) => {
                     let res = self.model_manager.upsert_model(
                         &self.device,

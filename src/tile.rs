@@ -93,7 +93,6 @@ impl Layer {
     ) -> (Option<(String, u8)>) {
         let t = match self.get_chunk(ix, iy, iz) {
             Some(c) => {
-                println!("chunk exists {} {} {} named {}", ix, iy, iz, c.key);
                 let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
                     + iy.rem_euclid(CHUNK_SIZE))
                     * CHUNK_SIZE)

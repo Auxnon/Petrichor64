@@ -5,6 +5,7 @@ use crate::{
     command::MainCommmand,
     controls::ControlState,
     log::LogType,
+    lua_img::LuaImg,
     pad::Pad,
     world::{TileCommand, TileResponse},
 };
@@ -230,8 +231,25 @@ fn start(
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
         let mice_mutex = Rc::new(RefCell::new(mice));
         let ent_counter = Rc::new(Mutex::new(2u64));
-
-        let gui_handle = Rc::new(RefCell::new(crate::gui::GuiMorsel::new(resources)));
+            let (letters, main_im, sky_im, size) = resources;
+            let morsel = crate::gui::GuiMorsel::new(letters, size);
+            let main_rast = Rc::new(RefCell::new(LuaImg::new(
+                bundle_id,
+                main_im,
+                size[0],
+                size[1],
+                morsel.letters.clone(),
+            )));
+            let sky_rast = Rc::new(RefCell::new(LuaImg::new(
+                bundle_id,
+                sky_im,
+                size[0],
+                size[1],
+                morsel.letters.clone(),
+            )));
+            // morsel.sky
+            //     let im = GuiMorsel::new_image(w, h);
+            let gui_handle = Rc::new(RefCell::new(morsel));
 
         let lua_ctx = if true {
             unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
@@ -269,7 +287,9 @@ fn start(
             pitcher,
             world_sender,
             Rc::clone(&gui_handle),
-            net,
+                Rc::clone(&main_rast),
+                Rc::clone(&sky_rast),
+                netout,
             singer,
             Rc::clone(&keys_mutex),
             Rc::clone(&diff_keys_mutex),
@@ -381,21 +401,13 @@ fn start(
                         async_sender
                             .send((bundle_id, crate::MainCommmand::AsyncError(format!("{}", e))));
                     }
-                    // TODO if we just clump a loop in we shouldnt need this right?
-                    // async_sender.send((bundle_id, crate::MainCommmand::MainComplete()));
                 }
                 LuaTalk::Die => {
                     #[cfg(feature = "online_capable")]
-                    match closer {
-                        Some(n) => {
-                            // println!("closing 2");
-                            n.send(vec![-99., 0., 0.]);
-                        }
-                        _ => {}
-                    }
+                        net.borrow_mut().shutdown();
                     break;
                 }
-                LuaTalk::AsyncFunc(func) => {}
+                    LuaTalk::AsyncFunc(_func) => {}
                 LuaTalk::Loop((key_state, mouse_state)) => {
                     let res = lua_ctx.load(&"loop()".to_string()).eval::<mlua::Value>();
                     //=== async functions error handler will debounce since we deal with rapid event looping ===
@@ -453,11 +465,24 @@ fn start(
                     // mouse_state;
 
                     // only send if a change was made, otherwise the old image is cached on the main thread
+                        let mut m = main_rast.borrow_mut();
+                        let mm = if m.dirty {
+                            m.dirty = false;
+                            Some(m.image.clone())
+                        } else {
+                            None
+                        };
 
-                    async_sender.send((
-                        bundle_id,
-                        crate::MainCommmand::LoopComplete(gui_handle.borrow_mut().send_state()),
-                    ));
+                        let mut s = sky_rast.borrow_mut();
+                        let ss = if s.dirty {
+                            s.dirty = false;
+                            Some(s.image.clone())
+                        } else {
+                            None
+                        };
+
+                        async_sender
+                            .send((bundle_id, crate::MainCommmand::LoopComplete((mm, ss))))?;
                 }
                 LuaTalk::Func(func, sync) => {
                     // TODO load's chunk should call set_name to "main" etc, for better error handling
@@ -552,6 +577,8 @@ fn start(
                 }
                 LuaTalk::Resize(w, h) => {
                     gui_handle.borrow_mut().resize(w, h);
+                        main_rast.borrow_mut().resize(w, h);
+                        sky_rast.borrow_mut().resize(w, h);
                 }
                 LuaTalk::Drop(s) => {
                     let res = lua_ctx
