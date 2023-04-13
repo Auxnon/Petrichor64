@@ -1,8 +1,5 @@
-use std::sync::mpsc::Sender;
-
 use mlua::{UserData, UserDataFields, UserDataMethods, Value::Nil};
 
-use crate::command::MainCommmand;
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
     pub x: f64,
@@ -29,11 +26,11 @@ pub struct LuaEnt {
                           // pub sender: Option<Sender<(u8, MainCommmand)>>,
                           // pub cloned: bool,
 }
-pub mod LuaEntFlags {
-    pub const None: u8 = 0b0;
-    pub const Tex: u8 = 0b1;
-    pub const Asset: u8 = 0b10;
-    pub const Dead: u8 = 0b100;
+pub mod lua_ent_flags {
+    // pub const None: u8 = 0b0;
+    pub const TEX: u8 = 0b1;
+    pub const ASSET: u8 = 0b10;
+    pub const DEAD: u8 = 0b100;
 }
 
 impl UserData for LuaEnt {
@@ -41,7 +38,7 @@ impl UserData for LuaEnt {
         // methods.add_method_mut(name, method)
         // set meta method __gc
         // let h = mlua::MetaMethod::
-        methods.add_meta_method("__tostring", |lu, this, _: ()| {
+        methods.add_meta_method("__tostring", |_, this, _: ()| {
             // println!("lua ent gc'd");
             // match lu.globals().get::<&str, mlua::Function>("kill") {
             //     Ok(kill) => {
@@ -54,7 +51,7 @@ impl UserData for LuaEnt {
             Ok(format!("[entity {}]", this.get_id()))
         });
         //mlua::MetaMethod::Concat::name()
-        methods.add_meta_method("__concat", |lu, this, _: ()| {
+        methods.add_meta_method("__concat", |_, this, _: ()| {
             Ok(format!("[entity {}]", this.get_id()))
         });
         methods.add_method_mut("pos", |_, this, p: (f64, f64, f64)| {
@@ -75,7 +72,7 @@ impl UserData for LuaEnt {
             Ok(true)
         });
 
-        methods.add_method_mut("kill", |lu, this, ()| {
+        methods.add_method_mut("kill", |_, this, ()| {
             this.kill();
             Ok(Nil)
         });
@@ -125,11 +122,11 @@ impl UserData for LuaEnt {
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;
-                this.flags |= LuaEntFlags::Tex;
+                this.flags |= lua_ent_flags::TEX;
             } else if this.anim {
                 this.anim = false;
                 this.dirty = true;
-                this.flags |= LuaEntFlags::Tex;
+                this.flags |= lua_ent_flags::TEX;
             }
             Ok(())
         });
@@ -137,7 +134,7 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("asset", |_, this, asset: String| {
             if this.asset != asset {
                 this.asset = asset;
-                this.flags |= LuaEntFlags::Asset;
+                this.flags |= lua_ent_flags::ASSET;
                 this.dirty = true;
             }
             Ok(())
@@ -248,7 +245,7 @@ impl LuaEnt {
         self.flags = 0;
     }
     pub fn kill(&mut self) {
-        self.flags |= LuaEntFlags::Dead;
+        self.flags |= lua_ent_flags::DEAD;
         self.dirty = true;
     }
 }

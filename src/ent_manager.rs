@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     ent::EntityUniforms,
-    lua_ent::LuaEntFlags,
+    lua_ent::lua_ent_flags,
     model::{Instance, Model, ModelManager},
     texture::TexManager,
 };
@@ -376,13 +376,13 @@ impl EntManager {
                     if l.is_dirty() {
                         let flags = l.get_flags();
 
-                        if flags & LuaEntFlags::Dead == LuaEntFlags::Dead {
+                        if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
                             self.hash_dirty = true;
                             return false;
                         }
                         l.clear_dirt();
 
-                        if flags & LuaEntFlags::Asset == LuaEntFlags::Asset {
+                        if flags & lua_ent_flags::ASSET == lua_ent_flags::ASSET {
                             let asset = l.get_asset();
                             ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
                                 Some(m) => {
@@ -409,7 +409,7 @@ impl EntManager {
                             self.hash_dirty = true;
                         }
 
-                        if flags & LuaEntFlags::Tex == LuaEntFlags::Tex {
+                        if flags & lua_ent_flags::TEX == lua_ent_flags::TEX {
                             ent.tex = tm.get_tex(l.get_tex());
                             ent.remove_anim();
                         }
