@@ -131,11 +131,11 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                     if !crate::command::init_con_sys(core, c) {
                         let mut ltype = LogType::Lua;
                         // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
-                        let result = match core.bundle_manager.get_lua().func(c) {
-                            LuaResponse::String(s) => s,
-                            LuaResponse::Number(n) => n.to_string(),
-                            LuaResponse::Integer(i) => i.to_string(),
-                            LuaResponse::Boolean(b) => b.to_string(),
+                        if let Some(result) = match core.bundle_manager.get_lua().func(c) {
+                            LuaResponse::String(s) => Some(s),
+                            LuaResponse::Number(n) => Some(n.to_string()),
+                            LuaResponse::Integer(i) => Some(i.to_string()),
+                            LuaResponse::Boolean(b) => Some(b.to_string()),
                             LuaResponse::Table(t) => {
                                 let mut s = String::new();
                                 s.push_str("{");
@@ -143,17 +143,17 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                                     s.push_str(&format!("{}: {}, ", k, v));
                                 }
                                 s.push_str("}");
-                                s
+                                Some(s)
                             }
                             LuaResponse::Error(e) => {
                                 ltype = LogType::LuaError;
-                                e
+                                Some(e)
                             } // LuaResponse::Function(f) => format!("function: {}", f),
 
-                            _ => "nil".to_string(), // LuaResponse::Nil
-                        };
-
-                        core.loggy.log(ltype, &result);
+                            _ => None, // ignore nils
+                        } {
+                            core.loggy.log(ltype, &result);
+                        }
                     }
                 }
             }
