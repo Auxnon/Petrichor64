@@ -1,86 +1,44 @@
-// use tokio_util::codec::{BytesCodec, FramedRead, FramedWrite};
-
 use std::{
     error::Error,
     net::SocketAddr,
     sync::mpsc::{channel, Receiver, Sender},
-    thread::JoinHandle,
 };
 
-use futures::{FutureExt, Stream};
 use tokio::{
-    io::{self, AsyncWriteExt},
-    net::{TcpListener, TcpSocket, TcpStream, UdpSocket},
+    io::{self},
+    net::{TcpStream, UdpSocket},
     sync::mpsc,
 };
 
-use crate::lua_connection::LuaConnection;
+use crate::{lua_connection::LuaConnection, packet::Packet64};
 
-pub type MovePacket = Vec<f32>;
-pub type MessagePacket = String;
-pub type MoveReponse = f32;
-
-pub enum Packet64 {
-    U3([f32; 3]),
-    U4([f32; 4]),
-    Str(String),
-}
+// packets over tcp
+// 1 byte for type
+// 4 bytes for length
+// 64 bytes for data
+// 1 byte for checksum
+// 1 byte for end
 
 trait Connection {}
-pub struct Online {
-    clients: Vec<JoinHandle<String>>,
-}
+pub struct Online {}
 impl Online {
-    pub fn new() -> Self {
-        Online { clients: vec![] }
-    }
-
-    // pub fn init() -> Result<(Sender<MovePacket>, Receiver<MovePacket>), Box<dyn Error>> {
-    //     let tcp = true;
-
-    //     // let netin:Sender<MovePacket>=
-    //     // let netout=
-    //     // let stdin = FramedRead::new(io::stdin(), BytesCodec::new());
-    //     // let stdin = stdin.map(|i| i.map(|bytes| bytes.freeze()));
-    //     // let stdout = FramedWrite::new(io::stdout(), BytesCodec::new());
-
-    //     // if tcp {
-    //     //     tcp::connect(&addr, stdin, stdout).await?;
-    //     // } else {
-    //     // crate::lg!("online starting..");
-
-    //     // crate::lg!("online on");
-    // }
-
     /** address in format 0.0.0.0:1234 */
-    pub fn open(
-        &mut self,
-        address: &str,
-        udp: bool,
-        server: bool,
-    ) -> Result<LuaConnection, Box<dyn Error>> {
-        // let addr = "73.101.41.242:6142";
+    pub fn open(address: &str, udp: bool, server: bool) -> Result<LuaConnection, Box<dyn Error>> {
         let addr = address.parse::<SocketAddr>()?;
 
         let (netin_send, netin_recv) = channel::<Packet64>();
         let (netout_send, netout_recv) = channel::<Packet64>();
         // MARK we must poll this somehow
-        let handle = std::thread::spawn(move || {
-            // futures::executor::block_on(
-            run(addr, udp, false, netin_send, netout_recv);
-            "done".to_string()
-        });
+        let handle =
+            std::thread::spawn(
+                move || match run(addr, udp, false, netin_send, netout_recv) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e.to_string()),
+                },
+            );
 
-        self.clients.push(handle);
-        let conn = LuaConnection::new(netout_send, netin_recv);
+        let conn = LuaConnection::new(netout_send, netin_recv, handle);
         Ok(conn)
-    }
-    pub fn shutdown(&mut self) {
-        for client in self.clients.drain(..) {
-            client.thread().unpark();
-            let res = client.join();
-            println!("terminated connection: {:?}", res);
-        }
     }
 }
 
@@ -92,17 +50,19 @@ async fn run(
     netin: Sender<Packet64>,
     netout: Receiver<Packet64>,
 ) -> Result<(), Box<dyn Error>> {
-    //impl futures::Future<Output = Result<(), Box<(dyn Error)>>> {
-    if !udp {
-        let socket = create_tcp_client(addr).await?;
-        let re = tcp::connect(socket, netin, netout).await;
-        re
+    if !server {
+        tcp::start_client(addr, netin, netout).await
+        // let socket = create_tcp_client(addr).await?;
+        // let re = tcp::connect(socket, netin, netout).await;
     } else {
-        let socket = create_udp_client(addr).await?;
-        let re = udp::connect(socket, netin, netout).await;
-        // println!("🟣🟢🔴 terminated socket");
-        re
+        tcp::start_server(addr, netin, netout).await
     }
+
+    // else {
+    //     let socket = create_udp_client(addr).await?;
+    //     let re = udp::connect(socket, netin, netout).await;
+    //     re
+    // }
 }
 
 async fn create_udp_client(addr: SocketAddr) -> io::Result<UdpSocket> {
@@ -126,69 +86,72 @@ async fn create_udp_client(addr: SocketAddr) -> io::Result<UdpSocket> {
 // }
 
 async fn create_tcp_client(addr: SocketAddr) -> io::Result<TcpStream> {
-    let bind_addr = if addr.ip().is_ipv4() {
-        "0.0.0.0:0"
-    } else {
-        "[::]:0"
-    };
-    let handle = 1;
+    // let bind_addr = if addr.ip().is_ipv4() {
+    //     "0.0.0.0:0"
+    // } else {
+    //     "[::]:0"
+    // };
     let socket = TcpStream::connect(addr).await?;
-    // type Tx = mpsc::UnboundedSender<Bytes>;
-    // let socket = TcpListener::bind(bind_addr).await?;
-    // socket.
     return Ok(socket);
 }
-type Rx = mpsc::UnboundedReceiver<String>;
-type Tx = mpsc::UnboundedSender<String>;
+// type Rx = mpsc::UnboundedReceiver<String>;
+// type Tx = mpsc::UnboundedSender<String>;
 
 mod tcp {
-
-    use futures::channel::mpsc;
-    use std::convert::TryInto;
+    use crate::packet::{Packer, Packy};
+    use bytes::buf::Writer;
+    use futures::sink::SinkExt;
+    use futures::StreamExt;
+    use parking_lot::Mutex;
+    use std::cell::RefCell;
     use std::error::Error;
     use std::io::{self};
+    use std::net::SocketAddr;
+    use std::rc::Rc;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-    use tokio::net::TcpStream;
-    use tokio_util::codec;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc::channel;
+    use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
-    use super::{MessagePacket, MovePacket, Packet64};
+    use super::Packet64;
 
-    pub struct Handshake {
-        pub name: String,
+    type WrappedStream = FramedRead<OwnedReadHalf, Packy>;
+    type WrappedSink = FramedWrite<OwnedWriteHalf, Packy>;
+    // type Streamy = Framed<WrappedStream, BasicPacky>;
+    // type DeSink = Framed<WrappedSink, (), MyMessage, Json<(), MyMessage>>;
+
+    pub async fn start_client(
+        addr: SocketAddr,
+        netin: Sender<Packet64>,
+        netout: Receiver<Packet64>,
+    ) -> Result<(), Box<dyn Error>> {
+        let socket = TcpStream::connect(addr).await?;
+        connect(None, socket, netin, netout).await
     }
-
-    impl Handshake {
-        pub fn new<S: Into<String>>(name: S) -> Handshake {
-            Handshake { name: name.into() }
-        }
-    }
-
-    // pub type HandshakeCodec = codec::LengthPrefixedJson<Handshake, Handshake>;
-
-    pub async fn start_server(socket: TcpStream) {}
 
     pub async fn connect(
+        id: Option<u32>,
         socket: TcpStream,
         netin: Sender<Packet64>,
         netout: Receiver<Packet64>,
     ) -> Result<(), Box<dyn Error>> {
         let (read, write) = socket.into_split();
-        let reader = BufReader::new(read);
-        let writer = BufWriter::new(write);
+        let reader = WrappedStream::new(read, Packy {});
+        let writer = WrappedSink::new(write, Packy {});
 
-        let task1 = tokio::spawn(send(reader, netin));
-        let task2 = tokio::spawn(recv(writer, netout));
+        let task1 = tokio::spawn(recv(reader, netin));
+        let task2 = tokio::spawn(send(writer, netout));
 
         tokio::try_join!(
             async move {
                 match task1.await {
-                    Err(e) => {
-                        println!("task1 erroring");
-                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
-                    }
+                    Err(e) => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "receiver failed start",
+                    )),
                     Ok(o) => match o {
                         Ok(m) => Ok(()),
                         Err(e) => Err(e),
@@ -197,10 +160,10 @@ mod tcp {
             },
             async move {
                 match task2.await {
-                    Err(e) => {
-                        println!("task2 erroring");
-                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
-                    }
+                    Err(e) => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "sender failed start",
+                    )),
                     Ok(o) => match o {
                         Ok(m) => Ok(()),
                         Err(e) => Err(e),
@@ -211,52 +174,166 @@ mod tcp {
         Ok(())
     }
 
-    /** send content to the bundle from outside */
-    pub async fn send(
-        mut socket: BufReader<OwnedReadHalf>,
-        netin: Sender<Packet64>,
-    ) -> Result<(), io::Error> {
+    pub async fn server_checker(
+        netout: Receiver<Packet64>,
+        vec_out: Arc<Mutex<Vec<(u16, tokio::sync::mpsc::Sender<Packet64>)>>>,
+    ) -> Result<(), String> {
         loop {
-            let mut out_buf = Default::default();
-            if let Ok(b) = socket.read_line(&mut out_buf).await {
-                // if b == 0 {
-                //     break;
-                // }
-                netin.send(Packet64::Str(out_buf));
+            if let Ok(packet) = netout.try_recv() {
+                let t = packet.target();
+                let b = packet.body();
+                if let Packer::Close() = b {
+                    println!("close");
+                    return Ok(());
+                }
+                if *t == 0 {
+                    for (_, conn) in vec_out.lock().iter() {
+                        conn.send(packet.clone());
+                    }
+                } else {
+                    for (id, conn) in vec_out.lock().iter() {
+                        if id == t {
+                            conn.send(packet.clone());
+                        }
+                    }
+                }
             }
+            // for conn in conn_in.iter() {
+            //     conn.send(packet.clone());
+            // }
         }
-        Ok(())
     }
 
-    pub async fn recv(
-        mut socket: BufWriter<OwnedWriteHalf>,
+    pub async fn start_server(
+        addr: SocketAddr,
+        netin: Sender<Packet64>,
         netout: Receiver<Packet64>,
-    ) -> Result<(), io::Error> {
+    ) -> Result<(), Box<dyn Error>> {
+        let listener = TcpListener::bind(&addr).await?;
+        println!("Listening on: {}", addr);
+        let mut id_counter = 1;
+        let (conn_in, conn_out) = channel::<Packet64>(100);
+        let mut connections: Vec<(u16, tokio::sync::mpsc::Sender<Packet64>)> = vec![];
+        let vec_in = Arc::new(Mutex::new(connections));
+        let vec_out = vec_in.clone();
+
+        let spreader = tokio::spawn(async move { server_checker(netout, vec_out).await });
+
         loop {
-            let cmd = netout.recv();
-            if let Ok(v) = cmd {
-                // socket.send(&b).await?;
-                if let Packet64::Str(src) = v {
-                    socket.write_all(src.as_bytes()).await?;
+            // Asynchronously wait for an inbound socket.
+            let (socket, _) = listener.accept().await?;
+            println!("Got connection from: {}", socket.peer_addr()?);
+            // let (read, mut write) = socket.into_split();
+            let id = id_counter;
+            id_counter += 1;
+
+            let (conn_in, mut conn_out) = channel::<Packet64>(10);
+            vec_in.lock().push((id, conn_in));
+
+            // connect(Some(id), socket, netin.clone(), netout.clone()).await?;
+
+            let (read, write) = socket.into_split();
+            let mut writer = WrappedSink::new(write, Packy {});
+
+            // let mut reader = BufReader::new(read);
+            // let mut bytes: Vec<u8> = Vec::new();
+            tokio::spawn(async move {
+                //     // let mut buf: String = String::new();
+
+                //     // In a loop, read data from the socket and write the data back.
+                loop {
+                    if let Ok(m) = conn_out.try_recv() {
+                        writer.send(m).await;
+                    }
+                    //         // let n = socket
+                    //         //     .read(&mut buf)
+                    //         //     .await
+                    //         //     .expect("failed to read data from socket");
+                    //         bytes.clear();
+                    //         let n = reader.read_until(b'\r', &mut bytes).await.unwrap();
+                    //         // bytes.pop();
+                    //         println!("read {} bytes", n);
+                    //         if n == 0 {
+                    //             return;
+                    //         }
+                    //         if let Ok(s) = std::str::from_utf8(&bytes) {
+                    //             println!("read data: {:?}", &s[0..n - 1]);
+                    //             write
+                    //                 .write_u64(id)
+                    //                 .await
+                    //                 .expect("failed to write id to socket");
+                    //             write
+                    //                 .write_all(&bytes)
+                    //                 .await
+                    //                 .expect("failed to write data to socket");
+                    //             write.flush().await.expect("failed to flush data to socket");
+                    //         }
                 }
-                // socket.write_buf(src)
-                // socket.write_all(&v).await?;
+            });
+        }
+    }
+
+    /** send content to the bundle from outside */
+    pub async fn recv(mut socket: WrappedStream, netin: Sender<Packet64>) -> Result<(), io::Error> {
+        loop {
+            if let Some(a) = socket.next().await {
+                match a {
+                    Ok(p) => {
+                        if let Err(_) = netin.send(p) {
+                            return Err(io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                "lua recv pipe fail",
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "server pipe close",
+                        ));
+                    }
+                }
             }
         }
+    }
 
-        Ok(())
+    pub async fn send(
+        mut socket: WrappedSink,
+        netout: Receiver<Packet64>,
+    ) -> Result<(), io::Error> {
+        // let sink = Framed::new(socket, Packet64 {});
+        loop {
+            let cmd = netout.recv();
+            if let Ok(p) = cmd {
+                match p.body() {
+                    Packer::Str(src) => {
+                        println!("out_buf: {:?}", src);
+                        // TODO built in flush, may be inefficient with multiple packets, batch somehow?
+                        socket.send(p).await?;
+                        // socket.write_all(src.as_bytes()).await?;
+                        // const R: u32 = 0x0d;
+                        // socket.write_u32(R).await?;
+                        // socket.flush().await?;
+                    }
+                    Packer::Close() => {
+                        println!("socket shutdown");
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
 mod udp {
-    use std::convert::TryInto;
     use std::error::Error;
     use std::io;
     use std::sync::mpsc::{Receiver, Sender};
     use std::sync::Arc;
     use tokio::net::UdpSocket;
 
-    use super::{MovePacket, Packet64};
+    use super::Packet64;
 
     pub async fn connect(
         socket: UdpSocket,
@@ -266,146 +343,73 @@ mod udp {
         let sock1 = Arc::new(socket);
         let sock2 = sock1.clone();
 
-        let task1 = tokio::spawn(send(sock1, netin));
-        let task2 = tokio::spawn(recv(sock2, netout));
+        // let task1 = tokio::spawn(recv(sock1, netin));
+        // let task2 = tokio::spawn(send(sock2, netout));
 
-        tokio::try_join!(
-            async move {
-                match task1.await {
-                    Err(e) => {
-                        println!("task1 erroring");
-                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
-                    }
-                    Ok(o) => match o {
-                        Ok(m) => Ok(()),
-                        Err(e) => Err(e),
-                    },
-                }
-            },
-            async move {
-                match task2.await {
-                    Err(e) => {
-                        println!("task2 erroring");
-                        Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
-                    }
-                    Ok(o) => match o {
-                        Ok(m) => Ok(()),
-                        Err(e) => Err(e),
-                    },
-                }
-            }
-        )?;
+        // tokio::try_join!(
+        //     async move {
+        //         match task1.await {
+        //             Err(e) => {
+        //                 println!("task1 erroring");
+        //                 Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
+        //             }
+        //             Ok(o) => match o {
+        //                 Ok(m) => Ok(()),
+        //                 Err(e) => Err(e),
+        //             },
+        //         }
+        //     },
+        //     async move {
+        //         match task2.await {
+        //             Err(e) => {
+        //                 println!("task2 erroring");
+        //                 Err(std::io::Error::new(std::io::ErrorKind::Other, "closing!"))
+        //             }
+        //             Ok(o) => match o {
+        //                 Ok(m) => Ok(()),
+        //                 Err(e) => Err(e),
+        //             },
+        //         }
+        //     }
+        // )?;
         Ok(())
     }
 
-    pub async fn send(socket: Arc<UdpSocket>, netin: Sender<Packet64>) -> Result<(), io::Error> {
-        loop {
-            let mut out_buf = [0u8; 16];
+    // pub async fn recv(socket: Arc<UdpSocket>, netin: Sender<Packet64>) -> Result<(), io::Error> {
+    //     loop {
+    //         let mut out_buf = [0u8; 16];
 
-            match socket.recv(&mut out_buf[..]).await {
-                Ok(b) => {
-                    let p = crate::online::tof32(&out_buf);
-                    println!("🟣 netin recv {:?}", p);
-                    netin.send(Packet64::U4(p));
-                }
+    //         match socket.recv(&mut out_buf[..]).await {
+    //             Ok(b) => {
+    //                 let p = crate::online::tof32(&out_buf);
+    //                 println!("🟣 netin recv {:?}", p);
+    //                 netin.send(Packet64::U4(p));
+    //             }
 
-                Err(e) => {
-                    println!("🟣🔴 recv err:{}", e);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn recv(socket: Arc<UdpSocket>, netout: Receiver<Packet64>) -> Result<(), io::Error> {
-        loop {
-            let cmd = netout.recv();
-            if let Ok(v) = cmd {
-                if let Packet64::U4(f) = v {
-                    let b = crate::online::fromf32(&f);
-                    socket.send(&b).await?;
-                }
-                // if (v[0] == -99.) {
-                //     let e = std::io::Error::new(std::io::ErrorKind::Other, "closing!");
-                //     return Err(e);
-                // }
-                // if v.len() < 4 {
-                //     v.resize(4, 0.);
-                // }
-                // v.split(pred)
-                // let f: [f32; 4] = v.try_into().unwrap();
-                // let r = v.try_into();
-                // match r {
-                //     Ok(i) => {
-            }
-        }
-
-        Ok(())
-    }
-
-    // fn create(netin: Sender<MovePacket>, netout: Receiver<MovePacket>, socket: UdpSocket) {
-    //     tokio::task::spawn(run(netin, netout, socket));
+    //             Err(e) => {
+    //                 println!("🟣🔴 recv err:{}", e);
+    //             }
+    //         }
+    //     }
     // }
 
-    //#[tokio::main]
-    // async fn run(
-    //     netin: Sender<MovePacket>,
-    //     netout: Receiver<MovePacket>,
-    //     socket: UdpSocket,
-    // ) -> Result<(), io::Error> {
-    //     tokio::runtime::Builder::new_multi_thread()
-    //         .enable_all()
-    //         .build()
-    //         .unwrap()
-    //         .block_on(async {
-    //             println!("Hello world");
-
-    //             loop {
-    //                 let to_send = match netout.try_recv() {
-    //                     Ok(p) => {
-    //                         println!("yes we a lua send in");
-    //                         Some(p)
-    //                     }
-    //                     _ => {
-    //                         println!("loop, no lua in packet");
-    //                         None
-    //                     }
-    //                 };
-
-    //                 //MARK confirmed that this works, so the mpsc channel is just closing to early, like the sender is being dropped somehow???
-    //                 let to_send = Some(vec![0., 3., 4.]);
-
-    //                 if let Some(p) = to_send {
-    //                     let b = p.iter().map(|f| (*f * 100.) as u8).collect::<Vec<u8>>();
-    //                     let amt = socket.send(&b).await?;
-    //                     println!("eched back {:?}", std::thread::current().id());
+    // pub async fn send(socket: Arc<UdpSocket>, netout: Receiver<Packet64>) -> Result<(), io::Error> {
+    //     loop {
+    //         let cmd = netout.recv();
+    //         if let Ok(v) = cmd {
+    //             match v {
+    //                 Packet64::U4(f) => {
+    //                     let b = crate::online::fromf32(&f);
+    //                     socket.send(&b).await?;
     //                 }
-    //                 let mut out_buf = [0u8; 3];
-
-    //                 match socket.try_recv(&mut out_buf) {
-    //                     Ok(b) => {
-    //                         let p = out_buf
-    //                             .iter()
-    //                             .map(|u| (*u as f32) / 100.)
-    //                             .collect::<Vec<f32>>();
-    //                         netin.send(p);
-    //                     }
-    //                     _ => {}
+    //                 Packet64::Close() => {
+    //                     println!("got shutdown packet");
+    //                     return Ok(());
     //                 }
-
-    //                 match socket.try_recv_from(&mut out_buf) {
-    //                     Ok((n, _addr)) => {
-    //                         println!("GOT {:?}", &out_buf[..3]);
-    //                         // break;
-    //                     }
-    //                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-    //                         continue;
-    //                     }
-    //                     Err(e) => return Err(e),
-    //                 };
-    //                 println!("read some stuff {:?}", std::thread::current().id());
+    //                 _ => {}
     //             }
-    //         })
+    //         }
+    //     }
     // }
 }
 

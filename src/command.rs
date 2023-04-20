@@ -1283,7 +1283,7 @@ function over(str) end"
         move |_, (addr, udp, server): (String, bool, bool)| {
             #[cfg(feature = "online_capable")]
             {
-                return match _net_sender.borrow_mut().open(&addr, udp, server) {
+                return match Online::open(&addr, udp, server) {
                     Ok(c) => Ok(c),
                     Err(er) => Err(make_err(&format!("Unable to create connection {}", er))),
                 };
@@ -1358,6 +1358,9 @@ function help() end"
         text = function(...) gui:text(...) end
         img = function(...) gui:img(...) end
         clr = function(...) gui:clr(...) end
+        pixel = function(...) gui:pixel(...) end
+        main = function() end
+        loop = function() end
         ",
         )
         .exec()?;
