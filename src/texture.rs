@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::{
+    asset::load_img_nopath,
     log::{LogType, Loggy},
     template::AssetTemplate,
     world::World,
@@ -506,30 +507,6 @@ impl TexManager {
     }
 }
 
-pub fn simple_square(size: u32, path: PathBuf, loggy: &mut Loggy) {
-    let mut img: RgbaImage = ImageBuffer::new(size, size);
-    let magenta = Rgba([255u8, 0u8, 255u8, 255u8]);
-    draw_filled_rect_mut(
-        &mut img,
-        imageproc::rect::Rect::at(0, 0).of_size(size, size),
-        magenta,
-    );
-    match image::save_buffer_with_format(
-        path,
-        &img,
-        size,
-        size,
-        image::ColorType::Rgba8,
-        image::ImageFormat::Png,
-    ) {
-        Err(err) => loggy.log(
-            LogType::TextureError,
-            &format!("could not save example image: {}", err),
-        ),
-        _ => {}
-    }
-}
-
 pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
     // println!("🟣buffer {} {}", buffer.len(), 512);
     let w = buffer.len() as u32;
@@ -565,28 +542,6 @@ pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
 pub fn render_sampler(device: &wgpu::Device, size: (u32, u32)) -> (TextureView, Sampler, Texture) {
     let img: RgbaImage = ImageBuffer::new(size.0, size.1);
     make_render_tex(device, &img)
-}
-
-pub fn load_img(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
-    let text = Path::new("assets").join(str).to_str().unwrap().to_string();
-    //Path::new(".").join("entities");
-    load_img_nopath(&text, loggy)
-}
-
-pub fn load_img_nopath(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
-    loggy.log(LogType::Texture, &format!("loading image {}", str));
-
-    let img = image::open(str);
-
-    // The dimensions method returns the images width and height.
-    //println!("dimensions height {:?}", img.height());
-
-    img
-}
-
-pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageError> {
-    let img = image::load_from_memory(buffer);
-    img
 }
 
 fn get_name(str: &str, from_unpack: bool) -> (String, u32) {

@@ -8,3 +8,5 @@ pub enum ValueMap {
     // Map(std::collections::HashMap<String, ValueMap>),
     Null(),
 }
+
+pub type ControlState = ([bool; 256], [f32; 11]);

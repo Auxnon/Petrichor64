@@ -3,10 +3,10 @@ use crate::sound::SoundCommand;
 use crate::{
     bundle::BundleResources,
     command::MainCommmand,
-    controls::ControlState,
     log::LogType,
     lua_img::LuaImg,
     pad::Pad,
+    types::ControlState,
     world::{TileCommand, TileResponse},
 };
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
@@ -82,7 +82,7 @@ impl LuaCore {
         world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         pitcher: Sender<MainPacket>,
         loggy: Sender<(LogType, String)>,
-        singer: SoundSender,
+        #[cfg(feature = "audio")] singer: SoundSender,
         debug: bool,
         dangerous: bool,
     ) -> LuaHandle {
@@ -92,6 +92,7 @@ impl LuaCore {
             world_sender,
             pitcher,
             loggy,
+            #[cfg(feature = "audio")]
             singer,
             debug,
             dangerous,
@@ -202,7 +203,7 @@ fn start(
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     pitcher: Sender<MainPacket>,
     loggy: Sender<(LogType, String)>,
-    singer: SoundSender,
+    #[cfg(feature = "audio")] singer: SoundSender,
     debug: bool,
     dangerous: bool,
 ) -> (Sender<LuaTalk>, LuaHandle) {
@@ -212,15 +213,15 @@ fn start(
     }
     let thread_join = thread::spawn(move || -> Result<(), String> {
         let thread_result = || -> Result<(), Box<dyn std::error::Error>> {
-            #[cfg(feature = "online_capable")]
-            let net = Rc::new(RefCell::new(crate::online::Online::new()));
-            #[cfg(not(feature = "online_capable"))]
-            let net: Option<bool> = None;
+            // #[cfg(feature = "online_capable")]
+            // let net = Rc::new(RefCell::new(crate::online::Online::new()));
+            // #[cfg(not(feature = "online_capable"))]
+            // let net: Option<bool> = None;
 
-            #[cfg(feature = "online_capable")]
-            let netout = net.clone();
-            #[cfg(not(feature = "online_capable"))]
-            let netout: Option<bool> = None;
+            // #[cfg(feature = "online_capable")]
+            // let netout = net.clone();
+            // #[cfg(not(feature = "online_capable"))]
+            // let netout: Option<bool> = None;
 
             let keys = [false; 256];
             let mice = [0.; 13];
@@ -287,7 +288,7 @@ fn start(
                 Rc::clone(&gui_handle),
                 Rc::clone(&main_rast),
                 Rc::clone(&sky_rast),
-                netout,
+                #[cfg(feature = "audio")]
                 singer,
                 Rc::clone(&keys_mutex),
                 Rc::clone(&diff_keys_mutex),
@@ -392,15 +393,13 @@ fn start(
                             .load(&"main() loop()".to_string())
                             .eval::<mlua::Value>();
                         if let Err(e) = res {
-                            async_sender.send((
-                                bundle_id,
-                                crate::MainCommmand::AsyncError(format_error(e)),
-                            ))?;
+                            async_sender
+                                .send((bundle_id, MainCommmand::AsyncError(format_error(e))))?;
                         }
                     }
                     LuaTalk::Die => {
-                        #[cfg(feature = "online_capable")]
-                        net.borrow_mut().shutdown();
+                        // #[cfg(feature = "online_capable")]
+                        // net.borrow_mut().shutdown();
                         break;
                     }
                     LuaTalk::AsyncFunc(_func) => {}
@@ -415,7 +414,7 @@ fn start(
                                     debounce_error_counter = 0;
                                     async_sender.send((
                                         bundle_id,
-                                        crate::MainCommmand::AsyncError(format_error(e)),
+                                        MainCommmand::AsyncError(format_error(e)),
                                     ))?;
                                 }
                             }
@@ -469,8 +468,7 @@ fn start(
                             None
                         };
 
-                        async_sender
-                            .send((bundle_id, crate::MainCommmand::LoopComplete((mm, ss))))?;
+                        async_sender.send((bundle_id, MainCommmand::LoopComplete((mm, ss))))?;
                     }
                     LuaTalk::Func(func, sync) => {
                         // TODO load's chunk should call set_name to "main" etc, for better error handling
@@ -571,19 +569,21 @@ fn start(
                         };
                     }
                     LuaTalk::Resize(w, h) => {
+                        println!("resize {} {}", w, h);
                         gui_handle.borrow_mut().resize(w, h);
                         main_rast.borrow_mut().resize(w, h);
                         sky_rast.borrow_mut().resize(w, h);
+                        let _ = lua_ctx
+                            .load(&format!("draw({},{})", w, h))
+                            .eval::<mlua::Value>();
                     }
                     LuaTalk::Drop(s) => {
                         let res = lua_ctx
                             .load(&format!("drop('{}')", s))
                             .eval::<mlua::Value>();
                         if let Err(e) = res {
-                            async_sender.send((
-                                bundle_id,
-                                crate::MainCommmand::AsyncError(format_error(e)),
-                            ))?;
+                            async_sender
+                                .send((bundle_id, MainCommmand::AsyncError(format_error(e))))?;
                         }
                     }
                 }

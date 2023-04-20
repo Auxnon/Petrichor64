@@ -5,7 +5,7 @@ use image::RgbaImage;
 use mlua::{AnyUserData, UserData, UserDataMethods, Value};
 
 use crate::{
-    command::{num, numop, NumCouple},
+    command::{num, numop},
     gui::{direct_fill, direct_image, direct_line, direct_pixel, direct_rect, direct_text},
 };
 
@@ -70,6 +70,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "line",
             |_, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
+                this.dirty = true;
                 let c = get_color(rgb);
                 direct_line(
                     &mut this.image,
@@ -88,6 +89,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "rect",
             |_, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
+                this.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
                     &mut this.image,
@@ -106,6 +108,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "rrect",
             |_, this, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value)| {
+                this.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
                     &mut this.image,
@@ -125,6 +128,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "text",
             |_, this, (txt, x, y, rgb): (String, Option<Value>, Option<Value>, Option<Value>)| {
+                this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
                     _ => vec4(1., 1., 1., 1.),
@@ -145,6 +149,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "img",
             |_, this, (img, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
+                this.dirty = true;
                 if let Ok(limg) = img.borrow::<LuaImg>() {
                     direct_image(
                         &mut this.image,
@@ -161,6 +166,7 @@ impl UserData for LuaImg {
         methods.add_method_mut(
             "pixel",
             |_, this, (x, y, rgb): (u32, u32, Option<Value>)| {
+                this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
                     _ => vec4(1., 1., 1., 1.),
@@ -172,10 +178,12 @@ impl UserData for LuaImg {
             },
         );
         methods.add_method_mut("clr", |_, this, (): ()| {
+            this.dirty = true;
             this.image = RgbaImage::new(this.width, this.height);
             Ok(())
         });
-        methods.add_method_mut("fill", |_, this, (rgb): (Option<Value>)| {
+        methods.add_method_mut("fill", |_, this, rgb: Option<Value>| {
+            this.dirty = true;
             let c = match rgb {
                 Some(rgba) => get_color(rgba),
                 _ => vec4(1., 1., 1., 1.),
@@ -273,11 +281,6 @@ pub fn get_color(x: mlua::Value) -> Vec4 {
                 r = a / 255.;
             }
 
-            // let r = t.get::<_, f32>("1").unwrap_or(0.);
-            // let g = t.get::<_, f32>("2").unwrap_or(0.);
-            // let b = t.get::<_, f32>("3").unwrap_or(0.);
-            // let a = t.get::<_, f32>("4").unwrap_or(1.);
-            // println!("got color {} {} {} {}", r, g, b, a);
             vec4(r, g, b, a)
         }
         _ => vec4(1., 1., 1., 1.),

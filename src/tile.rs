@@ -2,10 +2,12 @@ use rustc_hash::FxHashMap;
 use std::{collections::hash_map::Entry, ops::Mul, rc::Rc};
 
 use glam::{ivec3, IVec3, Mat4, Vec4};
+#[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Buffer, Device};
 
+#[cfg(feature = "headed")]
+use crate::ent::EntityUniforms;
 use crate::{
-    ent::EntityUniforms,
     model::{Model, ModelManager, Vertex},
     world::WorldInstance,
 };
@@ -444,24 +446,38 @@ impl LayerModel {
 pub struct ChunkModel {
     pub vert_data: Vec<Vertex>,
     pub ind_data: Vec<u32>,
+    #[cfg(feature = "headed")]
     pub buffers: Option<(Buffer, Buffer)>,
+    #[cfg(feature = "headed")]
     pub instance_buffer: Buffer,
     pub pos: IVec3,
     pub key: String,
 }
 
 impl ChunkModel {
-    pub fn new(device: &Device, key: String, x: i32, y: i32, z: i32) -> ChunkModel {
+    pub fn new(
+        #[cfg(feature = "headed")] device: &Device,
+        key: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> ChunkModel {
         let pos = ivec3(x, y, z);
-        // println!("chunk pos {:?}", pos);
-        // ChunkModel::c
+        #[cfg(feature = "headed")]
         let t = ChunkModel::create_transform(pos);
-        let instance_buffer = ChunkModel::create_buffer(device, t);
+        #[cfg(feature = "headed")]
+        let instance_buffer = ChunkModel::create_buffer(
+            #[cfg(feature = "headed")]
+            device,
+            t,
+        );
 
         ChunkModel {
             vert_data: vec![],
             ind_data: vec![],
+            #[cfg(feature = "headed")]
             buffers: None,
+            #[cfg(feature = "headed")]
             instance_buffer,
             pos,
             key,
@@ -476,14 +492,12 @@ impl ChunkModel {
         model_manager: &ModelManager,
         chunk: Chunk,
     ) {
+        #[cfg(feature = "headed")]
+        {
+            self.buffers = None;
+        }
         self.vert_data = vec![];
         self.ind_data = vec![];
-
-        self.buffers = None;
-        // let texture = "grid".to_string(); // grass_down
-        // MARK change model
-
-        // println!("got cells {}", chunk.cells.len());
 
         // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
         for (i, cell) in chunk.cells.clone().iter().enumerate() {
@@ -503,6 +517,7 @@ impl ChunkModel {
         }
     }
 
+    #[cfg(feature = "headed")]
     fn create_buffer(device: &Device, e: EntityUniforms) -> Buffer {
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
@@ -510,6 +525,7 @@ impl ChunkModel {
             usage: wgpu::BufferUsages::VERTEX,
         })
     }
+    #[cfg(feature = "headed")]
     fn create_transform(pos: IVec3) -> EntityUniforms {
         let offset = (pos.clone()).as_vec3();
         // + ivec3(-CHUNK_SIZE / 2, -CHUNK_SIZE / 2, -CHUNK_SIZE / 2).as_vec3();
@@ -528,6 +544,7 @@ impl ChunkModel {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn cook(&mut self, device: &Device) {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),

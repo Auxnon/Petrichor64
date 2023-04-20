@@ -67,7 +67,7 @@ pub fn render_loop(
 
     // TODO is this expensive? only sometimes?
     core.gui.render(
-        &core.queue,
+        &core.gfx.queue,
         0.,
         // core.global.get("value2".to_string()),
         &mut core.loggy,
@@ -95,21 +95,22 @@ pub fn render_loop(
     core.global.smooth_cam_rot = core.global.simple_cam_rot;
 
     let (mx_view, mx_persp, _mx_model) = generate_matrix(
-        core.size.width as f32 / core.size.height as f32,
+        core.gfx.size.width as f32 / core.gfx.size.height as f32,
         // *v * 2. * std::f32::consts::PI,
         cam_pos,
         core.global.smooth_cam_rot,
     );
 
     crate::ray::trace(core, mx_persp, mx_view);
+    let gfx = &core.gfx;
 
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
     let mx_persp_ref: &[f32; 16] = mx_persp.as_ref();
 
     let time_ref: [f32; 16] = [
         core.global.iteration as f32 / 30.,
-        core.size.width as f32,
-        core.size.height as f32,
+        gfx.size.width as f32,
+        gfx.size.height as f32,
         core.global.screen_effects.crt_resolution,
         core.global.screen_effects.corner_harshness,
         core.global.screen_effects.corner_ease,
@@ -137,12 +138,12 @@ pub fn render_loop(
     let size3 = bytemuck::cast_slice(&time_ref);
 
     let size_specs = bytemuck::cast_slice(&specs);
-    core.queue.write_buffer(&core.uniform_buf, 0, size1);
-    core.queue.write_buffer(&core.uniform_buf, 64, size2);
-    core.queue.write_buffer(&core.uniform_buf, 128, size3);
-    core.queue.write_buffer(&core.uniform_buf, 192, size_specs);
+    gfx.queue.write_buffer(&gfx.uniform_buf, 0, size1);
+    gfx.queue.write_buffer(&gfx.uniform_buf, 64, size2);
+    gfx.queue.write_buffer(&gfx.uniform_buf, 128, size3);
+    gfx.queue.write_buffer(&gfx.uniform_buf, 192, size_specs);
 
-    let mut encoder = core
+    let mut encoder = gfx
         .device
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -153,7 +154,7 @@ pub fn render_loop(
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &core.post.post_texture_view, //&core.post.post_texture_view,
+                view: &gfx.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
@@ -166,7 +167,7 @@ pub fn render_loop(
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &core.depth_texture,
+                view: &gfx.depth_texture,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: true,
@@ -184,9 +185,9 @@ pub fn render_loop(
 
         //world space
         {
-            render_pass.set_pipeline(&core.render_pipeline);
-            render_pass.set_bind_group(0, &core.main_bind_group, &[]);
-            render_pass.set_bind_group(1, &core.entity_bind_group, &[]);
+            render_pass.set_pipeline(&gfx.render_pipeline);
+            render_pass.set_bind_group(0, &gfx.main_bind_group, &[]);
+            render_pass.set_bind_group(1, &gfx.entity_bind_group, &[]);
             let chunks = core.world.get_chunk_models();
 
             for c in chunks {
@@ -248,7 +249,7 @@ pub fn render_loop(
     //     texture_extent,
     // );
 
-    let output = core.surface.get_current_texture()?;
+    let output = gfx.surface.get_current_texture()?;
 
     let view = output
         .texture
@@ -269,14 +270,14 @@ pub fn render_loop(
         });
 
         {
-            post_pass.set_pipeline(&core.post.post_pipeline);
-            post_pass.set_bind_group(0, &core.post.post_bind_group, &[]);
+            post_pass.set_pipeline(&gfx.post.post_pipeline);
+            post_pass.set_bind_group(0, &gfx.post.post_bind_group, &[]);
             post_pass.draw(0..4, 0..4);
             // frame!("post pass");
         }
     }
 
-    core.queue.submit(iter::once(encoder.finish()));
+    gfx.queue.submit(iter::once(encoder.finish()));
     // frame!("encoder.finish()");
     output.present();
 
@@ -284,7 +285,3 @@ pub fn render_loop(
 
     Ok(())
 }
-
-// pub fn log(str: String) {
-//     crate::log::log(format!("🖌render::{}", str));
-// }

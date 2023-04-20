@@ -61,7 +61,7 @@ pub fn trace(core: &mut Core, mx_persp: Mat4, mx_view: Mat4) {
         1.,
     );
 
-    let _aspect = core.size.width as f32 / core.size.height as f32;
+    let _aspect = core.gfx.size.width as f32 / core.gfx.size.height as f32;
     // let persp2 = nalgebra::Perspective3::new(aspect, 0.785398, 1., 1600.);
 
     //let cam_center = vec4(0., 0., 0., 1.);

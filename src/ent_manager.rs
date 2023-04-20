@@ -6,30 +6,40 @@ use std::{
 };
 
 use crate::{
-    ent::EntityUniforms,
-    lua_ent::lua_ent_flags,
-    model::{Instance, Model, ModelManager},
+    lua_ent::{lua_ent_flags, LuaEnt},
+    model::{Model, ModelManager},
+};
+
+#[cfg(feature = "headed")]
+use crate::{
+    ent::{Ent, EntityUniforms},
+    model::Instance,
     texture::TexManager,
 };
+
 use glam::{vec3, vec4};
 use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
-use wgpu::util::DeviceExt;
-use wgpu::Buffer;
+#[cfg(feature = "headed")]
+use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{ent::Ent, lua_ent::LuaEnt};
-
+#[cfg(feature = "headed")]
 pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize)>;
 pub struct EntManager {
-    // pub ent_table: Mutex<mlua::Table<'static>>,
-    // pub entities: HashMap<u64, Rc<RefCell<Ent>>>,
+    #[cfg(feature = "headed")]
     pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
+    #[cfg(feature = "headed")]
     pub ent_array: Vec<(Arc<Mutex<LuaEnt>>, Ent, Rc<RefCell<EntityUniforms>>)>,
+    #[cfg(not(feature = "headed"))]
+    pub ent_array: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
+    #[cfg(feature = "headed")]
     pub instances: Vec<Instance>,
+    #[cfg(feature = "headed")]
     pub instance_buffer: Buffer,
     pub id_counter: u64,
+    #[cfg(feature = "headed")]
     pub render_hash: FxHashMap<String, (Rc<Model>, Vec<Rc<RefCell<EntityUniforms>>>)>,
     // pub render_pairs: Vec<(Arc<Mutex<LuaEnt>>, Rc<RefCell<Ent>>)>,
     pub hash_dirty: bool,
@@ -37,22 +47,25 @@ pub struct EntManager {
 
 // (lua, ent)
 impl EntManager {
-    pub fn new(device: &wgpu::Device) -> EntManager {
+    pub fn new(#[cfg(feature = "headed")] device: &wgpu::Device) -> EntManager {
         EntManager {
-            // ent_table: Mutex::new(),
+            #[cfg(feature = "headed")]
             specks: vec![],
             ent_array: vec![],
-            // entities: HashMap::new(),
+            #[cfg(feature = "headed")]
             instances: vec![],
+            #[cfg(feature = "headed")]
             instance_buffer: EntManager::build_buffer(&vec![], device),
             uniform_alignment: 0,
             id_counter: 2,
+            #[cfg(feature = "headed")]
             render_hash: FxHashMap::default(),
             // render_pairs: vec![],
             hash_dirty: false,
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn build_buffer(instances: &Vec<Instance>, device: &wgpu::Device) -> Buffer {
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -62,10 +75,12 @@ impl EntManager {
         })
     }
 
+    #[cfg(feature = "headed")]
     pub fn rebuild_instance_buffer(&mut self, device: &wgpu::Device) {
         self.instance_buffer = EntManager::build_buffer(&self.instances, device);
     }
 
+    #[cfg(feature = "headed")]
     pub fn build_instance_buffer(
         instance_data: &Vec<EntityUniforms>,
         device: &wgpu::Device,
@@ -77,13 +92,7 @@ impl EntManager {
         })
     }
 
-    // pub fn get_uuid() -> String {
-    //     uuid::Uuid::new_v4().to_simple().to_string()
-    // }
-    // pub fn get_ents(self){
-    //     self.entities.update()
-    // }
-
+    #[cfg(feature = "headed")]
     pub fn create_from_lua(
         &mut self,
         tex_manager: &TexManager,
@@ -110,9 +119,14 @@ impl EntManager {
         );
         let uni = Rc::new(RefCell::new(ent.get_uniform(&lua, 0, None)));
 
-        // self.entities.insert(id, Rc::new(RefCell::new(ent)));
         drop(lua);
         self.ent_array.push((wrapped_lua, ent, uni));
+        self.hash_dirty = true
+    }
+
+    #[cfg(not(feature = "headed"))]
+    pub fn create_from_lua(&mut self, wrapped_lua: Arc<Mutex<LuaEnt>>) {
+        self.ent_array.push(wrapped_lua);
         self.hash_dirty = true
     }
 
@@ -125,7 +139,11 @@ impl EntManager {
         let mut parentIndex = -1;
         let mut childIndex = -1;
         for (i, lent) in self.ent_array.iter().enumerate() {
-            match lent.0.lock() {
+            #[cfg(feature = "headed")]
+            let ll = lent.0.lock();
+            #[cfg(not(feature = "headed"))]
+            let ll = lent.lock();
+            match ll {
                 Ok(mut l) => {
                     let id = l.get_id();
                     if id == childId {
@@ -137,8 +155,11 @@ impl EntManager {
                     } else if id == targetId {
                         parentIndex = i as i64;
                         if childIndex != -1 {
-                            self.ent_array[childIndex as usize].0.lock().unwrap().parent =
-                                Some(targetId);
+                            #[cfg(feature = "headed")]
+                            let t = self.ent_array[childIndex as usize].0.lock();
+                            #[cfg(not(feature = "headed"))]
+                            let t = self.ent_array[childIndex as usize].lock();
+                            t.unwrap().parent = Some(targetId);
                             break;
                         }
                     }
@@ -154,10 +175,9 @@ impl EntManager {
         }
     }
 
+    #[cfg(feature = "headed")]
     fn rebuild_render_hash(&mut self) {
         self.render_hash.clear();
-        // let mut hash: FxHashMap<String, (Rc<Model>, Vec<&Ent>)> = FxHashMap::default();
-        // self.render_pairs.clear();
         for (lent, ent, uni_ref) in &mut self.ent_array.iter() {
             match self.render_hash.get_mut(&ent.model.name) {
                 Some((_, vec)) => {
@@ -171,27 +191,19 @@ impl EntManager {
                 }
             }
         }
-        // println!("rebuild")
     }
 
+    //
+
+    #[cfg(feature = "headed")]
     pub fn tick_update_ents(
         &self,
         iteration: u64,
         device: &wgpu::Device,
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
-        // let lua_ent_array = self
-        //     .ent_array
-        //     .iter()
-        //     .filter_map(|a| match a.0.lock() {
-        //         Ok(g) => Some((g.clone(), &a.1, &a.2)),
-        //         _ => None,
-        //     })
-        //     .collect::<Vec<_>>();
-
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
         for (alent, ent, uni_ref) in self.ent_array.iter() {
             if let Ok(lent) = alent.lock() {
-                // for (lent, ent, uni_ref) in lua_ent_array.iter() {
                 let parent = match lent.parent {
                     Some(u) => mats.get(&u),
                     None => None,
@@ -217,68 +229,6 @@ impl EntManager {
                 )
             })
             .collect::<Vec<_>>();
-
-        // for (_, (model, pairs)) in self.render_hash.iter() {
-        //     let mut transforms = vec![];
-        //     let epairs = pairs
-        //         .iter()
-        //         .filter_map(|(l, e)| match l.lock() {
-        //             Ok(lent) => Some((lent.clone(), e)),
-        //             _ => None,
-        //         })
-        //         .collect::<Vec<_>>();
-
-        //     for (lent, ent) in epairs {
-        //         let parent = match lent.parent {
-        //             Some(u) => mats.get(&u),
-        //             None => None,
-        //         };
-
-        //         let mat = ent.borrow().build_meta(&lent, parent);
-        //         let uni = ent.borrow().get_uniforms_with_mat(&lent, iteration, mat);
-        //         mats.insert(lent.get_id(), mat);
-        //         transforms.push(uni);
-        //     }
-
-        //     instance_buffers.push((
-        //         Rc::clone(&model),
-        //         crate::ent_manager::EntManager::build_instance_buffer(&transforms, device),
-        //         transforms.len(),
-        //     ));
-        // }
-
-        // for lent in &mut self.ent_array.iter() {
-        //     match lent.lock() {}
-        //     match entity_manager.get_from_id(entity.get_id()) {
-        //         Some(o) => {
-        //             if cur != &o.model.name {
-        //                 cur = &o.model.name;
-        //                 if model_array.len() > 0 {
-        //                     instance_buffers.push((
-        //                         crate::ent_manager::EntManager::build_instance_buffer(
-        //                             &transforms,
-        //                             &core.device,
-        //                         ),
-        //                         transforms.len(),
-        //                     ));
-        //                     transforms = vec![];
-        //                 }
-        //                 model_array.push(Rc::clone(&o.model));
-        //             }
-        //             let data = o.get_uniform(&entity, iteration);
-        //             // let instance = data; //InstanceRaw { model: data.model,uv: data.};
-        //             // instances.push(instance);
-        //             transforms.push(data);
-        //             // let instance=
-        //             // let e = o.clone();
-        //             // ent_array.push(model);
-        //         }
-        //         _ => {}
-        //     }
-        // }
-
-        // self.render_hash
-
         instance_buffers
     }
 
@@ -307,42 +257,31 @@ impl EntManager {
     //     println!("awful test run {}", self.entities.len());
     // }
 
-    // pub fn get_from_lua(&self, lua: &LuaEnt) -> Option<&Rc<RefCell<Ent>>> {
-    //     let id = lua.get_id();
-
-    //     self.entities.get(&id)
-    // }
-    // pub fn get_from_id(&self, id: u64) -> Option<&Rc<RefCell<Ent>>> {
-    //     self.entities.get(&id)
-    // }
-    // pub fn get_from_id_mut(&mut self, id: u64) -> Option<&mut Rc<RefCell<Ent>>> {
-    //     self.entities.get_mut(&id)
-    // }
-    // pub fn swap_tex(&mut self, tm: TexManager, tex: &String, ent_id: u64) {
-    //     match self.entities.get_mut(&ent_id) {
-    //         Some(e) => {
-    //             e.borrow_mut().tex = tm.get_tex(tex);
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // pub fn destroy_from_lua(&mut self, lua: &LuaEnt) {
-    //     self.entities.remove(&lua.get_id());
-    // }
     pub fn reset(&mut self) {
-        // self.entities.clear();
         self.ent_array.clear();
+        #[cfg(feature = "headed")]
         self.specks.clear();
-        // self.uniform_alignment = 0;
     }
+
     pub fn reset_by_bundle(&mut self, bundle_id: u8) {
         println!(
             "looking for {}, ent count before bundle purge {}",
             bundle_id,
             self.ent_array.len()
         );
+        #[cfg(feature = "headed")]
         self.ent_array.retain(|(le, e, u)| match le.lock() {
+            Ok(lent) => {
+                if lent.bundle_id == bundle_id {
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        });
+        #[cfg(not(feature = "headed"))]
+        self.ent_array.retain(|le| match le.lock() {
             Ok(lent) => {
                 if lent.bundle_id == bundle_id {
                     false
@@ -355,17 +294,43 @@ impl EntManager {
         println!("ent count after bundle purge {}", self.ent_array.len());
     }
 
+    #[cfg(not(feature = "headed"))]
+    pub fn check_ents(&mut self, iteration: u64) {
+        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
+        self.ent_array.retain_mut(|lent| {
+            match lent.lock() {
+                Ok(mut l) => {
+                    let parent = match l.parent {
+                        Some(u) => mats.get(&u),
+                        None => None,
+                    };
+                    if l.is_dirty() {
+                        let flags = l.get_flags();
+                        if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
+                            return false;
+                        }
+                        l.clear_dirt();
+                    }
+                    // let mat = ent.build_meta(&l, parent);
+                    // mats.insert(l.get_id(), mat);
+                }
+                _ => {}
+            }
+            return true;
+        });
+    }
+
+    #[cfg(feature = "headed")]
     pub fn check_ents(
         &mut self,
-        iteration: u64,
         device: &wgpu::Device,
         tm: &TexManager,
         mm: &ModelManager,
+        iteration: u64,
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
         let mut failed = 0;
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
-        // for (lent, ent, uni_ref) in self.ent_array.iter_mut() {
         self.ent_array.retain_mut(|(lent, ent, uni_ref)| {
             match lent.lock() {
                 Ok(mut l) => {
@@ -386,8 +351,6 @@ impl EntManager {
                             let asset = l.get_asset();
                             ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
                                 Some(m) => {
-                                    // println!("found model for {} it's {}", asset, m.name);
-
                                     // billboard
                                     if asset == "plane" {
                                         ent.effects.x = 1.;
@@ -438,6 +401,7 @@ impl EntManager {
             return true;
         });
 
+        #[cfg(feature = "headed")]
         let instance_buffers = self
             .render_hash
             .iter()
@@ -455,11 +419,13 @@ impl EntManager {
         if failed > 0 {
             println!("failed to lock {} ents", failed);
         }
-        // println!("size {}", self.ent_array.len());
+
+        #[cfg(feature = "headed")]
         if self.hash_dirty {
             self.rebuild_render_hash();
             self.hash_dirty = false;
         }
+        #[cfg(feature = "headed")]
         instance_buffers
 
         // if (self.specks.len() == 0 && self.specks.len() < 10000) {
@@ -476,6 +442,7 @@ impl EntManager {
         // }
     }
 
+    #[cfg(feature = "headed")]
     pub fn check_for_model_change(&mut self, model_manager: &ModelManager, model: &str) {
         let mut change = false;
         for (_, e, _) in self.ent_array.iter_mut() {

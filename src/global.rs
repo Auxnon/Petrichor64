@@ -1,8 +1,8 @@
 use std::collections::{hash_map::Entry, HashMap};
 
-use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
-
+#[cfg(feature = "headed")]
 use crate::post::ScreenBinds;
+use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 /** Global variable container intended for main thread only */
 pub struct Global {
     // pub values: HashMap<String, f32>,
@@ -29,10 +29,12 @@ pub struct Global {
     pub fps: f64,
     pub delayed: i32,
     pub iteration: u64,
+    #[cfg(feature = "headed")]
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
     pub aliases: HashMap<String, String>,
+    #[cfg(feature = "headed")]
     pub gui_params: GuiParams,
     pub state_changes: Vec<StateChange>,
     pub state_delay: u32,
@@ -70,8 +72,10 @@ impl Global {
             delayed: 0,
             iteration: 0,
             scroll_delta: 0.,
+            #[cfg(feature = "headed")]
             screen_effects: ScreenBinds::new(),
             aliases: HashMap::new(),
+            #[cfg(feature = "headed")]
             gui_params: GuiParams::new(),
             state_changes: Vec::new(),
             state_delay: 0,
@@ -79,7 +83,6 @@ impl Global {
             locked: false,
             boot_state: true,
             pending_load: None,
-            // loaded_directory: None,
         }
     }
 
@@ -101,7 +104,10 @@ impl Global {
         self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
-        self.screen_effects = ScreenBinds::new();
+        #[cfg(feature = "headed")]
+        {
+            self.screen_effects = ScreenBinds::new();
+        }
         // self.boot_state = false;
         self.pending_load = None;
     }
@@ -129,8 +135,11 @@ impl Global {
 }
 
 pub enum StateChange {
+    #[cfg(feature = "headed")]
     Resized,
+    #[cfg(feature = "headed")]
     MouseGrabOn,
+    #[cfg(feature = "headed")]
     MouseGrabOff,
     Quit,
     Config,

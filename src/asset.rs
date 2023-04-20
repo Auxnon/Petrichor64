@@ -1,29 +1,33 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     fs::{self, read_dir},
     path::{Path, PathBuf},
 };
 
+use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
+use imageproc::drawing::draw_filled_rect_mut;
 use regex::Regex;
+#[cfg(feature = "headed")]
 use wgpu::Device;
 
+use crate::model::ModelManager;
+#[cfg(feature = "headed")]
+use crate::texture::TexManager;
 use crate::{
     global::Global,
     log::{LogType, Loggy},
     lua_define::{LuaCore, LuaResponse},
-    model::ModelManager,
-    texture::TexManager,
     world::World,
-    Core,
 };
 
+// 1.0.0 Applesauce
 // 2.1.0 Avocado
 pub fn get_codex_version_string() -> String {
     "-- Codex 3.0.0 \"Artichoke\"".to_owned()
 }
 
 pub fn pack(
-    tex_manager: &mut TexManager,
+    #[cfg(feature = "headed")] tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
     bundle_id: u8,
@@ -72,11 +76,14 @@ pub fn pack(
     println!("pack name: {}", pack_name);
 
     let sources = walk_files(
+        #[cfg(feature = "headed")]
+        None,
+        #[cfg(feature = "headed")]
         tex_manager,
         model_manager,
+        false,
         world,
         bundle_id,
-        None,
         lua_master,
         path.clone(),
         loggy,
@@ -97,12 +104,12 @@ pub fn super_pack(name: &str) -> &str {
 }
 
 pub fn unpack(
-    tex_manager: &mut TexManager,
+    #[cfg(feature = "headed")] device: &Device,
+    #[cfg(feature = "headed")] tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
     bundle_id: u8,
     lua_master: &LuaCore,
-    device: &Device,
     name: &str,
     file: Vec<u8>,
     loggy: &mut Loggy,
@@ -118,8 +125,10 @@ pub fn unpack(
     );
 
     let mut sources: HashMap<String, (String, String, String, Option<&Vec<u8>>)> = HashMap::new();
+    #[cfg(feature = "headed")]
     let mut configs = vec![];
 
+    #[cfg(feature = "headed")]
     match map.get("assets") {
         Some(dir) => {
             if debug {
@@ -152,6 +161,7 @@ pub fn unpack(
         }
         _ => {}
     }
+    #[cfg(feature = "headed")]
     parse_assets(
         tex_manager,
         model_manager,
@@ -414,18 +424,18 @@ end",
 
     fs::write(scripts.join("ignore.lua"), make_codex_file(command_map));
 
-    crate::texture::simple_square(16, assets.join("example.png"), loggy);
-    crate::texture::simple_square(16, root.join("icon.png"), loggy);
+    simple_square(16, assets.join("example.png"), loggy);
+    simple_square(16, root.join("icon.png"), loggy);
 }
 
 pub fn walk_files(
-    tex_manager: &mut TexManager,
+    #[cfg(feature = "headed")] device: Option<&Device>,
+    #[cfg(feature = "headed")] tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
+    activate: bool,
     world: &mut World,
     bundle_id: u8,
-    device: Option<&Device>,
     lua_master: &LuaCore,
-    // list: Option<HashMap<String, Vec<Vec<u8>>>>,
     current_path: PathBuf,
     loggy: &mut Loggy,
     debug: bool,
@@ -496,6 +506,7 @@ pub fn walk_files(
             );
         }
     }
+    #[cfg(feature = "headed")]
     parse_assets(
         tex_manager,
         model_manager,
@@ -539,7 +550,8 @@ pub fn walk_files(
                                 let st = fs::read_to_string(input_path).unwrap_or_default();
 
                                 // println!("script item is {}", st);
-                                if device.is_some() {
+
+                                if activate {
                                     let ver = handle_script(st.as_str(), lua_master);
                                     if ver[0] > version[0]
                                         || ver[1] > version[1]
@@ -573,6 +585,7 @@ pub fn walk_files(
     paths
 }
 
+#[cfg(feature = "headed")]
 fn parse_assets(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
@@ -584,6 +597,8 @@ fn parse_assets(
     loggy: &mut Loggy,
     debug: bool,
 ) {
+    use std::collections::hash_map::Entry;
+
     loggy.log(
         LogType::Config,
         &format!("found {} template(s)", configs.len()),
@@ -638,23 +653,6 @@ fn parse_assets(
                         // now load the resource with config template stuff
                         let resource = o.remove_entry().1; // TODO we're removing the entry but only using it if it's a png, this may cause assets to be ignored if they're not png, buggy
                         if resource.1 == "png" {
-                            // println!(
-                            //     "🟢we found {} and it has a tile map with keys {} and values {}",
-                            //     resource.0,
-                            //     template
-                            //         .tiles
-                            //         .keys()
-                            //         .map(|r| { format!("{:?}", r) })
-                            //         .collect::<Vec<String>>()
-                            //         .join(", "),
-                            //     template
-                            //         .tiles
-                            //         .values()
-                            //         .map(|r| { format!("{:?}", r) })
-                            //         .collect::<Vec<String>>()
-                            //         .join(", ")
-                            // );
-
                             if resource.3.is_some() {
                                 tex_manager.load_tex_from_buffer(
                                     world,
@@ -720,21 +718,21 @@ fn parse_assets(
             match device {
                 Some(d) => match buffer {
                     Some(b) => model_manager.load_from_buffer(
+                        d,
+                        tex_manager,
                         world,
                         bundle_id,
-                        tex_manager,
                         &file_name,
                         &b,
-                        d,
                         loggy,
                         debug,
                     ),
                     _ => model_manager.load_from_string(
+                        d,
+                        tex_manager,
                         world,
                         bundle_id,
-                        tex_manager,
                         &path,
-                        d,
                         loggy,
                         debug,
                     ),
@@ -819,6 +817,51 @@ pub fn get_b() -> Vec<u8> {
         };
     }
     include_bytes!(concat!("..", sp!(), "b.game.png")).to_vec()
+}
+pub fn load_img(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
+    let text = Path::new("assets").join(str).to_str().unwrap().to_string();
+    //Path::new(".").join("entities");
+    load_img_nopath(&text, loggy)
+}
+
+pub fn load_img_nopath(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
+    loggy.log(LogType::Texture, &format!("loading image {}", str));
+
+    let img = image::open(str);
+
+    // The dimensions method returns the images width and height.
+    //println!("dimensions height {:?}", img.height());
+
+    img
+}
+
+pub fn load_img_from_buffer(buffer: &[u8]) -> Result<DynamicImage, image::ImageError> {
+    let img = image::load_from_memory(buffer);
+    img
+}
+
+pub fn simple_square(size: u32, path: PathBuf, loggy: &mut Loggy) {
+    let mut img: RgbaImage = ImageBuffer::new(size, size);
+    let magenta = Rgba([255u8, 0u8, 255u8, 255u8]);
+    draw_filled_rect_mut(
+        &mut img,
+        imageproc::rect::Rect::at(0, 0).of_size(size, size),
+        magenta,
+    );
+    match image::save_buffer_with_format(
+        path,
+        &img,
+        size,
+        size,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    ) {
+        Err(err) => loggy.log(
+            LogType::TextureError,
+            &format!("could not save example image: {}", err),
+        ),
+        _ => {}
+    }
 }
 
 // fn process_image_asset(path,file_name,buffer:Option<ec<u8>>){
@@ -921,13 +964,20 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field line fun(self:image, x:gunit, y:gunit, x2:gunit, y2:gunit, rgb?:rgb) draw line on image
 --- @field rect fun(self:image, x:gunit, y:gunit, w:gunit, h:gunit, rgb?:rgb) draw rectangle on image
 --- @field rrect fun(self:image ,x:gunit, y:gunit, w:gunit, h:gunit,ro:gunit, rgb?:rgb) draw rounded rectangle on image
---- @field text fun(txt:string, x?:gunit, y?:gunit, rgb?:rgb) draw text on image
+--- @field text fun(self:image, txt:string, x?:gunit, y?:gunit, rgb?:rgb) draw text on image
 --- @field img fun(self:image, im:image, x?:gunit, y?:gunit) draw another image on image
 --- @field pixel fun(self:image, x:integer, y:integer,rgb?:rgb) draw pixel directly on image
 --- @field clr fun(self:image) clear image
 --- @field fill fun(self:image, rgb?:rgb) fill image with color
 --- @field raw fun(self:image):integer[] image return raw pixel data
 --- @field copy fun(self:image):image clones to new image
+
+--- @class connection
+--- @field send fun(self:connection, data:string) send data to connection
+--- @field recv fun(self:connection):string | nil receive data from connection
+--- @field test fun(self:connection):string | nil test if connection is still alive, returns string for error, 'safe close' for no error
+--- @field kill fun(self:connection) close connection
+
 
 --- @type number ~3.1457
 pi = nil
@@ -937,6 +987,32 @@ tau = nil
 gui = nil
 --- @type image image raster for the back screen or 'sky'
 sky = nil
+
+--- shorthand for gui:text
+function text(...) end
+
+--- shorthand for gui:line
+function line(...) end
+
+--- shorthand for gui:rect
+function rect(...) end
+
+--- shorthand for gui:rrect
+function rrect(...) end
+
+--- shorthand for gui:img
+function img(...) end
+
+--- shorthand for gui:pixel
+function pixel(...) end
+
+--- shorthand for gui:fill
+function fill(...) end
+
+--- shorthand for gui:clr
+function clr(...) end
+
+
 
 ";
     for (name, (desc, examp)) in command_map {

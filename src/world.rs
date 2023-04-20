@@ -6,11 +6,12 @@ use std::{
 
 use glam::{ivec3, ivec4, vec4, IVec3, IVec4, Vec4};
 use rustc_hash::FxHashMap;
+#[cfg(feature = "headed")]
 use wgpu::Device;
 
 use crate::{
     command::MainCommmand,
-    log::{LogType, Loggy},
+    log::LogType,
     model::{Model, ModelManager},
     tile::{Chunk, ChunkModel, Layer, LayerModel},
 };
@@ -315,11 +316,11 @@ impl World {
 
     pub fn process_sync(
         &mut self,
+        #[cfg(feature = "headed")] device: &Device,
         bundle_id: u8,
         chunks: Vec<Chunk>,
         dropped: bool,
         model_manager: &ModelManager,
-        device: &Device,
     ) {
         if let Some(layer) = self.layers.get_mut(&bundle_id) {
             if dropped && chunks.is_empty() {
@@ -338,6 +339,7 @@ impl World {
                                     model_manager,
                                     chunk,
                                 );
+                                #[cfg(feature = "headed")]
                                 c.cook(device);
                             }
                             Entry::Vacant(v) => {
@@ -348,14 +350,21 @@ impl World {
                                 //     "populate new model chunk {} {} {} {}",
                                 //     chunk.key, ix, iy, iz
                                 // );
-                                let mut model =
-                                    ChunkModel::new(device, chunk.key.clone(), ix, iy, iz);
+                                let mut model = ChunkModel::new(
+                                    #[cfg(feature = "headed")]
+                                    device,
+                                    chunk.key.clone(),
+                                    ix,
+                                    iy,
+                                    iz,
+                                );
                                 model.build_chunk(
                                     &mapper.tex_map,
                                     &mapper.model_map,
                                     model_manager,
                                     chunk,
                                 );
+                                #[cfg(feature = "headed")]
                                 model.cook(device);
                                 v.insert(model);
                             }

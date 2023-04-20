@@ -1,13 +1,14 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{ivec3, vec4, IVec3, Mat4, Quat, Vec3, Vec4};
 use itertools::izip;
-use log::logger;
 use std::{collections::HashMap, rc::Rc};
+#[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Device};
 
+#[cfg(feature = "headed")]
+use crate::texture::TexManager;
 use crate::{
     log::{LogType, Loggy},
-    texture::TexManager,
     world::World,
 };
 
@@ -26,15 +27,16 @@ pub struct ModelManager {
 }
 
 impl ModelManager {
-    pub fn init(device: &Device) -> ModelManager {
+    pub fn init(#[cfg(feature = "headed")] device: &Device) -> ModelManager {
         let (plane_vertex_data, plane_index_data) = create_plane(8, Some(ivec3(0, 0, 0)), None);
-        //device.create_buffer_init(desc)
+        #[cfg(feature = "headed")]
         let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Plane Vertex Buffer"),
             contents: bytemuck::cast_slice(&plane_vertex_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        #[cfg(feature = "headed")]
         let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Plane Index Buffer"),
             contents: bytemuck::cast_slice(&plane_index_data),
@@ -44,20 +46,25 @@ impl ModelManager {
         let plane_model = Model {
             base_name: "plane".to_string(),
             name: "plane".to_string(),
-            vertex_buf: plane_vertex_buf,
-            index_buf: plane_index_buf,
-            index_format: wgpu::IndexFormat::Uint32,
             index_count: plane_index_data.len(),
             data: None,
+            #[cfg(feature = "headed")]
+            vertex_buf: plane_vertex_buf,
+            #[cfg(feature = "headed")]
+            index_buf: plane_index_buf,
+            #[cfg(feature = "headed")]
+            index_format: wgpu::IndexFormat::Uint32,
         };
         let PLANE = Rc::new(plane_model);
 
         let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
+        #[cfg(feature = "headed")]
         let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Cubes Vertex Buffer"),
             contents: bytemuck::cast_slice(&cube_vertex_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
+        #[cfg(feature = "headed")]
         let cube_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Cubes Index Buffer"),
             contents: bytemuck::cast_slice(&cube_index_data),
@@ -66,11 +73,14 @@ impl ModelManager {
         let cube_model = Model {
             base_name: "cube".to_string(),
             name: "cube".to_string(),
-            vertex_buf: cube_vertex_buf,
-            index_buf: cube_index_buf,
-            index_format: wgpu::IndexFormat::Uint32,
             index_count: cube_index_data.len(),
             data: Some((cube_vertex_data, cube_index_data)),
+            #[cfg(feature = "headed")]
+            vertex_buf: cube_vertex_buf,
+            #[cfg(feature = "headed")]
+            index_buf: cube_index_buf,
+            #[cfg(feature = "headed")]
+            index_format: wgpu::IndexFormat::Uint32,
         };
         let CUBE = Rc::new(cube_model);
         let mut DICTIONARY = HashMap::new();
@@ -130,14 +140,15 @@ impl ModelManager {
     /** big honking central gltf/glb loader function that inserts the new model into our dictionary lookup */
     fn load(
         &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        #[cfg(feature = "headed")] tex_manager: &mut TexManager,
         world: &mut World,
         bundle_id: u8,
-        tex_manager: &mut TexManager,
         str: &String,
         nodes: gltf::Document,
         buffers: Vec<gltf::buffer::Data>,
         image_data: Vec<gltf::image::Data>,
-        device: &Device,
+
         loggy: &mut Loggy,
         debug: bool,
     ) {
@@ -146,6 +157,10 @@ impl ModelManager {
             Some(p) => {
                 let base_name = p.to_os_string().into_string().unwrap().to_lowercase();
 
+                #[cfg(not(feature = "headed"))]
+                let uv_adjust = vec![vec4(0., 0., 1., 1.)];
+
+                #[cfg(feature = "headed")]
                 let uv_arr = tex_manager.load_tex_from_data(
                     base_name.clone(),
                     str.to_string(),
@@ -153,14 +168,13 @@ impl ModelManager {
                     loggy,
                 );
 
+                #[cfg(feature = "headed")]
                 let uv_adjust = if uv_arr.len() == 0 {
                     vec![vec4(0., 0., 1., 1.)]
                 } else {
                     uv_arr
                 };
 
-                //let tex = Texture2D::from_rgba8(im1.width as u16, im1.height as u16, &im1.pixels);
-                //tex.set_filter(FilterMode::Nearest);
                 let mut first_instance = true;
                 let mut meshes = vec![];
 
@@ -197,6 +211,7 @@ impl ModelManager {
                             let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
 
                             let model = Self::build_complex_model(
+                                #[cfg(feature = "headed")]
                                 device,
                                 &base_name,
                                 Some(&mesh_name),
@@ -256,7 +271,7 @@ impl ModelManager {
     }
 
     fn build_complex_model(
-        device: &Device,
+        #[cfg(feature = "headed")] device: &Device,
         base_name: &str,
         mesh_name: Option<&str>,
         vertices: Vec<Vertex>,
@@ -266,14 +281,14 @@ impl ModelManager {
             Some(n) => format!("{}.{}", base_name, n),
             None => base_name.to_owned(),
         };
-        // println!("Load mesh {} with {} verts and texture {}", compound_name, vertices.len(),);
-        // println!("ind #{} verts #{}", indices.len(), vertices.len());
+        #[cfg(feature = "headed")]
         let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", compound_name, " Mesh Vertex Buffer")),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        #[cfg(feature = "headed")]
         let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", compound_name, " Mesh Index Buffer")),
             contents: bytemuck::cast_slice(&indices),
@@ -283,11 +298,14 @@ impl ModelManager {
         let model = Model {
             base_name: base_name.to_string(),
             name: compound_name,
-            vertex_buf: mesh_vertex_buf,
-            index_buf: mesh_index_buf,
-            index_format: wgpu::IndexFormat::Uint32,
             index_count: indices.len(),
             data: Some((vertices, indices)),
+            #[cfg(feature = "headed")]
+            vertex_buf: mesh_vertex_buf,
+            #[cfg(feature = "headed")]
+            index_buf: mesh_index_buf,
+            #[cfg(feature = "headed")]
+            index_format: wgpu::IndexFormat::Uint32,
         };
         let model_cell = Rc::new(model);
 
@@ -296,8 +314,8 @@ impl ModelManager {
 
     pub fn upsert_model(
         &mut self,
-        device: &Device,
-        tex_manager: &TexManager,
+        #[cfg(feature = "headed")] device: &Device,
+        #[cfg(feature = "headed")] tex_manager: &TexManager,
         world: &mut World,
         bundle_id: u8,
         name: &str,
@@ -310,7 +328,6 @@ impl ModelManager {
         loggy: &mut Loggy,
         debug: bool,
     ) -> Option<String> {
-        // println!("upsert model {} debug is {}", name, debug);
         if debug {
             loggy.log(
                 LogType::Model,
@@ -346,8 +363,8 @@ impl ModelManager {
         let single_texture = t_count == 1;
         let vertices = if uvs_match_v || t_count > 0 {
             if t_count == 1 {
+                #[cfg(feature = "headed")]
                 let uv_adjust = tex_manager.get_tex(&texture[0]);
-                // loggy.log(LogType::Model, &format!("uv_adjust: {:?}", uv_adjust));
                 if !uvs_match_v {
                     verts
                         .iter()
@@ -366,6 +383,7 @@ impl ModelManager {
                             let uv = uvs[i];
                             let n = norms[i];
                             let mut vv = vertexx(*pos, n, uv);
+                            #[cfg(feature = "headed")]
                             vv.texture(uv_adjust);
                             vv
                         })
@@ -377,14 +395,17 @@ impl ModelManager {
                     _ => 3,
                 };
                 let mut tex_cycle = 0;
+                #[cfg(feature = "headed")]
                 let uv_adjusts: Vec<Vec4> =
                     texture.iter().map(|t| tex_manager.get_tex(t)).collect();
+                #[cfg(feature = "headed")]
                 let mut current_tex = uv_adjusts[0];
                 verts
                     .iter()
                     .enumerate()
                     .map(|(i, pos)| {
                         let uv = uvs[i];
+                        #[cfg(feature = "headed")]
                         if i % step_size == 0 && i > 0 {
                             tex_cycle += 1;
                             if tex_cycle >= t_count {
@@ -392,8 +413,8 @@ impl ModelManager {
                             }
                             current_tex = uv_adjusts[tex_cycle];
                         }
-                        // println!("ctex {}: {:?}", i, current_tex);
                         let mut vv = vertexx(*pos, norms[i], uv);
+                        #[cfg(feature = "headed")]
                         vv.texture(current_tex);
                         vv
                     })
@@ -415,8 +436,14 @@ impl ModelManager {
         } else {
             inds
         };
-        let model =
-            Self::build_complex_model(device, &name.to_lowercase(), None, vertices, indicies);
+        let model = Self::build_complex_model(
+            #[cfg(feature = "headed")]
+            device,
+            &name.to_lowercase(),
+            None,
+            vertices,
+            indicies,
+        );
 
         world.index_model(bundle_id, &model.base_name, Rc::clone(&model));
 
@@ -429,26 +456,28 @@ impl ModelManager {
     /** entry model loader that is handed a buffer, probably from an unzip, then sends to central loader */
     pub fn load_from_buffer(
         &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        #[cfg(feature = "headed")] tex_manager: &mut TexManager,
         world: &mut World,
         bundle_id: u8,
-        tex_manager: &mut TexManager,
         str: &String,
         slice: &Vec<u8>,
-        device: &Device,
         loggy: &mut Loggy,
         debug: bool,
     ) {
         match gltf::import_slice(slice) {
             Ok((nodes, buffers, image_data)) => {
                 self.load(
+                    #[cfg(feature = "headed")]
+                    device,
+                    #[cfg(feature = "headed")]
+                    tex_manager,
                     world,
                     bundle_id,
-                    tex_manager,
                     str,
                     nodes,
                     buffers,
                     image_data,
-                    device,
                     loggy,
                     debug,
                 );
@@ -460,11 +489,11 @@ impl ModelManager {
     /** entry model loader that first loads from disk and then sends to central load fn */
     pub fn load_from_string(
         &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        #[cfg(feature = "headed")] tex_manager: &mut TexManager,
         world: &mut World,
         bundle_id: u8,
-        tex_manager: &mut TexManager,
         str: &String,
-        device: &Device,
         loggy: &mut Loggy,
         debug: bool,
     ) {
@@ -473,14 +502,16 @@ impl ModelManager {
         match gltf::import(&target) {
             Ok((nodes, buffers, image_data)) => {
                 self.load(
+                    #[cfg(feature = "headed")]
+                    device,
+                    #[cfg(feature = "headed")]
+                    tex_manager,
                     world,
                     bundle_id,
-                    tex_manager,
                     str,
                     nodes,
                     buffers,
                     image_data,
-                    device,
                     loggy,
                     debug,
                 );
@@ -497,42 +528,42 @@ impl ModelManager {
     // TODO make this a cleaner function
     pub fn edit_cube(
         &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        #[cfg(feature = "headed")] tex_manager: &TexManager,
         world: &mut World,
         bundle_id: u8,
-        tex_manager: &TexManager,
         name: String,
         textures: Vec<String>,
-        device: &Device,
     ) {
         let m = self.CUBE.clone();
         let (verts, inds) = (m).data.as_ref().unwrap().clone();
 
+        #[cfg(feature = "headed")]
         let mut uv = vec![];
-        // println!("keys {}", crate::texture::list_keys());
+        #[cfg(feature = "headed")]
         for t in textures {
-            // println!("❓ {} ", t);
             uv.push(tex_manager.get_tex(&t));
         }
-        // let t2 = textures.map(|t| t.clone());
-        // let uvs = t2.map(|t| crate::texture::get_tex((&t.clone())));
         let verts2 = verts
             .iter()
             .enumerate()
             .map(|(i, v)| {
                 let mut v2 = v.clone();
                 // v2.trans(offset.clone());
-
+                #[cfg(feature = "headed")]
                 v2.texture(uv[(i / 4 as usize)]);
                 v2
             })
             .collect::<Vec<Vertex>>();
 
+        #[cfg(feature = "headed")]
         let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", name, " Mesh Vertex Buffer")),
             contents: bytemuck::cast_slice(&verts2),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        #[cfg(feature = "headed")]
         let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", name, " Mesh Index Buffer")),
             contents: bytemuck::cast_slice(&inds),
@@ -542,11 +573,14 @@ impl ModelManager {
         let model = Model {
             base_name: name.clone(),
             name: name.clone(),
-            vertex_buf: mesh_vertex_buf,
-            index_buf: mesh_index_buf,
-            index_format: wgpu::IndexFormat::Uint32,
             index_count: inds.len(),
             data: Some((verts2, inds)),
+            #[cfg(feature = "headed")]
+            vertex_buf: mesh_vertex_buf,
+            #[cfg(feature = "headed")]
+            index_buf: mesh_index_buf,
+            #[cfg(feature = "headed")]
+            index_format: wgpu::IndexFormat::Uint32,
         };
 
         let rced_model = Rc::new(model);
@@ -625,8 +659,12 @@ impl Vertex {
     pub fn to_string(self) -> String {
         format!("({},{},{})", self._pos[0], self._pos[1], self._pos[2])
     }
+
+    #[cfg(feature = "headed")]
     const ATTRIBS: [wgpu::VertexAttribute; 3] =
         wgpu::vertex_attr_array![0 => Sint16x4, 1 => Sint8x4, 2=> Float32x2];
+
+    #[cfg(feature = "headed")]
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         // let vertex_attr = ;
         wgpu::VertexBufferLayout {
@@ -637,10 +675,13 @@ impl Vertex {
     }
 }
 
+#[cfg(feature = "headed")]
 pub struct Instance {
     position: Vec3,
     rotation: Quat,
 }
+
+#[cfg(feature = "headed")]
 impl Instance {
     pub fn to_raw(&self) -> InstanceRaw {
         InstanceRaw {
@@ -649,12 +690,14 @@ impl Instance {
     }
 }
 
+#[cfg(feature = "headed")]
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct InstanceRaw {
     pub(crate) model: [[f32; 4]; 4],
 }
 
+#[cfg(feature = "headed")]
 impl InstanceRaw {
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         use std::mem;
@@ -839,18 +882,20 @@ pub fn create_plane(size: i16, offset: Option<IVec3>, uv: Option<Vec4>) -> (Vec<
 }
 
 fn build_model(
-    device: &Device,
+    #[cfg(feature = "headed")] device: &Device,
     base_name: &str,
     name: &str,
     verts: &Vec<Vertex>,
     inds: &Vec<u16>,
 ) -> Model {
+    #[cfg(feature = "headed")]
     let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Vertex Buffer"),
         contents: bytemuck::cast_slice(verts),
         usage: wgpu::BufferUsages::VERTEX,
     });
 
+    #[cfg(feature = "headed")]
     let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Index Buffer"),
         contents: bytemuck::cast_slice(inds),
@@ -859,11 +904,14 @@ fn build_model(
     Model {
         base_name: base_name.to_string(),
         name: name.to_string(),
-        vertex_buf,
-        index_buf,
-        index_format: wgpu::IndexFormat::Uint32,
         index_count: inds.len(),
         data: None,
+        #[cfg(feature = "headed")]
+        vertex_buf,
+        #[cfg(feature = "headed")]
+        index_buf,
+        #[cfg(feature = "headed")]
+        index_format: wgpu::IndexFormat::Uint32,
     }
 }
 
@@ -872,11 +920,14 @@ pub struct Model {
     pub base_name: String,
     /** direct name including sub mesh name in the format of: base_name.sub_name */
     pub name: String,
-    pub vertex_buf: wgpu::Buffer,
-    pub index_buf: wgpu::Buffer,
-    pub index_format: wgpu::IndexFormat,
     pub index_count: usize,
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
+    #[cfg(feature = "headed")]
+    pub vertex_buf: wgpu::Buffer,
+    #[cfg(feature = "headed")]
+    pub index_buf: wgpu::Buffer,
+    #[cfg(feature = "headed")]
+    pub index_format: wgpu::IndexFormat,
 }
 
 // fn log(str: String) {

@@ -4,12 +4,13 @@ use image::RgbaImage;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
+#[cfg(feature = "headed")]
+use crate::root::Core;
+// use crate::texture::TexManager;
 use crate::{
-    controls::ControlState,
-    gui::{GuiMorsel, PreGuiMorsel},
+    gui::PreGuiMorsel,
     lua_define::{LuaCore, LuaHandle},
-    texture::TexManager,
-    Core,
+    types::ControlState,
 };
 
 /**
@@ -67,7 +68,8 @@ pub struct BundleManager {
     pub console_bundle_target: u8,
     pub bundle_counter: u8,
     pub bundles: FxHashMap<u8, Bundle>,
-    pub open_tex_managers: Vec<TexManager>,
+    // #[cfg(feature = "headed")]
+    // pub open_tex_managers: Vec<TexManager>,
     pub open_lua_box: Vec<LuaCore>,
     pub call_order: Vec<u8>,
     main_rasters: Vec<Rc<RefCell<RgbaImage>>>,
@@ -80,7 +82,8 @@ impl BundleManager {
             console_bundle_target: 0,
             bundle_counter: 0,
             bundles: FxHashMap::default(),
-            open_tex_managers: Vec::new(),
+            // #[cfg(feature = "headed")]
+            // open_tex_managers: Vec::new(),
             open_lua_box: Vec::new(),
             call_order: Vec::new(),
             main_rasters: Vec::new(),
@@ -208,9 +211,10 @@ impl BundleManager {
     //         false,
     //     );
     // }
-    pub fn provide_resources(core: &Core) -> BundleResources {
-        core.gui.make_morsel()
-    }
+
+    // pub fn provide_resources(core: &Core) -> BundleResources {
+    //     core.gui.make_morsel()
+    // }
 
     pub fn rebuild_call_order(&mut self) {
         self.call_order = self.bundles.keys().copied().collect();

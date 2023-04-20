@@ -1,3 +1,7 @@
+#[cfg(feature = "headed")]
+use crate::root::Core;
+#[cfg(not(feature = "headed"))]
+use crate::root_headless::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
@@ -6,24 +10,21 @@ use crate::{
     log::LogType,
     lua_define::{LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
-    lua_img::{dehex, get_color, LuaImg},
+    lua_img::{dehex, LuaImg},
     model::TextureStyle,
     online::Online,
     pad::Pad,
     tile::Chunk,
     types::ValueMap,
     world::{TileCommand, TileResponse, World},
-    Core,
 };
 
-#[cfg(feature = "online_capable")]
-use crate::online::MovePacket;
-
-use glam::vec4;
 use image::RgbaImage;
+use itertools::Itertools;
 use mlua::{
     AnyUserData, Error, Lua, Table,
     Value::{self},
+    Variadic,
 };
 use parking_lot::Mutex;
 
@@ -37,9 +38,6 @@ use std::{
         Arc,
     },
 };
-
-#[cfg(feature = "online_capable")]
-use std::sync::mpsc::Receiver;
 
 static com_list: [&str; 16] = [
     "new - creates a new game directory",
@@ -93,6 +91,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
 
             let currentGameDir = main_bundle.directory.clone();
             crate::asset::pack(
+                #[cfg(feature = "headed")]
                 &mut core.tex_manager,
                 &mut core.model_manager,
                 &mut core.world,
@@ -176,6 +175,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         }
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
+        #[cfg(feature = "headed")]
         "atlas" => {
             core.tex_manager.save_atlas(&mut core.loggy);
         }
@@ -291,6 +291,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "bg" => {
             if segments.len() > 1 {
                 let v = dehex(segments[1]);
+                #[cfg(feature = "headed")]
                 core.gui.set_console_background_color(
                     (v.x * 255.) as u8,
                     (v.y * 255.) as u8,
@@ -341,11 +342,6 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
     true
 }
 
-#[cfg(feature = "online_capable")]
-type OnlineType = Rc<RefCell<Online>>;
-#[cfg(not(feature = "online_capable"))]
-type OnlineType = Option<bool>;
-
 pub fn init_lua_sys(
     lua_ctx: &Lua,
     lua_globals: &Table,
@@ -355,8 +351,7 @@ pub fn init_lua_sys(
     gui_in: Rc<RefCell<GuiMorsel>>,
     main_rast: Rc<RefCell<LuaImg>>,
     sky_rast: Rc<RefCell<LuaImg>>,
-    mut _net_sender: OnlineType,
-    singer: SoundSender,
+    #[cfg(feature = "headed")] singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 13]>>,
@@ -638,7 +633,7 @@ function abtn(button) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "make",
-        move |lua, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
+        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
             // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
@@ -650,7 +645,7 @@ function abtn(button) end"
 
             match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
-                Err(er) => return Err(make_err("Unable to create entity")),
+                Err(_) => return Err(make_err("Unable to create entity")),
             }
 
             // Ok(match rx.recv() {
@@ -726,11 +721,6 @@ function kill(ent) end"
 function reload() end"
     );
 
-    /**
-     * // YELLOW
-     *  use to store an entity between context, for moving entities between games maybe?
-     *  lua.create_registry_value(t)
-     */
     let pitcher = main_pitcher.clone();
     lua!(
         "attr",
@@ -783,8 +773,6 @@ function attr(attributes) end"
 function cam(params) end"
     );
 
-    let pitcher = main_pitcher.clone();
-
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
@@ -806,6 +794,7 @@ function cam(params) end"
 ---@param length number?
 function sound(freq, length) end"
     );
+    #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "song",
@@ -814,29 +803,25 @@ function sound(freq, length) end"
             {
                 let converted = notes
                     .iter()
-                    .filter_map(|v| {
-                        // to vector
-                        match v {
-                            Value::Table(t) => {
-                                if t.raw_len() > 0 {
-                                    Some(Note::new(
-                                        0,
-                                        t.get::<usize, f32>(1).unwrap_or(440.),
-                                        t.get::<usize, f32>(2).unwrap_or(1.),
-                                        1.,
-                                    ))
-                                } else {
-                                    None
-                                }
+                    .filter_map(|v| match v {
+                        Value::Table(t) => {
+                            if t.raw_len() > 0 {
+                                Some(Note::new(
+                                    0,
+                                    t.get::<usize, f32>(1).unwrap_or(440.),
+                                    t.get::<usize, f32>(2).unwrap_or(1.),
+                                    1.,
+                                ))
+                            } else {
+                                None
                             }
-                            Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
-                            Value::Integer(n) => Some(Note::new(0, *n as f32, 1., 1.)),
-                            _ => None,
                         }
+                        Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                        Value::Integer(n) => Some(Note::new(0, *n as f32, 1., 1.)),
+                        _ => None,
                     })
                     .collect::<Vec<Note>>();
 
-                // println!("sent chain {}", converted.len());
                 sing.send(SoundCommand::Chain(converted, None));
             }
             Ok(())
@@ -847,6 +832,7 @@ function sound(freq, length) end"
 function song(notes) end"
     );
 
+    #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "mute",
@@ -1485,6 +1471,7 @@ function over(str) end"
         "Create a new connection to the ip, site, etc. A :port is optional",
         "
 --- @param addr string
+--- @return connection
 function conn(addr) end"
     );
 
@@ -1514,7 +1501,7 @@ function quit(u) end"
     let command_map_clone = command_map.clone();
     lua!(
         "help",
-        move |lu, (b): (bool)| {
+        move |lu, b: bool| {
             if let Ok(t) = lu.create_table() {
                 t.set("help", "list all lua commands. In fact, the command used by this program to list this very command")?;
                 for (k, (desc, examp)) in command_map_clone.iter() {
@@ -1575,6 +1562,7 @@ fn res(target: &str, r: Result<(), Error>, loggy: &Sender<(LogType, String)>) {
 pub fn hard_reset(core: &mut Core) {
     core.bundle_manager.hard_reset();
 
+    #[cfg(feature = "headed")]
     core.tex_manager.reset();
     core.model_manager.reset();
     // core.gui.clean(); //TODO
@@ -1590,7 +1578,9 @@ pub fn hard_reset(core: &mut Core) {
 pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
     let (exists, children) = core.bundle_manager.soft_reset(bundle_id);
     if exists {
+        #[cfg(feature = "headed")]
         core.tex_manager.remove_bundle_content(bundle_id);
+        #[cfg(feature = "headed")]
         core.tex_manager
             .rebuild_atlas(&mut core.world, &mut core.loggy);
         core.model_manager.reset();
@@ -1613,63 +1603,45 @@ pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
 
 /** Load an empty game state or bundle for issuing commands */
 pub fn load_empty(core: &mut Core) {
+    // skip_logo: bool
     let bundle = core.bundle_manager.make_bundle(None, None);
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
-    #[cfg(feature = "audio")]
-    {
-        bundle.lua_ctx_handle = Some(bundle.lua.start(
-            bundle.id,
-            resources,
-            world_sender,
-            core.pitcher.clone(),
-            core.loggy.make_sender(),
-            core.singer.clone(),
-            core.global.debug,
-            false,
-        ));
-    }
-    #[cfg(not(feature = "audio"))]
-    {
-        bundle.lua_ctx_handle = Some(bundle.lua.start(
-            bundle.id,
-            resources,
-            world_sender,
-            core.pitcher.clone(),
-            core.loggy.make_sender(),
-            (),
-            core.global.debug,
-            false,
-        ));
-    }
-
-    let payload = crate::asset::get_logo();
-    crate::asset::unpack(
-        &mut core.tex_manager,
-        &mut core.model_manager,
-        &mut core.world,
+    bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
-        &bundle.lua,
-        &core.device,
-        "empty",
-        payload,
-        &mut core.loggy,
+        resources,
+        world_sender,
+        core.pitcher.clone(),
+        core.loggy.make_sender(),
+        #[cfg(feature = "audio")]
+        core.singer.clone(),
         core.global.debug,
-    );
+        false,
+    ));
 
+    #[cfg(feature = "headed")]
+    {
+        let payload = crate::asset::get_logo();
+        crate::asset::unpack(
+            #[cfg(feature = "headed")]
+            &core.gfx.device,
+            #[cfg(feature = "headed")]
+            &mut core.tex_manager,
+            &mut core.model_manager,
+            &mut core.world,
+            bundle.id,
+            &bundle.lua,
+            "empty",
+            payload,
+            &mut core.loggy,
+            core.global.debug,
+        );
+    }
+
+    #[cfg(feature = "headed")]
     core.tex_manager
-        .refinalize(&core.queue, &core.master_texture);
+        .refinalize(&core.gfx.queue, &core.gfx.master_texture);
     // DEV  TODO
-    // for e in &mut entity_manager.entities {
-    //     e.hot_reload();
-    // }
-    // let dir = match &bundle.directory {
-    //     Some(s) => s.clone(),
-    //     None => "_".to_string(),
-    // };
-
-    // core.bundle_manager.call_main(bundle_id);
-    // bundle.call_main();
 
     // let default = "function main() end function loop() end";
     // bundle.lua.async_load(&default.to_string());
@@ -1707,32 +1679,18 @@ pub fn load(
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
-    #[cfg(feature = "audio")]
-    {
-        bundle.lua_ctx_handle = Some(bundle.lua.start(
-            bundle_id,
-            resources,
-            world_sender,
-            core.pitcher.clone(),
-            core.loggy.make_sender(),
-            core.singer.clone(),
-            core.global.debug,
-            false,
-        ));
-    }
-    #[cfg(not(feature = "audio"))]
-    {
-        bundle.lua_ctx_handle = Some(bundle.lua.start(
-            bundle_id,
-            resources,
-            world_sender,
-            core.pitcher.clone(),
-            core.loggy.make_sender(),
-            (),
-            core.global.debug,
-            false,
-        ));
-    }
+    bundle.lua_ctx_handle = Some(bundle.lua.start(
+        bundle_id,
+        resources,
+        world_sender,
+        core.pitcher.clone(),
+        core.loggy.make_sender(),
+        #[cfg(feature = "audio")]
+        core.singer.clone(),
+        core.global.debug,
+        false,
+    ));
+
     let debug = core.global.debug;
 
     // TODO ensure this is reset before load
@@ -1743,12 +1701,14 @@ pub fn load(
         Some(s) => match payload {
             Some(p) => {
                 crate::asset::unpack(
+                    #[cfg(feature = "headed")]
+                    &core.gfx.device,
+                    #[cfg(feature = "headed")]
                     &mut core.tex_manager,
                     &mut core.model_manager,
                     &mut core.world,
                     bundle_id,
                     &bundle.lua,
-                    &core.device,
                     &s,
                     p,
                     &mut core.loggy,
@@ -1761,11 +1721,14 @@ pub fn load(
                 bundle.directory = Some(s.clone());
                 if path.is_dir() {
                     crate::asset::walk_files(
+                        #[cfg(feature = "headed")]
+                        Some(&core.gfx.device),
+                        #[cfg(feature = "headed")]
                         &mut core.tex_manager,
                         &mut core.model_manager,
+                        true,
                         &mut core.world,
                         bundle_id,
-                        Some(&core.device),
                         &bundle.lua,
                         path,
                         &mut core.loggy,
@@ -1790,12 +1753,14 @@ pub fn load(
                                 // Some(&core.device),
 
                                 crate::asset::unpack(
+                                    #[cfg(feature = "headed")]
+                                    &core.gfx.device,
+                                    #[cfg(feature = "headed")]
                                     &mut core.tex_manager,
                                     &mut core.model_manager,
                                     &mut core.world,
                                     bundle_id,
                                     &bundle.lua,
-                                    &core.device,
                                     &s,
                                     buff,
                                     &mut core.loggy,
@@ -1821,11 +1786,14 @@ pub fn load(
         None => {
             let path = crate::asset::determine_path(None);
             crate::asset::walk_files(
+                #[cfg(feature = "headed")]
+                Some(&core.gfx.device),
+                #[cfg(feature = "headed")]
                 &mut core.tex_manager,
                 &mut core.model_manager,
+                true,
                 &mut core.world,
                 bundle_id,
-                Some(&core.device),
                 &bundle.lua,
                 path,
                 &mut core.loggy,
@@ -1833,9 +1801,9 @@ pub fn load(
             );
         }
     };
-
+    #[cfg(feature = "headed")]
     core.tex_manager
-        .refinalize(&core.queue, &core.master_texture);
+        .refinalize(&core.gfx.queue, &core.gfx.master_texture);
     // DEV  TODO
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
@@ -2469,8 +2437,8 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
         let v2diry = v2dir[2] * v2length;
         let v2dirx = v2dir[0] * v2length;
         // get v4 aligned x and y distance
-        let v4diry = v4dir[2] * v4length;
-        let v4dirx = v4dir[0] * v4length;
+        // let v4diry = v4dir[2] * v4length;
+        // let v4dirx = v4dir[0] * v4length;
         println!(
             "v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}",
             v1dir, v2dir, v3dir, v4dir
@@ -2484,8 +2452,6 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
         let n2 = [v1dirx, v1diry];
         let n3 = [n2[0] + v2dirx, n2[1] + v2diry];
         let n4 = [n3[0] + v3dirx, n3[1] + v3diry];
-        // println!("x n4 vs dir {} {}",n4[0],v4dirx);
-        // println!("y n4 vs dir {} {}",n4[1],v4diry);
         println!("n1 {:?} n2 {:?} n3 {:?} n4 {:?}", n1, n2, n3, n4);
 
         let mut xs = [n1[0], n2[0], n3[0], n4[0]];

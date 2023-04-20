@@ -1,5 +1,6 @@
 use crate::log::LogType;
 use crate::lua_define::LuaResponse;
+use crate::types::ControlState;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
@@ -17,8 +18,6 @@ const COMMAND_KEY_L: VirtualKeyCode = VirtualKeyCode::LControl;
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
-
-pub type ControlState = ([bool; 256], [f32; 11]);
 
 pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // WindowEvent::Resized(physical_size) => {
@@ -66,8 +65,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     match input_helper.mouse() {
         Some((x, y)) => {
             core.global.game_controller = false;
-            core.global.mouse_pos.x = x / core.size.width as f32;
-            core.global.mouse_pos.y = y / core.size.height as f32;
+            core.global.mouse_pos.x = x / core.gfx.size.width as f32;
+            core.global.mouse_pos.y = y / core.gfx.size.height as f32;
             // TODO test if this is not needed on WinOS
             // let diff = input_helper.mouse_diff();
             // core.global.mouse_delta.x = diff.0;

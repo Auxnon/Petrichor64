@@ -2,31 +2,18 @@ use std::{borrow::Borrow, rc::Rc};
 
 use glam::{vec4, Vec4};
 
-use crate::{
-    global::GuiParams,
-    log::{LogType, Loggy},
-    lua_define::LuaResponse,
-    lua_img::LuaImg,
-    texture::{TexManager, TexTuple},
-};
-use image::{
-    imageops::{crop_imm, overlay, ColorMap},
-    GenericImage, ImageBuffer, Rgba, RgbaImage,
-};
+use crate::{global::GuiParams, log::Loggy, lua_define::LuaResponse};
+
+#[cfg(feature = "headed")]
+use crate::texture::TexTuple;
+
+use image::{imageops::ColorMap, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::{draw_filled_circle_mut, draw_filled_rect_mut};
-use wgpu::{BindGroup, Device, Queue, Sampler, Texture, TextureView};
+#[cfg(feature = "headed")]
+use wgpu::{BindGroup, Device, Queue};
 
 const LETTER_SIZE: u32 = 8;
-const NOTIF_WIDTH: u32 = 320;
-
-// pub enum GuiUnit {
-//     Percent(f32),
-//     Pixel(u32),
-//     AspectPixel(f32),
-//     AspectPercent(f32),
-//     ReversePixel(u32),
-//     ReversePercent(f32),
-// }
+// const NOTIF_WIDTH: u32 = 320;
 
 pub enum ScreenIndex {
     System = 0,
@@ -36,12 +23,13 @@ pub enum ScreenIndex {
     Sky = 4,
 }
 
+#[cfg(feature = "headed")]
 struct ScreenLayer {
-    pub index: ScreenIndex,
     pub texture: TexTuple,
     pub image: RgbaImage,
     pub dirty: bool,
 }
+#[cfg(feature = "headed")]
 impl ScreenLayer {
     pub fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: &[u32; 2]) {
         self.image = RgbaImage::new(size[0], size[1]);
@@ -63,16 +51,25 @@ impl ScreenLayer {
 }
 
 pub struct Gui {
+    #[cfg(feature = "headed")]
     pub gui_pipeline: wgpu::RenderPipeline,
+    #[cfg(feature = "headed")]
     pub sky_pipeline: wgpu::RenderPipeline,
+    #[cfg(feature = "headed")]
     pub gui_group: wgpu::BindGroup,
+    #[cfg(feature = "headed")]
     pub gui_aux_group: wgpu::BindGroup,
+    #[cfg(feature = "headed")]
     pub sky_group: wgpu::BindGroup,
-    // pub model: Arc<OnceCell<Model>>,
+    #[cfg(feature = "headed")]
     system_layer: ScreenLayer,
+    #[cfg(feature = "headed")]
     primary_layer: ScreenLayer,
+    #[cfg(feature = "headed")]
     secondary_layer: ScreenLayer,
+    #[cfg(feature = "headed")]
     trinary_layer: ScreenLayer,
+    #[cfg(feature = "headed")]
     sky_layer: ScreenLayer,
     // primary_texture: TexTuple,
     // secondary_texture: TexTuple,
@@ -106,28 +103,20 @@ pub struct Gui {
 }
 
 impl Gui {
+    #[cfg(feature = "headed")]
     pub fn new(
+        gfx: &crate::gfx::Gfx,
         gui_pipeline: wgpu::RenderPipeline,
         sky_pipeline: wgpu::RenderPipeline,
-        main_layout: &wgpu::BindGroupLayout,
-        gui_aux_layout: &wgpu::BindGroupLayout,
-        uniform_buf: &wgpu::Buffer,
-        // gui_group: wgpu::BindGroup,
-        // overlay_texture: TexTuple,
-        // sky_group: wgpu::BindGroup,
-        // sky_texture: TexTuple,
-        device: &Device,
-        queue: &Queue,
         gui_scaled: (u32, u32),
-        // gui_img: RgbaImage,
         loggy: &mut Loggy,
     ) -> Gui {
-        let (system_texture, system_image) = init_image(&device, &queue, gui_scaled);
-        let (primary_texture, primary_image) = init_image(&device, &queue, gui_scaled);
-        let (secondary_texture, secondary_image) = init_image(&device, &queue, gui_scaled);
-        let (trinary_texture, trinary_image) = init_image(&device, &queue, gui_scaled);
+        let (system_texture, system_image) = init_image(&gfx.device, &gfx.queue, gui_scaled);
+        let (primary_texture, primary_image) = init_image(&gfx.device, &gfx.queue, gui_scaled);
+        let (secondary_texture, secondary_image) = init_image(&gfx.device, &gfx.queue, gui_scaled);
+        let (trinary_texture, trinary_image) = init_image(&gfx.device, &gfx.queue, gui_scaled);
 
-        let (sky_bundle, sky_image) = init_image(&device, &queue, gui_scaled);
+        let (sky_bundle, sky_image) = init_image(&gfx.device, &gfx.queue, gui_scaled);
 
         let (gui_group, gui_aux_group, sky_group) = rebuild_group(
             [
@@ -137,15 +126,86 @@ impl Gui {
                 &trinary_texture,
                 &sky_bundle,
             ],
-            device,
-            main_layout,
-            gui_aux_layout,
-            uniform_buf,
+            &gfx.device,
+            &gfx.main_layout,
+            &gfx.gui_aux_layout,
+            &gfx.uniform_buf,
         );
 
         let d = system_image.dimensions();
 
-        let letters = match crate::texture::load_img(&"6x6-8unicode.png".to_string(), loggy) {
+        let letters = Self::letter_init(loggy);
+
+        // let raster: RgbaImage = ImageBuffer::new(1024, 1024);
+
+        Gui {
+            gui_pipeline,
+            sky_pipeline,
+            gui_group,
+            gui_aux_group,
+            sky_group,
+            system_layer: ScreenLayer {
+                // index: ScreenIndex::System,
+                texture: system_texture,
+                image: system_image,
+                dirty: true,
+            },
+            primary_layer: ScreenLayer {
+                // index: ScreenIndex::Primary,
+                texture: primary_texture,
+                image: primary_image,
+                dirty: true,
+            },
+            secondary_layer: ScreenLayer {
+                // index: ScreenIndex::Secondary,
+                texture: secondary_texture,
+                image: secondary_image,
+                dirty: true,
+            },
+            trinary_layer: ScreenLayer {
+                // index: ScreenIndex::Trinary,
+                texture: trinary_texture,
+                image: trinary_image,
+                dirty: true,
+            },
+            sky_layer: ScreenLayer {
+                // index: ScreenIndex::Sky,
+                texture: sky_bundle,
+                image: sky_image,
+                dirty: true,
+            },
+
+            console_string: "".to_string(),
+            letters,
+            time: 0.,
+            size: [d.0, d.1],
+            output_console: false,
+            console_background_color: image::Rgba([47, 47, 47, 255]),
+            local_gui_params: GuiParams::new(),
+            active_notifs: vec![],
+            notifcations_enabled: true,
+            notifications_dirty: true,
+        }
+    }
+
+    #[cfg(not(feature = "headed"))]
+    pub fn new(gui_scaled: (u32, u32), loggy: &mut Loggy) -> Gui {
+        Gui {
+            console_string: "".to_string(),
+            letters: Gui::letter_init(loggy),
+            time: 0.,
+            size: [gui_scaled.0, gui_scaled.1],
+            output_console: false,
+            console_background_color: image::Rgba([47, 47, 47, 255]),
+            local_gui_params: GuiParams::new(),
+            active_notifs: vec![],
+            notifcations_enabled: false,
+            notifications_dirty: true,
+        }
+    }
+
+    fn letter_init(loggy: &mut Loggy) -> RgbaImage {
+        match crate::asset::load_img(&"6x6-8unicode.png".to_string(), loggy) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {
                 #[cfg(not(windows))]
@@ -163,165 +223,65 @@ impl Gui {
                 }
 
                 let d = include_bytes!(concat!("..", sp!(), "assets", sp!(), "6x6-8unicode.png"));
-                crate::texture::load_img_from_buffer(d)
-                    .unwrap()
-                    .into_rgba8()
+                crate::asset::load_img_from_buffer(d).unwrap().into_rgba8()
             }
-        };
-
-        // let raster: RgbaImage = ImageBuffer::new(1024, 1024);
-
-        Gui {
-            gui_pipeline,
-            sky_pipeline,
-            gui_group,
-            gui_aux_group,
-            sky_group,
-            system_layer: ScreenLayer {
-                index: ScreenIndex::System,
-                texture: system_texture,
-                image: system_image,
-                dirty: true,
-            },
-            primary_layer: ScreenLayer {
-                index: ScreenIndex::Primary,
-                texture: primary_texture,
-                image: primary_image,
-                dirty: true,
-            },
-            secondary_layer: ScreenLayer {
-                index: ScreenIndex::Secondary,
-                texture: secondary_texture,
-                image: secondary_image,
-                dirty: true,
-            },
-            trinary_layer: ScreenLayer {
-                index: ScreenIndex::Trinary,
-                texture: trinary_texture,
-                image: trinary_image,
-                dirty: true,
-            },
-            sky_layer: ScreenLayer {
-                index: ScreenIndex::Sky,
-                texture: sky_bundle,
-                image: sky_image,
-                dirty: true,
-            },
-            // sky_texture: sky_bundle,
-            // sky_image,
-            // dirty_sky: false,
-            // target_sky: false,
-            // system_image,
-            // primary_image,
-            // secondary_image,
-            // trinary_image,
-            // system_texture,
-            // primary_texture,
-            // secondary_texture,
-            // trinary_texture,
-            console_string: "".to_string(),
-            letters,
-            time: 0.,
-            size: [d.0, d.1],
-            // dirty: true,
-            output_console: false,
-            console_background_color: image::Rgba([47, 47, 47, 255]),
-            local_gui_params: GuiParams::new(),
-            active_notifs: vec![Notif::new("test1"), Notif::new("test2")],
-            notifcations_enabled: true,
-            notifications_dirty: true,
         }
     }
 
     //pub fn type()
     pub fn add_text(&mut self, str: String) {
         self.console_string = format!("{}\n{}", self.console_string, str);
+        #[cfg(feature = "headed")]
         self.apply_console_out_text();
     }
 
     // DEV is this still useful? it numbers tiles on a 16x16 grid
-    pub fn add_img(&self, str: &String, loggy: &mut Loggy) {
-        match crate::texture::load_img(str, loggy) {
-            Ok(t) => {
-                let mut im = t.to_rgba8();
-                let w = im.width() / 16;
-                let h = im.height() / 16;
-                for x in 0..w {
-                    for y in 0..h {
-                        let n = x + y * w;
-                        let digits: Vec<_> = n
-                            .to_string()
-                            .chars()
-                            .map(|d| d.to_digit(10).unwrap())
-                            .collect();
-                        for (i, d) in digits.into_iter().enumerate() {
-                            let sub = image::imageops::crop_imm(
-                                &self.letters,
-                                d * LETTER_SIZE,
-                                12,
-                                LETTER_SIZE,
-                                LETTER_SIZE,
-                            );
-                            // let imm: &ImageBuffer<Rgba<u8>, Vec<u8>> = sub.inner();
-                            image::imageops::replace(
-                                &mut im,
-                                &mut sub.to_image(),
-                                (x * 16 + i as u32 * (LETTER_SIZE + 1)).into(),
-                                (y * 16).into(),
-                            );
-                        }
+    // pub fn add_img(&self, str: &String, loggy: &mut Loggy) {
+    //     match crate::asset::load_img(str, loggy) {
+    //         Ok(t) => {
+    //             let mut im = t.to_rgba8();
+    //             let w = im.width() / 16;
+    //             let h = im.height() / 16;
+    //             for x in 0..w {
+    //                 for y in 0..h {
+    //                     let n = x + y * w;
+    //                     let digits: Vec<_> = n
+    //                         .to_string()
+    //                         .chars()
+    //                         .map(|d| d.to_digit(10).unwrap())
+    //                         .collect();
+    //                     for (i, d) in digits.into_iter().enumerate() {
+    //                         let sub = image::imageops::crop_imm(
+    //                             &self.letters,
+    //                             d * LETTER_SIZE,
+    //                             12,
+    //                             LETTER_SIZE,
+    //                             LETTER_SIZE,
+    //                         );
+    //                         // let imm: &ImageBuffer<Rgba<u8>, Vec<u8>> = sub.inner();
+    //                         image::imageops::replace(
+    //                             &mut im,
+    //                             &mut sub.to_image(),
+    //                             (x * 16 + i as u32 * (LETTER_SIZE + 1)).into(),
+    //                             (y * 16).into(),
+    //                         );
+    //                     }
 
-                        //image::imageops::overlay(&mut self.img, &sub, x, y);
-                    }
-                }
-            }
-            Err(e) => {
-                loggy.log(LogType::TextureError, &e.to_string());
-            }
-        }
-    }
-
-    // pub fn draw_image(
-    //     &mut self,
-    //     tex_manager: &mut TexManager,
-    //     image: &String,
-    //     onto_system: bool,
-    //     x: LuaResponse,
-    //     y: LuaResponse,
-    // ) {
-    //     let targ = if onto_system {
-    //         &mut self.system_image
-    //     } else {
-    //         if self.target_sky {
-    //             self.dirty_sky = true;
-    //             &mut self.sky_image
-    //         } else {
-    //             self.dirty = true;
-    //             &mut self.primary_image
+    //                     //image::imageops::overlay(&mut self.img, &sub, x, y);
+    //                 }
+    //             }
     //         }
-    //     };
-    //     let source = tex_manager.get_tex(image);
-
-    //     let w = tex_manager.atlas.width();
-    //     let h = tex_manager.atlas.height();
-    //     let sub = image::imageops::crop_imm(
-    //         &mut tex_manager.atlas,
-    //         (source.x * w as f32) as u32,
-    //         (source.y * h as f32) as u32,
-    //         (source.z * w as f32) as u32,
-    //         (source.w * h as f32) as u32,
-    //     );
-
-    //     direct_image(targ, &sub.to_image(), x, y, self.size[0], self.size[1]);
-
-    //     // *targ = image::imageops::huerotate(targ, rand::thread_rng().gen_range(0..360));
-    //     // self.dirty = true;
+    //         Err(e) => {
+    //             loggy.log(LogType::TextureError, &e.to_string());
+    //         }
+    //     }
     // }
 
     pub fn set_console_background_color(&mut self, r: u8, g: u8, b: u8, a: u8) {
         self.console_background_color = image::Rgba([r, g, b, a])
     }
 
+    #[cfg(feature = "headed")]
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
         image::imageops::replace(&mut self.system_layer.image, &im, 0, 0);
@@ -362,48 +322,6 @@ impl Gui {
         self.system_layer.dirty = true;
     }
 
-    // pub fn fill(&mut self, r: f32, g: f32, b: f32, a: f32) {
-    //     let width = self.size[0];
-    //     let height = self.size[1];
-
-    //     draw_filled_rect_mut(
-    //         self.get_targ(),
-    //         imageproc::rect::Rect::at(0 as i32, 0 as i32).of_size(width as u32, height as u32),
-    //         image::Rgba([
-    //             (r * 255.) as u8,
-    //             (g * 255.) as u8,
-    //             (b * 255.) as u8,
-    //             (a * 255.) as u8,
-    //         ]),
-    //     );
-    // }
-
-    // pub fn pixel(&mut self, x: u32, y: u32, r: f32, g: f32, b: f32, a: f32) {
-    //     self.get_targ().get_pixel_mut(x, y).0 = [
-    //         (r * 255.) as u8,
-    //         (g * 255.) as u8,
-    //         (b * 255.) as u8,
-    //         (a * 255.) as u8,
-    //     ];
-    // }
-
-    // fn get_targ(&mut self) -> &mut RgbaImage {
-    //     if self.target_sky {
-    //         self.dirty_sky = true;
-    //         &mut self.sky_image
-    //     } else {
-    //         self.dirty = true;
-    //         &mut self.primary_image
-    //     }
-    // }
-
-    /* Clean off the main raster */
-    // pub fn clean(&mut self) {
-    //     println!("cleaning {:?}", self.size);
-    //     self.main = RgbaImage::new(self.size[0], self.size[1]);
-    //     self.dirty = true;
-    // }
-
     pub fn get_console_size(&self) -> (u32, u32) {
         (
             (self.size[0] / (LETTER_SIZE + 1) - 2),
@@ -411,20 +329,25 @@ impl Gui {
         )
     }
 
+    #[cfg(feature = "headed")]
     pub fn enable_console(&mut self, loggy: &Loggy) {
         self.console_string = loggy.get();
         self.output_console = true;
         self.apply_console_out_text();
     }
+    #[cfg(feature = "headed")]
     pub fn disable_console(&mut self) {
         self.console_string = "".to_string();
         self.output_console = false;
         self.apply_console_out_text();
     }
+
     // pub fn overlay_image(&mut self, image: &RgbaImage) {
     //     image::imageops::overlay(&mut self.main, image, 0, 0);
     //     self.dirty = true;
     // }
+
+    #[cfg(feature = "headed")]
     pub fn replace_image(&mut self, img: RgbaImage, index: ScreenIndex) {
         // println!("replacing image of size {:?}", img.dimensions());
         match index {
@@ -451,15 +374,10 @@ impl Gui {
         }
     }
 
-    pub fn resize(
-        &mut self,
-        size: (u32, u32),
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        main_layout: &wgpu::BindGroupLayout,
-        gui_aux_layout: &wgpu::BindGroupLayout,
-        uniform_buf: &wgpu::Buffer,
-    ) {
+    #[cfg(feature = "headed")]
+    pub fn resize(&mut self, size: (u32, u32), gfx: &crate::gfx::Gfx) {
+        let device = &gfx.device;
+        let queue = &gfx.queue;
         self.size = [size.0, size.1];
         // resize all layer fields
         self.system_layer.resize(device, queue, &self.size);
@@ -477,9 +395,9 @@ impl Gui {
                 &self.sky_layer.texture,
             ],
             device,
-            main_layout,
-            gui_aux_layout,
-            uniform_buf,
+            &gfx.main_layout,
+            &gfx.gui_aux_layout,
+            &gfx.uniform_buf,
         );
         self.gui_group = gui_group;
         self.sky_group = sky_group;
@@ -490,10 +408,11 @@ impl Gui {
         }
     }
 
-    pub fn change_layout(&mut self, gui_params: GuiParams) {
-        self.local_gui_params = gui_params;
-    }
+    // pub fn change_layout(&mut self, gui_params: GuiParams) {
+    //     self.local_gui_params = gui_params;
+    // }
 
+    #[cfg(feature = "headed")]
     pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
         if loggy.is_dirty_and_listen() && self.output_console {
@@ -508,36 +427,6 @@ impl Gui {
         self.secondary_layer.check_render(queue);
         self.trinary_layer.check_render(queue);
         self.sky_layer.check_render(queue);
-        // if self.dirty {
-        //     let raster = if self.output_console {
-        //         &self.console
-        //     } else {
-        //         &self.main
-        //     };
-
-        //     let final_raster = if self.notifications_dirty {
-        //         self.notifications_dirty = false;
-        //         // image::imageops::replace(&mut self.raw, raster, 0, 0);
-        //         // image::imageops::overlay(&mut self.raw, &self.notif, 0, 0);
-        //         &self.raw
-        //     } else {
-        //         // println!("not dirty");
-        //         raster
-        //     };
-        //     // println!(
-        //     //     "raster size console {} {:?} stored size{:?}",
-        //     //     self.output,
-        //     //     raster.dimensions(),
-        //     //     self.size
-        //     // );
-        //     crate::texture::write_tex(queue, &self.overlay_texture.texture, &raster);
-        //     self.dirty = false;
-        // } else {
-        // }
-        // if self.dirty_sky {
-        //     crate::texture::write_tex(queue, &self.sky_texture.texture, &self.sky_image);
-        //     self.dirty_sky = false;
-        // }
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
@@ -551,6 +440,7 @@ impl Gui {
         )
     }
 
+    #[cfg(feature = "headed")]
     pub fn process_notifications(&mut self, force: bool) {
         let mut should = false;
         if self.notifcations_enabled {
@@ -575,8 +465,6 @@ impl Gui {
                         direct_text_raw(
                             &mut self.system_layer.image,
                             &self.letters,
-                            self.size[0],
-                            self.size[1],
                             &n.message,
                             0,
                             n.position,
@@ -653,33 +541,27 @@ impl Notif {
             image: None,
         }
     }
-    pub fn render(&mut self, letters: &RgbaImage, size: [u32; 2]) {
-        println!("rendering notif: {}", self.message);
-        let mut img = RgbaImage::new(NOTIF_WIDTH, 64);
-        let count = direct_text_raw(
-            &mut img,
-            &letters,
-            size[0],
-            size[1],
-            &self.message,
-            0,
-            0,
-            vec4(1., 1., 0., 1.),
-        );
-        // println!("count {}", count);
-        crop_imm(&mut img, 0, 0, NOTIF_WIDTH, count * 16);
-        self.image = Some(img);
-    }
+    // pub fn render(&mut self, letters: &RgbaImage, size: [u32; 2]) {
+    //     println!("rendering notif: {}", self.message);
+    //     let mut img = RgbaImage::new(NOTIF_WIDTH, 64);
+    //     let count = direct_text_raw(
+    //         &mut img,
+    //         &letters,
+    //         size[0],
+    //         size[1],
+    //         &self.message,
+    //         0,
+    //         0,
+    //         vec4(1., 1., 0., 1.),
+    //     );
+    //     crop_imm(&mut img, 0, 0, NOTIF_WIDTH, count * 16);
+    //     self.image = Some(img);
+    // }
 }
 
 pub type PreGuiMorsel = (RgbaImage, RgbaImage, RgbaImage, [u32; 2]);
 pub struct GuiMorsel {
     pub letters: Rc<RgbaImage>,
-    dirty: bool,
-    dirty_sky: bool,
-    // pub main: RgbaImage,
-    // pub sky: RgbaImage,
-    // target_sky: bool,
     pub size: [u32; 2],
 }
 
@@ -687,14 +569,7 @@ impl GuiMorsel {
     pub fn new(letters: RgbaImage, size: [u32; 2]) -> Self {
         // letters: Rc<RgbaImage>, main: RgbaImage, sky: RgbaImage, size: [u32; 2]
         let letters = Rc::new(letters);
-        Self {
-            letters,
-            dirty: true,
-            dirty_sky: true,
-            // main,
-            // sky,
-            size,
-        }
+        Self { letters, size }
     }
 
     // pub fn fill(&mut self, c: Vec4) {
@@ -873,6 +748,7 @@ pub fn eval(val: LuaResponse, l: u32) -> i32 {
     }
 }
 
+#[cfg(feature = "headed")]
 pub fn rebuild_group(
     gui_bundles: [&TexTuple; 5],
     device: &Device,
@@ -956,6 +832,7 @@ fn adeval(st: &str, l: u32) -> i32 {
     }
 }
 
+#[cfg(feature = "headed")]
 pub fn init_image(device: &Device, queue: &Queue, size: (u32, u32)) -> (TexTuple, RgbaImage) {
     // println!("aspect {}", h);
     let mut img: RgbaImage = ImageBuffer::new(size.0, size.1);
@@ -1068,15 +945,13 @@ pub fn direct_text(
 ) -> u32 {
     let xx = eval(x, width);
     let yy = eval(y, height);
-    direct_text_raw(target, letters.borrow(), width, height, txt, xx, yy, c)
+    direct_text_raw(target, letters.borrow(), txt, xx, yy, c)
 }
 
 /** Even rawer! Just hand us the i32 positions. Returns the line count */
 pub fn direct_text_raw(
     target: &mut RgbaImage,
     letters: &RgbaImage,
-    width: u32,
-    height: u32,
     txt: &str,
     xx: i32,
     yy: i32,
@@ -1201,7 +1076,7 @@ impl ColorMap for TextMap {
     type Color = Rgba<u8>;
 }
 
-/** Mutate the image proided to the dimensions */
+/** Mutate the image provided to the dimensions */
 pub fn resizer(im: &mut RgbaImage, w: u32, h: u32) {
     *im = image::imageops::resize(im, w, h, image::imageops::FilterType::Nearest);
 }
