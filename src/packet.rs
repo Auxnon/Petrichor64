@@ -2,7 +2,11 @@ use bytes::{Buf, BytesMut};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use tokio_util::codec::{Decoder, Encoder};
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
+};
+use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -14,6 +18,8 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 //     message: String,
 // }
 
+pub type WrappedStream = FramedRead<OwnedReadHalf, Packy>;
+pub type WrappedSink = FramedWrite<OwnedWriteHalf, Packy>;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Packet64 {
     id: u16,
@@ -25,6 +31,7 @@ pub enum Packer {
     Str(String),
     FVec(Vec<f32>),
     UVec(Vec<u32>),
+    // Connection(u16, Box<WrappedSink>),
     Close(),
 }
 impl Packet64 {

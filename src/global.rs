@@ -142,6 +142,7 @@ pub enum StateChange {
     #[cfg(feature = "headed")]
     MouseGrabOff,
     Quit,
+    /** Runs initial config document parse and excutes and boot commands. Also checks against passed in command line args */
     Config,
     ModelChange(String),
 }

@@ -1,6 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
+    cell::RefCell,
     rc::Rc,
     sync::{Arc, Mutex},
 };

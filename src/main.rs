@@ -301,11 +301,17 @@ fn main() {
         // loop
         let mut updated_bundles = FxHashMap::default();
         loop {
+            core.loop_helper.loop_start();
+            if let Ok(inp) = core.cli_thread_receiver.try_recv() {
+                // println!("cli: {:?}", inp);
+                core_console_command(&mut core, &inp);
+            }
             if state_change_check(&mut core, &mut (), &mut ()) {
                 return;
             }
             core.update(&mut updated_bundles);
             core.bundle_manager.call_loop(&mut updated_bundles, bits);
+            core.loop_helper.loop_sleep();
         }
     }
 

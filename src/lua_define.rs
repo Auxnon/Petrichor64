@@ -181,7 +181,9 @@ impl LuaCore {
     }
 
     pub fn call_loop(&self, bits: ControlState) {
-        self.to_lua_tx.send(LuaTalk::Loop(bits));
+        if let Err(e) = self.to_lua_tx.send(LuaTalk::Loop(bits)) {
+            println!("lua loop error: {}", e);
+        }
     }
 
     /** sends kill signal to this lua context thread */
@@ -312,8 +314,10 @@ fn start(
             if debug {
                 loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
             }
+            // let mut counter = 0;
             for m in reciever {
                 // let (s1, s2, bit_in, channel) = m;
+                #[cfg(feature = "headed")]
                 while let Some(Event {
                     id: _,
                     event,

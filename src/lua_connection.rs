@@ -1,5 +1,7 @@
-use mlua::{UserData, UserDataMethods};
 use std::sync::mpsc::{Receiver, Sender};
+
+use futures::FutureExt;
+use mlua::{UserData, UserDataMethods};
 
 use crate::packet::{Packer, Packet64};
 
@@ -27,7 +29,7 @@ impl LuaConnection {
             id: 0,
         }
     }
-    pub fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) {
         self.closed = true;
         if let Some(h) = self.handle.take() {
             if let Err(e) = self.sender.send(Packet64::close()) {
@@ -47,9 +49,36 @@ impl LuaConnection {
 impl UserData for LuaConnection {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("send", |_, this, s: String| {
+            // tokio::spawn(async {
+            // let c = this.sender.clone();
+            // let id = this.id;
+            // tokio::spawn(async move {
             if let Err(_) = this.sender.send(Packet64::str(this.id, 0, s)) {
                 this.shutdown();
-            }
+            };
+            // });
+            // this.sender
+            //     .send(Packet64::str(this.id, 0, s))
+            //     .await
+            //     .unwrap();
+            // if let Err(_) = this.sender.send(Packet64::str(this.id, 0, s)).await {
+            //     this.shutdown();
+            // };
+            // });
+            // println!("sending from lua: {}", s);
+            // this.sender.send(Packet64::str(this.id, 0, s)).await;
+            // if let Err(_) =  {
+            //     this.shutdown();
+            // }
+
+            // let res = this.sender.send(Packet64::str(this.id, 0, s));
+            // res.
+            // res.then(move |r| {
+            //     if let Err(_) = r {
+            //         this.shutdown();
+            //     }
+            // });
+
             Ok(())
         });
         methods.add_method_mut("recv", |_, this, (): ()| {

@@ -416,7 +416,15 @@ pub fn init_lua_sys(
     lua!(
         "cout",
         move |_, args: Variadic<String>| {
-            aux_loggy.send((LogType::Lua, args.iter().join(", ")));
+            // println!("cout: {:?}", args);
+            #[cfg(feature = "headed")]
+            {
+                aux_loggy.send((LogType::Lua, args.iter().join(", ")));
+            }
+            #[cfg(not(feature = "headed"))]
+            {
+                println!("{}", args.iter().join(", "));
+            }
             Ok(())
         },
         "Prints string to console",
@@ -634,7 +642,6 @@ function abtn(button) end"
     lua!(
         "make",
         move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
-            // let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<Arc<std::sync::Mutex<LuaEnt>>>>(0);
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
@@ -1294,8 +1301,10 @@ function over(str) end"
         "Create a new connection to the ip, site, etc. A :port is optional",
         "
 --- @param addr string
+--- @param udp? boolean
+--- @param server? boolean
 --- @return connection
-function conn(addr) end"
+function conn(addr,udp,server) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -2167,7 +2176,7 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
             v1dir[2] * v2dir[0] - v1dir[0] * v2dir[2],
             v1dir[0] * v2dir[1] - v1dir[1] * v2dir[0],
         ];
-        println!("quad_norm {:?}", quad_norm);
+        // println!("quad_norm {:?}", quad_norm);
         let rotmat = if quad_norm[1] > 0.95 {
             // some slight rounding errors but this is close enough and consistent
             [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
@@ -2217,14 +2226,14 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
             rotmat[1][0] * quad_norm[0] + rotmat[1][1] * quad_norm[1] + rotmat[1][2] * quad_norm[2],
             rotmat[2][0] * quad_norm[0] + rotmat[2][1] * quad_norm[1] + rotmat[2][2] * quad_norm[2],
         ];
-        println!("new_quad_norm {:?}", new_quad_norm); //should be [0,1,0]
+        // println!("new_quad_norm {:?}", new_quad_norm); //should be [0,1,0]
 
-        println!(
-            "original v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}",
-            v1dir, v2dir, v3dir, v4dir
-        );
+        // println!(
+        //     "original v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}",
+        //     v1dir, v2dir, v3dir, v4dir
+        // );
 
-        println!("rotmat {:?}", rotmat);
+        // println!("rotmat {:?}", rotmat);
         //rotate v1dir
         let v1dir = [
             rotmat[0][0] * v1dir[0] + rotmat[0][1] * v1dir[1] + rotmat[0][2] * v1dir[2],
@@ -2265,20 +2274,20 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
         // get v4 aligned x and y distance
         // let v4diry = v4dir[2] * v4length;
         // let v4dirx = v4dir[0] * v4length;
-        println!(
-            "v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}",
-            v1dir, v2dir, v3dir, v4dir
-        );
-        println!(
-            "v1length {:?} v2length {:?} v3length {:?} v4length {:?}",
-            v1length, v2length, v3length, v4length
-        );
+        // println!(
+        //     "v1dir {:?} v2dir {:?} v3dir {:?} v4dir {:?}",
+        //     v1dir, v2dir, v3dir, v4dir
+        // );
+        // println!(
+        //     "v1length {:?} v2length {:?} v3length {:?} v4length {:?}",
+        //     v1length, v2length, v3length, v4length
+        // );
 
         let n1 = [0., 0.];
         let n2 = [v1dirx, v1diry];
         let n3 = [n2[0] + v2dirx, n2[1] + v2diry];
         let n4 = [n3[0] + v3dirx, n3[1] + v3diry];
-        println!("n1 {:?} n2 {:?} n3 {:?} n4 {:?}", n1, n2, n3, n4);
+        // println!("n1 {:?} n2 {:?} n3 {:?} n4 {:?}", n1, n2, n3, n4);
 
         let mut xs = [n1[0], n2[0], n3[0], n4[0]];
         let mut ys = [n1[1], n2[1], n3[1], n4[1]];
@@ -2378,6 +2387,11 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
 }
 
 fn make_err(s: &str) -> mlua::prelude::LuaError {
+    // return mlua::Error::CallbackError {
+    //     traceback: s.to_string(),
+    //     cause: Arc::new(*er),
+    // };
+
     return mlua::Error::RuntimeError(s.to_string());
 }
 

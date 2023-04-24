@@ -1,5 +1,8 @@
+// use lazy_static::lazy_static;
 use std::sync::mpsc::{channel, Receiver, Sender};
-
+// lazy_static! {
+//     pub static ref LOG: std::sync::mpsc::channel = std::sync::mpsc::channel::<String>(100);
+// }
 pub struct Loggy {
     buffer: Vec<String>,
     log_dirty: bool,
@@ -142,7 +145,8 @@ impl Loggy {
     // }
 
     /** SYS: log out */
-    pub fn log(&mut self, log_type: LogType, str: &str) {
+    pub fn log(&mut self, _log_type: LogType, str: &str) {
+        #[cfg(feature = "headed")]
         self._print(str, false);
         println!("~{}", str);
     }
@@ -229,7 +233,7 @@ impl Loggy {
         } else {
             let offset = (self.offset).floor() as usize;
 
-            let contro_height = (l - (height - 1));
+            let contro_height = l - (height - 1);
             let (deg, cap) = if contro_height < offset {
                 (0, l)
             } else {
@@ -258,6 +262,7 @@ impl Loggy {
         buf
     }
     pub fn listen(&mut self) {
+        // println!("listen");
         if let Ok((t, s)) = self.receiver.try_recv() {
             self.log(t, &s);
         }

@@ -27,12 +27,13 @@ pub struct Core {
     pub world: World,
     pub pitcher: Sender<MainPacket>,
     pub catcher: Receiver<MainPacket>,
-    loop_helper: spin_sleep::LoopHelper,
+    pub loop_helper: spin_sleep::LoopHelper,
     pub ent_manager: EntManager,
     pub model_manager: ModelManager,
     pub bundle_manager: BundleManager,
     pub loggy: Loggy,
     pub gui: Gui,
+    pub cli_thread_receiver: Receiver<String>,
 }
 impl Core {
     pub async fn new() -> Core {
@@ -46,6 +47,18 @@ impl Core {
         let (pitcher, catcher) = channel::<MainPacket>();
         let model_manager = ModelManager::init();
         let mut gui = Gui::new((256, 256), &mut loggy);
+
+        let (cli_thread_sender, cli_thread_receiver) = channel::<String>();
+        std::thread::spawn(move || loop {
+            let mut line = String::new();
+            if let Ok(_) = std::io::stdin().read_line(&mut line) {
+                cli_thread_sender.send(line).unwrap();
+                // if line.trim() == "exit" {
+                //     std::process::exit(0);
+                // }
+            }
+        });
+
         Self {
             global,
             world,
@@ -57,6 +70,7 @@ impl Core {
             bundle_manager: BundleManager::new(),
             loggy,
             gui,
+            cli_thread_receiver,
         }
     }
 }

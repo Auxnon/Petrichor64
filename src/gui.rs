@@ -228,7 +228,6 @@ impl Gui {
         }
     }
 
-    //pub fn type()
     pub fn add_text(&mut self, str: String) {
         self.console_string = format!("{}\n{}", self.console_string, str);
         #[cfg(feature = "headed")]

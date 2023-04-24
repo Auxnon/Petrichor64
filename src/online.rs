@@ -7,7 +7,7 @@ use std::{
 use tokio::{
     io::{self},
     net::{TcpStream, UdpSocket},
-    sync::mpsc,
+    sync::mpsc::{self},
 };
 
 use crate::{lua_connection::LuaConnection, packet::Packet64};
@@ -31,12 +31,13 @@ impl Online {
         // MARK we must poll this somehow
         let handle =
             std::thread::spawn(
-                move || match run(addr, udp, false, netin_send, netout_recv) {
+                move || match run(addr, udp, server, netin_send, netout_recv) {
                     Ok(_) => Ok(()),
                     Err(e) => Err(e.to_string()),
                 },
             );
 
+        // println!("opening connection to {}", address);
         let conn = LuaConnection::new(netout_send, netin_recv, handle);
         Ok(conn)
     }
@@ -98,28 +99,23 @@ async fn create_tcp_client(addr: SocketAddr) -> io::Result<TcpStream> {
 // type Tx = mpsc::UnboundedSender<String>;
 
 mod tcp {
-    use crate::packet::{Packer, Packy};
-    use bytes::buf::Writer;
+    use super::Packet64;
+    use crate::packet::{Packer, Packy, WrappedSink, WrappedStream};
+    use crate::parse::test;
     use futures::sink::SinkExt;
     use futures::StreamExt;
     use parking_lot::Mutex;
-    use std::cell::RefCell;
+    use rustc_hash::FxHashMap;
     use std::error::Error;
     use std::io::{self};
     use std::net::SocketAddr;
-    use std::rc::Rc;
-    use std::sync::mpsc::{Receiver, Sender};
+    use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
     use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
     use tokio::net::{TcpListener, TcpStream};
-    use tokio::sync::mpsc::channel;
     use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
-    use super::Packet64;
-
-    type WrappedStream = FramedRead<OwnedReadHalf, Packy>;
-    type WrappedSink = FramedWrite<OwnedWriteHalf, Packy>;
     // type Streamy = Framed<WrappedStream, BasicPacky>;
     // type DeSink = Framed<WrappedSink, (), MyMessage, Json<(), MyMessage>>;
 
@@ -133,12 +129,13 @@ mod tcp {
     }
 
     pub async fn connect(
-        id: Option<u32>,
+        id: Option<u16>,
         socket: TcpStream,
         netin: Sender<Packet64>,
         netout: Receiver<Packet64>,
     ) -> Result<(), Box<dyn Error>> {
         let (read, write) = socket.into_split();
+
         let reader = WrappedStream::new(read, Packy {});
         let writer = WrappedSink::new(write, Packy {});
 
@@ -148,25 +145,25 @@ mod tcp {
         tokio::try_join!(
             async move {
                 match task1.await {
-                    Err(e) => Err(std::io::Error::new(
+                    Err(_) => Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "receiver failed start",
                     )),
                     Ok(o) => match o {
-                        Ok(m) => Ok(()),
                         Err(e) => Err(e),
+                        _ => Ok(()),
                     },
                 }
             },
             async move {
                 match task2.await {
-                    Err(e) => Err(std::io::Error::new(
+                    Err(_) => Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "sender failed start",
                     )),
                     Ok(o) => match o {
-                        Ok(m) => Ok(()),
                         Err(e) => Err(e),
+                        _ => Ok(()),
                     },
                 }
             }
@@ -176,10 +173,12 @@ mod tcp {
 
     pub async fn server_checker(
         netout: Receiver<Packet64>,
-        vec_out: Arc<Mutex<Vec<(u16, tokio::sync::mpsc::Sender<Packet64>)>>>,
+        vec_out: Arc<Mutex<FxHashMap<u16, Sender<Packet64>>>>,
     ) -> Result<(), String> {
         loop {
-            if let Ok(packet) = netout.try_recv() {
+            println!("server checker loop");
+            if let Ok(packet) = netout.recv() {
+                // broadcaster.send(packet);
                 let t = packet.target();
                 let b = packet.body();
                 if let Packer::Close() = b {
@@ -187,10 +186,12 @@ mod tcp {
                     return Ok(());
                 }
                 if *t == 0 {
+                    println!("broadcast to all {:?}", packet);
                     for (_, conn) in vec_out.lock().iter() {
                         conn.send(packet.clone());
                     }
                 } else {
+                    println!("broadcast to {} {:?}", *t, packet);
                     for (id, conn) in vec_out.lock().iter() {
                         if id == t {
                             conn.send(packet.clone());
@@ -198,6 +199,9 @@ mod tcp {
                     }
                 }
             }
+            // if let Ok((id, conn)) = new_conn.try_recv() {
+            //     connect(id, conn, netin, netout)
+            // }
             // for conn in conn_in.iter() {
             //     conn.send(packet.clone());
             // }
@@ -209,76 +213,104 @@ mod tcp {
         netin: Sender<Packet64>,
         netout: Receiver<Packet64>,
     ) -> Result<(), Box<dyn Error>> {
-        let listener = TcpListener::bind(&addr).await?;
+        let net_listener = TcpListener::bind(&addr).await?;
         println!("Listening on: {}", addr);
         let mut id_counter = 1;
-        let (conn_in, conn_out) = channel::<Packet64>(100);
-        let mut connections: Vec<(u16, tokio::sync::mpsc::Sender<Packet64>)> = vec![];
-        let vec_in = Arc::new(Mutex::new(connections));
-        let vec_out = vec_in.clone();
+        // let (serv_in, serv_out) = channel::<(u16, TcpStream)>(100);
+        let vec_in = Arc::new(Mutex::new(FxHashMap::default()));
+        let v2 = vec_in.clone();
+        // let (ssend, srecv) = tokio::sync::mpsc::channel::<Packet64>(100);
+        // let mut connections: Vec<(u16, tokio::sync::mpsc::Sender<Packet64>)> = vec![];
+        // let (maker, hearer) = tokio::sync::broadcast::channel::<TcpStream>(10);
 
-        let spreader = tokio::spawn(async move { server_checker(netout, vec_out).await });
+        // server_checker(netout, broadcaster).await
+        // let spreader = tokio::spawn(async move {
+        //     loop {
+        //         if let Ok(packet) = netout.try_recv() {
+        //             broadcaster.send(packet);
+        //         }
+        //         if let Ok(new_conn)= hearer.try_recv() {
+        //             connect(id, conn, netin, netout)
+        //         }
+        //     }
+        // });
+        // let connections = FxHashMap::default();
+
+        tokio::spawn(async move { server_checker(netout, v2).await });
 
         loop {
             // Asynchronously wait for an inbound socket.
-            let (socket, _) = listener.accept().await?;
+            // net_listener.poll_accept(cx: &mut Context<'_>)
+            // net_listener.
+            let (socket, _) = net_listener.accept().await?;
             println!("Got connection from: {}", socket.peer_addr()?);
             // let (read, mut write) = socket.into_split();
             let id = id_counter;
             id_counter += 1;
 
-            let (conn_in, mut conn_out) = channel::<Packet64>(10);
-            vec_in.lock().push((id, conn_in));
+            let (conn_in, conn_out) = channel::<Packet64>();
+            vec_in.lock().insert(id, conn_in);
+            // serv_in.send(((id, socket)));
+            // connect::<tokio::sync::broadcast::Receiver<Packet64>>(Some(id), socket, netin);
+            let netnew = netin.clone();
+            tokio::spawn(async move {
+                connect(Some(id), socket, netnew, conn_out).await;
+                // let rt = tokio::runtime::Runtime::new().unwrap();
+                // rt.block_on(async move { connect(Some(id), socket, netnew, conn_out).await })
+                //     .unwrap();
+            });
 
-            // connect(Some(id), socket, netin.clone(), netout.clone()).await?;
-
-            let (read, write) = socket.into_split();
-            let mut writer = WrappedSink::new(write, Packy {});
+            // let (read, write) = socket.into_split();
+            // let mut writer = WrappedSink::new(write, Packy {});
+            // let reader = WrappedStream::new(read, Packy {});
 
             // let mut reader = BufReader::new(read);
             // let mut bytes: Vec<u8> = Vec::new();
-            tokio::spawn(async move {
-                //     // let mut buf: String = String::new();
+            // tokio::spawn(async move {
+            //     //     // let mut buf: String = String::new();
 
-                //     // In a loop, read data from the socket and write the data back.
-                loop {
-                    if let Ok(m) = conn_out.try_recv() {
-                        writer.send(m).await;
-                    }
-                    //         // let n = socket
-                    //         //     .read(&mut buf)
-                    //         //     .await
-                    //         //     .expect("failed to read data from socket");
-                    //         bytes.clear();
-                    //         let n = reader.read_until(b'\r', &mut bytes).await.unwrap();
-                    //         // bytes.pop();
-                    //         println!("read {} bytes", n);
-                    //         if n == 0 {
-                    //             return;
-                    //         }
-                    //         if let Ok(s) = std::str::from_utf8(&bytes) {
-                    //             println!("read data: {:?}", &s[0..n - 1]);
-                    //             write
-                    //                 .write_u64(id)
-                    //                 .await
-                    //                 .expect("failed to write id to socket");
-                    //             write
-                    //                 .write_all(&bytes)
-                    //                 .await
-                    //                 .expect("failed to write data to socket");
-                    //             write.flush().await.expect("failed to flush data to socket");
-                    //         }
-                }
-            });
+            //     //     // In a loop, read data from the socket and write the data back.
+            //     loop {
+            //         if let Ok(m) = conn_out.try_recv() {
+            //             writer.send(m).await;
+            //         }
+            //         reader.
+            //         //         // let n = socket
+            //         //         //     .read(&mut buf)
+            //         //         //     .await
+            //         //         //     .expect("failed to read data from socket");
+            //         //         bytes.clear();
+            //         //         let n = reader.read_until(b'\r', &mut bytes).await.unwrap();
+            //         //         // bytes.pop();
+            //         //         println!("read {} bytes", n);
+            //         //         if n == 0 {
+            //         //             return;
+            //         //         }
+            //         //         if let Ok(s) = std::str::from_utf8(&bytes) {
+            //         //             println!("read data: {:?}", &s[0..n - 1]);
+            //         //             write
+            //         //                 .write_u64(id)
+            //         //                 .await
+            //         //                 .expect("failed to write id to socket");
+            //         //             write
+            //         //                 .write_all(&bytes)
+            //         //                 .await
+            //         //                 .expect("failed to write data to socket");
+            //         //             write.flush().await.expect("failed to flush data to socket");
+            //         //         }
+            //     }
+            // });
         }
     }
 
     /** send content to the bundle from outside */
     pub async fn recv(mut socket: WrappedStream, netin: Sender<Packet64>) -> Result<(), io::Error> {
         loop {
+            // println!("recv loop");
             if let Some(a) = socket.next().await {
                 match a {
                     Ok(p) => {
+                        println!("in_buf: {:?}", p.body());
                         if let Err(_) = netin.send(p) {
                             return Err(io::Error::new(
                                 io::ErrorKind::BrokenPipe,
@@ -287,6 +319,7 @@ mod tcp {
                         }
                     }
                     Err(e) => {
+                        println!("recv error: {:?}", e);
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
                             "server pipe close",
@@ -299,12 +332,14 @@ mod tcp {
 
     pub async fn send(
         mut socket: WrappedSink,
-        netout: Receiver<Packet64>,
+        mut netout: Receiver<Packet64>,
     ) -> Result<(), io::Error> {
         // let sink = Framed::new(socket, Packet64 {});
         loop {
+            println!("send loop");
             let cmd = netout.recv();
             if let Ok(p) = cmd {
+                println!("out_buf: {:?}", p.body());
                 match p.body() {
                     Packer::Str(src) => {
                         println!("out_buf: {:?}", src);
@@ -321,6 +356,11 @@ mod tcp {
                     }
                     _ => {}
                 }
+            } else {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "server pipe close",
+                ));
             }
         }
     }
