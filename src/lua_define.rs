@@ -378,6 +378,11 @@ fn start(
                 }
                 }
 
+                // counter += 1;
+                // if counter > 100000 {
+                //     counter = 0;
+                //     println!("loop");
+                // }
                 match m {
                     LuaTalk::Load(file, sync) => {
                         if let Err(er) = lua_load(&lua_ctx, &file) {
@@ -476,7 +481,7 @@ fn start(
                     }
                     LuaTalk::Func(func, sync) => {
                         // TODO load's chunk should call set_name to "main" etc, for better error handling
-
+                        // println!("func {:?}", func);
                         let res = lua_ctx.load(&func).eval::<mlua::Value>();
                         match match res {
                             Ok(o) => {
@@ -487,7 +492,10 @@ fn start(
                                         LuaResponse::String(s)
                                     }
                                     mlua::Value::Integer(i) => LuaResponse::Integer(i),
-                                    mlua::Value::Number(n) => LuaResponse::Number(n),
+                                    mlua::Value::Number(n) => {
+                                        // println!("func back {:?}", n);
+                                        LuaResponse::Number(n)
+                                    }
                                     mlua::Value::Boolean(b) => LuaResponse::Boolean(b),
                                     mlua::Value::Table(t) => {
                                         let mut hash: HashMap<String, String> = HashMap::new();
@@ -604,26 +612,46 @@ fn start(
 
 fn format_error(e: mlua::Error) -> String {
     let s = e.to_string();
-    s.split("\n")
-        .filter_map(|p| {
-            if let Some((_, trace)) = p.split_once("]") {
-                if trace.len() > 0 {
-                    let parts: Vec<&str> = trace.split(":").collect();
-                    let plen = parts.len();
-                    if plen > 2 {
-                        let code = parts.get(1).unwrap();
-                        let mes = parts.get(2).unwrap();
+    // return s;
+    let mut cause = "";
+    let array = s.split("\n").filter_map(|p| {
+        if let Some((_, trace)) = p.split_once("]") {
+            if trace.len() > 0 {
+                println!("line: {}", trace);
+                let parts: Vec<&str> = trace.split(":").collect();
+                let plen = parts.len();
+                if plen > 2 {
+                    let code = parts.get(1).unwrap();
+                    let mes = parts.get(2).unwrap();
 
-                        return Some(code.to_string() + &mes.replace("function", "fn"));
-                    } else if plen == 1 {
-                        return Some("?".to_owned() + parts[0]);
-                    } else {
-                        return Some("?".to_owned());
-                    }
-                    // return Some(trace);
+                    return Some(code.to_string() + &mes.replace("function", "fn"));
+                } else if plen == 2 {
+                    let mes = parts.get(1).unwrap();
+
+                    return Some(mes.replace("function", "fn"));
+                } else if plen == 1 {
+                    return Some("?".to_owned() + parts[0]);
+                } else {
+                    return Some("?".to_owned());
                 }
+                // return Some(trace);
             }
-            None
-        })
-        .join(" >")
+        } else {
+            if p.starts_with("caused by") {
+                // return everything after 'caused by:'
+                if p.starts_with("caused by: runtime error: ") {
+                    cause = p.split_at(26).1;
+                } else {
+                    cause = p.split_at(10).1;
+                }
+                return None;
+            }
+        }
+        None
+    });
+    // we remove the last item as it is just the rust code calling the lua context
+    let mut array = array.collect::<Vec<String>>();
+    array.pop();
+
+    format!("{} >{}", cause, array.join(" >"))
 }
