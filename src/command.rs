@@ -337,6 +337,16 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 core.loggy.log(LogType::Config, c);
             }
         }
+        "version" => {
+            core.loggy.log(
+                LogType::Config,
+                &format!(
+                    "Engine version {}, {}",
+                    env!("CARGO_PKG_VERSION"),
+                    crate::asset::get_codex_version_string().split_at(3).1
+                ),
+            );
+        }
         &_ => return false,
     }
     true
@@ -1287,12 +1297,15 @@ function over(str) end"
 
     lua!(
         "conn",
-        move |_, (addr, udp, server): (String, bool, bool)| {
+        move |_, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
             #[cfg(feature = "online_capable")]
             {
-                return match Online::open(&addr, udp, server) {
+                return match Online::open(&addr, udp.unwrap_or(false), server.unwrap_or(false)) {
                     Ok(c) => Ok(c),
-                    Err(er) => Err(make_err(&format!("Unable to create connection {}", er))),
+                    Err(er) => {
+                        // println!("Unable to create connection {}", er);
+                        Err(make_err(&format!("conn fail, {}", er.to_string())))
+                    }
                 };
             }
             #[cfg(not(feature = "online_capable"))]
