@@ -119,42 +119,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         }
         if input_helper.key_released(VirtualKeyCode::Return) {
             let command = core.loggy.carriage();
-            if command.is_some() {
-                // if core.global.test {
-                let mut com = command.unwrap(); //.to_lowercase();
+            if let Some(mut com) = command {
                 println!("command is {}", com);
-                if let Some(alias) = core.global.aliases.get(&com) {
-                    com = alias.to_string();
-                }
-                for c in com.split("&&") {
-                    if !crate::command::init_con_sys(core, c) {
-                        let mut ltype = LogType::Lua;
-                        // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
-                        if let Some(result) = match core.bundle_manager.get_lua().func(c) {
-                            LuaResponse::String(s) => Some(s),
-                            LuaResponse::Number(n) => Some(n.to_string()),
-                            LuaResponse::Integer(i) => Some(i.to_string()),
-                            LuaResponse::Boolean(b) => Some(b.to_string()),
-                            LuaResponse::Table(t) => {
-                                let mut s = String::new();
-                                s.push_str("{");
-                                for (k, v) in t {
-                                    s.push_str(&format!("{}: {}, ", k, v));
-                                }
-                                s.push_str("}");
-                                Some(s)
-                            }
-                            LuaResponse::Error(e) => {
-                                ltype = LogType::LuaError;
-                                Some(e)
-                            } // LuaResponse::Function(f) => format!("function: {}", f),
-
-                            _ => None, // ignore nils
-                        } {
-                            core.loggy.log(ltype, &result);
-                        }
-                    }
-                }
+                crate::core_console_command(core, &mut com);
             }
         } else if input_helper.key_pressed(VirtualKeyCode::Up) {
             core.loggy.history_up()

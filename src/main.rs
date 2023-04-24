@@ -1,11 +1,13 @@
 use std::rc::Rc;
 
+use crate::log::LogType;
 #[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
 use gui::ScreenIndex;
 use itertools::Itertools;
+use lua_define::LuaResponse;
 #[cfg(feature = "headed")]
 use root::Core;
 #[cfg(not(feature = "headed"))]
@@ -186,8 +188,29 @@ fn main() {
                                     &mut c.loggy,
                                 );
                                 if let Some(s) = res {
-                                    println!("hi config: {:?}", s);
+                                    // println!("hi config: {:?}", s);
                                     crate::command::init_con_sys(c, &s);
+                                }
+
+                                // as a bonus also check command line arguments here
+                                let args: Vec<String> = std::env::args().collect();
+                                if args.len() > 1 {
+                                    // println!("cli args: {:?}", args);
+                                    let mut command = None;
+                                    for (i, arg) in args.iter().enumerate() {
+                                        if arg.starts_with("-") {
+                                            command = Some(arg.to_lowercase());
+                                        } else if command.is_some() {
+                                            match command.unwrap().as_str() {
+                                                "--init" | "-i" => {
+                                                    println!("cli-init: {:?}", arg);
+                                                    crate::command::init_con_sys(c, &arg);
+                                                }
+                                                _ => {}
+                                            }
+                                            command = None;
+                                        }
+                                    }
                                 }
 
                                 // core.config = crate::config::Config::new();
@@ -318,6 +341,42 @@ fn main() {
     // unsafe {
     //     tracy::shutdown_tracy();
     // }
+}
+
+pub fn core_console_command(core: &mut Core, com_in: &str) {
+    let mut com = com_in.trim().to_owned();
+    if let Some(alias) = core.global.aliases.get(&com) {
+        com = alias.to_string();
+    }
+    for c in com.split("&&") {
+        if !crate::command::init_con_sys(core, c) {
+            let mut ltype = LogType::Lua;
+            // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
+            if let Some(result) = match core.bundle_manager.get_lua().func(c) {
+                LuaResponse::String(s) => Some(s),
+                LuaResponse::Number(n) => Some(n.to_string()),
+                LuaResponse::Integer(i) => Some(i.to_string()),
+                LuaResponse::Boolean(b) => Some(b.to_string()),
+                LuaResponse::Table(t) => {
+                    let mut s = String::new();
+                    s.push_str("{");
+                    for (k, v) in t {
+                        s.push_str(&format!("{}: {}, ", k, v));
+                    }
+                    s.push_str("}");
+                    Some(s)
+                }
+                LuaResponse::Error(e) => {
+                    ltype = LogType::LuaError;
+                    Some(e)
+                } // LuaResponse::Function(f) => format!("function: {}", f),
+
+                _ => None, // ignore nils
+            } {
+                core.loggy.log(ltype, &result);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "headed")]
