@@ -252,7 +252,7 @@ fn start(
             //     let im = GuiMorsel::new_image(w, h);
             let gui_handle = Rc::new(RefCell::new(morsel));
 
-            let lua_ctx = if true {
+            let lua_ctx = if false {
                 unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
             } else {
                 Lua::new()
