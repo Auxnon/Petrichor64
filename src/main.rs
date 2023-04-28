@@ -403,7 +403,7 @@ impl Core {
                     #[cfg(feature = "headed")]
                     tx.send(self.tex_manager.get_img(&s));
                 }
-                MainCommmand::SetImg(s, im) => {
+                MainCommmand::SetImg(s, im, tx) => {
                     #[cfg(feature = "headed")]
                     {
                         self.tex_manager.overwrite_texture(
@@ -413,6 +413,7 @@ impl Core {
                             id,
                             &mut self.loggy,
                         );
+                        tx.send(());
                         self.tex_manager
                             .refinalize(&self.gfx.queue, &self.gfx.master_texture);
                     }

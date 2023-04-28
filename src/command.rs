@@ -892,7 +892,12 @@ function instr(freqs, half) end"
         "tex",
         move |_, (name, im): (String, AnyUserData)| {
             if let Ok(limg) = im.borrow::<LuaImg>() {
-                pitcher.send((bundle_id, MainCommmand::SetImg(name, limg.image.clone())));
+                let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+                pitcher.send((
+                    bundle_id,
+                    MainCommmand::SetImg(name, limg.image.clone(), tx),
+                ));
+                rx.recv();
             };
 
             Ok(())
@@ -1925,7 +1930,7 @@ pub fn key_unmatch(u: usize) -> Option<char> {
 pub type NumCouple = (bool, f32);
 pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
-    SetImg(String, RgbaImage),
+    SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
