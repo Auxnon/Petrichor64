@@ -1217,6 +1217,16 @@ function ceil(f) end"
     );
 
     lua!(
+        "rou",
+        move |_, f: f64| { Ok(f.round() as i64) },
+        "Round value",
+        "
+---@param f number
+---@return integer
+function rou(f) end"
+    );
+
+    lua!(
         "abs",
         move |_, f: f64| { Ok(f.abs()) },
         "Absolute value",
