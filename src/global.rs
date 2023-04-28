@@ -52,8 +52,8 @@ impl Global {
             // values: HashMap::new(),
             console: true,
             game_controller: false,
-            simple_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
-            smooth_cam_rot: vec2(std::f32::consts::FRAC_PI_2, 0.),
+            simple_cam_rot: vec2(0., 0.),
+            smooth_cam_rot: vec2(0., 0.),
             mouse_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
             mouse_buttons: [0.; 4],
@@ -92,7 +92,7 @@ impl Global {
         self.mouse_pos.y = 0.;
         self.mouse_grab = false;
         // self.fullscreen
-        self.simple_cam_rot.x = std::f32::consts::FRAC_PI_2;
+        self.simple_cam_rot.x = 0.;
         self.simple_cam_rot.y = 0.;
         self.smooth_cam_rot.x = self.simple_cam_rot.x;
         self.smooth_cam_rot.y = self.simple_cam_rot.y;
