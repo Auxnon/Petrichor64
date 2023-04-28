@@ -1193,7 +1193,7 @@ function irnd(a, b) end"
 
     lua!(
         "flr",
-        move |_, f: f32| { Ok(f.floor() as i32) },
+        move |_, f: f64| { Ok(f.floor() as i64) },
         "Floor value",
         "
 ---@param f number
@@ -1203,7 +1203,7 @@ function flr(f) end"
 
     lua!(
         "ceil",
-        move |_, f: f32| { Ok(f.ceil() as i32) },
+        move |_, f: f64| { Ok(f.ceil() as i64) },
         "Ceil value",
         "
 ---@param f number
@@ -1213,7 +1213,7 @@ function ceil(f) end"
 
     lua!(
         "abs",
-        move |_, f: f32| { Ok(f.abs()) },
+        move |_, f: f64| { Ok(f.abs()) },
         "Absolute value",
         "
 ---@param f number
@@ -1223,7 +1223,7 @@ function abs(f) end"
 
     lua!(
         "cos",
-        move |_, f: f32| { Ok(f.cos()) },
+        move |_, f: f64| { Ok(f.cos()) },
         "Cosine value",
         "
 ---@param f number  
@@ -1232,7 +1232,7 @@ function cos(f) end"
     );
     lua!(
         "sin",
-        move |_, f: f32| { Ok(f.sin()) },
+        move |_, f: f64| { Ok(f.sin()) },
         "Sine value",
         "
 ---@param f number
@@ -1241,7 +1241,7 @@ function sin(f) end"
     );
     lua!(
         "sqrt",
-        move |_, f: f32| { Ok(f.sqrt()) },
+        move |_, f: f64| { Ok(f.sqrt()) },
         "Squareroot value",
         "
 ---@param f number
@@ -1251,7 +1251,7 @@ function sqrt(f) end"
 
     lua!(
         "pow",
-        move |_, (f, e): (f32, f32)| { Ok(f.powf(e)) },
+        move |_, (f, e): (f64, f64)| { Ok(f.powf(e)) },
         "Squareroot value",
         "
 ---@param f number target
@@ -1261,7 +1261,7 @@ function pow(f,e) end"
     );
     lua!(
         "log",
-        move |_, f: f32| { Ok(f.log10()) },
+        move |_, f: f64| { Ok(f.log10()) },
         "Base 10 logarithm of the value",
         "
 ---@param f number target
