@@ -1,7 +1,7 @@
-dev = true
+-- dev = true
 alias = {
     a = "load apps/logo",
-    b = "load apps/b",
+    t = "load ../petrichor-games/train",
     md = "attr{modernize=1}",
     crt = "attr{modernize=0}",
     c = "load games/card",
@@ -17,4 +17,9 @@ alias = {
     em = "load test/emodel",
 }
 
--- init = "load apps/logo"
+-- init = "load games/bip"
+-- init = "load ../moop"
+-- init = "load test/client"
+--moop
+-- init = "load ../petrichor-games/train"
+-- init = "load apps/model"
