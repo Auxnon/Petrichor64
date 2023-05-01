@@ -75,10 +75,19 @@ fn main() {
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
         let event_loop = EventLoop::new();
-        let win = WindowBuilder::new()
-            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 480i32))
+
+        let win = match WindowBuilder::new()
+            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 5480i32))
             .build(&event_loop)
-            .unwrap();
+        {
+            Ok(win) => win,
+            Err(e) => {
+                error_window(Box::new(e));
+                // println!("Error: {}", e);
+                return;
+            }
+        };
+
         win.set_title("Petrichor64");
 
         let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
@@ -698,5 +707,23 @@ impl Core {
 
         self.global.iteration += 1;
         instance_buffers
+    }
+}
+
+pub fn error_window(e: Box<dyn std::error::Error>) {
+    use std::ptr::null_mut as NULL;
+    use winapi::um::winuser;
+    let st = format!("{}\0", e.to_string());
+    let l_msg: Vec<u16> = st.encode_utf16().collect();
+    // let l_msg: Vec<u16> = "Wassa wassa wassup\0".encode_utf16().collect();
+    let l_title: Vec<u16> = "Petrichor64 Error\0".encode_utf16().collect();
+
+    unsafe {
+        winuser::MessageBoxW(
+            NULL(),
+            l_msg.as_ptr(),
+            l_title.as_ptr(),
+            winuser::MB_OK | winuser::MB_ICONINFORMATION,
+        );
     }
 }

@@ -1,6 +1,3 @@
-// #![windows_subsystem = "console"]
-#![windows_subsystem = "windows"]
-// #![allow(warnings)]
 use crate::{
     bundle::BundleManager,
     ent_manager::{EntManager, InstanceBuffer},

@@ -1,5 +1,6 @@
 use crate::{
     bundle::BundleManager,
+    error_window,
     global::GuiParams,
     gui::ScreenIndex,
     lua_define::MainPacket,
@@ -113,7 +114,15 @@ impl Gfx {
         });
 
         // wgpu::Backends::all());
-        let surface = unsafe { instance.create_surface(window).unwrap() };
+        let surface = unsafe {
+            match instance.create_surface(window) {
+                Ok(surface) => surface,
+                Err(e) => {
+                    error_window(Box::new(e));
+                    std::process::exit(1);
+                }
+            }
+        };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -123,7 +132,7 @@ impl Gfx {
             .await
             .unwrap();
 
-        let (device, queue) = adapter
+        let (device, queue) = match adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
@@ -136,7 +145,17 @@ impl Gfx {
                 None,
             )
             .await
-            .unwrap();
+        {
+            Ok((device, queue)) => (device, queue),
+            Err(e) => {
+                error_window(Box::new(e));
+                std::process::exit(1);
+            }
+        };
+        device.on_uncaptured_error(Box::new(|e| {
+            error_window(Box::new(e));
+            std::process::exit(1);
+        }));
 
         //this order is important, since models can load their own textures we need assets to init first
 
