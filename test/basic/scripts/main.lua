@@ -1,13 +1,17 @@
-example = spawn('example', rando() * 3. - 1.5, 12, rando() * 3. - 1.5)
-bg(1, 1, .4, 1)
+-- example = make('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
+
+
+fill = function(...) gui:fill(...) end
+
+fill('F00')
+
 function main()
-    log('main runs once everything has loaded')
+    cout('main runs once everything has loaded')
     local test = 1
     if type(test) == "number" then
-        log('true is a boolean')
+        cout('true is a boolean')
     else
-        log('true is not a boolean')
-
+        cout('true is not a boolean')
     end
     print("ugh" .. type(test))
 end

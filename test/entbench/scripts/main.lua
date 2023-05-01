@@ -1,14 +1,13 @@
-sky()
-fill("f88")
+sky:fill("f88")
 function bunch(i)
     for j = 1, 100 do
-        spawn('square', (rnd() - .5) * 20, i, (rnd() - .5) * 20)
+        make('square', (rnd() - .5) * 20, i, (rnd() - .5) * 20)
     end
     -- spawn('example', rnd() * 3. - 1.5,12, rnd() * 3. - 1.5)
 end
 
 function main()
-    log('main runs once everything has loaded')
+    cout('main runs once everything has loaded')
 end
 
 player = { x = 0, y = 0, z = 0 }
@@ -32,7 +31,7 @@ function loop()
         player.x = player.x + 0.1
     end
     cam { pos = { player.x, player.y, player.z } }
-    local t = input()
+    local t = cin()
     if #t > 0 then
         print(t)
     end

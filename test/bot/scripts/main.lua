@@ -1,4 +1,4 @@
-example = spawn('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
+example = make('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
 player = { x = 0, y = 0, z = -2, vx = 0, vy = 0, vz = 0 }
 cm = { x = 0, y = 0, z = 0 }
 rot = { x = 0, y = 0 }
@@ -8,18 +8,22 @@ m = { x = 0, y = 0 }
 attr { mouse_grab = true } --fullscreen = 1
 absolute_speed = 0
 
-aim = spawn("screen", 0, 0, 0)
+aim = make("screen", 0, 0, 0)
 sqimg = gimg("screen")
 rimg = gimg("red")
 ogimg = sqimg:copy()
 ogrimg = rimg:copy()
+local big = make("cube", 0, 0, -10)
+big.tex = "screen"
+big.scale = 20
+big.rz = tau / 4
 
 the_size = 7
 ni = -the_size
 nj = -the_size
 fire_delay = 0
 bullets = {}
-bot = spawn("bot.bot", 0, 0, 0)
+bot = make("bot.bot", 0, 0, 0)
 -- bot.scale = 2
 m_off = false
 pheight = 6
@@ -36,10 +40,13 @@ function model_test()
     --     { t = "square", v = v, i = i, u = u })
 
 
-    model("thing",
-        { t = { "square" }, v = { { -0.8, -1, 0 }, { 0.8, -1, 0 }, { 0.8, 1, 0 }, { -0.8, 1, 0 } },
+    mod("thing",
+        {
+            t = { "square" },
+            v = { { -0.8, -1, 0 }, { 0.8, -1, 0 }, { 0.8, 1, 0 }, { -0.8, 1, 0 } },
             i = { 0, 1, 2, 0, 2, 3 },
-            uv = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } } })
+            uv = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } }
+        })
 end
 
 model_test()
@@ -102,7 +109,7 @@ end
 
 spots = {}
 function make_thing()
-    local e = spawn("smoke", player.x, player.y, player.z - 2)
+    local e = make("smoke", player.x, player.y, player.z - 2)
     e.vx = rnd() * 0.05 - 0.025
     e.vy = rnd() * 0.05 - 0.025
     e.vz = rnd() * 0.05 - 0.025
@@ -126,11 +133,10 @@ function move_things()
         s.y = s.y + s.vy
         s.z = s.z + s.vz
     end
-
 end
 
 function main()
-    log('main runs once everything has loaded')
+    cout('main runs once everything has loaded')
     sky()
     fill("fff")
     gui()
@@ -162,10 +168,11 @@ function rndb()
 end
 
 function fire()
-    local b = spawn("red", player.x, player.y, player.z + pheight)
+    local b = make("red", player.x, player.y, player.z + pheight)
     -- tile("red", player.x, player.y, player.z + pheight)
     -- local affect = 0.1
-    local bb = { ent = b,
+    local bb = {
+        ent = b,
         vx = (aim.x - player.x) + rndb(),
         vy = (aim.y - player.y) + rndb(),
         vz = (aim.z - player.z) + rndb(),
@@ -190,9 +197,9 @@ function imgey()
     if scounty > 60 then
         county = county + 1
         scounty = 0
-        sqimg:dimg(ogimg)
+        sqimg:img(ogimg)
         rimg:clr()
-        rimg:dimg(ogrimg)
+        rimg:img(ogrimg)
         -- sqimg:line(rnd(), rnd(), rnd(), rnd())
         sqimg:text("" .. county, 0, 12)
         if county % 2 == 0 then
@@ -203,7 +210,6 @@ function imgey()
         tex("screen", sqimg)
         tex("red", rimg)
     end
-
 end
 
 function loop()
@@ -212,14 +218,20 @@ function loop()
     example.x = example.x + rnd() * 0.1 - 0.05
     example.z = example.z + rnd() * 0.1 - 0.05
     local mp = m
-    m = mouse()
+    m = mus()
     local ang = 0
     local azi = 0
     ang = m.dx
     azi = m.dy
 
     --
-    rot.x = rot.x - ang / 240.
+    -- rot.x = rot.x - ang / 240.
+    if key("d") then
+        ang = 0.1
+    elseif key("a") then
+        ang = -0.1
+    end
+    rot.x = rot.x + ang
     rot.y = rot.y - azi / 240.
 
     rot.y = clamp(rot.y, -pi / 2 + 0.0001, pi / 2 - 0.0001)
@@ -249,7 +261,6 @@ function loop()
         player.vx = player.vx - math.cos(srot.x + math.pi / 2) * 0.1
         player.vy = player.vy - math.sin(srot.x + math.pi / 2) * 0.1
         speedcap()
-
     end
 
     if istile(player.x, player.y, player.z) then
@@ -277,18 +288,18 @@ function loop()
 
 
 
-    cm.x = player.x - math.cos(srot.x) * 12
-    cm.y = player.y - math.sin(srot.x) * 12
+    cm.x = player.x - cos(srot.x) * 12
+    cm.y = player.y - sin(srot.x) * 12
     cm.z = player.z + pheight
 
     make_thing()
     move_things()
 
 
-    aim.z = player.z + math.sin(srot.y) * 4
-    local xz = math.cos(srot.y) * 4
-    aim.x = player.x + math.cos(srot.x) * xz
-    aim.y = player.y + math.sin(srot.x) * xz
+    aim.z = player.z + sin(srot.y) * 4
+    local xz = cos(srot.y) * 4
+    aim.x = player.x + cos(srot.x) * xz
+    aim.y = player.y + sin(srot.x) * xz
 
     if m.m1 then
         if not m_off then
@@ -297,7 +308,6 @@ function loop()
             end
         end
         m_off = true
-
     else
         m_off = false
     end
@@ -330,8 +340,6 @@ function loop()
             b.ent:kill()
             table.remove(bullets, i)
             tile("red", b.ent.x - b.vx, b.ent.y - b.vy, b.ent.z - b.vz)
-
-
         elseif b.ent.z < -2 then
             b.ent:kill()
             table.remove(bullets, i)

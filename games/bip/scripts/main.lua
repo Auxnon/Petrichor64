@@ -34,7 +34,7 @@ sky()
 fill("9bbc0f") --cadc9f
 gui()
 
-img(gimg("speech"), "=50%-32", 4)
+-- img(gimg("speech"), "=50%-32", 4)
 -- text("test",)
 function main()
 	for key, val in pairs(t) do
@@ -56,6 +56,13 @@ function main()
 	feller = spawn('door', 4, 0, 1)
 	feller.offset = { -.5, -.5, -.5 }
 	feller2 = spawn('bip3', 4, 0, 1)
+	-- model('car',
+	-- 	{
+	-- 		t = { "tester" },
+	-- 		q = { { .8, 0, 1 }, { .8, 0, 1 }, { 1, 0, 0 },
+	-- 			{ 0,  0, 0 } }
+	-- 	})
+	-- car = spawn('car', 0, -5, .5)
 
 	t2.leaves = t.leaves
 	t2.wallbend = t.wallbend
@@ -66,7 +73,6 @@ function main()
 	t2.grass1 = t.grass1
 
 	if true then
-
 		local gsize = 24;
 		for i = -gsize, gsize do
 			for j = -gsize, gsize do
@@ -118,13 +124,30 @@ function main()
 		--         tile(t.trunk, i, j, -1)
 		--     end
 		-- end
-
 	end
+
+
+
+
+	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 } }) --z
+	model_test({ { 0, 0, 1 }, { 1, 0, 1 }, { 1, 0, 0.5 }, { 0, 0, 0.5 } }) --y
+	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 0, 0, 0 } }) --x
+
+	model_test({ { .2, 0, 1 }, { .2, 1, 1 }, { .8, 1, 1 }, { .8, 0, 1 } }) -- z
+	model_test({ { .2, 0, 1 }, { .8, 0, 1 }, { .8, 0, 0 }, { .2, 0, 0 } }) -- y
+	model_test({ { 0, .2, 1 }, { 0, .8, 1 }, { 0, .8, 0 }, { 0, .2, 0 } }) -- x
+
+	model_test({ { 0, .2, 1 }, { 0, .8, 1 }, { 1, 1, 1 }, { 1, 0, 1 } }) --z
+	model_test({ { .2, 0, 1 }, { .8, 0, 1 }, { 1, 0, 0 }, { 0, 0, 0 } }) --y
+	model_test({ { 0, .2, 1 }, { 0, .8, 1 }, { 0, 1, 0 }, { 0, 0, 0 } }) --x
+
+	model_test({ { 0, 0, 1 }, { 1, .2, 1 }, { 1, .2, 0 }, { 0, 0, 0 } }) -- xy
+
+	spawn("tester", 0, -6, .5)
 
 
 	-- tile(t.grass, 4, 12, 0)
 	cam { pos = { 0, -8, 8 }, rot = { pi / 2, -tau / 8 } }
-
 end
 
 rr = 0.
@@ -175,7 +198,6 @@ function cycle_ents()
 	if ent_iterator > it then
 		ent_iterator = 1
 	end
-
 end
 
 function loop()
@@ -215,7 +237,6 @@ function loop()
 	end
 
 	if m.m1 then
-
 		if first_click then
 			first_click = false
 
@@ -239,7 +260,6 @@ function loop()
 			if entity_mode then
 				spawn(ent_selection, xx, yy, block_level)
 			else
-
 				if remove_mode then
 					tile(0, xx, yy, block_level)
 				else
@@ -297,4 +317,41 @@ function loop()
 	end
 	cam { pos = cpos, rot = { rr + pi / 2, -tau / 8 } }
 
+	model_delay = 1 + model_delay
+	if model_delay > 10 then
+		model_delay = 0
+	end
+	-- spawn('car', rnd( -10, 10), 0, 0)
+end
+
+model_it = 0
+model_delay = 0
+dir = 1.
+function model_test(q)
+	-- 	dir=-1.
+	-- elseif model_it<-tau then
+	-- 	dir=1.
+
+	local i = 1 --cos(model_it)
+	local j = 0 --sin(model_it)
+	local m = 0.5
+	local x = 0
+	local y = 0
+	local x2 = 1
+	local y2 = 1
+	model('car' .. model_it,
+		{
+			t = { "tester" },
+			q = q
+			-- q={
+			-- 	{ -x, y2, 1 },
+			-- 	{ x2, y2, 1 },
+			-- 	{ x2, -y, .49},
+			-- 	{ -x, -y, .4 }}
+		})
+
+	spawn('car' .. model_it, model_it * 1.5, -5, 0.5)
+
+	-- spawn(e.birb, 2 * model_it + .5, -6, .5)
+	model_it = model_it + dir
 end

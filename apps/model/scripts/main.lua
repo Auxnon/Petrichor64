@@ -122,7 +122,8 @@ function loop()
         if key("z", true) then
             local f = del(vecs, #vecs)
             kill(f)
-            print("new size" .. #vecs)
+            -- print("new size" .. #vecs)
+            make_mesh()
         end
     else
         if key("z", true) then

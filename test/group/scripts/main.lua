@@ -1,33 +1,33 @@
-cube("grib", "grid")
-bg(1, 1, .4, 1)
+mod("grib", { t = { "grid" } })
+sky:fill({ 1, 1, .4, 1 })
 ex = {}
-example = spawn('grib', 0, 6, 0)
+example = make('grib', 0, 6, 0)
 local last = example
 for i = 1, 10, 1 do
-    local e = spawn('grib', 0, 2, 0)
-    group(last, e)
+    local e = make('grib', 0, 2, 0)
+    lot(last, e)
     last = e
     ex[i] = e
 end
-local bot = spawn("bot.bot", 0, 6, -1)
-group(last, bot)
+local bot = make("bot.bot", 0, 6, -1)
+lot(last, bot)
 last = bot
 
 for i = 11, 20, 1 do
-    local e = spawn('grib', 0, 2, 0)
-    group(last, e)
+    local e = make('grib', 0, 2, 0)
+    lot(last, e)
     last = e
     ex[i] = e
 end
 
 function main()
-    log('main runs once everything has loaded')
+    cout('main runs once everything has loaded')
     -- group(last, bot)
 end
 
 function loop()
-    local mice = mouse()
-    local m = { x = mice[1] * 2 - 1, y = -mice[2] * 2 + 1 }
+    local mice = mus()
+    local m = { x = mice.x * 2 - 1, y = -mice.y * 2 + 1 }
     example.x = m.x
     example.z = m.y
     -- bot.x = m.x
