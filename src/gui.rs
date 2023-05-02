@@ -442,10 +442,13 @@ impl Gui {
     #[cfg(feature = "headed")]
     pub fn process_notifications(&mut self, force: bool) {
         let mut should = false;
+        let mut i = 0;
         if self.notifcations_enabled {
-            for (i, n) in self.active_notifs.iter_mut().enumerate() {
+            self.active_notifs.retain_mut(|n| {
+                n.lifetime -= 1;
                 if force || n.dest != n.position {
                     n.position -= (n.position - n.dest) / 20;
+
                     if !self.output_console {
                         if !should {
                             self.system_layer.image = RgbaImage::new(self.size[0], self.size[1]);
@@ -479,7 +482,9 @@ impl Gui {
                 } else {
                     // println!("still");
                 }
-            }
+                i += 1;
+                n.lifetime > 0
+            });
         }
 
         if should {
@@ -532,7 +537,7 @@ impl Notif {
     pub fn new(s: &str) -> Notif {
         Notif {
             message: s.to_string(),
-            lifetime: 120,
+            lifetime: 360,
             error: false,
             position: 0,
             dest: 0,
