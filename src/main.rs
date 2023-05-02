@@ -80,7 +80,7 @@ fn main() {
         let event_loop = EventLoop::new();
 
         let win = match WindowBuilder::new()
-            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 5480i32))
+            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
             .build(&event_loop)
         {
             Ok(win) => win,
