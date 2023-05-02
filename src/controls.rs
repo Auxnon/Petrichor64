@@ -139,7 +139,9 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
-            } else if input_helper.key_pressed(VirtualKeyCode::Escape) {
+            } else if input_helper.key_pressed(VirtualKeyCode::Escape)
+                || input_helper.key_pressed(VirtualKeyCode::W)
+            {
                 *control_flow = ControlFlow::Exit;
             } else if input_helper.key_pressed(VirtualKeyCode::Return) {
                 core.toggle_fullscreen();
@@ -240,6 +242,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
                 println!("fullscreen {}", core.global.fullscreen);
+            } else if input_helper.key_pressed(VirtualKeyCode::W) {
+                *control_flow = ControlFlow::Exit;
             }
         }
     }
