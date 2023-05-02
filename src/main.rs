@@ -711,19 +711,22 @@ impl Core {
 }
 
 pub fn error_window(e: Box<dyn std::error::Error>) {
-    use std::ptr::null_mut as NULL;
-    use winapi::um::winuser;
-    let st = format!("{}\0", e.to_string());
-    let l_msg: Vec<u16> = st.encode_utf16().collect();
-    // let l_msg: Vec<u16> = "Wassa wassa wassup\0".encode_utf16().collect();
-    let l_title: Vec<u16> = "Petrichor64 Error\0".encode_utf16().collect();
+    #[cfg(target_os = "windows")]
+    {
+        use std::ptr::null_mut as NULL;
+        use winapi::um::winuser;
+        let st = format!("{}\0", e.to_string());
+        let l_msg: Vec<u16> = st.encode_utf16().collect();
+        // let l_msg: Vec<u16> = "Wassa wassa wassup\0".encode_utf16().collect();
+        let l_title: Vec<u16> = "Petrichor64 Error\0".encode_utf16().collect();
 
-    unsafe {
-        winuser::MessageBoxW(
-            NULL(),
-            l_msg.as_ptr(),
-            l_title.as_ptr(),
-            winuser::MB_OK | winuser::MB_ICONINFORMATION,
-        );
+        unsafe {
+            winuser::MessageBoxW(
+                NULL(),
+                l_msg.as_ptr(),
+                l_title.as_ptr(),
+                winuser::MB_OK | winuser::MB_ICONINFORMATION,
+            );
+        }
     }
 }
