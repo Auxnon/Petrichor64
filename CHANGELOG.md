@@ -6,12 +6,13 @@
 - Headless binary now available for server like setup without a render pipeline. Just have an app run on init
 - In accordance with shorthand command names: `spawn` is now `make`, `mouse` is now `mus`, `button` is now `btn`, `analog` is now `abtn`, `sound` is now `note`, `silence` is now `mute`, `model` is now `mod`, `lmodel` is now `lmod`, `group` is now `lot`. `subload` is now simply `sub` (Would someone mistake a subprocess command as subtract? Time will tell. ), `overload` is now `over`, `input` is now `cin`, `dchunk` and `dtiles` are now merged into a single method `dtile`.
 - `log` which acts like `print` which it also overrides, is now called by `cout` so no one is confused thinking it's logarithm. Is it worth saving a single character? Yes. `print` still works too.
-- `print`/`cout` now works with variable number of arguments as it normally should without having to concat first. `print('test',1,2)` yields _test, 1, 2_
+- `print`/`cout` now works with variable number of arguments (including images and entities) as it normally should without having to concat first. `print('test',1,2)` yields _test, 1, 2_
 - Added `pow` for exponents, `log` is now for base 10 logarithms as you'd expect
 - `rou` to round a value instead of just floor or ceiling
 - New notification system as a direct overlay for spammed errors. More usage coming soon!
 - Much smaller error output, hopeully easier to read in console or notifications
 - New system font!
+- Testing a cross platform error popup, should work even if render pipeline fails.
 - Text can now be colored!
 - `gtile` command to get asset/texture at tile position, use for checking what's placed where
 - Disabled "smooth" camera movement as it was ironically shakey
@@ -22,6 +23,7 @@
 - Img raster can use pixel command to set individual pixels, not super efficient
 - Bug prevented sky raster from updating at the same time as the main raster
 - Major change to how image rasters are layered on to the draw target. Now uses the GPU for hella quick overlaying
+- Adding a `draw` function to your app or game will be called everytime the the windows resizes. Builtin debounce. This is useful if you don't desire to constantly redraw every loop
 - Clearing sky raster actually works now too
 - Corrected precision error with some math functions using 32 bit floats instead of 64 bit
 - Camera now defaults to 0 azimuth like you'd expect
