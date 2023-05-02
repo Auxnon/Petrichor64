@@ -1,3 +1,6 @@
+// #![windows_subsystem = "console"]
+#![windows_subsystem = "windows"]
+// #![allow(warnings)]
 use std::rc::Rc;
 
 use crate::log::LogType;
