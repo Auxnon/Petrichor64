@@ -299,3 +299,9 @@ fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
         .map(|i| u8::from_str_radix(&s[i..i + 1], 16))
         .collect()
 }
+
+impl ToString for LuaImg {
+    fn to_string(&self) -> String {
+        format!("image({}x{})", self.width, self.height)
+    }
+}

@@ -439,8 +439,8 @@ pub fn init_lua_sys(
         },
         "Prints string to console",
         "
----@param message string
-function cout(message) end"
+---@param ... string|number|integer|boolean|image|entity|connection|nil
+function cout(...) end"
     );
 
     let sender = world_sender.clone();

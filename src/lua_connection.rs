@@ -185,3 +185,9 @@ impl Drop for LuaConnection {
 //     "Recieve UDP",
 //     "-- Coming soon"
 // );
+
+impl ToString for LuaConnection {
+    fn to_string(&self) -> String {
+        format!("connection({})", self.id)
+    }
+}

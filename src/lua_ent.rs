@@ -284,3 +284,12 @@ impl Clone for LuaEnt {
         }
     }
 }
+
+impl ToString for LuaEnt {
+    fn to_string(&self) -> String {
+        format!(
+            "entity(id: {}, asset: {}, tex: {}, x: {}, y: {}, z: {}, vx: {}, vy: {}, vz: {}, rot_x: {}, rot_y: {}, rot_z: {}, scale: {}, dirty: {}, anim: {}, flipped: {}, parent: {:?}, bundle_id: {}, offset: {:?}, flags: {})",
+            self.id, self.asset, self.tex, self.x, self.y, self.z, self.vx, self.vy, self.vz, self.rot_x, self.rot_y, self.rot_z, self.scale, self.dirty, self.anim, self.flipped, self.parent.is_some(), self.bundle_id, self.offset, self.flags
+        )
+    }
+}
