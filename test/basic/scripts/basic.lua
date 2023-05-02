@@ -1,9 +1,5 @@
 -- example = make('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
-
-
-fill = function(...) gui:fill(...) end
-
-fill('F00')
+fill('FFF')
 
 function main()
     cout('main runs once everything has loaded')
@@ -14,6 +10,8 @@ function main()
         cout('true is not a boolean')
     end
     print("ugh" .. type(test))
+    cout(ent)
+    ent = make("example", 0, 0, 0)
 end
 
 function loop()

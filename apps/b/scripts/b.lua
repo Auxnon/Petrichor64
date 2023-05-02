@@ -14,6 +14,7 @@ sky:fill("fff")
 g = 0
 gdir = 1
 sp = 0.02
+cam { rot = { pi / 2, 0 } }
 
 function loop()
     b.y = b.y - sp

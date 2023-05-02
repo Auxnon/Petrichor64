@@ -122,18 +122,22 @@ function rain_loop()
 end
 
 function main()
-    local t1 = "Drag and drop game file"
-    local t2 = "` opens console, type 'help'"
-    text(t1, "=50% -" .. flr(t1:len() * 10 / 2), 8)
-    text(t2, "=50% -" .. flr(t2:len() * 10 / 2), "=100% - 12")
+    draw()
     anim("plop", { "logo6", "logo7", "logo8", "logo9" })
     make_model()
-
     console = make("console", 0, 0, 1.125)
     console.rz = 6 * tau / 16
     console.rx = tau / 48
 
     cam { pos = { 0, -8, 3 }, rot = { pi / 2, -0.1 } }
+end
+
+function draw()
+    gui:clr()
+    local t1 = "Drag and drop game file"
+    local t2 = "` opens console, type 'help'"
+    text(t1, "=50% -" .. flr(t1:len() * 10 / 2), 8)
+    text(t2, "=50% -" .. flr(t2:len() * 10 / 2), "=100% - 12")
 end
 
 function drop()

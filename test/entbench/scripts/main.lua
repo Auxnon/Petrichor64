@@ -8,6 +8,7 @@ end
 
 function main()
     cout('main runs once everything has loaded')
+    cam { rot = { pi / 2, 0 } }
 end
 
 player = { x = 0, y = 0, z = 0 }
