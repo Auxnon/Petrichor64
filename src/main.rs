@@ -9,6 +9,7 @@ use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
 use gui::ScreenIndex;
+use image::GenericImageView;
 use itertools::Itertools;
 use lua_define::LuaResponse;
 #[cfg(feature = "headed")]
@@ -65,9 +66,8 @@ mod zip_pal;
 use command::MainCommmand;
 #[cfg(feature = "headed")]
 use winit::{
-    dpi::LogicalSize,
     event::{DeviceEvent, Event, WindowEvent},
-    event_loop::{self, ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop},
     window::{CursorGrabMode, WindowBuilder},
 };
 
@@ -78,9 +78,22 @@ fn main() {
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
         let event_loop = EventLoop::new();
+        let window_icon = {
+            let icon =
+                image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
+                    .expect("failed to load icon.png");
+            let rgba = icon.as_rgba8().unwrap();
+            let (width, height) = icon.dimensions();
+            let rgba = rgba
+                .chunks_exact(4)
+                .flat_map(|rgba| rgba.iter().cloned())
+                .collect::<Vec<_>>();
+            winit::window::Icon::from_rgba(rgba, width, height).unwrap()
+        };
 
         let win = match WindowBuilder::new()
             .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+            .with_window_icon(Some(window_icon))
             .build(&event_loop)
         {
             Ok(win) => win,
