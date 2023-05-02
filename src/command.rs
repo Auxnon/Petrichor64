@@ -39,22 +39,27 @@ use std::{
     },
 };
 
-static com_list: [&str; 16] = [
+static com_list: [&str; 20] = [
     "new - creates a new game directory",
     "load - loads an app file",
     "pack - packs a directory into an app file",
     "unpack - unpacks an app file into a zip archive",
     "ls - show directory contents, relative to home",
     "show - open current app folder or file",
-    "exit - exit to console",
+    "config - create config or show if already exists",
+    // "reset - reset the app, same as",
+    "exit - exit to boot menu",
     "reload - reloads game, or press Super + R",
     "atlas - dump texture atlas to png",
     "dev - toggle dev mode this session",
-    "clear - clear the console",
+    "clear or cls - clear the console",
     "bg - set console background color",
     "find - loaded assets search",
     "stats - show stats",
+    "notif - make a notification (debug)",
+    "bundles - list active bundles",
     "help - ;)",
+    "version - show engine and codex versions",
     "test",
 ];
 
@@ -215,6 +220,13 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "cls" => core.loggy.clear(),
         "test" => {
             core.loggy.log(LogType::Config, "that test worked, yipee");
+        }
+        "notif" => {
+            if segments.len() > 1 {
+                core.gui.push_notif(segments[1]);
+            } else {
+                core.loggy.log(LogType::ConfigError, "notif <message>");
+            }
         }
         "new" => {
             if segments.len() > 1 {
@@ -1381,6 +1393,16 @@ function quit(u) end"
 ---@return table
 function help() end"
     );
+
+    // lua!(
+    //     "test420",
+    //     move |lu, b: Table| {
+    //         crate::packet::table_serial(b);
+    //         Ok(())
+    //     },
+    //     "Test 4/20/2023",
+    //     ""
+    // );
 
     lua_ctx
         .load(
