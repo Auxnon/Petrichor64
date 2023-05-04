@@ -663,11 +663,25 @@ function abtn(button) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "make",
-        move |_, (asset, x, y, z, s): (String, f64, f64, f64, Option<f64>)| {
+        move |_,
+              (asset, x, y, z, s): (
+            Option<String>,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>,
+            Option<f64>
+        )| {
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
-            let ent = crate::lua_ent::LuaEnt::new(id, asset, x, y, z, s.unwrap_or(1.));
+            let ent = crate::lua_ent::LuaEnt::new(
+                id,
+                asset.unwrap_or("plane".to_string()),
+                x.unwrap_or(0.),
+                y.unwrap_or(0.),
+                z.unwrap_or(0.),
+                s.unwrap_or(1.),
+            );
             let wrapped = Arc::new(std::sync::Mutex::new(ent));
 
             // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
@@ -685,10 +699,10 @@ function abtn(button) end"
         },
         "Spawn an entity from an asset",
         "
----@param asset string
----@param x number
----@param y number
----@param z number
+---@param asset string?
+---@param x number?
+---@param y number?
+---@param z number?
 ---@param scale number?
 ---@return entity
 function make(asset, x, y, z, scale) end"
