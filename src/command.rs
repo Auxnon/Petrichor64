@@ -1186,13 +1186,13 @@ function lmod(model, bundle) end"
     // let mut rng = rand::thread_rng();
     lua!(
         "rnd",
-        move |_, (a, b): (Option<f32>, Option<f32>)| {
+        move |_, (a, b): (Option<f64>, Option<f64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok(rand::random::<f32>() * (fb - fa) + fa),
-                    _ => Ok(rand::random::<f32>() * fa),
+                    Some(fb) => Ok(rand::random::<f64>() * (fb - fa) + fa),
+                    _ => Ok(rand::random::<f64>() * fa),
                 },
-                _ => Ok(rand::random::<f32>()),
+                _ => Ok(rand::random::<f64>()),
             }
         },
         "Random float from 0-1, or provide a range",
@@ -1205,16 +1205,16 @@ function rnd(a, b) end"
 
     lua!(
         "irnd",
-        move |_, (a, b): (Option<i32>, Option<i32>)| {
+        move |_, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok((rand::random::<f32>() * (fb - fa) as f32).floor() as i32 + fa),
-                    _ => Ok((rand::random::<f32>() * fa as f32).floor() as i32),
+                    Some(fb) => Ok((rand::random::<i64>() * (fb - fa)) + fa),
+                    _ => Ok((rand::random::<i64>() * fa)),
                 },
-                _ => Ok(rand::random::<i32>()),
+                _ => Ok(rand::random::<i64>()),
             }
         },
-        "An imperfect random number generator for integers. May suffer from modulo bias, only i32",
+        "An imperfect random number generator for integers. May suffer from modulo bias.",
         "
 ---@param a integer?
 ---@param b integer?
