@@ -35,7 +35,7 @@ impl ScreenBinds {
             corner_harshness: 1.0,
             corner_ease: 4.0,
             crt_resolution: 720.0, //320
-            glitchiness: [3., 0., 0.02],
+            glitchiness: [0.12, 0., 0.02],
             lumen_threshold: 0.2,
             fog: 0.0,
         }
