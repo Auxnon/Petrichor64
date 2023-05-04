@@ -7,7 +7,7 @@ _cosine value_
 function cos(n)
 ```
 
-Mathematical cosine function. Uses standard rust library not lua's math library. See (sin)[sin] for sine.
+Mathematical cosine function. Uses standard rust library not lua's math library. See [sin](sin) for sine.
 
 ```lua
 assert(cos(pi) == -1)

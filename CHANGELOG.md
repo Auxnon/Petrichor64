@@ -1,8 +1,10 @@
 ## UNRELEASED
 
+### 0.4.1
+
 ## 0.4.0
 
-- New `conn` command to make a tcp connection to an ip or address! Very early version only works with sending strings with a carriage return indiciating termination. Should work with a ping pong server if you check for '\r'. More to come!
+- New `conn` command to make a tcp connection to an ip or address! Very early version only works with sending strings with a carriage return indicating termination. Should work with a ping pong server if you check for '\r'. More to come!
 - Headless binary now available for server like setup without a render pipeline. Just have an app run on init
 - In accordance with shorthand command names: `spawn` is now `make`, `mouse` is now `mus`, `button` is now `btn`, `analog` is now `abtn`, `sound` is now `note`, `silence` is now `mute`, `model` is now `mod`, `lmodel` is now `lmod`, `group` is now `lot`. `subload` is now simply `sub` (Would someone mistake a subprocess command as subtract? Time will tell. ), `overload` is now `over`, `input` is now `cin`, `dchunk` and `dtiles` are now merged into a single method `dtile`.
 - `log` which acts like `print` which it also overrides, is now called by `cout` so no one is confused thinking it's logarithm. Is it worth saving a single character? Yes. `print` still works too.
@@ -10,12 +12,12 @@
 - Added `pow` for exponents, `log` is now for base 10 logarithms as you'd expect
 - `rou` to round a value instead of just floor or ceiling
 - New notification system as a direct overlay for spammed errors. More usage coming soon!
-- Much smaller error output, hopeully easier to read in console or notifications
+- Much smaller error output, hopefully easier to read in console or notifications
 - New system font!
 - Testing a cross platform error popup, should work even if render pipeline fails.
 - Text can now be colored!
 - `gtile` command to get asset/texture at tile position, use for checking what's placed where
-- Disabled "smooth" camera movement as it was ironically shakey
+- Disabled "smooth" camera movement as it was ironically shaky
 - Added bad quad data failsafes
 - Models with quads can have optional uvs and indexes changed directly just like triangle based models. 4 UV coords per quad. Indexes still optional.
 - Initial work for lighting systems, able to include normals in model data
@@ -23,12 +25,13 @@
 - Img raster can use pixel command to set individual pixels, not super efficient
 - Bug prevented sky raster from updating at the same time as the main raster
 - Major change to how image rasters are layered on to the draw target. Now uses the GPU for hella quick overlaying
-- Adding a `draw` function to your app or game will be called everytime the the windows resizes. Builtin debounce. This is useful if you don't desire to constantly redraw every loop
+- Adding a `draw` function to your app or game will be called every time the the windows resizes. Builtin debounce. This is useful if you don't desire to constantly redraw every loop
 - Clearing sky raster actually works now too
 - Corrected precision error with some math functions using 32 bit floats instead of 64 bit
 - Camera now defaults to 0 azimuth like you'd expect
 - `tex` function is now synchronous to prevent unexpected texturing behavior
-- new example app is a little more fleshed out
+- New example app is a little more fleshed out
+- New window icon (on windows anyway)
 - Codex 3.0
 
 ## 0.3.0
