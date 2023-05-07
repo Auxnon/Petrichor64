@@ -27,6 +27,7 @@ use mlua::{
     Variadic,
 };
 use parking_lot::Mutex;
+use rand::Rng;
 
 use std::{
     cell::RefCell,
@@ -1208,8 +1209,8 @@ function rnd(a, b) end"
         move |_, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok((rand::random::<i64>() * (fb - fa)) + fa),
-                    _ => Ok((rand::random::<i64>() * fa)),
+                    Some(fb) => Ok(rand::thread_rng().gen_range(fa..fb)),
+                    _ => Ok(rand::thread_rng().gen_range(0..fa)),
                 },
                 _ => Ok(rand::random::<i64>()),
             }
