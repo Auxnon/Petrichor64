@@ -704,7 +704,8 @@ pub fn eval(val: LuaResponse, l: u32) -> i32 {
     match val {
         LuaResponse::Integer(i) => {
             if i < 0 {
-                l as i32 - i
+                // l as i32 - i
+                i
             } else {
                 i
             }
@@ -712,7 +713,8 @@ pub fn eval(val: LuaResponse, l: u32) -> i32 {
         LuaResponse::Number(f) => {
             let ff = (f * l as f64) as i32;
             if f < 0. {
-                l as i32 - ff
+                // l as i32 - ff
+                ff
             } else {
                 ff
             }
@@ -1048,18 +1050,41 @@ pub fn direct_image(
     image::imageops::overlay(target, source, xx as i64, yy as i64);
 }
 
-pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4) {
+pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4, map: Option<Vec4>) {
     let color = image::Rgba([
         (c.x * 255.).floor() as u8,
         (c.y * 255.).floor() as u8,
         (c.z * 255.).floor() as u8,
         (c.w * 255.).floor() as u8,
     ]);
-    draw_filled_rect_mut(
-        target,
-        imageproc::rect::Rect::at(0, 0).of_size(width, height),
-        color,
-    );
+    //     pixel
+    // let pix=Pixel::from(color);
+    match map {
+        Some(mv) => {
+            let mapper = image::Rgba([
+                (mv.x * 255.).floor() as u8,
+                (mv.y * 255.).floor() as u8,
+                (mv.z * 255.).floor() as u8,
+                (mv.w * 255.).floor() as u8,
+            ]);
+            // println!("map {:?} to {:?}", mapper, mv);
+            imageproc::map::map_pixels_mut(target, |x, y, p| {
+                if mapper == p {
+                    color
+                } else {
+                    // println!("ignored {:?} ", p);
+                    p
+                }
+            });
+        }
+        None => {
+            draw_filled_rect_mut(
+                target,
+                imageproc::rect::Rect::at(0, 0).of_size(width, height),
+                color,
+            );
+        }
+    }
 }
 
 struct TextMap {

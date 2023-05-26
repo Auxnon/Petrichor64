@@ -182,16 +182,24 @@ impl UserData for LuaImg {
             this.image = RgbaImage::new(this.width, this.height);
             Ok(())
         });
-        methods.add_method_mut("fill", |_, this, rgb: Option<Value>| {
-            this.dirty = true;
-            let c = match rgb {
-                Some(rgba) => get_color(rgba),
-                _ => vec4(1., 1., 1., 1.),
-            };
-            direct_fill(&mut this.image, this.width, this.height, c);
-            // this.image = RgbaImage::new(this.width, this.height);
-            Ok(())
-        });
+        methods.add_method_mut(
+            "fill",
+            |_, this, (rgb, map): (Option<Value>, Option<Value>)| {
+                this.dirty = true;
+                let c = match rgb {
+                    Some(rgba) => get_color(rgba),
+                    _ => vec4(1., 1., 1., 1.),
+                };
+                let mapper = match map {
+                    Some(m) => Some(get_color(m)),
+                    _ => None,
+                };
+
+                direct_fill(&mut this.image, this.width, this.height, c, mapper);
+                // this.image = RgbaImage::new(this.width, this.height);
+                Ok(())
+            },
+        );
         methods.add_method("copy", |_, this, (): ()| Ok(this.clone()));
 
         // TODO from raw
