@@ -396,7 +396,7 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
                     Some(e)
                 } // LuaResponse::Function(f) => format!("function: {}", f),
 
-                _ => None, // ignore nils
+                _ => Some("~".to_string()), // ignore nils
             } {
                 core.loggy.log(ltype, &result);
             }
@@ -498,7 +498,7 @@ impl Core {
                 }
                 MainCommmand::Make(m, tx) => {
                     if m.len() == 7 {
-                        // change order to match expecations from the front end
+                        // change order to match expectations from the front end
                         let m2 = vec![
                             m[1].clone(),
                             m[6].clone(),
