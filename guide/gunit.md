@@ -1,4 +1,4 @@
-### gunit
+## gunit (type)
 
 _graphical unit_
 

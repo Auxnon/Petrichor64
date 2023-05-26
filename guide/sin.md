@@ -1,4 +1,4 @@
-### sin
+## sin
 
 _sine value_
 

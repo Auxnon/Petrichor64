@@ -1,121 +1,125 @@
+_Type anywhere to search by command name_
+
 # Preface
 
 An important thing to keep in mind is all commands are in shorthand to minimize the characters needed to execute a game or program. This is a design choice that allows for compact code that's easy to share. Mapping the builtin commands to longer ones is simple to achieve but won't be included by default.
 
 Consider that some command naming takes on a role of "setting" a value or data, like `mod` sets model, `img` sets an image, `tile` sets a tile, etc. The retrieval or "getting" you can think of as get model, or `gmod`, get image or `gimg`.
 
-### terminal
+## terminal
 
 # io
 
-### key
+## key
 
-### mus
+## mus
 
-### btn
+## btn
 
-### abtn
+## abtn
 
-### cam
+## cam
 
-### cin
+## cin
 
-### cout
+## cout
 
-### conn
+## conn
+
+## connection
 
 # system
 
-### attr
+## attr
 
-### over
+## over
 
-### sub
+## sub
 
-### init
+## init
 
-### quit
+## quit
 
 # assets
 
-### tex
+## tex
 
-### anim
+## anim
 
-### mod
+## mod
 
-### gmod
+## gmod
 
-### nimg
+## nimg
 
-### gimg
+## gimg
 
-### image
+## image
 
-### color
+## color
 
-### gunit
+## gunit
 
-### gui
+## gui
 
-### sky
+## sky
 
 # sprites and entities
 
-### make
+## make
 
-### kill
+## kill
 
-### lot
+## lot
 
-### entity
+## entity
 
 # tile management
 
-### tile
+## tile
 
-### istile
+## istile
 
-### ftile
+## ftile
 
-### gtile
+## gtile
 
-### dtile
+## dtile
 
 # math
 
-### abs
+## abs
 
-### rou
+## rou
 
-### ceil
+## ceil
 
-### flr
+## flr
 
-### cos
+## cos
 
-### sin
+## sin
 
-### pow
+## pow
 
-### sqrt
+## sqrt
 
-### log
+## log
 
-### rnd
+## rnd
 
-### irnd
+## irnd
 
 # sound
 
-### note
+## note
 
-### song
+## song
 
-### instr
+## instr
 
-### mute
+## mute
 
 # misc
 
-### help
+## help

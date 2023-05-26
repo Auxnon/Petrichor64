@@ -12,8 +12,8 @@ const main = fs.readFileSync("./guide/main.md", "utf8");
 let output = "";
 const lines = main.split("\n");
 lines.forEach((line) => {
-  if (line.startsWith("### ")) {
-    const name = line.slice(4).trim();
+  if (line.startsWith("## ")) {
+    const name = line.slice(3).trim();
     const docName = docHash[name];
     if (docName) {
       const doc = fs.readFileSync(`./guide/${docName}`, "utf8");

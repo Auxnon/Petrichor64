@@ -1,3 +1,5 @@
+## terminal
+
 - new < path > - creates a new game example at path
 - load < path > - loads an app file
 - pack < path > - packs a directory into an app file

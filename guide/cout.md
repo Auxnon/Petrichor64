@@ -1,4 +1,4 @@
-### cout
+## cout
 
 _character output_
 

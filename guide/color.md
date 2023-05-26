@@ -1,4 +1,4 @@
-### color (type)
+## color (type)
 
 ```lua
 ---@type color number[] | integer[] | string

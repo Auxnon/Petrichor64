@@ -1,4 +1,4 @@
-### image (userdata)
+## image (userdata)
 
 An image instance ties to image raster userdata hosted inside the lua context. Simple draw commands can be used to edit and animate in real time and then rendered on to a texture via the `tex` command. True live editing of a texture is currently only possible by editing the `gui` and `sky` constants. These constants are always in global scope by default and called such as `gui:text("test")` or `sky:fill("F00")`. Additionally a new image can be created via `nimg` and then set to a texture via `tex` for similar effect.
 

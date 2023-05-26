@@ -1,4 +1,4 @@
-### kill
+## kill
 
 _destroy entity_
 

@@ -1,4 +1,4 @@
-### cos
+## cos
 
 _cosine value_
 

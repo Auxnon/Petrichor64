@@ -1,4 +1,4 @@
-### cin
+## cin
 
 _character input_
 

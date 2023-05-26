@@ -1,4 +1,4 @@
-### log
+## log
 
 _logarithmic value_
 

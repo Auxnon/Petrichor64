@@ -1,4 +1,4 @@
-### entity (userdata)
+## entity (userdata)
 
 Created with the [make](#make) command an entity represents either a billboarded sprite or mesh with mutable position, rotation, scale, etc.
 
