@@ -1,4 +1,4 @@
-use mlua::{UserData, UserDataFields, UserDataMethods, Value::Nil};
+use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -70,6 +70,16 @@ impl UserData for LuaEnt {
             this.anim = true;
 
             Ok(true)
+        });
+
+        methods.add_method_mut("copy", |lua, this, ()| {
+            let ent = this.clone();
+            let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
+            if let Ok(fun) = lua.globals().get::<&str, Function>("_make") {
+                fun.call(wrapped.clone())?;
+            }
+
+            Ok(wrapped)
         });
 
         methods.add_method_mut("kill", |_, this, ()| {
@@ -271,7 +281,7 @@ impl Clone for LuaEnt {
             // ent: None,
             asset: self.asset.clone(),
             tex: self.tex.clone(),
-            dirty: false,
+            dirty: true,
             anim: self.anim,
             flipped: self.flipped,
             parent: self.parent, // children,

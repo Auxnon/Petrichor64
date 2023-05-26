@@ -662,6 +662,7 @@ function abtn(button) end"
     );
 
     let pitcher = main_pitcher.clone();
+    let ent_counter2 = ent_counter.clone();
     lua!(
         "make",
         move |_,
@@ -708,6 +709,24 @@ function abtn(button) end"
 ---@return entity
 function make(asset, x, y, z, scale) end"
     );
+
+    // single usage method for entity duplication only means it's not listed
+    let pitcher = main_pitcher.clone();
+    lua_globals.set(
+        "_make",
+        lua_ctx
+            .create_function(move |_, lent: Arc<std::sync::Mutex<LuaEnt>>| {
+                let id = *ent_counter2.lock();
+                *ent_counter2.lock() += 1;
+                match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+                    Ok(_) => {}
+                    Err(_) => return Err(make_err("Unable to create entity")),
+                };
+                Ok(())
+            })
+            .unwrap(),
+    )?;
+
     let pitcher = main_pitcher.clone();
     lua!(
         "lot",
