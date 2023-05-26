@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::collections::HashMap;
 
 use crate::{
     asset::load_img_nopath,
@@ -10,8 +7,8 @@ use crate::{
     world::World,
 };
 use glam::{vec4, UVec2, UVec4, Vec4};
-use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
-use imageproc::drawing::{draw_filled_rect, draw_filled_rect_mut};
+use image::{ImageBuffer, RgbaImage};
+use imageproc::drawing::draw_filled_rect;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use wgpu::{Queue, Sampler, Texture, TextureView};
@@ -88,6 +85,10 @@ impl TexManager {
     }
     pub fn reset(&mut self) {
         let img: RgbaImage = ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT);
+
+        // TODO tex debug
+        // crate::gui::direct_fill(&mut img, MAX_WIDTH, MAX_HEIGHT, vec4(1., 0., 1., 0.5));
+
         self.atlas_dim.x = MAX_WIDTH;
         self.atlas_dim.y = MAX_HEIGHT;
         self.atlas_pos.x = 0;

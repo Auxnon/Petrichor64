@@ -120,7 +120,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         if input_helper.key_released(VirtualKeyCode::Return) {
             let command = core.loggy.carriage();
             if let Some(mut com) = command {
-                println!("command is {}", com);
+                // println!("command is {}", com);
                 crate::core_console_command(core, &mut com);
             }
         } else if input_helper.key_pressed(VirtualKeyCode::Up) {
@@ -161,7 +161,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                                 core.loggy.back();
                             }
                             _ => {
-                                println!("char {}  {}", *c as u32, c);
+                                // println!("char {}  {}", *c as u32, c);
                                 core.loggy.add(String::from(*c))
                             } //st.push(*c),
                         },
@@ -241,7 +241,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             } else if input_helper.key_pressed(VirtualKeyCode::Return) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
-                println!("fullscreen {}", core.global.fullscreen);
+                // println!("fullscreen {}", core.global.fullscreen);
             } else if input_helper.key_pressed(VirtualKeyCode::W) {
                 *control_flow = ControlFlow::Exit;
             }
