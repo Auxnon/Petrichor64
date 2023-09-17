@@ -264,7 +264,7 @@ function anim(name, items, speed)
 end
 
 -- Set various app state parameters
----@param attributes Attributes
+---@param attributes attributes
 function attr(attributes)
 end
 

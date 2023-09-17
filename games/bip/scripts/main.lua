@@ -24,15 +24,13 @@ e = {
 
 
 
-sky()
 -- "cadc9f"
 -- "9bbc0f"
 -- "306230"
 -- "b8d9b8"
 
 
-fill("9bbc0f") --cadc9f
-gui()
+sky:fill("9bbc0f") --cadc9f
 
 -- img(gimg("speech"), "=50%-32", 4)
 -- text("test",)
@@ -43,19 +41,19 @@ function main()
 	for key, val in pairs(e) do
 		e[key] = "bip" .. val
 	end
-	model("leaves", { t = { t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside } })
+	mod("leaves", { t = { t.treetop, t.treeside, t.treeside, t.treeside, t.treeside, t.treeside } })
 	t.leaves = "leaves"
-	model("wallbend", { t = { t.topbend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
+	mod("wallbend", { t = { t.topbend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallbend = "wallbend"
-	model("wallstraight", { t = { t.topstraight, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
+	mod("wallstraight", { t = { t.topstraight, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallstraight = "wallstraight"
-	model("wallend", { t = { t.topend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
+	mod("wallend", { t = { t.topend, t.sidewall, t.sidewall, t.sidewall, t.sidewall, t.sidewall } })
 	t.wallend = "wallend"
-	model("door", { t = { t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall } })
+	mod("door", { t = { t.topstraight, t.sidewall, t.sidedoor, t.sidewall, t.sidedoor, t.sidewall } })
 	t.door = "door"
-	feller = spawn('door', 4, 0, 1)
+	feller = make('door', 4, 0, 1)
 	feller.offset = { -.5, -.5, -.5 }
-	feller2 = spawn('bip3', 4, 0, 1)
+	feller2 = make('bip3', 4, 0, 1)
 	-- model('car',
 	-- 	{
 	-- 		t = { "tester" },
@@ -129,9 +127,9 @@ function main()
 
 
 
-	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 } }) --z
+	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 } })  --z
 	model_test({ { 0, 0, 1 }, { 1, 0, 1 }, { 1, 0, 0.5 }, { 0, 0, 0.5 } }) --y
-	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 0, 0, 0 } }) --x
+	model_test({ { 0, 0, 1 }, { 0, 1, 1 }, { 0, 1, 0 }, { 0, 0, 0 } })  --x
 
 	model_test({ { .2, 0, 1 }, { .2, 1, 1 }, { .8, 1, 1 }, { .8, 0, 1 } }) -- z
 	model_test({ { .2, 0, 1 }, { .8, 0, 1 }, { .8, 0, 0 }, { .2, 0, 0 } }) -- y
@@ -143,7 +141,7 @@ function main()
 
 	model_test({ { 0, 0, 1 }, { 1, .2, 1 }, { 1, .2, 0 }, { 0, 0, 0 } }) -- xy
 
-	spawn("tester", 0, -6, .5)
+	make("tester", 0, -6, .5)
 
 
 	-- tile(t.grass, 4, 12, 0)
@@ -203,7 +201,7 @@ end
 function loop()
 	-- example.x = example.x + rnd() * 0.1 - 0.05
 	-- example.z = example.z + rnd() * 0.1 - 0.05
-	local m = mouse()
+	local m = mus()
 	-- local x = flr((m.x * 16) - 8)
 	-- local y = flr((16 - m.y * 16) - 8)
 
@@ -258,7 +256,7 @@ function loop()
 			last_pos[1] = xx
 			last_pos[2] = xx
 			if entity_mode then
-				spawn(ent_selection, xx, yy, block_level)
+				make(ent_selection, xx, yy, block_level)
 			else
 				if remove_mode then
 					tile(0, xx, yy, block_level)
@@ -315,6 +313,9 @@ function loop()
 		cpos[3] = 8
 		rr = 0
 	end
+	if key("z", true) then
+		cpos[3] = cpos[3] - 1
+	end
 	cam { pos = cpos, rot = { rr + pi / 2, -tau / 8 } }
 
 	model_delay = 1 + model_delay
@@ -339,7 +340,7 @@ function model_test(q)
 	local y = 0
 	local x2 = 1
 	local y2 = 1
-	model('car' .. model_it,
+	mod('car' .. model_it,
 		{
 			t = { "tester" },
 			q = q
@@ -350,7 +351,7 @@ function model_test(q)
 			-- 	{ -x, -y, .4 }}
 		})
 
-	spawn('car' .. model_it, model_it * 1.5, -5, 0.5)
+	make('car' .. model_it, model_it * 1.5, -5, 0.5)
 
 	-- spawn(e.birb, 2 * model_it + .5, -6, .5)
 	model_it = model_it + dir

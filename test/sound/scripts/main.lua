@@ -33,8 +33,7 @@ musical_mode = true
 
 -- e c - e f - - f
 --  G - - A _ G e c
-sky()
-fill("000")
+sky:fill("000")
 
 function rando(min, max)
     if max == nil then
@@ -49,7 +48,7 @@ function main()
     for i = 1, 100 do
         e = {
             h = rando(10.),
-            pp = spawn("jumpers" .. flr(rando(0, 4)), rando(-12., 12.), rando(8, 40), rando(0., 4.)),
+            pp = make("jumpers" .. flr(rando(0, 4)), rando(-12., 12.), rando(8, 40), rando(0., 4.)),
             vel = 0.
         }
         -- e.pp:anim("Idle")
@@ -67,7 +66,7 @@ function main()
         img(poof, rnd(), rnd() / 3.)
         --     spawn("poofy", rnd(-12., 12.), 18, rnd(1., 8.))
     end
-    gui()
+
 
     for i = -10, 10 do
         for j = 0, 40 do
@@ -92,8 +91,6 @@ function main()
 
     send_instr()
     -- instr(2., noise_wave())
-
-
 end
 
 -- sounder = .1
@@ -117,11 +114,11 @@ overlay = ""
 function check_bar(bi)
     if musical_mode then
         local v = 1 + flr(bars[bi] * (#music_note_set - 1))
-        local note = music_note_set[v]
-        bar_notes[bi] = note
+        local current_note = music_note_set[v]
+        bar_notes[bi] = current_note
         -- also adjust our bar ui to be flush with the edge
         bars[bi] = v / (#music_note_set)
-        return note
+        return current_note
     else
         local v = (bars[bi] * 440.)
         bar_notes[bi] = v
@@ -130,7 +127,6 @@ function check_bar(bi)
 end
 
 function loop()
-
     overlay = ""
     for i, e in ipairs(pps) do
         if e.pp.z > -1 then
@@ -147,7 +143,7 @@ function loop()
         activate()
     end
 
-    local m = mouse()
+    local m = mus()
     if m.m1 then
         -- if mouse_once then
         --     mouse_once = false
@@ -192,7 +188,6 @@ function loop()
     end
 
     cam { pos = { camera.x, camera.y, camera.z } }
-
 end
 
 function clamp(n, min, max)
@@ -224,7 +219,7 @@ function make_noise()
 end
 
 function activate()
-    silence(0)
+    mute(0)
     if mode_type then
         print("Notes")
         send_notes()
@@ -245,7 +240,7 @@ function send_instr()
     --     print("p" .. bars[j])
     -- end
     instr(bars, half_enabled)
-    sound(440., 2.)
+    note(440., 2.)
 end
 
 function send_notes()
@@ -289,10 +284,10 @@ function draw_bars()
             rect(x, (1. - h) * bar_ui_size + bar_ui_size2, w, h * bar_ui_size, c)
             -- text(flr(bar_notes[i]), x - 8 / 320., 1. - h - 8 / 240.)
         end
-
     end
 end
 
+---@param m mouse
 function ui_bars(m)
     local bb = (bar_ui_count + 2)
     local w = 1 / bb
@@ -315,6 +310,5 @@ function ui_bars(m)
 
             -- print("bar is " .. m.y)
         end
-
     end
 end

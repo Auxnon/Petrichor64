@@ -1,5 +1,5 @@
 math.randomseed(os.time())
-crt({
+attr({
     dark = 99.,
     low = 0.1,
     high = 0.9,
@@ -7,10 +7,6 @@ crt({
     curvature = 0.8,
     resolution = 720,
     glitch = 4.
-})
-
-crt({
-    dark = 99.
 })
 
 octave1 = {
@@ -144,7 +140,7 @@ notes = {
 -- brass = {"B1", "B2", "Fs", "B", "Ds4", "Fs4", "A4", "C5"}
 -- test???
 -- brass = {"C4", "D4", "E4", "F4", "G4", "A4", "B4"}
-brass = {"C", "C4", "G4", "C5", "E5", "G5", "Bb5", "C6", "D6", "E6"}
+brass = { "C", "C4", "G4", "C5", "E5", "G5", "Bb5", "C6", "D6", "E6" }
 
 -- song = {"G", "E", "G", "G", "E", "G", "A", "G", "F", "E", "D", "E", "F"}
 last = ""
@@ -154,13 +150,13 @@ last = ""
 
 -- song = {"A", "C", "_", "A", ""}
 
-song = {"F", "_"}
+song = { "F", "_" }
 
-layout = {""}
+layout = { "" }
 
 -- e c - e f - - f
 --  G - - A _ G e c
-bg(0.1, 1., 1.)
+sky:fill({ 0.1, 1., 1. })
 function rnd(min, max)
     if max == nil then
         max = min
@@ -215,7 +211,6 @@ function main()
             -- tile("beveled_cube.torch", j * 2, i * 2, 1) -- 9 10 17 18
         end
     end
-
 end
 
 -- sounder = .1
@@ -304,5 +299,4 @@ function loop()
 
     -- camera.y = camera.y + 0.2
     campos(camera.x, camera.y, camera.z)
-
 end

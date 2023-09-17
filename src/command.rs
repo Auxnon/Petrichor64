@@ -794,7 +794,7 @@ function reload() end"
         },
         "Set various app state parameters",
         "
----@param attributes Attributes
+---@param attributes attributes
 function attr(attributes) end"
     );
 

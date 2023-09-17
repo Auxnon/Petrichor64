@@ -16,7 +16,8 @@ alias = {
     g = "load games/bip",
     em = "load test/emodel",
 }
-
+init = "load test/sound"
+-- init = "load test/water"
 -- init = "load games/bip"
 -- init = "load ../moop"
 -- init = "load test/client"
