@@ -155,6 +155,21 @@ fn main() {
             core.global.pending_load = Some(s.clone());
             // crate::command::load_from_string(&mut core, Some(s));
             core.bundle_manager.get_lua().call_drop(s);
+    };
+
+    if env::args().count() > 1 {
+        let s = env::args().nth(1).unwrap();
+        native_dialog::MessageDialog::new()
+            .set_type(native_dialog::MessageType::Info)
+            .set_title("Petrichor64 Info")
+            .set_text(&s)
+            .show_alert()
+            .unwrap();
+        insta_load(s);
+    } else {
+        match crate::asset::check_for_auto() {
+            Some(s) => {
+                insta_load(s);
         }
         _ => {
             #[cfg(feature = "include_auto")]
@@ -170,6 +185,7 @@ fn main() {
                 // crate::command::load_empty(&mut core);
             }
         }
+    }
     }
 
     #[cfg(not(feature = "headed"))]
@@ -768,7 +784,7 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
         .set_type(native_dialog::MessageType::Error)
         .set_title("Petrichor64 Error")
         // .set_text(&format!("{:#?}", path))
-        .set_text(&format!("{}", e.to_string()))
+        .set_text(&e.to_string())
         .show_alert()
         .unwrap();
 }
