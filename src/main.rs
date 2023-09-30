@@ -1,7 +1,11 @@
 // #![windows_subsystem = "console"]
 #![windows_subsystem = "windows"]
 // #![allow(warnings)]
-use std::rc::Rc;
+use std::{
+    env,
+    rc::Rc,
+    sync::mpsc::{channel, Receiver},
+};
 
 use crate::log::LogType;
 #[cfg(feature = "headed")]
@@ -11,13 +15,13 @@ use global::StateChange;
 use gui::ScreenIndex;
 use image::GenericImageView;
 use itertools::Itertools;
-use lua_define::LuaResponse;
+use lua_define::{LuaResponse, MainPacket};
 #[cfg(feature = "headed")]
 use root::Core;
 #[cfg(not(feature = "headed"))]
 use root_headless::Core;
 use rustc_hash::FxHashMap;
-use types::ControlState;
+use types::{ControlState, GlobalMap};
 
 mod asset;
 mod bundle;
@@ -27,6 +31,8 @@ mod controls;
 #[cfg(feature = "headed")]
 mod ent;
 mod ent_manager;
+mod error;
+mod file_util;
 #[cfg(feature = "headed")]
 mod gfx;
 mod global;
@@ -61,7 +67,6 @@ mod texture;
 mod tile;
 mod types;
 mod world;
-mod zip_pal;
 
 use command::MainCommmand;
 #[cfg(feature = "headed")]
@@ -81,9 +86,10 @@ const OS: &str = "nix";
 const OS: &str = "mac";
 
 fn main() {
-    crate::parse::test(&"test.lua".to_string());
+    // crate::parse::test(&"test.lua".to_string());
     env_logger::init();
 
+    let (pitcher, mut catcher) = channel::<MainPacket>();
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
         let event_loop = EventLoop::new();
@@ -120,7 +126,7 @@ fn main() {
 
         // State::new uses async code, so we're going to wait for it to finish
         (
-            pollster::block_on(Core::new(Rc::clone(&rwindow))),
+            pollster::block_on(Core::new(Rc::clone(&rwindow), pitcher)),
             rwindow,
             center,
             event_loop,
@@ -128,7 +134,7 @@ fn main() {
     };
 
     #[cfg(not(feature = "headed"))]
-    let mut core = pollster::block_on(Core::new());
+    let mut core = pollster::block_on(Core::new(pitcher));
 
     crate::command::load_empty(&mut core);
 
@@ -140,8 +146,7 @@ fn main() {
     core.global.is_state_changed = true;
     let mut bits: ControlState = ([false; 256], [0.; 11]);
 
-    match crate::asset::check_for_auto() {
-        Some(s) => {
+    let mut insta_load = |s: String| {
             core.global.console = false;
             #[cfg(feature = "headed")]
             core.gui.disable_console();
@@ -176,7 +181,7 @@ fn main() {
     #[cfg(feature = "headed")]
     type Param2 = Rc<winit::window::Window>;
 
-    let mut state_change_check =
+    let state_change_check =
         move |c: &mut Core, control_flow: &mut Param1, rwindow: &mut Param2| {
             if c.global.is_state_changed {
                 if c.global.state_delay > 0 {
@@ -222,8 +227,7 @@ fn main() {
                                     &mut c.loggy,
                                 );
                                 if let Some(s) = res {
-                                    // println!("hi config: {:?}", s);
-                                    crate::command::init_con_sys(c, &s);
+                                    crate::command::run_con_sys(c, &s);
                                 }
 
                                 // as a bonus also check command line arguments here
@@ -238,7 +242,7 @@ fn main() {
                                             match command.unwrap().as_str() {
                                                 "--init" | "-i" => {
                                                     println!("cli-init: {:?}", arg);
-                                                    crate::command::init_con_sys(c, &arg);
+                                                    crate::command::run_con_sys(c, &arg);
                                                 }
                                                 _ => {}
                                             }
@@ -331,7 +335,7 @@ fn main() {
                     state_change_check(&mut core, control_flow, &mut rwin);
                     // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
                     // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
-                    if let Some(buff) = core.update(&mut updated_bundles) {
+                    if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
                         instance_buffers = buff;
                     }
                     core.bundle_manager.call_loop(&mut updated_bundles, bits);
@@ -360,7 +364,6 @@ fn main() {
         loop {
             core.loop_helper.loop_start();
             if let Ok(inp) = core.cli_thread_receiver.try_recv() {
-                // println!("cli: {:?}", inp);
                 core_console_command(&mut core, &inp);
             }
             if state_change_check(&mut core, &mut (), &mut ()) {
@@ -371,10 +374,6 @@ fn main() {
             core.loop_helper.loop_sleep();
         }
     }
-
-    // unsafe {
-    //     tracy::shutdown_tracy();
-    // }
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str) {
@@ -383,7 +382,8 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
         com = alias.to_string();
     }
     for c in com.split("&&") {
-        if !crate::command::init_con_sys(core, c) {
+        match crate::command::run_con_sys(core, c) {
+            Ok(false) => {
             let mut ltype = LogType::Lua;
             // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
             if let Some(result) = match core.bundle_manager.get_lua().func(c) {
@@ -410,6 +410,11 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
                 core.loggy.log(ltype, &result);
             }
         }
+            Ok(true) => {}
+            Err(e) => {
+                core.loggy.log(LogType::LuaError, &format!("!!{}", e));
+            }
+        }
     }
 }
 
@@ -419,10 +424,14 @@ type IB = InstanceBuffer;
 type IB = ();
 
 impl Core {
-    fn update(&mut self, completed_bundles: &mut FxHashMap<u8, bool>) -> Option<IB> {
-        let mut mutations = vec![];
+    fn update(
+        &mut self,
+        catcher: &mut Receiver<MainPacket>,
+        completed_bundles: &mut FxHashMap<u8, bool>,
+    ) -> Option<IB> {
         let mut loop_complete = false;
-        for (id, p) in self.catcher.try_iter() {
+        let mut only_one_gui_sync = true;
+        catcher.try_iter().for_each(|(id, p)| {
             match p {
                 MainCommmand::Cam(p, r) => {
                     if let Some(pos) = p {
@@ -432,10 +441,9 @@ impl Core {
                         self.global.simple_cam_rot = rot;
                     }
                 }
-
                 MainCommmand::GetImg(s, tx) => {
                     #[cfg(feature = "headed")]
-                    tx.send(self.tex_manager.get_img(&s));
+                    self.log_check(tx.send(self.tex_manager.get_img(&s)));
                 }
                 MainCommmand::SetImg(s, im, tx) => {
                     #[cfg(feature = "headed")]
@@ -447,7 +455,7 @@ impl Core {
                             id,
                             &mut self.loggy,
                         );
-                        tx.send(());
+                        self.log_check(tx.send(()));
                         self.tex_manager
                             .refinalize(&self.gfx.queue, &self.gfx.master_texture);
                     }
@@ -476,7 +484,7 @@ impl Core {
                         }
                     }
                 }
-                MainCommmand::Model(name, texture, v, n, i, u, style, tx) => {
+                MainCommmand::Model(model) => {
                     let res = self.model_manager.upsert_model(
                         #[cfg(feature = "headed")]
                         &self.gfx.device,
@@ -484,13 +492,13 @@ impl Core {
                         &self.tex_manager,
                         &mut self.world,
                         id,
-                        &name,
-                        texture,
-                        v,
-                        n,
-                        i,
-                        u,
-                        style,
+                        &model.asset,
+                        model.textures,
+                        model.vecs,
+                        model.norms,
+                        model.inds,
+                        model.uvs,
+                        model.style,
                         &mut self.loggy,
                         self.global.debug,
                     );
@@ -499,11 +507,11 @@ impl Core {
                         self.global.is_state_changed = true;
                     }
 
-                    tx.send(0);
+                    self.log_check(model.sender.send(0));
                 }
                 MainCommmand::ListModel(s, bundles, tx) => {
                     let list = self.model_manager.search_model(&s, bundles);
-                    tx.send(list);
+                    self.log_check(tx.send(list));
                 }
                 MainCommmand::Make(m, tx) => {
                     if m.len() == 7 {
@@ -527,7 +535,7 @@ impl Core {
                             m2,
                         );
 
-                        tx.send(0);
+                        self.log_check(tx.send(0));
                     }
                 }
                 MainCommmand::Spawn(lent) => {
@@ -541,7 +549,7 @@ impl Core {
                 }
                 MainCommmand::Group(parent, child, tx) => {
                     self.ent_manager.group(parent, child);
-                    tx.send(true);
+                    self.log_check(tx.send(true));
                 }
                 MainCommmand::Globals(table) => {
                     for (k, v) in table.iter() {
@@ -629,14 +637,18 @@ impl Core {
                 }
                 MainCommmand::BundleDropped(b) => {
                     completed_bundles.remove(&id);
-                    self.bundle_manager.reclaim_resources(b)
+                    self.bundle_manager.reclaim_resources(b);
                 }
                 MainCommmand::Subload(file, is_overlay) => {
-                    mutations.push((id, MainCommmand::Subload(file, is_overlay)));
+                    crate::command::load(
+                        self,
+                        Some(file.as_str()),
+                        None,
+                        None,
+                        Some((id, is_overlay)),
+                    );
                 }
-                MainCommmand::Reload() => {
-                    mutations.push((id, MainCommmand::Reload()));
-                }
+                MainCommmand::Reload() => crate::command::reload(self, id),
 
                 MainCommmand::WorldSync(chunks, dropped) => {
                     self.world.process_sync(
@@ -653,17 +665,25 @@ impl Core {
                 }
                 MainCommmand::Quit(u) => {
                     if u > 0 {
-                        println!(
-                            "quit with pending load {} {:?}",
-                            u, self.global.pending_load
-                        );
+                        // println!(
+                        //     "quit with pending load {} {:?}",
+                        //     u, self.global.pending_load
+                        // );
+                        self.global.pending_load = None;
                         match &self.global.pending_load {
                             Some(l) => {
-                                mutations.push((id, MainCommmand::Load(l.to_owned())));
+                                let to_load = l.clone();
+                                self.log(LogType::Sys, &format!("load {}", l));
+                                crate::command::hard_reset(self);
+
+                                crate::command::load(self, Some(&to_load), None, None, None);
                             }
-                            _ => mutations.push((id, MainCommmand::Quit(u))),
+                            _ => {
+                                //DEV if a load quit is triggered and then the lua context spams it too fast it technically quits to empty comnsole. should ahve it be code based or not trigger too quickly
+                                crate::command::hard_reset(self);
+                                crate::command::load_empty(self);
+                            }
                         }
-                        self.global.pending_load = None;
                     } else {
                         self.global.state_changes.push(StateChange::Quit);
                     }
@@ -674,7 +694,11 @@ impl Core {
                         if !self.bundle_manager.is_single() {
                             self.bundle_manager.set_raster(id, 0, main);
                             #[cfg(feature = "headed")]
-                            mutations.push((id, MainCommmand::Meta(ScreenIndex::Primary)));
+                            if only_one_gui_sync {
+                                // DEV is this still necessary to force 1? Wont that break simultaneous syncs?
+                                self.update_raster(ScreenIndex::Primary);
+                                only_one_gui_sync = false;
+                            }
                         } else {
                             #[cfg(feature = "headed")]
                             self.gui.replace_image(main, ScreenIndex::Primary);
@@ -684,7 +708,10 @@ impl Core {
                         if !self.bundle_manager.is_single() {
                             self.bundle_manager.set_raster(id, 1, sky);
                             #[cfg(feature = "headed")]
-                            mutations.push((id, MainCommmand::Meta(ScreenIndex::Sky)));
+                            if only_one_gui_sync {
+                                self.update_raster(ScreenIndex::Sky);
+                                only_one_gui_sync = false;
+                            }
                         } else {
                             #[cfg(feature = "headed")]
                             self.gui.replace_image(sky, gui::ScreenIndex::Sky);
@@ -695,47 +722,10 @@ impl Core {
                 }
                 MainCommmand::Load(_) => todo!(),
                 MainCommmand::Null() => todo!(),
-                MainCommmand::Meta(_) => todo!(),
-            };
-        }
-
-        if !mutations.is_empty() {
-            let mut only_one_gui_sync = true;
-            for (id, m) in mutations {
-                match m {
-                    MainCommmand::Reload() => crate::command::reload(self, id),
-                    MainCommmand::Quit(u) => {
-                        //DEV if a load quit is triggered and then the lua context spams it too fast it technically quits to empty comnsole. should ahve it be code based or not trigger too quickly
-                        // crate::command::hard_reset(self);
-                        // crate::command::load_empty(self);
-                    }
-                    MainCommmand::Subload(file, is_overlay) => {
-                        crate::command::load(self, Some(file), None, None, Some((id, is_overlay)));
-                    }
-                    MainCommmand::Load(file) => {
-                        crate::command::hard_reset(self);
-                        println!("load {}", file);
-                        crate::command::load(self, Some(file), None, None, None);
-                    }
-                    #[cfg(feature = "headed")]
-                    MainCommmand::Meta(d) => {
-                        if only_one_gui_sync {
-                            match self.bundle_manager.get_rasters(match d {
-                                ScreenIndex::Primary => 0,
-                                _ => 1,
-                            }) {
-                                Some(rasters) => {
-                                    self.gui.replace_image(rasters, d);
-                                }
-                                None => {}
-                            }
-                            only_one_gui_sync = false;
-                        }
-                    }
-                    _ => {}
-                }
+                MainCommmand::Write(_, _) => todo!(),
             }
-        }
+        });
+
         let instance_buffers = if loop_complete {
             Some(self.ent_manager.check_ents(
                 #[cfg(feature = "headed")]
