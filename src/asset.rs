@@ -960,7 +960,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
---- @field i integer[][]? indicies
+--- @field i integer[]? indices
 
 --- @class entity
 --- @field x number x position
@@ -974,14 +974,15 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 --- @field vz number velocity z
 --- @field flipped number texture flip x axis
 --- @field scale number uniform scale factor 1 is 100%
---- @field id integer assigned by engine, killable
+--- @field offset number[]? x, y, z position to offset model
+--- @field id integer assigned by engine, used for destroying
 --- @field tex string texture asset
 --- @field asset string model or blocked texture asset
 --- @field anim fun(self:entity,animation:string,force?:boolean) change animation, force marks change even if already playing
 --- @field kill fun(self:entity) destroy entity
 
 --- @alias gunit number | integer | string
---- @alias rgb number[] | integer[] | string
+--- @alias rgb number[] | integer[] | string | integer
 
 --- @class image
 --- @field line fun(self:image, x:gunit, y:gunit, x2:gunit, y2:gunit, rgb?:rgb) draw line on image
