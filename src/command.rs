@@ -1865,7 +1865,7 @@ fn key_match(key: String) -> usize {
         "down" => 73,
         "back" => 74,
 
-        "return" => 75,
+        "return" | "enter" => 75,
         // "space" => {
         //     println!("space");
         //     return 66;
@@ -1938,6 +1938,11 @@ fn key_match(key: String) -> usize {
         // "space" => VirtualKeyCode::Space,
         // "lctrl" => VirtualKeyCode::LControl,
         // "rctrl" => VirtualKeyCode::RControl,
+        "alt" => 247,
+        "ctrl" | "control" => 248,
+        "shift" => 249,
+        "super" | "win" => 250,
+
         _ => 255,
     }
 }

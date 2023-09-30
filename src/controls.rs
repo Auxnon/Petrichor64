@@ -278,9 +278,39 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
                     // DEV
                     // println!("newkey is {}", *keycode as u32);
                     bits.0[*keycode as usize] = true;
+                    match *keycode {
+                        VirtualKeyCode::LAlt | VirtualKeyCode::RAlt => {
+                            bits.0[247] = true;
+                        }
+                        VirtualKeyCode::LControl | VirtualKeyCode::RControl => {
+                            bits.0[248] = true;
+                        }
+                        VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
+                            bits.0[249] = true;
+                        }
+                        VirtualKeyCode::LWin | VirtualKeyCode::RWin => {
+                            bits.0[250] = true;
+                        }
+                        _ => {}
+                    }
                 }
                 winit::event::ElementState::Released => {
                     bits.0[*keycode as usize] = false;
+                    match *keycode {
+                        VirtualKeyCode::LAlt | VirtualKeyCode::RAlt => {
+                            bits.0[247] = false;
+                        }
+                        VirtualKeyCode::LControl | VirtualKeyCode::RControl => {
+                            bits.0[248] = false;
+                        }
+                        VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
+                            bits.0[249] = false;
+                        }
+                        VirtualKeyCode::LWin | VirtualKeyCode::RWin => {
+                            bits.0[250] = false;
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
