@@ -802,14 +802,33 @@ function reload() end"
     let pitcher = main_pitcher.clone();
     lua!(
         "attr",
-        move |_, table: Table| {
-            let hash = table_hasher(table);
-            pitcher.send((bundle_id, MainCommmand::Globals(hash)));
-            Ok(())
+        move |lu, table: Option<Table>| {
+            match table {
+                Some(t) => {
+                    let hash = table_hasher(t);
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::Globals(hash))));
+
+                    Ok(Value::Nil)
+                }
+                None => {
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<GlobalMap>(0);
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::GetGlobal(tx))));
+                    match rx.recv() {
+                        Ok(arr) => match lu.create_table() {
+                            Ok(mut t) => {
+                                lua_err!(arr.convert(&mut t));
+                                Ok(Value::Table(t))
+                            }
+                            Err(_) => Ok(Value::Nil),
+                        },
+                        Err(_) => Ok(Value::Nil),
+                    }
+                }
+            }
         },
-        "Set various app state parameters",
+        "Set app state params or get attributes if no args",
         "
----@param attributes attributes
+---@param attributes attributes?
 function attr(attributes) end"
     );
 
@@ -1481,6 +1500,7 @@ function help() end",
     //     ""
     // );
 
+    lua_globals.set("io", io)?;
     lua_ctx
         .load(
             "
@@ -2046,6 +2066,7 @@ pub enum MainCommmand {
     Model(Box<ModelPacket>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
+    GetGlobal(SyncSender<GlobalMap>),
     AsyncError(String),
     LoopComplete((Option<image::RgbaImage>, Option<image::RgbaImage>)),
     Reload(),

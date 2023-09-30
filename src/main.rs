@@ -71,6 +71,15 @@ use winit::{
     window::{CursorGrabMode, WindowBuilder},
 };
 
+#[cfg(target_os = "windows")]
+const OS: &str = "win";
+
+#[cfg(target_os = "linux")]
+const OS: &str = "nix";
+
+#[cfg(target_os = "macos")]
+const OS: &str = "mac";
+
 fn main() {
     crate::parse::test(&"test.lua".to_string());
     env_logger::init();
@@ -591,6 +600,10 @@ impl Core {
                             _ => {}
                         }
                     }
+                }
+                MainCommmand::GetGlobal(tx) => {
+                    let t = GlobalMap::new(OS, 60., self.global.gui_params.resolution);
+                    self.log_check(tx.send(t));
                 }
                 MainCommmand::AsyncError(e) => {
                     let s = format!("!!{}", e);
