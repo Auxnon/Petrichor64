@@ -147,14 +147,14 @@ fn main() {
     let mut bits: ControlState = ([false; 256], [0.; 11]);
 
     let mut insta_load = |s: String| {
-            core.global.console = false;
-            #[cfg(feature = "headed")]
-            core.gui.disable_console();
-            // crate::command::hard_reset(&mut core);
+        core.global.console = false;
+        #[cfg(feature = "headed")]
+        core.gui.disable_console();
+        // crate::command::hard_reset(&mut core);
 
-            core.global.pending_load = Some(s.clone());
-            // crate::command::load_from_string(&mut core, Some(s));
-            core.bundle_manager.get_lua().call_drop(s);
+        core.global.pending_load = Some(s.clone());
+        // crate::command::load_from_string(&mut core, Some(s));
+        core.bundle_manager.get_lua().call_drop(s);
     };
 
     if env::args().count() > 1 {
@@ -170,22 +170,22 @@ fn main() {
         match crate::asset::check_for_auto() {
             Some(s) => {
                 insta_load(s);
-        }
-        _ => {
-            #[cfg(feature = "include_auto")]
-            {
-                core.global.console = false;
-                core.gui.disable_console();
-                let id = core.bundle_manager.console_bundle_target;
-                crate::command::reload(&mut core, id);
             }
+            _ => {
+                #[cfg(feature = "include_auto")]
+                {
+                    core.global.console = false;
+                    core.gui.disable_console();
+                    let id = core.bundle_manager.console_bundle_target;
+                    crate::command::reload(&mut core, id);
+                }
 
-            #[cfg(not(feature = "include_auto"))]
-            {
-                // crate::command::load_empty(&mut core);
+                #[cfg(not(feature = "include_auto"))]
+                {
+                    // crate::command::load_empty(&mut core);
+                }
             }
         }
-    }
     }
 
     #[cfg(not(feature = "headed"))]
@@ -400,32 +400,32 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
     for c in com.split("&&") {
         match crate::command::run_con_sys(core, c) {
             Ok(false) => {
-            let mut ltype = LogType::Lua;
-            // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
-            if let Some(result) = match core.bundle_manager.get_lua().func(c) {
-                LuaResponse::String(s) => Some(s),
-                LuaResponse::Number(n) => Some(n.to_string()),
-                LuaResponse::Integer(i) => Some(i.to_string()),
-                LuaResponse::Boolean(b) => Some(b.to_string()),
-                LuaResponse::Table(t) => {
-                    let mut s = String::new();
-                    s.push_str("{");
-                    for (k, v) in t {
-                        s.push_str(&format!("{}: {}, ", k, v));
+                let mut ltype = LogType::Lua;
+                // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
+                if let Some(result) = match core.bundle_manager.get_lua().func(c) {
+                    LuaResponse::String(s) => Some(s),
+                    LuaResponse::Number(n) => Some(n.to_string()),
+                    LuaResponse::Integer(i) => Some(i.to_string()),
+                    LuaResponse::Boolean(b) => Some(b.to_string()),
+                    LuaResponse::Table(t) => {
+                        let mut s = String::new();
+                        s.push_str("{");
+                        for (k, v) in t {
+                            s.push_str(&format!("{}: {}, ", k, v));
+                        }
+                        s.push_str("}");
+                        Some(s)
                     }
-                    s.push_str("}");
-                    Some(s)
-                }
-                LuaResponse::Error(e) => {
-                    ltype = LogType::LuaError;
-                    Some(e)
-                } // LuaResponse::Function(f) => format!("function: {}", f),
+                    LuaResponse::Error(e) => {
+                        ltype = LogType::LuaError;
+                        Some(e)
+                    } // LuaResponse::Function(f) => format!("function: {}", f),
 
-                _ => Some("~".to_string()), // ignore nils
-            } {
-                core.loggy.log(ltype, &result);
+                    _ => Some("~".to_string()), // ignore nils
+                } {
+                    core.loggy.log(ltype, &result);
+                }
             }
-        }
             Ok(true) => {}
             Err(e) => {
                 core.loggy.log(LogType::LuaError, &format!("!!{}", e));

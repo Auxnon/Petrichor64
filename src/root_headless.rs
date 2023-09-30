@@ -26,7 +26,6 @@ pub struct Core {
     pub global: Global,
     pub world: World,
     pub pitcher: Sender<MainPacket>,
-    pub catcher: Receiver<MainPacket>,
     pub loop_helper: spin_sleep::LoopHelper,
     pub ent_manager: EntManager,
     pub model_manager: ModelManager,
@@ -70,5 +69,13 @@ impl Core {
             gui,
             cli_thread_receiver,
         }
+    }
+
+    pub fn send_notification(&mut self, msg: &str) {
+        self.log(LogType::Notification, msg);
+    }
+
+    pub fn log(&mut self, kind: LogType, msg: &str) {
+        self.loggy.log(kind, msg);
     }
 }

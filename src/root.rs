@@ -2,7 +2,7 @@ use crate::{
     bundle::BundleManager,
     ent_manager::{EntManager, InstanceBuffer},
     gfx::Gfx,
-    global::{Global, GuiParams, StateChange},
+    global::{Global, StateChange},
     gui::ScreenIndex,
     lua_define::MainPacket,
     model::ModelManager,
@@ -11,27 +11,16 @@ use crate::{
     texture::TexManager,
     types::ValueMap,
 };
-use bytemuck::{Pod, Zeroable};
-use itertools::Itertools;
-use rustc_hash::FxHashMap;
+use std::sync::mpsc::SyncSender;
 #[cfg(feature = "audio")]
 use std::{
-    mem,
     rc::Rc,
     sync::mpsc::{channel, Receiver, Sender},
 };
 // use tracy::frame;
-use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
+use crate::world::World;
 use crate::{gui::Gui, log::LogType};
-use glam::{vec2, vec3, Mat4};
-use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, Texture};
-use winit::{
-    dpi::{LogicalSize, PhysicalSize},
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    // platform::macos::WindowExtMacOS,
-    window::{CursorGrabMode, Window, WindowBuilder},
-};
+use winit::window::Window;
 
 /** All centralized engines and factories to be passed around in the main thread */
 pub struct Core {
@@ -44,7 +33,6 @@ pub struct Core {
 
     pub world: World,
     pub pitcher: Sender<MainPacket>,
-    pub catcher: Receiver<MainPacket>,
 
     pub gui: Gui,
     pub gfx: Gfx,
@@ -63,7 +51,7 @@ pub struct Core {
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl Core {
-    pub async fn new(rwindow: Rc<Window>) -> Self {
+    pub async fn new(rwindow: Rc<Window>, pitcher: Sender<MainPacket>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
         let model_manager = ModelManager::init(&gfx.device);
@@ -103,7 +91,6 @@ impl Core {
         };
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
         let input_manager = winit_input_helper::WinitInputHelper::new();
-        let (pitcher, catcher) = channel::<MainPacket>();
 
         Self {
             global,
@@ -113,7 +100,6 @@ impl Core {
             singer,
             world,
             pitcher,
-            catcher,
             gui,
             loop_helper,
             tex_manager,
@@ -221,6 +207,37 @@ impl Core {
     pub fn check_fullscreen(&self) {
         if self.global.fullscreen != self.global.fullscreen_state {
             self.gfx.set_fullscreen(self.global.fullscreen);
+        }
+    }
+
+    pub fn send_notification(&mut self, msg: &str) {
+        self.gui.push_notif(msg);
+    }
+
+    pub fn log(&mut self, kind: LogType, msg: &str) {
+        self.loggy.log(kind, msg);
+        self.send_notification(msg);
+    }
+
+    pub fn log_channel_error(&mut self) {
+        self.log(LogType::LuaSysError, "!!Channel error");
+    }
+
+    pub fn log_check<T>(&mut self, s: Result<(), std::sync::mpsc::SendError<T>>)
+    where
+        T: Send + 'static,
+    {
+        if let Err(_) = s {
+            self.log_channel_error();
+        }
+    }
+
+    pub fn update_raster(&mut self, d: ScreenIndex) {
+        if let Some(rasters) = self.bundle_manager.get_rasters(match d {
+            ScreenIndex::Primary => 0,
+            _ => 1,
+        }) {
+            self.gui.replace_image(rasters, d);
         }
     }
 }
