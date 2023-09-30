@@ -34,8 +34,11 @@ pub enum LogType {
     Model,
     ModelError,
     CoreError,
+    IoError,
     Sys,
     Debug,
+    /** only used for headless */
+    Notification,
 }
 
 impl Loggy {

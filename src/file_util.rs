@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter, Cursor, Read, Write};
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::{fs::File, path::Path};
 
+use zip::result::ZipError;
 use zip::write::FileOptions;
 
+use crate::error::P64Error;
 use crate::log::{LogType, Loggy};
 
 /**
@@ -54,39 +56,85 @@ use crate::log::{LogType, Loggy};
 // }
 
 /** load a file and return as a u8 vector buffer */
-pub fn get_file_buffer(path_str: &String) -> Vec<u8> {
+pub fn get_file_buffer(path_str: &str) -> Result<Vec<u8>, P64Error> {
     let path = PathBuf::new().join(path_str);
     // println!("get filepath {:?}", path);
     get_file_buffer_from_path(path)
 }
 
-pub fn get_file_buffer_from_path(path: PathBuf) -> Vec<u8> {
+/** Load file contents as buffer */
+pub fn get_file_buffer_from_path(path: PathBuf) -> Result<Vec<u8>, P64Error> {
     let mut v = vec![];
     match File::open(&path) {
         Ok(f) => {
             let mut reader = BufReader::new(f);
-            // reader.re
 
             match reader.read_to_end(&mut v) {
                 Ok(_) => {
                     //log(format!("buffer size {} for {}", x, &path_str)),
                 }
-                Err(_) => {}
+                Err(e) => {
+                    return Err(P64Error::IoError(e));
+                }
             };
         }
         _ => {}
     }
-    v
+    Ok(v)
 }
 
+/** Load file contents as utf8 string from path */
+pub fn get_file_string_from_path(path: PathBuf) -> Result<String, P64Error> {
+    let v = get_file_buffer_from_path(path)?;
+    match String::from_utf8(v) {
+        Ok(s) => Ok(s),
+        Err(e) => Err(P64Error::IoUtf8Error),
+    }
+}
+
+/** Scrub path to not go higher than dir */
+fn scrub_path(dir: &str, path: &str) -> Result<PathBuf, P64Error> {
+    let p = PathBuf::new().join(path);
+    if p.components()
+        .into_iter()
+        .any(|x| x == Component::ParentDir)
+    {
+        return Err(P64Error::PermPathTraversal);
+    }
+    Ok(PathBuf::new().join(dir).join(path))
+}
+
+/** Load file contents as utf8 string, file path cannot go higher than dir */
+pub fn get_file_string_scrubbed(dir: &str, path: &str) -> Result<String, P64Error> {
+    let p = scrub_path(dir, path)?;
+    get_file_string_from_path(p)
+}
+
+fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {
+    match err {
+        zip::result::ZipError::Io(i) => P64Error::IoError(i),
+        zip::result::ZipError::InvalidArchive(a) | zip::result::ZipError::UnsupportedArchive(a) => {
+            P64Error::IoInvalidArchive(a)
+        }
+        zip::result::ZipError::FileNotFound => match f {
+            Some(ff) => P64Error::IoFileNotFound(ff.into()),
+            None => P64Error::IoFileNotFound("unknown".into()),
+        },
+    }
+}
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
-pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &str, loggy: &mut Loggy) {
+pub fn pack_zip(
+    sources: Vec<String>,
+    thumb: PathBuf,
+    out: &str,
+    loggy: &mut Loggy,
+) -> Result<(), P64Error> {
     // let zipfile = std::fs::File::open(name).unwrap();
-    let mut image = get_file_buffer_from_path(thumb);
-    if image.len() > 0 {
+    let mut bin = get_file_buffer_from_path(thumb)?;
+    if bin.len() > 0 {
         loggy.log(
             LogType::Config,
-            &format!("using icon of {} bytes", image.len()),
+            &format!("using icon of {} bytes", bin.len()),
         );
 
         // let new_file = File::create(&Path::new("temp")).unwrap();
@@ -104,10 +152,10 @@ pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &str, loggy: &mut Log
                 &source,
                 options.compression_method(zip::CompressionMethod::Stored),
             ) {
-                loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
+                return Err(handle_zip_error(err, Some(&source)));
             }
 
-            let buff = get_file_buffer(&source);
+            let buff = get_file_buffer(&source)?;
             let buffy = buff.as_slice();
             if let Err(err) = zip.write(buffy) {
                 loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
@@ -124,21 +172,22 @@ pub fn pack_zip(sources: Vec<String>, thumb: PathBuf, out: &str, loggy: &mut Log
                 f.read_to_end(&mut buf).unwrap();
                 loggy.log(LogType::Config, &format!("zip buffer size {}", buf.len()));
 
-                image.append(&mut buf);
+                bin.append(&mut buf);
                 let new_file = File::create(&Path::new(out)).unwrap();
                 let mut writer = BufWriter::new(new_file);
-                match writer.write(image.as_slice()) {
-                    Ok(_) => loggy.log(LogType::Config, &"cartridge zipped!"),
-                    Err(err) => loggy.log(
-                        LogType::ConfigError,
-                        &format!("failed zipping to cartridge: {}", err),
-                    ),
+                match writer.write(bin.as_slice()) {
+                    Ok(_) => {
+                        loggy.log(LogType::Config, &"cartridge zipped!");
+                        Ok(())
+                    }
+                    Err(err) => Err(P64Error::IoError(err)),
                 }
             }
-            Err(_) => todo!(),
+            Err(e) => Err(handle_zip_error(e, Some(out))),
         }
     } else {
         loggy.log(LogType::ConfigError,&"unable to pack file as icon chosen is not available, is it in the game directory root?");
+        Err(P64Error::IoEmptyFile)
     }
 }
 
@@ -170,20 +219,22 @@ pub fn unpack_and_save(file: Vec<u8>, out: &String, loggy: &mut Loggy) {
     }
 }
 
-// MARK new pack
-pub fn pack_game_bin(out: &str) -> &str {
-    let mut game_buffer = get_file_buffer(&"Petrichor".to_string());
+pub fn pack_game_bin(out: &str) -> Result<&str, P64Error> {
+    let mut game_buffer = get_file_buffer(&"Petrichor".to_string())?;
     if game_buffer.len() <= 0 {
-        return "Can't find engine file";
+        return Err(P64Error::IoEmptyFile);
     }
 
-    let mut icon = get_file_buffer(&"icon.png".to_string());
-    let new_file = File::create(&Path::new(out)).unwrap();
+    let mut icon = get_file_buffer(&"icon.png".to_string())?;
+    let new_file = match File::create(&Path::new(out)) {
+        Ok(f) => f,
+        Err(e) => return Err(P64Error::IoError(e)),
+    };
     game_buffer.append(&mut icon);
     let mut writer = BufWriter::new(new_file);
     match writer.write(game_buffer.as_slice()) {
-        Ok(_) => "game packed!",
-        Err(_) => "failed to pack game",
+        Ok(_) => Ok("game packed!"),
+        Err(e) => Err(P64Error::IoError(e)),
     }
 }
 

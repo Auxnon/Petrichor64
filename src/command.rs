@@ -6,16 +6,18 @@ use crate::root_headless::Core;
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
     bundle::BundleResources,
+    error::P64Error,
+    file_util,
     gui::GuiMorsel,
     log::LogType,
     lua_define::{LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
-    model::TextureStyle,
+    model::{ModelPacket, TextureStyle},
     online::Online,
     pad::Pad,
     tile::Chunk,
-    types::ValueMap,
+    types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
 };
 
@@ -35,10 +37,18 @@ use std::{
     collections::HashMap,
     rc::Rc,
     sync::{
-        mpsc::{Sender, SyncSender},
+        mpsc::{sync_channel, Sender, SyncSender},
         Arc,
     },
 };
+
+macro_rules! lua_err {
+    ($e:expr) => {
+        if let Err(err) = $e {
+            return Err(make_err(&err.to_string()));
+        };
+    };
+}
 
 static com_list: [&str; 20] = [
     "new - creates a new game directory",
@@ -64,12 +74,14 @@ static com_list: [&str; 20] = [
     "test",
 ];
 
-/** Private commands not reachable by lua code, but also works without lua being loaded */
-pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
+/// Private commands not reachable by lua code,
+/// but also works without lua being loaded,
+/// returns false if not a valid command was entered and can safely run through the lua runtime
+pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let main_bundle = core.bundle_manager.get_main_bundle();
     if s.len() <= 0 {
-        return false;
+        return Ok(false);
     }
     let segments = s.trim().split(" ").collect::<Vec<&str>>();
 
@@ -95,7 +107,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 (vec![], HashMap::new())
             };
 
-            let currentGameDir = main_bundle.directory.clone();
+            let current_game_dir = main_bundle.get_directory();
             crate::asset::pack(
                 #[cfg(feature = "headed")]
                 &mut core.tex_manager,
@@ -105,7 +117,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 &main_bundle.lua,
                 comHash,
                 regular,
-                currentGameDir,
+                current_game_dir,
                 // &if segments.len() > 1 {
                 //     format!("{}.game.png", segments[1])
                 // } else {
@@ -128,18 +140,18 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         "superpack" => {
             core.loggy.log(
                 LogType::Config,
-                &crate::asset::super_pack(&if segments.len() > 1 {
+                crate::asset::super_pack(&if segments.len() > 1 {
                     segments[1]
                 } else {
                     "game"
-                }),
+                })?,
             );
         }
         "unpack" => {
             if segments.len() > 1 {
                 let name = segments[1];
-                crate::zip_pal::unpack_and_save(
-                    crate::zip_pal::get_file_buffer(&format!("./{}.game.zip", name)),
+                crate::file_util::unpack_and_save(
+                    crate::file_util::get_file_buffer(&format!("./{}.game.zip", name))?,
                     &format!("{}.zip", name),
                     &mut core.loggy,
                 );
@@ -156,7 +168,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 if segments.len() > 1 {
                     // let targ = format!("{}.game.png", segments[1].to_string());
                     // let file = crate::zip_pal::get_file_buffer(&targ);
-                    Some(segments[1].to_string())
+                    Some(segments[1])
                 } else {
                     None
                 },
@@ -171,13 +183,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         }
         "bartholomew" => {
             hard_reset(core);
-            load(
-                core,
-                Some("b".to_string()),
-                Some(crate::asset::get_b()),
-                None,
-                None,
-            );
+            load(core, Some("b"), Some(crate::asset::get_b()), None, None);
         }
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
@@ -192,10 +198,11 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         }
         "ls" => {
             let s = if segments.len() > 1 {
-                Some(segments[1].to_string().clone())
+                Some(segments[1])
             } else {
                 None
             };
+
             let path = crate::asset::determine_path(s);
 
             match path.read_dir() {
@@ -231,7 +238,7 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
         }
         "new" => {
             if segments.len() > 1 {
-                let name = segments[1].to_string();
+                let name = segments[1];
 
                 let tout = main_bundle.lua.func("help(true)");
                 if let LuaResponse::TableOfTuple(t) = tout {
@@ -272,8 +279,8 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 let name = segments[1];
                 crate::asset::open_dir(name);
             } else {
-                match main_bundle.directory {
-                    Some(ref d) => {
+                match main_bundle.get_directory() {
+                    Some(d) => {
                         crate::asset::open_dir(d);
                     }
                     None => {
@@ -360,9 +367,9 @@ pub fn init_con_sys(core: &mut Core, s: &str) -> bool {
                 ),
             );
         }
-        &_ => return false,
+        &_ => return Ok(false),
     }
-    true
+    Ok(true)
 }
 
 pub fn init_lua_sys(
@@ -400,6 +407,7 @@ pub fn init_lua_sys(
     );
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
+    let io = lua_ctx.create_table()?;
 
     lua_globals.set("pi", std::f64::consts::PI);
     lua_globals.set("tau", std::f64::consts::PI * 2.0);
@@ -414,6 +422,13 @@ pub fn init_lua_sys(
     #[macro_export]
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr,$exam:expr) => {
+            lua_lib!($name, $closure, $desc, $exam, lua_globals);
+        };
+    }
+
+    #[macro_export]
+    macro_rules! lua_lib {
+        ($name:expr,$closure:expr,$desc:expr,$exam:expr,$lib:expr) => {
             #[cfg(debug_assertions)]
             {
                 let _f = include_bytes!(concat!("../guide/", $name, ".md"));
@@ -429,7 +444,7 @@ pub fn init_lua_sys(
             command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
             res(
                 $name,
-                lua_globals.set($name, lua_ctx.create_function($closure).unwrap()),
+                $lib.set($name, lua_ctx.create_function($closure).unwrap()),
                 &loggy,
             );
         };
@@ -826,7 +841,7 @@ function attr(attributes) end"
                 _ => None,
             };
 
-            pitcher.send((bundle_id, MainCommmand::Cam(pos, rot)));
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Cam(pos, rot))));
 
             Ok(())
         },
@@ -885,7 +900,7 @@ function sound(freq, length) end"
                     })
                     .collect::<Vec<Note>>();
 
-                sing.send(SoundCommand::Chain(converted, None));
+                lua_err!(sing.send(SoundCommand::Chain(converted, None)));
             }
             Ok(())
         },
@@ -915,14 +930,14 @@ function mute(channel) end"
         "instr",
         move |_, (freqs, half): (Vec<f32>, Option<bool>)| {
             #[cfg(feature = "audio")]
-            singer.send(SoundCommand::MakeInstrument(Instrument::new(
+            lua_err!(singer.send(SoundCommand::MakeInstrument(Instrument::new(
                 0,
                 freqs,
                 match half {
                     Some(h) => h,
                     None => false,
                 },
-            )));
+            ))));
 
             Ok(())
         },
@@ -939,11 +954,11 @@ function instr(freqs, half) end"
         move |_, (name, im): (String, AnyUserData)| {
             if let Ok(limg) = im.borrow::<LuaImg>() {
                 let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-                pitcher.send((
+                lua_err!(pitcher.send((
                     bundle_id,
                     MainCommmand::SetImg(name, limg.image.clone(), tx),
-                ));
-                rx.recv();
+                )));
+                lua_err!(rx.recv());
             };
 
             Ok(())
@@ -1001,7 +1016,7 @@ function nimg(w, h) end"
     let pitcher = main_pitcher.clone();
     lua!(
             "mod",
-            move |_, (name, t): (String, Table)| {
+            move |_, (asset, t): (String, Table)| {
                 let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
 
                 match t.get::<_, Vec<[f32; 3]>>("q") {
@@ -1043,19 +1058,21 @@ function nimg(w, h) end"
                             }
                         };
                         match t.get::<_, Vec<String>>("t") {
-                            Ok(texture) => {
-                                pitcher.send((
+                            Ok(textures) => {
+                                lua_err!(pitcher.send((
                                     bundle_id,
                                     MainCommmand::Model(
-                                        name,
-                                        texture,
-                                        v,
-                                        n,
-                                        i,
-                                        uv,
-                                        TextureStyle::Quad,
-                                        tx,
-                                    ),
+                                        Box::new(ModelPacket{
+                                            asset,
+                                            textures,
+                                            vecs:v,
+                                            norms:n,
+                                            inds:i,
+                                            uvs:uv,
+                                            style:TextureStyle::Quad,
+                                            sender:tx,
+                                        })
+                                    )),
                                 ));
                                 if let Err(err) = rx.recv() {
                                     return Err(make_err(&err.to_string()));
@@ -1071,35 +1088,36 @@ function nimg(w, h) end"
                         // println!("got no quads");
                         let vin = t.get::<_, Vec<[f32; 3]>>("v");
                         match vin {
-                            Ok(v) => {
-                                if v.len() > 2 {
-                                    let i = match t.get::<_, Vec<u32>>("i") {
+                            Ok(vecs) => {
+                                if vecs.len() > 2 {
+                                    let inds = match t.get::<_, Vec<u32>>("i") {
                                         Ok(o) => o,
                                         _ => vec![],
                                     };
-                                    let u = match t.get::<_, Vec<[f32; 2]>>("u") {
+                                    let uvs = match t.get::<_, Vec<[f32; 2]>>("u") {
                                         Ok(o) => o,
                                         _ => vec![],
                                     };
-                                    let n = match t.get::<_, Vec<[f32; 3]>>("n") {
+                                    let norms = match t.get::<_, Vec<[f32; 3]>>("n") {
                                         Ok(o) => o,
                                         _ => vec![],
                                     };
                                     match t.get::<_, Vec<String>>("t") {
-                                        Ok(texture) => {
-                                            pitcher.send((
+                                        Ok(textures) => {
+                                            lua_err!( pitcher.send((
                                                 bundle_id,
                                                 MainCommmand::Model(
-                                                    name,
-                                                    texture,
-                                                    v,
-                                                    n,
-                                                    i,
-                                                    u,
-                                                    TextureStyle::Tri,
-                                                    tx,
+                                                    Box::new(ModelPacket{
+                                                    asset,
+                                                    textures,
+                                                    vecs,
+                                                    norms,
+                                                    inds,
+                                                    uvs,
+                                                    style:TextureStyle::Tri,
+                                                    sender:tx})
                                                 ),
-                                            ));
+                                            )));
                                             if let Err(err) = rx.recv() {
                                                 return Err(make_err(&err.to_string()));
                                             }
@@ -1118,11 +1136,11 @@ function nimg(w, h) end"
                                     Ok(texture) => {
                                         if texture.len() > 0 {
                                             let t = texture[0].clone();
-                                            pitcher.send((
+                                            lua_err!(pitcher.send((
                                                 bundle_id,
                                                 MainCommmand::Make(
                                                     vec![
-                                                        name,
+                                                        asset,
                                                         t.clone(),
                                                         texture.get(1).unwrap_or(&t).to_string(),
                                                         texture.get(2).unwrap_or(&t).to_string(),
@@ -1132,7 +1150,7 @@ function nimg(w, h) end"
                                                     ],
                                                     tx,
                                                 ),
-                                            ));
+                                            )));
                                             if let Err(err) = rx.recv() {
                                                 return Err(make_err(&err.to_string()));
                                             }
@@ -1162,11 +1180,11 @@ function mod(asset, t) end"
     lua!(
         "gmod",
         move |_, (model, bundle): (Option<String>, Option<u8>)| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<String>>(0);
-            pitcher.send((
+            let (tx, rx) = sync_channel::<Vec<String>>(0);
+            lua_err!(pitcher.send((
                 bundle_id,
                 MainCommmand::ListModel(model.unwrap_or("".to_string()), bundle, tx),
-            ));
+            )));
             match rx.recv() {
                 Ok(d) => Ok(d),
                 _ => Ok(vec![]),
@@ -1334,7 +1352,7 @@ function log(f) end"
     lua!(
         "sub",
         move |_, str: String| {
-            pitcher.send((bundle_id, MainCommmand::Subload(str, false)));
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, false))));
             Ok(())
         },
         "Load a sub bundle",
@@ -1347,7 +1365,7 @@ function sub(str) end"
     lua!(
         "over",
         move |_, str: String| {
-            pitcher.send((bundle_id, MainCommmand::Subload(str, true)));
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, true))));
             Ok(())
         },
         "load an overlaying bundle",
@@ -1385,7 +1403,7 @@ function conn(addr,udp,server) end"
     lua!(
         "quit",
         move |_, u: Option<u8>| {
-            pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0))));
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0)))));
             Ok(())
         },
         "Hard quit or exit to console",
@@ -1462,16 +1480,19 @@ function help() end"
 }
 
 /** Error dumping helper */
-fn res(target: &str, r: Result<(), Error>, loggy: &Sender<(LogType, String)>) {
+fn res<E>(target: &str, r: Result<(), E>, loggy: &Sender<(LogType, String)>)
+where
+    E: std::error::Error,
+{
     match r {
         Err(err) => {
-            loggy.send((
+            if let Err(_) = loggy.send((
                 LogType::LuaSysError,
                 format!(
                     "🔴lua::problem setting default lua function {}, {}",
                     target, err
                 ),
-            ));
+            )) {}
         }
         _ => {}
     }
@@ -1516,14 +1537,14 @@ pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
     }
 }
 
-pub fn load_from_string(core: &mut Core, sub_command: Option<String>) {
+pub fn load_from_string(core: &mut Core, sub_command: Option<&str>) {
     load(core, sub_command, None, None, None);
 }
 
 /** Load an empty game state or bundle for issuing commands */
 pub fn load_empty(core: &mut Core) {
     // skip_logo: bool
-    let bundle = core.bundle_manager.make_bundle(None, None);
+    let bundle = core.bundle_manager.make_bundle(None, None, None);
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
     bundle.lua_ctx_handle = Some(bundle.lua.start(
@@ -1578,21 +1599,19 @@ pub fn load_empty(core: &mut Core) {
  */
 pub fn load(
     core: &mut Core,
-    game_path_in: Option<String>,
+    game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
-) {
-    let (game_path, bundle) = match bundle_in {
+) -> Result<(), P64Error> {
+    let bundle = match bundle_in {
         Some(b) => {
             let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();
-            (bun.directory.clone(), bun)
+            bun
         }
-        None => (
-            game_path_in.clone(),
-            core.bundle_manager
-                .make_bundle(game_path_in, bundle_relations),
-        ),
+        None => core
+            .bundle_manager
+            .make_bundle(game_path_in, bundle_relations, game_path_in),
     };
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
@@ -1616,7 +1635,7 @@ pub fn load(
     // core.tex_manager.reset();
 
     // if we get a path and it's a file, it needs to be unpacked, if it's a custom directoty we walk it, otherwise walk the local directory
-    match game_path {
+    match bundle.get_directory() {
         Some(s) => match payload {
             Some(p) => {
                 crate::asset::unpack(
@@ -1636,8 +1655,7 @@ pub fn load(
                 // println!("unpacked");
             }
             None => {
-                let mut path = crate::asset::determine_path(Some(s.clone()));
-                bundle.directory = Some(s.clone());
+                let mut path = crate::asset::determine_path(Some(s.as_ref()));
                 if path.is_dir() {
                     crate::asset::walk_files(
                         #[cfg(feature = "headed")]
@@ -1667,9 +1685,7 @@ pub fn load(
                             drop(file_name);
                             path.set_file_name(new_path);
                             if path.is_file() {
-                                let buff = crate::zip_pal::get_file_buffer_from_path(path);
-
-                                // Some(&core.device),
+                                let buff = crate::file_util::get_file_buffer_from_path(path)?;
 
                                 crate::asset::unpack(
                                     #[cfg(feature = "headed")]
@@ -1686,17 +1702,11 @@ pub fn load(
                                     debug,
                                 );
                             } else {
-                                core.loggy.log(
-                                    LogType::ConfigError,
-                                    &format!("{:?} ({}) is not a file or directory (1)", path, s),
-                                );
+                                return Err(P64Error::IoNotFileOrDir(s.into()));
                             }
                         }
                         None => {
-                            core.loggy.log(
-                                LogType::ConfigError,
-                                &format!("{} is not a file or directory (2)", s),
-                            );
+                            return Err(P64Error::IoNotFileOrDir(s.into()));
                         }
                     };
                 }
@@ -1727,9 +1737,9 @@ pub fn load(
     // for e in &mut entity_manager.entities {
     //     e.hot_reload();
     // }
-    let dir = match &bundle.directory {
-        Some(s) => s.clone(),
-        None => "_".to_string(),
+    let dir = match bundle.get_directory() {
+        Some(s) => s,
+        None => "_",
     };
     core.loggy.log(
         LogType::Config,
@@ -1747,6 +1757,7 @@ pub fn load(
     core.loggy.log(LogType::Config, "calling main method");
     // core.bundle_manager.call_main(bundle_id);
     bundle.call_main();
+    Ok(())
 }
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
@@ -2002,16 +2013,7 @@ pub enum MainCommmand {
     Anim(String, Vec<String>, u32),
     Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Group(u64, u64, SyncSender<bool>),
-    Model(
-        String,
-        Vec<String>,
-        Vec<[f32; 3]>,
-        Vec<[f32; 3]>,
-        Vec<u32>,
-        Vec<[f32; 2]>,
-        TextureStyle,
-        SyncSender<u8>,
-    ),
+    Model(Box<ModelPacket>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
     AsyncError(String),

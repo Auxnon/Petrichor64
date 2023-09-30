@@ -10,9 +10,9 @@ use regex::Regex;
 #[cfg(feature = "headed")]
 use wgpu::Device;
 
-use crate::model::ModelManager;
 #[cfg(feature = "headed")]
 use crate::texture::TexManager;
+use crate::{error::P64Error, model::ModelManager};
 use crate::{
     global::Global,
     log::{LogType, Loggy},
@@ -37,15 +37,15 @@ pub fn pack(
     // cart_pic: Option<String>,
     com_hash: HashMap<String, String>,
     regular_com: Vec<String>,
-    current_game_dir: Option<String>,
+    current_game_dir: Option<&str>,
     loggy: &mut Loggy,
     debug: bool,
-) {
-    let dir = match com_hash.get("i") {
-        Some(path) => Some(path.to_owned()),
+) -> Result<(), P64Error> {
+    let dir: Option<&str> = match com_hash.get("i") {
+        Some(path) => Some(path),
         None => {
             if regular_com.len() > 0 {
-                Some(regular_com[0].to_owned())
+                Some(regular_com[0].as_str())
             } else {
                 match current_game_dir {
                     Some(dir) => Some(dir),
@@ -94,13 +94,13 @@ pub fn pack(
         Some(pic) => pic.to_owned(),
         None => "icon.png".to_string(),
     });
-    crate::zip_pal::pack_zip(sources, icon, &pack_name, loggy)
+    crate::file_util::pack_zip(sources, icon, &pack_name, loggy)
 }
-pub fn super_pack(name: &str) -> &str {
+pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     // let sources = walk_files(None);
     // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
     // create::
-    crate::zip_pal::pack_game_bin(name)
+    crate::file_util::pack_game_bin(name)
 }
 
 pub fn unpack(
@@ -118,7 +118,7 @@ pub fn unpack(
     if debug {
         loggy.log(LogType::Config, &format!("unpack {}", name));
     }
-    let map = crate::zip_pal::unpack_and_walk(
+    let map = crate::file_util::unpack_and_walk(
         file,
         vec!["assets".to_string(), "scripts".to_string()],
         loggy,
@@ -240,7 +240,7 @@ fn to_num(s: &Vec<&str>, n: usize, reg: &Regex) -> u16 {
 }
 
 pub fn show_config() {
-    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    let p = determine_path(Some(".petrichor64/config.lua"));
     if !p.exists() {
         println!("config not found, creating one");
         make_config();
@@ -249,11 +249,11 @@ pub fn show_config() {
 }
 
 pub fn make_config() {
-    let p = determine_path(Some(".petrichor64".to_owned()));
+    let p = determine_path(Some(".petrichor64"));
     if !p.exists() {
         fs::create_dir_all(p).unwrap();
     }
-    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    let p = determine_path(Some(".petrichor64/config.lua"));
     if !p.exists() {
         fs::write(
             p,
@@ -269,11 +269,11 @@ pub fn make_config() {
 }
 
 pub fn check_config() -> bool {
-    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    let p = determine_path(Some(".petrichor64/config.lua"));
     p.exists()
 }
 pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> Option<String> {
-    let p = determine_path(Some(".petrichor64/config.lua".to_owned()));
+    let p = determine_path(Some(".petrichor64/config.lua"));
     let mut result = None;
     if p.exists() {
         if let Ok(buffer) = std::fs::read_to_string(p) {
@@ -367,7 +367,7 @@ pub fn check_for_auto() -> Option<String> {
     }
 }
 
-pub fn determine_path(directory: Option<String>) -> PathBuf {
+pub fn determine_path(directory: Option<&str>) -> PathBuf {
     #[cfg(not(debug_assertions))]
     let current = match dirs::home_dir() {
         Some(cur) => cur,
@@ -392,7 +392,7 @@ pub fn make_directory(
     command_map: &HashMap<String, (String, String)>,
     loggy: &mut Loggy,
 ) {
-    let root = determine_path(Some(directory.to_string()));
+    let root = determine_path(Some(directory));
     if !root.exists() {
         fs::create_dir_all(&root).unwrap();
     }
@@ -799,7 +799,7 @@ fn parse_assets(
 }
 
 pub fn open_dir(s: &str) {
-    let p = determine_path(Some(s.to_string()));
+    let p = determine_path(Some(s));
     let p2 = if p.exists() { p } else { determine_path(None) };
     open_dir_from_path(&p2);
 }

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync::mpsc::Receiver};
 
 use image::RgbaImage;
 use itertools::Itertools;
@@ -9,7 +9,7 @@ use crate::root::Core;
 // use crate::texture::TexManager;
 use crate::{
     gui::PreGuiMorsel,
-    lua_define::{LuaCore, LuaHandle},
+    lua_define::{LuaCore, LuaHandle, MainPacket},
     types::ControlState,
 };
 
@@ -19,7 +19,7 @@ use crate::{
 pub struct Bundle {
     pub id: u8,
     pub name: String,
-    pub directory: Option<String>,
+    directory: Option<String>,
     pub lua: LuaCore,
     pub children: Vec<u8>,
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
@@ -34,11 +34,11 @@ pub struct Bundle {
 pub type BundleResources = PreGuiMorsel;
 
 impl Bundle {
-    pub fn new(id: u8, name: String, lua: LuaCore) -> Self {
+    pub fn new(id: u8, name: String, lua: LuaCore, directory: Option<String>) -> Self {
         Self {
             id,
             name,
-            directory: None,
+            directory,
             lua,
             children: Vec::new(),
             rasters: FxHashMap::default(),
@@ -49,16 +49,23 @@ impl Bundle {
         }
     }
 
+    pub fn get_directory(&self) -> Option<&str> {
+        self.directory.as_deref()
+    }
+
     pub fn call_loop(&self, bits: ControlState) {
         self.lua.call_loop(bits);
     }
+
     pub fn call_main(&self) {
         self.lua.call_main();
         self.lua.call_loop(([false; 256], [0.; 11]));
     }
+
     pub fn shutdown(&self) {
         self.lua.die();
     }
+
     pub fn resize(&self, width: u32, height: u32) {
         self.lua.resize(width, height);
     }
@@ -154,8 +161,9 @@ impl BundleManager {
 
     pub fn make_bundle(
         &mut self,
-        name: Option<String>,
+        name: Option<&str>,
         bundle_relations: Option<(u8, bool)>,
+        game_path: Option<&str>,
     ) -> &mut Bundle {
         let id = self.bundle_counter;
         self.bundle_counter += 1;
@@ -164,8 +172,12 @@ impl BundleManager {
         let lua = crate::lua_define::LuaCore::new();
 
         // find first index of emtpy slot
-        // self.bundles.
-        let mut bundle = Bundle::new(id, name.unwrap_or(format!("local{}", id)), lua);
+        let name = match name {
+            Some(name) => name.to_string(),
+            None => format!("local{}", id),
+        };
+
+        let mut bundle = Bundle::new(id, name, lua, game_path.map(|x| x.to_string()));
         match bundle_relations {
             Some((target, is_parent)) => {
                 if is_parent {
@@ -185,36 +197,6 @@ impl BundleManager {
         self.rebuild_call_order();
         self.bundles.get_mut(&id).unwrap()
     }
-
-    // pub fn make_and_start_bundle(&mut self, name: Option<String>, core: &Core) -> &mut Bundle {
-    //     let bundle = self.make_bundle(name);
-    //     let resources = core.gui.make_morsel();
-    //     let lua_handle = bundle.lua.start(
-    //         bundle.id,
-    //         resources,
-    //         core.world.sender.clone(),
-    //         core.pitcher.clone(),
-    //         core.singer.clone(),
-    //         false,
-    //     );
-    //     bundle
-    // }
-
-    // pub fn start_bundle(resources: BundleResources, bundle: &mut Bundle) {
-    //     // let resources = core.gui.make_morsel();
-    //     let lua_handle = bundle.lua.start(
-    //         bundle.id,
-    //         resources,
-    //         core.world.sender.clone(),
-    //         core.pitcher.clone(),
-    //         core.singer.clone(),
-    //         false,
-    //     );
-    // }
-
-    // pub fn provide_resources(core: &Core) -> BundleResources {
-    //     core.gui.make_morsel()
-    // }
 
     pub fn rebuild_call_order(&mut self) {
         self.call_order = self.bundles.keys().copied().collect();
@@ -327,8 +309,6 @@ impl BundleManager {
                 }
             }
         }
-
-        // &self.bundles.get(&0).unwrap().lua
     }
 
     pub fn list_bundles(&self) -> String {
@@ -358,9 +338,6 @@ impl BundleManager {
     }
     pub fn reclaim_resources(&mut self, _lua_returns: BundleResources) {}
 
-    // pub fn get_bundle(&self, id: u8) -> Option<&Bundle> {
-    //     self.bundles.get(id as usize)
-    // }
     pub fn stats(&self) -> String {
         format!(
             "bundles: {} call order: {}, main rasters: {}, sky rasters: {}",

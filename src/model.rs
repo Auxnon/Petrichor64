@@ -19,10 +19,21 @@ pub enum TextureStyle {
     QuadRepeat,
 }
 
+pub struct ModelPacket {
+    pub asset: String,
+    pub textures: Vec<String>,
+    pub vecs: Vec<[f32; 3]>,
+    pub norms: Vec<[f32; 3]>,
+    pub inds: Vec<u32>,
+    pub uvs: Vec<[f32; 2]>,
+    pub style: TextureStyle,
+    /// Return channel to acknowledge success and unpause lua runtime
+    pub sender: std::sync::mpsc::SyncSender<u8>,
+}
+
 pub struct ModelManager {
     pub CUBE: Rc<Model>,
     pub PLANE: Rc<Model>,
-    // pub CUSTOM: Rc<Model>,
     pub DICTIONARY: HashMap<String, Rc<Model>>,
 }
 
