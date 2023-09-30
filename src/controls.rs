@@ -129,13 +129,15 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             core.loggy.history_down()
         } else if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
             if input_helper.key_pressed(VirtualKeyCode::C) {
-                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                ctx.set_contents(core.loggy.get_line()).unwrap();
+                if let Ok(mut ctx) = ClipboardContext::new() {
+                    if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
+                    }
+                }
             } else if input_helper.key_pressed(VirtualKeyCode::V) {
-                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                match ctx.get_contents() {
-                    Ok(s) => core.loggy.add(s),
-                    _ => {}
+                if let Ok(mut ctx) = ClipboardContext::new() {
+                    if let Ok(s) = ctx.get_contents() {
+                        core.loggy.add(s);
+                    }
                 }
             } else if input_helper.key_pressed(VirtualKeyCode::R) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
@@ -242,6 +244,17 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
                 // println!("fullscreen {}", core.global.fullscreen);
+            } else if input_helper.key_pressed(VirtualKeyCode::C) {
+                if let Ok(mut ctx) = ClipboardContext::new() {
+                    if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
+                    }
+                }
+            } else if input_helper.key_pressed(VirtualKeyCode::V) {
+                if let Ok(mut ctx) = ClipboardContext::new() {
+                    if let Ok(s) = ctx.get_contents() {
+                        core.bundle_manager.get_main_bundle().lua.call_drop(s);
+                    }
+                }
             } else if input_helper.key_pressed(VirtualKeyCode::W) {
                 *control_flow = ControlFlow::Exit;
             }

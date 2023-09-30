@@ -1446,6 +1446,31 @@ function quit(u) end"
 function help() end"
     );
 
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "get",
+        move |lu, file: String| {
+            // let game_directory=
+            // match file_util::get_file_string_scrubbed(,file){
+
+            // }
+            let (tx, rx) = sync_channel::<Option<String>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
+            match rx.recv() {
+                Ok(o) => match o {
+                    Some(s) => Ok(s),
+                    None => Ok("".to_string()),
+                },
+                _ => Ok("".to_string()),
+            }
+        },
+        "List all commands",
+        "
+---@return table
+function help() end",
+        io
+    );
+
     // lua!(
     //     "test420",
     //     move |lu, b: Table| {
@@ -2030,8 +2055,10 @@ pub enum MainCommmand {
     WorldSync(Vec<Chunk>, bool),
     Null(),
     Stats(),
+    Read(String, SyncSender<Option<String>>),
+    Write(String, String),
     //for testing
-    Meta(crate::gui::ScreenIndex),
+    // Meta(crate::gui::ScreenIndex),
     Quit(u8),
 }
 

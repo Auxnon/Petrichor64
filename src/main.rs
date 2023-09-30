@@ -594,9 +594,25 @@ impl Core {
                 }
                 MainCommmand::AsyncError(e) => {
                     let s = format!("!!{}", e);
-                    #[cfg(feature = "headed")]
-                    self.gui.push_notif(&s);
-                    self.loggy.log(log::LogType::LuaError, &s);
+                    self.log(log::LogType::LuaError, &s);
+                }
+                MainCommmand::Read(path, tx) => {
+                    println!("read {}", path);
+                    let pak = match self.bundle_manager.get_main_bundle().get_directory() {
+                        Some(dir) => match crate::file_util::get_file_string_scrubbed(dir, &path) {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                self.log(LogType::IoError, &format!("!!{}", e));
+                                None
+                            }
+                        },
+                        None => {
+                            self.log(LogType::IoError, &format!("!! No relative path access"));
+                            None
+                        }
+                    };
+                    let res = tx.send(pak);
+                    self.log_check(res);
                 }
                 MainCommmand::BundleDropped(b) => {
                     completed_bundles.remove(&id);
