@@ -36,7 +36,7 @@ pub struct Core {
     pub cli_thread_receiver: Receiver<String>,
 }
 impl Core {
-    pub async fn new() -> Core {
+    pub async fn new(pitcher: Sender<MainPacket>) -> Core {
         let mut ent_manager = EntManager::new();
         let global = Global::new();
         let mut loggy = Loggy::new();
@@ -44,7 +44,6 @@ impl Core {
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
-        let (pitcher, catcher) = channel::<MainPacket>();
         let model_manager = ModelManager::init();
         let mut gui = Gui::new((256, 256), &mut loggy);
 
@@ -66,7 +65,6 @@ impl Core {
             ent_manager,
             model_manager,
             pitcher,
-            catcher,
             bundle_manager: BundleManager::new(),
             loggy,
             gui,

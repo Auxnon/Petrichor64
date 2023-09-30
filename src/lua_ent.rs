@@ -1,4 +1,9 @@
+#[cfg(feature = "puc_lua")]
 use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
+#[cfg(feature = "picc")]
+use piccolo::{Function, UserDataFields, UserDataMethods, Value::Nil, Value::UserData};
+#[cfg(feature = "silt")]
+use silt_lua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
