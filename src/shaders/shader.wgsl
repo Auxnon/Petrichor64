@@ -18,13 +18,23 @@ struct InstanceInput {
     @location(10) model_matrix_3: vec4<f32>,
 };
 
-
 struct Globals {
     view_mat: mat4x4<f32>,
     proj_mat: mat4x4<f32>,
     adjustments: mat4x4<f32>,
     specs: vec4<f32>,
     //num_lights: vec4<u32>,
+};
+
+struct GuiFrag {
+    @builtin(position) pos: vec4<f32>, 
+    @location(1) screen: vec4<f32>,
+    // @location(2) eh: array<f32>,
+    // @location(2) adjustments: array<f32,12>,
+};
+
+struct FragmentOutput {
+    @location(0) f_color: vec4<f32>,
 };
 
 
@@ -37,7 +47,6 @@ var t_diffuse: texture_2d<f32>;
 @group(0)
 @binding(2)
 var s_diffuse: sampler;
-
 
 @group(1) 
 @binding(0)
@@ -54,8 +63,6 @@ fn vs_main(
     @location(0) position: vec4<i32>,
     @location(1) normal: vec4<i32>,
     @location(2) tex_coords: vec2<f32>,
-
-    
     instance: InstanceInput
 ) -> VertexOutput {
 
@@ -70,15 +77,14 @@ fn vs_main(
         instance.model_matrix_2,
         instance.model_matrix_3,
     );
-    let world_pos =  w *vec4<f32>(position); 
+    var world_pos =  w *vec4<f32>(position); 
+    // world_pos=round(world_pos/2.)*2.;
     var out: VertexOutput;
     out.world_position = world_pos;
     let v=globals.view_mat;
 
 
-    // globals.view_proj
     let pos=vec4<f32>(position);
-    //    out.proj_position = globals.view_proj * world_pos;
 
     let bb=instance.effects[0];
     //billboard if true
@@ -108,10 +114,16 @@ fn vs_main(
     }
     let uv_mod=instance.uv_mod;
 
-    out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
     let vpos:vec4<f32>=out.proj_position;
-  
-    out.vpos=vec4<f32>(world_pos.x,world_pos.y,world_pos.z+globals.adjustments[0][0],world_pos.w); 
+    out.vpos=vec4<f32>((world_pos.x),(world_pos.y),(world_pos.z+globals.adjustments[0][0]),world_pos.w); 
+    // out.proj_position=vec4(round(out.proj_position.xyz/1.5)*1.5,out.proj_position.w); // 1.2 harsh 1.5 too harsh
+    // MARK
+    // out.proj_position=vec4(round(out.proj_position.xyz*2.)/2.,out.proj_position.w); // 1.2 harsh 1.5 too harsh
+
+    // let ntex=vec2<f32>(tex_coords.x*out.vpos.w,tex_coords.y*out.vpos.w);
+    out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
+    // MARK
+    // out.tex_coords= vec2<f32>(out.tex_coords.x*vpos.w,out.tex_coords.y*vpos.w);
     out.specs=globals.specs;
     out.time=globals.adjustments[0][0];
     // FragPos = vec3(model * vec4(aPos, 1.0));
@@ -119,13 +131,53 @@ fn vs_main(
     return out;
 }
 
-struct GuiFrag {
-    @builtin(position) pos: vec4<f32>, 
-    @location(1) screen: vec4<f32>,
-    // @location(2) eh: array<f32>,
-    // @location(2) adjustments: array<f32,12>,
-};
 
+
+
+var<private> f_color: vec4<f32>;
+
+@fragment
+fn fs_main( in: VertexOutput) -> FragmentOutput {
+    //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
+    // let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
+    // let v=abs((10.*in.vpos.z+0.01)/10.)%3.;
+    // let v=1.-min(1.,length(in.world_position.xyz - in.specs.xyz)%10.);
+
+    // let start=120.;
+
+    // in.world_position.xyz
+
+    let mutator=1.;//in.proj_position.w;
+    let t=in.time/2.;
+    let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
+    let light_color=vec3<f32>(1.,1.,1.);
+    let norm = normalize(in.world_normal);
+    let light_dir = normalize(light_pos - in.world_position.xyz); 
+    let diff = max(dot(norm, light_dir), .1);
+    let diffuse = light_color;//diff *  
+    // vec3 result = (ambient + diffuse) * objectColor;
+// FragColor = vec4(result, 1.0);
+   
+    f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+   
+    if( in.specs.w>0.){
+        let end=in.specs.w;
+        let dist=length(in.world_position.xyz-in.specs.xyz);      
+        // let v= clamp((end - dist) / (end - start), 0.0, 1.0);
+        let v= clamp((end - dist) / (  32.), 0.0, 1.0);
+        // if (v<0.5){
+        // discard;
+        //  }
+        f_color.a*=v;
+    }
+
+    let e3: vec4<f32> = f_color;
+    if (e3.a < 0.1) {
+        discard;
+    }
+
+    return FragmentOutput(e3*vec4<f32>(diffuse,1.));
+}
 
 @vertex
 fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
@@ -144,55 +196,6 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
     
     out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2],globals.adjustments[3][0],globals.adjustments[3][1]);
     return out;
-}
-
-struct FragmentOutput {
-    @location(0) f_color: vec4<f32>,
-};
-
-
-var<private> f_color: vec4<f32>;
-
-@fragment
-fn fs_main( in: VertexOutput) -> FragmentOutput {
-    //f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
-    // let v=abs((10.*in.vpos.z+0.01)/10.)%1.;
-    // let v=abs((10.*in.vpos.z+0.01)/10.)%3.;
-    // let v=1.-min(1.,length(in.world_position.xyz - in.specs.xyz)%10.);
-
-    // let start=120.;
-
-    // in.world_position.xyz
-    let t=in.time/2.;
-    let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
-    let light_color=vec3<f32>(1.,1.,1.);
-    let norm = normalize(in.world_normal);
-    let light_dir = normalize(light_pos - in.world_position.xyz); 
-    let diff = max(dot(norm, light_dir), .1);
-    let diffuse = light_color;//diff *  
-    // vec3 result = (ambient + diffuse) * objectColor;
-// FragColor = vec4(result, 1.0);
-   
-    f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
-   
-    if( in.specs.w>0.){
-        let end=in.specs.w;
-        let dist=length(in.world_position.xyz-in.specs.xyz);      
-        // let v= clamp((end - dist) / (end - start), 0.0, 1.0);
-        let v= clamp((end - dist) / (  32.), 0.0, 1.0);
-        // if (v<0.5){
-        // discard;
-        //  }
-        f_color.a*=v;
-    }
-
-    let e3: vec4<f32> = f_color;
-    if (e3.a < 0.1) {
-        discard;
-    }
-
-
-    return FragmentOutput(e3*vec4<f32>(diffuse,1.));
 }
 
 @fragment
@@ -222,8 +225,6 @@ fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
             }
         }
     }
-
-   
     
    return f_color;//vec4<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y, 0., 1.0);
 }
