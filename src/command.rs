@@ -1487,21 +1487,52 @@ function help() end"
     lua_lib!(
         "get",
         move |lu, file: String| {
-            // let game_directory=
-            // match file_util::get_file_string_scrubbed(,file){
-
-            // }
             let (tx, rx) = sync_channel::<Option<String>>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
             match rx.recv() {
                 Ok(o) => match o {
-                    Some(s) => Ok(s),
-                    None => Ok("".to_string()),
+                    Some(s) => {
+                        let lua_string = lu.create_string(&s)?;
+                        Ok(Value::String(lua_string))
+                    }
+                    None => Ok(Value::Nil),
                 },
-                _ => Ok("".to_string()),
+                _ => Ok(Value::Nil),
             }
         },
-        "List all commands",
+        "load a file relative to the game directory",
+        "
+---@return table
+function get() end",
+        io
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "set",
+        move |_, (file, contents): (String, String)| {
+            let (tx, rx) = sync_channel::<bool>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Write(file, contents, tx))));
+            match rx.recv() {
+                Ok(o) => Ok(Value::Boolean(o)),
+                Err(_) => Ok(Value::Boolean(false)),
+            }
+        },
+        "load a file relative to the game directory",
+        "
+---@return table
+function get() end",
+        io
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "copy",
+        move |_, content: String| {
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
+            Ok(())
+        },
+        "Copy text to the clipboard",
         "
 ---@return table
 function help() end",
@@ -2095,7 +2126,8 @@ pub enum MainCommmand {
     Null(),
     Stats(),
     Read(String, SyncSender<Option<String>>),
-    Write(String, String),
+    Write(String, String, SyncSender<bool>),
+    Copy(String),
     //for testing
     // Meta(crate::gui::ScreenIndex),
     Quit(u8),
