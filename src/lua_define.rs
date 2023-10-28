@@ -407,7 +407,7 @@ fn start(
                         }
                     }
                     LuaTalk::Main => {
-                        let res = &main_lua_func.call::<Value, mlua::prelude::LuaError>(Value::Nil);
+                        let res = &main_lua_func.call::<Value, LuaError>(Value::Nil);
                         if let Err(e) = res {
                             async_sender.send((
                                 bundle_id,
@@ -422,7 +422,7 @@ fn start(
                     }
                     LuaTalk::AsyncFunc(_func) => {}
                     LuaTalk::Loop((key_state, mouse_state)) => {
-                        let res = &loop_lua_func.call::<Value, mlua::prelude::LuaError>(Value::Nil);
+                        let res = &loop_lua_func.call::<Value, LuaError>(Value::Nil);
                         //=== async functions error handler will debounce since we deal with rapid event looping ===
                         match res {
                             Err(e) => {

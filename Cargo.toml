@@ -16,11 +16,14 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=["online_capable", "audio", "headed"] # "online_capable" ,
+default=["online_capable", "audio", "headed", "puc_lua"] # "online_capable" ,
 include_auto=[]
 online_capable=["tokio", "tokio-util", "rmp-serde", "bytes"]
 headed=["wgpu", "winit", "winit_input_helper"]
 audio=["cpal"]
+puc_lua=["mlua"]
+silt=["silt-lua"]
+picc=["piccolo"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -45,7 +48,7 @@ gltf="1.0.0"
 itertools="0.10.5"
 serde="1.0.152"
 
-mlua={version= "0.8.7", features=["luau"]}
+mlua={version= "0.8.7", optional=true, features=["luau"]}
 rand="0.8.5"
 glam="0.22.0"
 rmp-serde={version="1.1.1",optional=true}
@@ -64,6 +67,8 @@ dirs="4.0.0"
 futures="0.3.26"
 regex="1.7.1"
 native-dialog = "0.6.3"
+silt-lua = {version="0.1.1", optional=true,path="../silt-lua"}
+piccolo = {version="0.1.1", optional=true}
 # wasm-bindgen = "0.2.83"
 
 # [dependencies.tracy]
