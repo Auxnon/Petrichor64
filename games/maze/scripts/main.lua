@@ -1,5 +1,4 @@
-sky()
-fill("FF0")
+sky:fill("FF0")
 
 attr { modernize = false, glitch = { 0.1, 0.5, 0 }, curvature = 0.97, resolution = 480 }
 
@@ -22,16 +21,15 @@ function board()
     -- tile("blocks2", -board_size - 1, 0, 0)
     -- tile("blocks3", board_size + 1, 0, 0)
     local b = { { 8, 6, 4, 2, "blue" },
-        { 10, 12, 14, 16, 18 },
-        { 19, 21, 23, 22, 20 },
-        { 17, 15, 13, 11, 9 },
-        { "red", 1, 3, 5, 7 } }
+        { 10,    12, 14, 16, 18 },
+        { 19,    21, 23, 22, 20 },
+        { 17,    15, 13, 11, 9 },
+        { "red", 1,  3,  5,  7 } }
 
     local walls = { { { nil, nil }, { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, -1 } },
-        { { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, nil } },
-
-        { { nil, nil }, { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, -1 } },
-        { { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, -1 }, { nil, nil } },
+        { { nil, -1 },  { nil, -1 },  { nil, -1 },  { nil, -1 },  { nil, nil } },
+        { { nil, nil }, { nil, -1 },  { nil, -1 },  { nil, -1 },  { nil, -1 } },
+        { { nil, -1 },  { nil, -1 },  { nil, -1 },  { nil, -1 },  { nil, nil } },
         { { nil, nil }, { nil, nil }, { nil, nil }, { nil, nil }, { nil, nil } } }
 
     for i = -2, 2 do
@@ -45,11 +43,10 @@ function board()
             wall(i * 3, j * 3, 0, w[1], w[2])
         end
     end
-
 end
 
 function pieces()
-    die = spawn("die", 0, 0, 1)
+    die = make("die", 0, 0, 1)
     die.offset = { -0.5, -0.5, -0.5 }
     add_item(die)
     add_item(guy1)
@@ -57,7 +54,6 @@ function pieces()
 end
 
 function controls()
-
     if key("w") then
         pos.y = pos.y + sin(rot) * speed
         pos.x = pos.x + cos(rot) * speed
@@ -77,6 +73,7 @@ function controls()
         local x = pos.x - cos(rot) * f
         local y = pos.y - sin(rot) * f
         rot = rot + tau / 8
+        print(rot)
         pos.x = x + cos(rot) * f
         pos.y = y + sin(rot) * f
     elseif key("e", true) then
@@ -87,7 +84,7 @@ function controls()
         pos.y = y + sin(rot) * f
     end
 
-    local m = mouse()
+    local m = mus()
     local v = 10
     local f = -(pos.z) / (m.vz)
     local p = { x = pos.x + f * m.vx, y = pos.y + f * m.vy, z = 0 + pos.z + f * m.vz }
@@ -119,13 +116,14 @@ mouse_once = false
 
 function main()
     make_blocks()
-    model("cursor", { t = { "blocks9" }, q = { { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 }, { 0, 0, 1 } } })
-    model("shadow", { t = { "shadow" }, q = { { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 }, { 0, 0, 1 } } })
-    cursor = spawn("cursor", 0, 0, 0)
+    mod("cursor", { t = { "blocks9" }, q = { { 0, 0, 1 }, { 1, 0, 1 }, { 1, 1, 1 }, { 0, 1, 1 } } })
+    mod("shadow", { t = { "shadow" }, q = { { 0, 1, 1 }, { 1, 1, 1 }, { 1, 0, 1 }, { 0, 0, 1 } } })
+    cursor = make("cursor", 0, 0, 0)
     cursor.offset = { -0.5, -.5, -0.4 }
-    shadow = spawn("shadow", 0, 0, 0)
+    shadow = make("shadow", 0, 0, 0)
     shadow.offset = { -0.5, -.5, -0.45 }
-    model("die", { t = { "dice0", "dice1", "dice2", "dice3", "dice4", "dice5" } })
+    cam { pos = { pos.x, pos.y, pos.z }, rot = { rot, -tau / 8 } }
+    mod("die", { t = { "dice0", "dice1", "dice2", "dice3", "dice4", "dice5" } })
     pieces()
     board()
 end

@@ -42,7 +42,7 @@
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
---- @field i integer[][]? indicies
+--- @field i integer[]? indicies
 
 --- @class entity
 --- @field x number x position
@@ -56,6 +56,7 @@
 --- @field vz number velocity z
 --- @field flipped number texture flip x axis
 --- @field scale number uniform scale factor 1 is 100%
+--- @field offset number[]? x, y, z
 --- @field id integer assigned by engine, killable
 --- @field tex string texture asset
 --- @field asset string model or blocked texture asset
@@ -264,7 +265,7 @@ function anim(name, items, speed)
 end
 
 -- Set various app state parameters
----@param attributes attributes
+---@param attributes attributes?
 function attr(attributes)
 end
 
