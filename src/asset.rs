@@ -822,24 +822,15 @@ pub fn get_logo() -> Vec<u8> {
             r#"\"#
         };
     }
-    include_bytes!(concat!("..", sp!(), "logo.game.png")).to_vec()
-}
-pub fn get_b() -> Vec<u8> {
-    #[cfg(not(windows))]
-    macro_rules! sp {
-        () => {
-            "/"
-        };
-    }
 
-    // TODO when cross compiling for windows you'll need this to be the other slash... should be a different build process
-    #[cfg(windows)]
-    macro_rules! sp {
-        () => {
-            r#"\"#
-        };
+    #[cfg(not(feature = "studio"))]
+    {
+        include_bytes!(concat!("..", sp!(), "nil.game.png")).to_vec()
     }
-    include_bytes!(concat!("..", sp!(), "b.game.png")).to_vec()
+    #[cfg(feature = "studio")]
+    {
+        include_bytes!(concat!("..", sp!(), "logo.game.png")).to_vec()
+    }
 }
 pub fn load_img(str: &str, loggy: &mut Loggy) -> Result<DynamicImage, image::ImageError> {
     let text = Path::new("assets").join(str).to_str().unwrap().to_string();

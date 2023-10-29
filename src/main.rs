@@ -183,6 +183,8 @@ fn main() {
 
                 #[cfg(not(feature = "include_auto"))]
                 {
+                    #[cfg(not(feature = "studio"))]
+                    core.gui.disable_console();
                     // crate::command::load_empty(&mut core);
                 }
             }

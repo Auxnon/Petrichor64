@@ -188,10 +188,6 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             hard_reset(core);
             load_empty(core);
         }
-        "bartholomew" => {
-            hard_reset(core);
-            load(core, Some("b"), Some(crate::asset::get_b()), None, None);
-        }
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
         #[cfg(feature = "headed")]
