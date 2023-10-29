@@ -2,6 +2,9 @@
 
 - Public repo! More documentation!
 - `No signal` app as basic runtime default
+- io.get and io.set to load and save utf8 to local file
+- io.copy to push content to clipboard
+- trying to paste in an app passes content to the `drop` function if it's defined
 - Fixed bad irnd math now preferring a standard library function
 - Ability to map a color via color mask with the fill command on an image
 - Nil console returns at least give a ~
