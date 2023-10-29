@@ -1,6 +1,5 @@
 use bytes::{Buf, BytesMut};
 use itertools::{izip, Itertools};
-use mlua::{Table, Value};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, iter::zip};
@@ -9,6 +8,11 @@ use tokio::net::{
     TcpStream,
 };
 use tokio_util::codec::{Decoder, Encoder, FramedRead, FramedWrite};
+
+#[cfg(feature = "puc_lua")]
+use mlua::{Table, Value};
+#[cfg(feature = "silt")]
+use silt_lua::prelude::{Table, Value};
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -28,6 +32,7 @@ pub struct Packet64 {
     target: u16,
     body: Packer,
 }
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Packer {
     Str(String),

@@ -3,12 +3,12 @@
 _write string to a file_
 
 ```lua
----@type fun(path:string, buffer:string)
+---@type fun(path:string, buffer:string):boolean
 function io.set(path, buffer)
 ```
 
-Load a file as utf8 string, binary files are not supported.
+Synchronously write a UTF-8 string to file relative to the game folder, binary files are not supported at this time. Returns true if successful.
 
 ```lua
-io.set("file.lua","function test() print('hiya') end")
+if io.set("file.lua","function test() print('hiya') end") then print("success!") end
 ```

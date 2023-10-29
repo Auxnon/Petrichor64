@@ -1,4 +1,8 @@
-use mlua::Table;
+#[cfg(feature = "silt")]
+use silt_lua::prelude::{LuaError, Table};
+
+#[cfg(feature = "puc_lua")]
+use mlua::{prelude::LuaError, Table};
 
 pub enum ValueMap {
     String(String),
@@ -27,7 +31,7 @@ impl GlobalMap {
             resolution: res,
         }
     }
-    pub fn convert(&self, table: &mut Table) -> Result<(), mlua::Error> {
+    pub fn convert(&self, table: &mut Table) -> Result<(), LuaError> {
         table.set("os", self.os)?;
         table.set("hz", self.hertz)?;
         table.set("res", [self.resolution.0, self.resolution.1])?;

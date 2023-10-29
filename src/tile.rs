@@ -509,9 +509,9 @@ impl ChunkModel {
                     self,
                     (*cell).0,
                     (*cell).1,
-                    ((i as i32 / (CHUNK_SIZE * CHUNK_SIZE)) % CHUNK_SIZE),
-                    ((i as i32 / CHUNK_SIZE) % CHUNK_SIZE),
-                    (i as i32 % CHUNK_SIZE),
+                    (i as i32 / (CHUNK_SIZE * CHUNK_SIZE)) % CHUNK_SIZE,
+                    (i as i32 / CHUNK_SIZE) % CHUNK_SIZE,
+                    i as i32 % CHUNK_SIZE,
                 );
             }
         }

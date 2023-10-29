@@ -16,7 +16,7 @@ alias = {
     g = "load games/bip",
     em = "load test/emodel",
 }
-init = "load test/sound"
+-- init = "load test/sound"
 -- init = "load test/water"
 -- init = "load games/bip"
 -- init = "load ../moop"
@@ -24,3 +24,5 @@ init = "load test/sound"
 --moop
 -- init = "load ../petrichor-games/train"
 -- init = "load apps/model"
+-- init = "load ../../editor"
+-- init = "load apps/logo2"

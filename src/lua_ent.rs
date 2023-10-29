@@ -3,7 +3,7 @@ use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
 use piccolo::{Function, UserDataFields, UserDataMethods, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
-use silt_lua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
+use silt_lua::prelude::{Lua, MetaMethod, UserData, Value};
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -38,24 +38,29 @@ pub mod lua_ent_flags {
     pub const DEAD: u8 = 0b100;
 }
 
+#[cfg(feature = "silt")]
+impl UserData<'_> for LuaEnt {
+    fn by_meta_method<'a>(
+        &mut self,
+        lua: &mut Lua,
+        method: MetaMethod,
+        inputs: Value<'a>,
+    ) -> Result<Value<'a>> {
+        match method {
+            MetaMethod::ToString => Ok(Value::String(format!(
+                "[entity {}]",
+                inputs.get::<LuaEnt>()?.get_id()
+            ))),
+            _ => Ok(Value::Nil),
+        }
+    }
+}
+#[cfg(feature = "puc_lua")]
 impl UserData for LuaEnt {
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        // methods.add_method_mut(name, method)
-        // set meta method __gc
-        // let h = mlua::MetaMethod::
         methods.add_meta_method("__tostring", |_, this, _: ()| {
-            // println!("lua ent gc'd");
-            // match lu.globals().get::<&str, mlua::Function>("kill") {
-            //     Ok(kill) => {
-            //         kill.call::<_, ()>((this.get_id(),))?;
-            //     }
-            //     Err(e) => {
-            //         println!("kill error: {}", e);
-            //     }
-            // }
             Ok(format!("[entity {}]", this.get_id()))
         });
-        //mlua::MetaMethod::Concat::name()
         methods.add_meta_method("__concat", |_, this, _: ()| {
             Ok(format!("[entity {}]", this.get_id()))
         });

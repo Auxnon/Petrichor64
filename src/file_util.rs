@@ -62,6 +62,19 @@ pub fn get_file_buffer(path_str: &str) -> Result<Vec<u8>, P64Error> {
     get_file_buffer_from_path(path)
 }
 
+/** write a string to a file */
+pub fn write_file_string(path: PathBuf, contents: &str) -> Result<(), P64Error> {
+    let mut file = match File::create(&path) {
+        Ok(f) => f,
+        Err(e) => return Err(P64Error::IoError(e)),
+    };
+    let mut writer = BufWriter::new(file);
+    match writer.write(contents.as_bytes()) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(P64Error::IoError(e)),
+    }
+}
+
 /** Load file contents as buffer */
 pub fn get_file_buffer_from_path(path: PathBuf) -> Result<Vec<u8>, P64Error> {
     let mut v = vec![];
@@ -108,6 +121,12 @@ fn scrub_path(dir: &str, path: &str) -> Result<PathBuf, P64Error> {
 pub fn get_file_string_scrubbed(dir: &str, path: &str) -> Result<String, P64Error> {
     let p = scrub_path(dir, path)?;
     get_file_string_from_path(p)
+}
+
+/** Write file with utf-8 string as contents, file path cannot go higher than dir */
+pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Result<(), P64Error> {
+    let p = scrub_path(dir, path)?;
+    write_file_string(p, contents)
 }
 
 fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {

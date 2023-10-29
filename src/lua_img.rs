@@ -1,13 +1,15 @@
 use std::rc::Rc;
 
-use glam::{vec4, Vec4};
-use image::RgbaImage;
-use mlua::{AnyUserData, UserData, UserDataMethods, Value};
-
 use crate::{
     command::{num, numop},
     gui::{direct_fill, direct_image, direct_line, direct_pixel, direct_rect, direct_text},
 };
+use glam::{vec4, Vec4};
+use image::RgbaImage;
+#[cfg(feature = "puc_lua")]
+use mlua::{AnyUserData, UserData, UserDataMethods, Value};
+#[cfg(feature = "silt")]
+use silt_lua::prelude::{UserData, Value};
 
 pub struct LuaImg {
     pub dirty: bool,
@@ -64,6 +66,7 @@ impl LuaImg {
 }
 
 impl UserData for LuaImg {
+    #[cfg(feature = "puc_lua")]
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
         methods.add_method("raw", |_, this, _: ()| Ok(this.image.to_vec()));
@@ -257,13 +260,13 @@ pub fn dehex(s2: &str) -> Vec4 {
     }
 }
 
-pub fn get_color(x: mlua::Value) -> Vec4 {
+pub fn get_color(x: Value) -> Vec4 {
     match x {
-        mlua::Value::String(s) => match s.to_str() {
+        Value::String(s) => match s.to_str() {
             Ok(s2) => dehex(s2),
             _ => vec4(0., 0., 0., 0.),
         },
-        mlua::Value::Table(t) => {
+        Value::Table(t) => {
             let tt = t
                 .sequence_values::<f32>()
                 .filter_map(|f| match f {

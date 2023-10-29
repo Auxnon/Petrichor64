@@ -7,7 +7,6 @@ use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
     bundle::BundleResources,
     error::P64Error,
-    file_util,
     gui::GuiMorsel,
     log::LogType,
     lua_define::{LuaResponse, MainPacket, SoundSender},
@@ -23,13 +22,21 @@ use crate::{
 
 use image::RgbaImage;
 use itertools::Itertools;
+
+use parking_lot::Mutex;
+use rand::Rng;
+
+#[cfg(feature = "puc_lua")]
 use mlua::{
-    AnyUserData, Error, Lua, Table,
+    AnyUserData, Error as ExtError, Lua, Table,
     Value::{self},
     Variadic,
 };
-use parking_lot::Mutex;
-use rand::Rng;
+
+#[cfg(feature = "silt")]
+use silt_lua::prelude::{Lua, LuaError, Table, Value, Variadic};
+#[cfg(feature = "silt")]
+type ExtError = LuaError;
 
 use std::{
     cell::RefCell,
@@ -180,10 +187,6 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         "exit" => {
             hard_reset(core);
             load_empty(core);
-        }
-        "bartholomew" => {
-            hard_reset(core);
-            load(core, Some("b"), Some(crate::asset::get_b()), None, None);
         }
         "reset" => hard_reset(core),
         "reload" => reload(core, bundle_id),
@@ -388,7 +391,7 @@ pub fn init_lua_sys(
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
-) -> Result<(), Error>
+) -> Result<(), ExtError>
 // where N: 
 // #[cfg(feature = "online_capable")]
 // Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
@@ -400,11 +403,15 @@ pub fn init_lua_sys(
     let default_func = lua_ctx
         .create_function(|_, _: f32| Ok("placeholder func uwu"))
         .unwrap();
+
+    #[cfg(feature = "puc_lua")]
     res(
         "_default_func",
         lua_globals.set("_default_func", default_func),
         &loggy,
     );
+    #[cfg(feature = "silt")]
+    lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
     let io = lua_ctx.create_table()?;
@@ -442,11 +449,14 @@ pub fn init_lua_sys(
                 // }
             }
             command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
+            #[cfg(feature = "puc_lua")]
             res(
                 $name,
                 $lib.set($name, lua_ctx.create_function($closure).unwrap()),
                 &loggy,
             );
+            #[cfg(feature = "silt")]
+            $lib.set($name, lua_ctx.create_function($closure).unwrap());
         };
     }
 
@@ -1456,6 +1466,10 @@ function quit(u) end"
                 }
                 Ok(t)
             } else {
+                // #[cfg(feature = "silt")]
+                // Err(LuaError::VmRuntimeErrorWithMessage("no table".to_string()))
+
+                #[cfg(feature = "puc_lua")]
                 Err(mlua::Error::RuntimeError("no table".to_string()))
             }
         },
@@ -1469,21 +1483,52 @@ function help() end"
     lua_lib!(
         "get",
         move |lu, file: String| {
-            // let game_directory=
-            // match file_util::get_file_string_scrubbed(,file){
-
-            // }
             let (tx, rx) = sync_channel::<Option<String>>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
             match rx.recv() {
                 Ok(o) => match o {
-                    Some(s) => Ok(s),
-                    None => Ok("".to_string()),
+                    Some(s) => {
+                        let lua_string = lu.create_string(&s)?;
+                        Ok(Value::String(lua_string))
+                    }
+                    None => Ok(Value::Nil),
                 },
-                _ => Ok("".to_string()),
+                _ => Ok(Value::Nil),
             }
         },
-        "List all commands",
+        "load a file relative to the game directory",
+        "
+---@return table
+function get() end",
+        io
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "set",
+        move |_, (file, contents): (String, String)| {
+            let (tx, rx) = sync_channel::<bool>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Write(file, contents, tx))));
+            match rx.recv() {
+                Ok(o) => Ok(Value::Boolean(o)),
+                Err(_) => Ok(Value::Boolean(false)),
+            }
+        },
+        "load a file relative to the game directory",
+        "
+---@return table
+function get() end",
+        io
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "copy",
+        move |_, content: String| {
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
+            Ok(())
+        },
+        "Copy text to the clipboard",
         "
 ---@return table
 function help() end",
@@ -2077,7 +2122,8 @@ pub enum MainCommmand {
     Null(),
     Stats(),
     Read(String, SyncSender<Option<String>>),
-    Write(String, String),
+    Write(String, String, SyncSender<bool>),
+    Copy(String),
     //for testing
     // Meta(crate::gui::ScreenIndex),
     Quit(u8),
@@ -2100,10 +2146,10 @@ pub fn numop(x: Option<Value>) -> LuaResponse {
         _ => LuaResponse::Integer(0),
     }
 }
-fn nummold(x: mlua::Value) -> NumCouple {
+fn nummold(x: Value) -> NumCouple {
     match x {
-        mlua::Value::Integer(i) => (true, i as f32),
-        mlua::Value::Number(f) => (f >= 2., f as f32),
+        Value::Integer(i) => (true, i as f32),
+        Value::Number(f) => (f >= 2., f as f32),
         _ => (false, 0.),
     }
 }
@@ -2185,7 +2231,7 @@ fn nummold(x: mlua::Value) -> NumCouple {
 //     }
 // }
 
-fn table_hasher(table: mlua::Table) -> Vec<(String, ValueMap)> {
+fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
     for it in table.pairs::<String, Value>() {
         if let Ok((key, val)) = it {

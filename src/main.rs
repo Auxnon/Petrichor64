@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::log::LogType;
+use clipboard::{ClipboardContext, ClipboardProvider};
 #[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
 use glam::vec2;
@@ -182,6 +183,8 @@ fn main() {
 
                 #[cfg(not(feature = "include_auto"))]
                 {
+                    #[cfg(not(feature = "studio"))]
+                    core.gui.disable_console();
                     // crate::command::load_empty(&mut core);
                 }
             }
@@ -651,6 +654,25 @@ impl Core {
                     let res = tx.send(pak);
                     self.log_check(res);
                 }
+                MainCommmand::Write(file, contents, tx) => {
+                    let res = match self.bundle_manager.get_main_bundle().get_directory() {
+                        Some(dir) => {
+                            if let Err(e) =
+                                crate::file_util::write_file_string_scrubbed(dir, &file, &contents)
+                            {
+                                self.log(LogType::IoError, &format!("!!{}", e));
+                                false
+                            } else {
+                                true
+                            }
+                        }
+                        None => {
+                            self.log(LogType::IoError, &format!("!! No relative path access"));
+                            false
+                        }
+                    };
+                    self.log_check(tx.send(res));
+                }
                 MainCommmand::BundleDropped(b) => {
                     completed_bundles.remove(&id);
                     self.bundle_manager.reclaim_resources(b);
@@ -736,9 +758,15 @@ impl Core {
                     completed_bundles.insert(id, true);
                     loop_complete = true;
                 }
+                MainCommmand::Copy(s) => {
+                    if let Ok(mut ctx) = ClipboardContext::new() {
+                        if let Err(_) = ctx.set_contents(s) {
+                            self.log(LogType::IoError, &format!("!!Clipboard error"));
+                        }
+                    }
+                }
                 MainCommmand::Load(_) => todo!(),
                 MainCommmand::Null() => todo!(),
-                MainCommmand::Write(_, _) => todo!(),
             }
         });
 

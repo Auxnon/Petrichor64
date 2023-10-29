@@ -243,12 +243,12 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             } else if input_helper.key_pressed(VirtualKeyCode::Return) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
-                // println!("fullscreen {}", core.global.fullscreen);
-            } else if input_helper.key_pressed(VirtualKeyCode::C) {
-                if let Ok(mut ctx) = ClipboardContext::new() {
-                    if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
-                    }
-                }
+                // TODO is it better to have copy within the control handler or leave it up to an app to bind cmd/ctrl+c ?
+                // } else if input_helper.key_pressed(VirtualKeyCode::C) {
+                //     if let Ok(mut ctx) = ClipboardContext::new() {
+                //         if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
+                //         }
+                //     }
             } else if input_helper.key_pressed(VirtualKeyCode::V) {
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
