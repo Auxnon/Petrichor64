@@ -20,7 +20,7 @@ codesign -s "Apple Development: nicholasmcavoy89@gmail.com (M7KS95955P)" target/
 
 # LINUX / STEAMDECK
 
-(Currently need windows WSL, if only because glibc version is too new to work on SteamDeck as of Septermeber 2022, WSL has an older version. A downgraded version of linux may work too)
+(Currently need windows WSL, if only because glibc version is too new to work on SteamDeck as of September 2022, WSL has an older version. A downgraded version of linux may work too)
 
 PreReq:
 
