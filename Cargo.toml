@@ -1,7 +1,7 @@
 
 [package]
 name = "Petrichor64"
-version = "0.4.0"
+version = "0.4.3"
 edition = "2021"
 resolver = "2"
 description = "Cross platform lua interpreting game engine"
@@ -17,13 +17,14 @@ inherits = "release"
 
 [features]
 default=["online_capable", "audio", "headed", "puc_lua"] # "online_capable" ,
-include_auto=[]
+include_auto=["studio"]
 online_capable=["tokio", "tokio-util", "rmp-serde", "bytes"]
 headed=["wgpu", "winit", "winit_input_helper"]
 audio=["cpal"]
 puc_lua=["mlua"]
 silt=["silt-lua"]
 picc=["piccolo"]
+studio=[]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
