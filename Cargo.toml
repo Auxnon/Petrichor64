@@ -16,7 +16,7 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=["online_capable", "audio", "headed", "puc_lua"] # "online_capable" ,
+default=["online_capable", "audio", "headed", "picc"] # "online_capable" ,
 include_auto=["studio"]
 online_capable=["tokio", "tokio-util", "rmp-serde", "bytes"]
 headed=["wgpu", "winit", "winit_input_helper"]
@@ -69,7 +69,8 @@ futures="0.3.26"
 regex="1.7.1"
 native-dialog = "0.6.3"
 silt-lua = {version="0.1.1", optional=true,path="../silt-lua"}
-piccolo = {version="0.1.1", optional=true}
+piccolo = {version="0.2", optional=true}
+gc-arena = "0.4.0"
 # wasm-bindgen = "0.2.83"
 
 # [dependencies.tracy]

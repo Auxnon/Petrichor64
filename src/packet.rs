@@ -193,63 +193,63 @@ impl Encoder<Packet64> for Packy {
     }
 }
 
-pub fn table_serial(table: Table) {
-    // table.raw_sequence_values()
-    let indexes: Vec<Value> = table
-        .clone()
-        .pairs::<Value, Value>()
-        .filter_map(|f| match f {
-            Ok((key, _)) => Some(key),
-            _ => None,
-        })
-        .collect();
+// pub fn table_serial(table: Table) {
+//     // table.raw_sequence_values()
+//     let indexes: Vec<Value> = table
+//         .clone()
+//         .pairs::<Value, Value>()
+//         .filter_map(|f| match f {
+//             Ok((key, _)) => Some(key),
+//             _ => None,
+//         })
+//         .collect();
 
-    let ind_len = indexes.len();
+//     let ind_len = indexes.len();
 
-    // match f.1 {
-    //     Value::Table(t) => table_serial(t),
-    //     Value::String(s) => println!("{} {}", f.0, s.to_str().unwrap()),
-    //     Value::Integer(i) => println!("{} {}", f.0, i),
-    //     _ => {}
-    // }
+//     // match f.1 {
+//     //     Value::Table(t) => table_serial(t),
+//     //     Value::String(s) => println!("{} {}", f.0, s.to_str().unwrap()),
+//     //     Value::Integer(i) => println!("{} {}", f.0, i),
+//     //     _ => {}
+//     // }
 
-    let seq = table.raw_sequence_values::<Value>();
-    let seq2 = seq
-        .filter_map(|f| match f {
-            Ok(r) => Some(r),
-            _ => None,
-        })
-        .collect_vec();
-    let seq_len = seq2.len();
-    if seq_len != ind_len {
-        panic!("length mismatch seq_len {} ind_len {}", seq_len, ind_len)
-    } else {
-        println!("length match!")
-    }
-    // length
+//     let seq = table.raw_sequence_values::<Value>();
+//     let seq2 = seq
+//         .filter_map(|f| match f {
+//             Ok(r) => Some(r),
+//             _ => None,
+//         })
+//         .collect_vec();
+//     let seq_len = seq2.len();
+//     if seq_len != ind_len {
+//         panic!("length mismatch seq_len {} ind_len {}", seq_len, ind_len)
+//     } else {
+//         println!("length match!")
+//     }
+//     // length
 
-    // for i in 0..indexes.len() {
-    //     let key = indexes[i];
-    //     seq.
-    //     let value = table.get::<Value, Value>(&key).unwrap();
-    //     match value {
-    //         Value::Table(t) => table_serial(t),
-    //         Value::String(s) => println!("{} {}", key, s.to_str().unwrap()),
-    //         Value::Integer(i) => println!("{} {}", key, i),
-    //         _ => {}
-    //     }
-    // }
+//     // for i in 0..indexes.len() {
+//     //     let key = indexes[i];
+//     //     seq.
+//     //     let value = table.get::<Value, Value>(&key).unwrap();
+//     //     match value {
+//     //         Value::Table(t) => table_serial(t),
+//     //         Value::String(s) => println!("{} {}", key, s.to_str().unwrap()),
+//     //         Value::Integer(i) => println!("{} {}", key, i),
+//     //         _ => {}
+//     //     }
+//     // }
 
-    // for pair in table.raw_sequence_values::<Value, Value>() {
-    //     if let Ok((key, value)) = pair {
-    //         match value {
-    //             Value::Table(t) => table_serial(t),
-    //             Value::String(s) => s.to_str(),
-    //             Value::Integer(i) =>i.to_string(),
-    //             ,
-    //             _ => {}
-    //         }
-    //     }
-    // }
-    // for i in table.raw_sequence_values() {}
-}
+//     // for pair in table.raw_sequence_values::<Value, Value>() {
+//     //     if let Ok((key, value)) = pair {
+//     //         match value {
+//     //             Value::Table(t) => table_serial(t),
+//     //             Value::String(s) => s.to_str(),
+//     //             Value::Integer(i) =>i.to_string(),
+//     //             ,
+//     //             _ => {}
+//     //         }
+//     //     }
+//     // }
+//     // for i in table.raw_sequence_values() {}
+// }

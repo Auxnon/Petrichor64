@@ -24,6 +24,7 @@ use image::RgbaImage;
 use itertools::Itertools;
 
 use parking_lot::Mutex;
+use piccolo::{error::LuaError, lua, Value};
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -35,8 +36,14 @@ use mlua::{
 
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Table, Value, Variadic};
+
+#[cfg(feature = "picc")]
+use piccolo::{Context, Lua, Table};
+
 #[cfg(feature = "silt")]
 type ExtError = LuaError;
+#[cfg(feature = "picc")]
+type ExtError<'a> = LuaError<'a>;
 
 use std::{
     cell::RefCell,
@@ -375,8 +382,9 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     Ok(true)
 }
 
-pub fn init_lua_sys(
+pub fn init_lua_sys<'a>(
     lua_ctx: &Lua,
+    #[cfg(feature = "picc")] ctx: &Context,
     lua_globals: &Table,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
@@ -391,7 +399,7 @@ pub fn init_lua_sys(
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
-) -> Result<(), ExtError>
+) -> Result<(), ExtError<'a>>
 // where N: 
 // #[cfg(feature = "online_capable")]
 // Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
@@ -416,10 +424,10 @@ pub fn init_lua_sys(
     let mut command_map: Vec<(String, (String, String))> = vec![];
     let io = lua_ctx.create_table()?;
 
-    lua_globals.set("pi", std::f64::consts::PI);
-    lua_globals.set("tau", std::f64::consts::PI * 2.0);
-    lua_globals.set("gui", main_rast);
-    lua_globals.set("sky", sky_rast);
+    lua_globals.set(ctx, "pi", std::f64::consts::PI);
+    lua_globals.set(ctx, "tau", std::f64::consts::PI * 2.0);
+    lua_globals.set(ctx, "gui", main_rast);
+    lua_globals.set(ctx, "sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -456,7 +464,7 @@ pub fn init_lua_sys(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            $lib.set($name, lua_ctx.create_function($closure).unwrap());
+            $lib.set(ctx, $name, lua_ctx.create_function($closure).unwrap());
         };
     }
 
@@ -717,6 +725,8 @@ function abtn(button) end"
                 Ok(_) => {}
                 Err(_) => return Err(make_err("Unable to create entity")),
             }
+            // AnyUserData::
+            // AnyUserData::new(lua_ctx, wrapped).to_lua_err()?;
 
             // Ok(match rx.recv() {
             //     Ok(mut e) => e.remove(0),
@@ -738,6 +748,7 @@ function make(asset, x, y, z, scale) end"
     // single usage method for entity duplication only means it's not listed
     let pitcher = main_pitcher.clone();
     lua_globals.set(
+        *ctx,
         "_make",
         lua_ctx
             .create_function(move |_, lent: Arc<std::sync::Mutex<LuaEnt>>| {
@@ -1031,8 +1042,9 @@ function gimg(asset) end"
         move |_, (w, h): (u32, u32)| {
             let im = GuiMorsel::new_image(w, h);
             let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
+            let ud = lua_img_constructor(lua_img);
 
-            Ok(lua_img)
+            Ok(ud)
         },
         "Create new image buffer userdata, does not set as asset",
         "
@@ -1545,9 +1557,10 @@ function help() end",
     //     ""
     // );
 
-    lua_globals.set("io", io)?;
+    lua_globals.set(*ctx, "io", io)?;
     lua_ctx
-        .load(
+        .lua_ctx
+        .run(
             "
         add=table.insert 
         del=table.remove 
@@ -2571,13 +2584,9 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
     (vec, norms, uv, ind)
 }
 
-fn make_err(s: &str) -> mlua::prelude::LuaError {
-    // return mlua::Error::CallbackError {
-    //     traceback: s.to_string(),
-    //     cause: Arc::new(*er),
-    // };
-
-    return mlua::Error::RuntimeError(s.to_string());
+fn make_err(s: &str) -> LuaError {
+    LuaError::RuntimeError(s.to_string())
+    // return mlua::Error::RuntimeError(s.to_string());
 }
 
 /** Convert string command into easy to use hashmap */

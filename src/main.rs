@@ -67,6 +67,8 @@ mod template;
 mod texture;
 mod tile;
 mod types;
+#[cfg(feature = "picc")]
+mod userdata_util;
 mod world;
 
 use command::MainCommmand;

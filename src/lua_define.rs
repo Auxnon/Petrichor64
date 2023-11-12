@@ -13,6 +13,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
+use piccolo::{error::LuaError, Lua, Thread, Value};
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Value};
 use std::{
@@ -195,10 +196,12 @@ impl LuaCore {
         self.to_lua_tx.send(LuaTalk::Die);
     }
 }
-fn lua_load(lua: &Lua, st: &String) -> Result<(), LuaError> {
-    let chunk = lua.load(st);
 
-    chunk.exec()
+fn lua_load<'a>(lua: &Lua, st: &String) -> Result<(), LuaError<'a>> {
+    lua.run(st)
+    // let chunk = lua.load(st);
+
+    // chunk.exec()
 }
 
 fn start(
@@ -261,8 +264,8 @@ fn start(
             // } else {
             //     Lua::new()
             // };
-            let lua_ctx = Lua::new();
-
+            let lua_ctx = Lua::core();
+            let thread = lua_ctx.run(|ctx| ctx.state.registry.stash(&ctx, Thread::new(&ctx)));
             // lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
             // lua_ctx.sa
 
@@ -289,6 +292,7 @@ fn start(
             let mut debounce_error_counter = 60;
             match crate::command::init_lua_sys(
                 &lua_ctx,
+                &ctx,
                 &globals,
                 bundle_id,
                 pitcher,
@@ -541,11 +545,11 @@ fn start(
                                                                         )
                                                                     ),
                                                                     (
-                                                                        tt.get::<_, String>(1)
+                                                                        tt.get::<_, String>(ctx, 1)
                                                                             .unwrap_or(
                                                                                 "".to_owned(),
                                                                             ),
-                                                                        tt.get::<_, String>(2)
+                                                                        tt.get::<_, String>(ctx, 2)
                                                                             .unwrap_or(
                                                                                 "".to_owned(),
                                                                             ),
@@ -619,6 +623,9 @@ fn start(
 type ErrorOut = mlua::Error;
 #[cfg(feature = "silt")]
 type ErrorOut = silt_lua::prelude::LuaError;
+
+#[cfg(feature = "picc")]
+type ErrorOut<'a> = LuaError<'a>;
 
 fn format_error(e: ErrorOut) -> String {
     format_error_string(e.to_string())
