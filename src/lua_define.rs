@@ -3,6 +3,7 @@ use crate::sound::SoundCommand;
 use crate::{
     bundle::BundleResources,
     command::MainCommmand,
+    error::P64Error,
     log::LogType,
     lua_img::LuaImg,
     pad::Pad,
@@ -13,12 +14,18 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use piccolo::{error::LuaError, Lua, Thread, Value};
+use piccolo::{
+    compiler::{self as Compiler, interning::BasicInterner},
+    error::LuaError,
+    meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Executor, Function,
+    FunctionProto, Lua, StashedExecutor, StaticError, Value,
+};
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Value};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    io::{BufRead, BufReader, Read},
     rc::Rc,
     sync::mpsc::{channel, sync_channel, Sender, SyncSender},
     thread,
@@ -45,30 +52,30 @@ pub enum LuaResponse {
     Error(String),
 }
 
-pub enum LuaTalk {
+pub enum LuaTalk<'lt> {
     AsyncFunc(String),
     Func(String, SyncSender<LuaResponse>),
     Main,
     Loop(ControlState),
     Load(String, SyncSender<LuaResponse>),
-    AsyncLoad(String),
+    AsyncLoad(&'lt dyn BufRead),
     Resize(u32, u32),
     Die,
     Drop(String),
 }
 
-pub struct LuaCore {
-    to_lua_tx: Sender<LuaTalk>,
+pub struct LuaCore<'lt> {
+    to_lua_tx: Sender<LuaTalk<'lt>>,
 }
 
-impl LuaCore {
+impl<'lt> LuaCore<'lt> {
     /** create new but do not start yet. Channel acts as a placeholder */
     pub fn new(// bundle_id: u8,
         // gui: GuiMorsel,
         // world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
         // singer: Sender<SoundPacket>,
         // dangerous: bool,
-    ) -> LuaCore {
+    ) -> LuaCore<'lt> {
         let (sender, reciever) = channel::<LuaTalk>();
 
         LuaCore { to_lua_tx: sender }
@@ -169,7 +176,7 @@ impl LuaCore {
         self.to_lua_tx.send(LuaTalk::Resize(w, h));
     }
 
-    pub fn async_load(&self, file: &String) {
+    pub fn async_load<R>(&self, file: &R) {
         self.to_lua_tx.send(LuaTalk::AsyncLoad(file.to_string()));
     }
 
@@ -197,12 +204,168 @@ impl LuaCore {
     }
 }
 
-fn lua_load<'a>(lua: &Lua, st: &String) -> Result<(), LuaError<'a>> {
-    lua.run(st)
-    // let chunk = lua.load(st);
+fn run_in_context<'gc>(
+    ctx: &Context<'_>,
+    executor: &Executor<'gc>,
+    code: &str,
+) -> Result<(), Error<'gc>> {
+    let closure = match Closure::load(*ctx, code.as_bytes()) {
+        Ok(closure) => closure,
+        Err(err) => {
+            return Err(err.into());
+        }
+    };
+    let function = Function::compose(
+        &ctx,
+        [
+            closure.into(),
+            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                Ok(if stack.is_empty() {
+                    CallbackReturn::Return
+                } else {
+                    CallbackReturn::Call {
+                        function: meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                        then: None,
+                    }
+                })
+            })
+            .into(),
+        ],
+    );
+    // executor.
+    executor.restart(*ctx, function, ());
 
-    // chunk.exec()
+    Ok(())
 }
+
+fn run_initial_code<R>(lua: &mut Lua, code: R) -> Result<(), StaticError>
+where
+    R: Read,
+{
+    let executor = lua.try_run(|ctx| {
+        let closure = Closure::new(
+            &ctx,
+            FunctionProto::compile(ctx, code)?,
+            Some(ctx.state.globals),
+        )?;
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+    })?;
+    lua.execute(&executor)?;
+    Ok(())
+}
+
+/// Build a lua function to be excuted later
+fn build_function(lua: &mut Lua, code: &str) -> Result<StashedExecutor, StaticError> {
+    let func = lua.try_run(|ctx| {
+        let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
+            Ok(closure) => closure,
+            Err(err) => {
+                if let Ok(closure) = Closure::load(ctx, code.as_bytes()) {
+                    closure
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        let function = Function::compose(
+            &ctx,
+            [
+                closure.into(),
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                    Ok(if stack.is_empty() {
+                        CallbackReturn::Return
+                    } else {
+                        CallbackReturn::Call {
+                            function: meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                            then: None,
+                        }
+                    })
+                })
+                .into(),
+            ],
+        );
+
+        Ok(ctx
+            .state
+            .registry
+            .stash(&ctx, Executor::start(ctx, function, ())))
+    })?;
+
+    Ok(func)
+}
+
+fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
+    lua.try_run(|ctx| {
+        let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
+            Ok(closure) => closure,
+            Err(err) => {
+                if let Ok(closure) = Closure::load(ctx, code.as_bytes()) {
+                    closure
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        let function = Function::compose(
+            &ctx,
+            [
+                closure.into(),
+                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+                    Ok(if stack.is_empty() {
+                        CallbackReturn::Return
+                    } else {
+                        CallbackReturn::Call {
+                            function: meta_ops::call(ctx, ctx.state.globals.get(ctx, "print"))?,
+                            then: None,
+                        }
+                    })
+                })
+                .into(),
+            ],
+        );
+        let executor = ctx.state.registry.fetch(executor);
+        executor.restart(ctx, function, ());
+        Ok(())
+    })?;
+
+    lua.execute::<()>(executor)
+}
+
+// fn lua_load<'a, R>(
+//     lua: &Lua,
+//     executor: &StashedExecutor,
+//     interner: &mut BasicInterner,
+//     st: R,
+// ) -> Result<(), P64Error>
+// where
+//     R: Read,
+// {
+//     // let file = piccolo::io::buffered_read(std::fs::File::open("file").unwrap()).unwrap();
+//     let chnk = Compiler::parse_chunk(st, interner)?;
+//     let bytecode = Compiler::compile_chunk(&chnk, interner)?;
+//     // interner.lua.execute(st);
+//     // let executor = lua.try_run(|ctx| {
+//     //     let closure = Closure::new(
+//     //         &ctx,
+//     //         FunctionProto::compile(ctx, file)?,
+//     //         Some(ctx.state.globals),
+//     //     )?;
+//     //     Ok(ctx
+//     //         .state
+//     //         .registry
+//     //         .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+//     // })?;
+
+//     lua.execute(executor);
+//     Ok(())
+//     // lua.run(st)
+//     // let chunk = lua.load(st);
+
+//     // chunk.exec()
+// }
 
 fn start(
     // switch_board: Arc<RwLock<SwitchBoard>>,
@@ -264,12 +427,46 @@ fn start(
             // } else {
             //     Lua::new()
             // };
-            let lua_ctx = Lua::core();
-            let thread = lua_ctx.run(|ctx| ctx.state.registry.stash(&ctx, Thread::new(&ctx)));
+
+            let lua_instance = Lua::core();
+            let interner = BasicInterner::default();
+            let thread = lua_instance.run(|ctx| {
+                let globals = &ctx.state.globals;
+
+                // ctx.state.registry.stash(&ctx, Thread::new(&ctx)
+            });
+
+            let executor = lua_instance.try_run(|ctx| {
+                let closure = Closure::new(
+                    &ctx,
+                    FunctionProto::compile(ctx, "print('hello')".as_bytes())?,
+                    Some(ctx.state.globals),
+                )?;
+
+                Ok(ctx
+                    .state
+                    .registry
+                    .stash(&ctx, Executor::start(ctx, closure.into(), ())))
+            })?;
+            // executor.restart(&lua_instance, || {
+            //     // rust things
+            // })?;
+
+            lua_instance.execute(&executor)?;
+
+            // let executor = lua_runner.run(|ctx| {
+            //     let executor = Executor::new(&ctx);
+            //     executor.restart(ctx, ||{
+
+            //         // rust things
+            //     }, params
+
+            // });
+            // ctx.state.registry.stash(&ctx, executor)
             // lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
             // lua_ctx.sa
 
-            let globals = lua_ctx.globals();
+            // let globals = lua_ctx.
 
             if debug {
                 loggy.send((
@@ -291,7 +488,7 @@ fn start(
             // let mut debounce_error_string = "".to_string();
             let mut debounce_error_counter = 60;
             match crate::command::init_lua_sys(
-                &lua_ctx,
+                &lua_instance,
                 &ctx,
                 &globals,
                 bundle_id,
@@ -325,8 +522,8 @@ fn start(
                 loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
             }
             // let mut counter = 0;
-            let main_lua_func = lua_ctx.load("main() loop()").into_function()?;
-            let loop_lua_func = lua_ctx.load("loop()").into_function()?;
+            let main_lua_func = lua_instance.load("main() loop()").into_function()?;
+            let loop_lua_func = lua_instance.load("loop()").into_function()?;
             // let main_ref = Rc::new(RefCell::new(f));
             for m in reciever {
                 // let (s1, s2, bit_in, channel) = m;
@@ -398,7 +595,7 @@ fn start(
                 // }
                 match m {
                     LuaTalk::Load(file, sync) => {
-                        if let Err(er) = lua_load(&lua_ctx, &file) {
+                        if let Err(er) = lua_load(&lua_instance, &mut interner, &file) {
                             loggy.send((LogType::LuaError, er.to_string()))?;
                             sync.send(LuaResponse::String(er.to_string()))?;
                         } else {
@@ -406,7 +603,7 @@ fn start(
                         }
                     }
                     LuaTalk::AsyncLoad(file) => {
-                        if let Err(er) = lua_load(&lua_ctx, &file) {
+                        if let Err(er) = lua_load(&lua_instance, &mut interner, &file) {
                             loggy.send((LogType::LuaError, er.to_string()))?;
                         }
                     }
@@ -499,7 +696,7 @@ fn start(
                     LuaTalk::Func(func, sync) => {
                         // TODO load's chunk should call set_name to "main" etc, for better error handling
                         // println!("func {:?}", func);
-                        let res = lua_ctx.load(&func).eval::<Value>();
+                        let res = lua_instance.load(&func).eval::<Value>();
                         match match res {
                             Ok(o) => {
                                 // let output = format!("{:?}", o);
@@ -598,10 +795,12 @@ fn start(
                         gui_handle.borrow_mut().resize(w, h);
                         main_rast.borrow_mut().resize(w, h);
                         sky_rast.borrow_mut().resize(w, h);
-                        let _ = lua_ctx.load(&format!("draw({},{})", w, h)).eval::<Value>();
+                        let _ = lua_instance
+                            .load(&format!("draw({},{})", w, h))
+                            .eval::<Value>();
                     }
                     LuaTalk::Drop(s) => {
-                        let res = lua_ctx.load(&format!("drop('{}')", s)).eval::<Value>();
+                        let res = lua_instance.load(&format!("drop('{}')", s)).eval::<Value>();
                         if let Err(e) = res {
                             async_sender
                                 .send((bundle_id, MainCommmand::AsyncError(format_error(e))))?;
