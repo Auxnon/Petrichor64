@@ -17,8 +17,8 @@ use parking_lot::Mutex;
 use piccolo::{
     compiler::{self as Compiler, interning::BasicInterner},
     error::{LuaError, StaticLuaError},
-    meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Executor, Function,
-    FunctionProto, Lua, StashedExecutor, StaticError, Value,
+    meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
+    FunctionProto, Lua, Stack, StashedExecutor, StaticError, Value,
 };
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Value};
@@ -55,13 +55,14 @@ pub enum LuaResponse {
     Error(String),
 }
 
+pub trait ReadSend: Read + Send {}
 pub enum LuaTalk<'lt> {
     AsyncFunc(String),
-    Func(String, SyncSender<LuaResponse>),
+    Func(&'lt str, SyncSender<LuaResponse>),
     Main,
     Loop(ControlState),
-    Load(String, SyncSender<LuaResponse>),
-    AsyncLoad(&'lt str),
+    Load(&'lt mut (dyn Read + Send), SyncSender<LuaResponse>),
+    AsyncLoad(&'lt mut (dyn Read + Send)),
     Resize(u32, u32),
     Die,
     Drop(String),
@@ -132,7 +133,7 @@ impl<'lt> LuaCore<'lt> {
     pub fn func(&self, func: &str) -> LuaResponse {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         // self.inject(func, &"0", None).0
-        self.to_lua_tx.send(LuaTalk::Func(func.to_string(), tx));
+        self.to_lua_tx.send(LuaTalk::Func(func, tx));
         match rx.recv_timeout(Duration::from_millis(4000)) {
             Ok(lua_out) => lua_out,
             Err(e) => LuaResponse::Error(format!("No/slow response from lua -> {}", e)),
@@ -179,12 +180,15 @@ impl<'lt> LuaCore<'lt> {
     //     }
     // }
 
-    pub fn load(&self, file: &String) -> LuaResponse {
+    pub fn load<R>(&self, reader: &mut R) -> LuaResponse
+    where
+        R: Read + Send,
+    {
         // log("loading script".to_string());
         // self.inject(&"load".to_string(), file, None)
 
         let (tx, rx) = sync_channel::<LuaResponse>(0);
-        match self.to_lua_tx.send(LuaTalk::Load(file.to_string(), tx)) {
+        match self.to_lua_tx.send(LuaTalk::Load(reader, tx)) {
             Ok(_) => match rx.recv_timeout(Duration::from_millis(10000)) {
                 Ok(lua_out) => lua_out,
                 Err(e) => LuaResponse::Error(format!("No / >10s response from lua -> {}", e)),
@@ -198,8 +202,8 @@ impl<'lt> LuaCore<'lt> {
         self.to_lua_tx.send(LuaTalk::Resize(w, h));
     }
 
-    pub fn async_load(&self, code: &str) {
-        self.to_lua_tx.send(LuaTalk::AsyncLoad(code));
+    pub fn async_load(&self, reader: &'lt mut (dyn Read + Send)) {
+        self.to_lua_tx.send(LuaTalk::AsyncLoad(reader));
     }
 
     /** Call main function within lua app */
@@ -226,12 +230,12 @@ impl<'lt> LuaCore<'lt> {
     }
 }
 
-fn run_in_context<'gc>(
+fn run_in_context<'gc, 'lt>(
     ctx: &Context<'_>,
     executor: &Executor<'gc>,
-    code: &str,
+    code: &'lt mut (dyn Read + Send),
 ) -> Result<(), Error<'gc>> {
-    let closure = match Closure::load(*ctx, code.as_bytes()) {
+    let closure = match Closure::load(*ctx, code) {
         Ok(closure) => closure,
         Err(err) => {
             return Err(err.into());
@@ -262,7 +266,7 @@ fn run_in_context<'gc>(
 
 fn run_initial_code<R>(lua: &mut Lua, code: R) -> Result<(), StaticError>
 where
-    R: Read,
+    R: ReadSend,
 {
     let executor = lua.try_run(|ctx| {
         let closure = Closure::new(
@@ -314,6 +318,18 @@ fn build_function<'a>(
     ))
 }
 
+pub fn native_function<'a, 'gc, F>(ctx: &Context<'_>, func: F) -> Result<Value<'gc>, StaticError>
+where
+    F: 'static
+        + Fn(
+            Context<'gc>,
+            Execution<'gc, '_>,
+            Stack<'gc, '_>,
+        ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+{
+    Ok(AnyCallback::from_fn(ctx, func).into())
+}
+
 fn build_and_run_function(lua: &mut Lua, code: &str) -> Result<StashedExecutor, StaticError> {
     let func = lua.try_run(|ctx| {
         let func = build_function(lua, ctx, code)?;
@@ -325,7 +341,7 @@ fn build_and_run_function(lua: &mut Lua, code: &str) -> Result<StashedExecutor, 
     Ok(func)
 }
 
-fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
+pub fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result<(), StaticError> {
     lua.try_run(|ctx| {
         let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
             Ok(closure) => closure,
@@ -638,7 +654,7 @@ fn start<'lt>(
                     // }
                     match m {
                         LuaTalk::Load(code, sync) => {
-                            if let Err(er) = run_in_context(&ctx, &executor, &code) {
+                            if let Err(er) = run_in_context(&ctx, &executor, code) {
                                 loggy.send((LogType::LuaError, er.to_string()))?;
                                 sync.send(LuaResponse::String(er.to_string()))?;
                             } else {
@@ -653,7 +669,7 @@ fn start<'lt>(
                             }
                         }
                         LuaTalk::AsyncLoad(code) => {
-                            if let Err(er) = run_in_context(&ctx, &executor, &code) {
+                            if let Err(er) = run_in_context(&ctx, &executor, code) {
                                 loggy.send((LogType::LuaError, er.to_string()))?;
                             }
                         }
@@ -747,7 +763,8 @@ fn start<'lt>(
                         }
                         LuaTalk::Func(func, sync) => {
                             // TODO load's chunk should call set_name to "main" etc, for better error handling
-                            run_in_context(&ctx, &executor, &func)?;
+                            let mut s: &mut (dyn Read + Send) = &mut func.as_bytes();
+                            run_in_context(&ctx, &executor, s)?;
                             let res = executor.take_result::<Value>(ctx)?;
                             // let res = match executor.take_result::<Value>(ctx) {
                             //     Ok(v1) => match v1 {
@@ -764,7 +781,9 @@ fn start<'lt>(
                                             let s = str.to_str().unwrap_or(&"").to_string();
                                             LuaResponse::String(s)
                                         }
-                                        Value::Integer(i) => LuaResponse::Integer(i),
+                                        Value::Integer(i) => LuaResponse::Integer(
+                                            i32::try_from(i).unwrap_or(i32::MAX),
+                                        ),
                                         Value::Number(n) => {
                                             // println!("func back {:?}", n);
                                             LuaResponse::Number(n)
@@ -775,52 +794,35 @@ fn start<'lt>(
                                             let mut hash2: HashMap<String, (String, String)> =
                                                 HashMap::new();
                                             // t.0.borrow().entries.
-                                            for (i, pair) in t.pairs::<Value, Value>().enumerate() {
-                                                if let Ok((k, v)) = pair {
-                                                    if let Value::String(key) = k {
-                                                        match v {
-                                                            Value::String(val) => {
-                                                                hash.insert(
-                                                                    format!(
-                                                                        "{}",
-                                                                        key.to_str().unwrap_or(
-                                                                            &i.to_string()
-                                                                        )
-                                                                    ),
-                                                                    format!(
-                                                                        "{}",
-                                                                        val.to_str().unwrap_or("")
+                                            for (i, (k, v)) in t.iter().enumerate() {
+                                                if let Value::String(key) = k {
+                                                    match v {
+                                                        Value::String(val) => {
+                                                            let hash_key = key
+                                                                .to_str()
+                                                                .unwrap_or(&i.to_string())
+                                                                .to_string();
+                                                            hash.insert(
+                                                                hash_key,
+                                                                val.to_str()
+                                                                    .unwrap_or("")
+                                                                    .to_string(),
+                                                            );
+                                                        }
+                                                        Value::Table(tt) => {
+                                                            if tt.length() == 2 {
+                                                                hash2.insert(
+                                                                    key.to_str()
+                                                                        .unwrap_or(&i.to_string())
+                                                                        .to_string(),
+                                                                    (
+                                                                        tt.get(ctx, 1).to_string(),
+                                                                        tt.get(ctx, 2).to_string(),
                                                                     ),
                                                                 );
                                                             }
-                                                            Value::Table(tt) => {
-                                                                if tt.raw_len() == 2 {
-                                                                    hash2.insert(
-                                                                        format!(
-                                                                            "{}",
-                                                                            key.to_str().unwrap_or(
-                                                                                &i.to_string()
-                                                                            )
-                                                                        ),
-                                                                        (
-                                                                            tt.get::<_, String>(
-                                                                                ctx, 1,
-                                                                            )
-                                                                            .unwrap_or(
-                                                                                "".to_owned(),
-                                                                            ),
-                                                                            tt.get::<_, String>(
-                                                                                ctx, 2,
-                                                                            )
-                                                                            .unwrap_or(
-                                                                                "".to_owned(),
-                                                                            ),
-                                                                        ),
-                                                                    );
-                                                                }
-                                                            }
-                                                            _ => {}
                                                         }
+                                                        _ => {}
                                                     }
                                                 }
                                             }
@@ -839,9 +841,9 @@ fn start<'lt>(
                                         Value::UserData(_) => {
                                             LuaResponse::String("[userdata]".to_string())
                                         }
-                                        Value::LightUserData(_) => {
-                                            LuaResponse::String("[lightuserdata]".to_string())
-                                        }
+                                        // Value::LightUserData(_) => {
+                                        //     LuaResponse::String("[lightuserdata]".to_string())
+                                        // }
                                         _ => LuaResponse::Nil,
                                     };
                                     sync.send(output)

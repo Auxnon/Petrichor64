@@ -238,7 +238,7 @@ impl UserData for LuaImg {
 pub fn lua_img_constructor<'a>(ctx: &Context, limg: LuaImg) -> AnyUserData<'a> {
     // let mc
 
-    let methods = StaticUserMethods::<LuaImg>::new(&ctx.mutation);
+    let methods = StaticUserMethods::<LuaImg>::new(ctx.mutation);
     methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
     let ud = methods.wrap(*ctx, limg);
     return ud;
