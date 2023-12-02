@@ -378,6 +378,30 @@ pub fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result
     lua.execute::<()>(executor)
 }
 
+pub fn execute<'gc>(
+    lua: &mut Lua,
+    ctx: Context,
+    executor: &Executor,
+    code: &str,
+) -> Result<(), Error<'gc>> {
+    // lua.try_run(|ctx| {
+    let closure = match Closure::load(ctx, code.as_bytes()) {
+        Ok(closure) => closure,
+        Err(err) => {
+            return Err(err.into());
+        }
+    };
+
+    let func = Function::from(closure);
+
+    // let executor = ctx.state.registry.fetch(executor);
+    executor.restart(ctx, func, ());
+    Ok(())
+    // })?;
+
+    // lua.execute::<()>(executor)
+}
+
 // fn lua_load<'a, R>(
 //     lua: &Lua,
 //     executor: &StashedExecutor,
@@ -546,6 +570,7 @@ fn start<'lt>(
                     &lua_instance,
                     &ctx,
                     &globals,
+                    &executor,
                     bundle_id,
                     pitcher,
                     world_sender,

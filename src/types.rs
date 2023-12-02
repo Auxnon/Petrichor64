@@ -1,4 +1,3 @@
-use piccolo::{error::LuaError, Context};
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{LuaError, Table};
 
@@ -6,7 +5,7 @@ use silt_lua::prelude::{LuaError, Table};
 use mlua::{prelude::LuaError, Table};
 
 #[cfg(feature = "picc")]
-use piccolo::Table;
+use piccolo::{Context, InvalidTableKey, Table};
 
 pub enum ValueMap {
     String(String),
@@ -37,10 +36,11 @@ impl GlobalMap {
     }
 
     #[cfg(feature = "picc")]
-    pub fn convert(&self, ctx: &Context, table: &mut Table) -> Result<(), LuaError> {
-        table.set(ctx, "os", self.os)?;
-        table.set(ctx, "hz", self.hertz)?;
-        table.set(ctx, "res", [self.resolution.0, self.resolution.1])?;
+    pub fn convert(&self, ctx: &Context, table: &mut Table) -> Result<(), InvalidTableKey> {
+        let c = *ctx;
+        table.set(c, "os", self.os)?;
+        table.set(c, "hz", self.hertz)?;
+        table.set(c, "res", [self.resolution.0, self.resolution.1])?;
         Ok(())
     }
 

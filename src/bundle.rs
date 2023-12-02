@@ -16,11 +16,11 @@ use crate::{
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
  */
-pub struct Bundle {
+pub struct Bundle<'a> {
     pub id: u8,
     pub name: String,
     directory: Option<String>,
-    pub lua: LuaCore,
+    pub lua: LuaCore<'a>,
     pub children: Vec<u8>,
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
     /** acts as a counter for for a frame skipped due to performance or intentionally */
@@ -33,7 +33,7 @@ pub struct Bundle {
 
 pub type BundleResources = PreGuiMorsel;
 
-impl Bundle {
+impl Bundle<'_> {
     pub fn new(id: u8, name: String, lua: LuaCore, directory: Option<String>) -> Self {
         Self {
             id,
@@ -71,19 +71,19 @@ impl Bundle {
     }
 }
 
-pub struct BundleManager {
+pub struct BundleManager<'a> {
     pub console_bundle_target: u8,
     pub bundle_counter: u8,
-    pub bundles: FxHashMap<u8, Bundle>,
+    pub bundles: FxHashMap<u8, Bundle<'a>>,
     // #[cfg(feature = "headed")]
     // pub open_tex_managers: Vec<TexManager>,
-    pub open_lua_box: Vec<LuaCore>,
+    // pub open_lua_box: Vec<LuaCore>,
     pub call_order: Vec<u8>,
     main_rasters: Vec<Rc<RefCell<RgbaImage>>>,
     sky_rasters: Vec<Rc<RefCell<RgbaImage>>>,
 }
 
-impl BundleManager {
+impl BundleManager<'_> {
     pub fn new() -> Self {
         Self {
             console_bundle_target: 0,
@@ -91,7 +91,7 @@ impl BundleManager {
             bundles: FxHashMap::default(),
             // #[cfg(feature = "headed")]
             // open_tex_managers: Vec::new(),
-            open_lua_box: Vec::new(),
+            // open_lua_box: Vec::new(),
             call_order: Vec::new(),
             main_rasters: Vec::new(),
             sky_rasters: Vec::new(),

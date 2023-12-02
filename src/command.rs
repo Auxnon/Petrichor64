@@ -9,7 +9,7 @@ use crate::{
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{LuaResponse, MainPacket, SoundSender},
+    lua_define::{native_function, LuaResponse, MainPacket, SoundSender, execute},
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
@@ -24,7 +24,7 @@ use image::RgbaImage;
 use itertools::Itertools;
 
 use parking_lot::Mutex;
-use piccolo::{error::LuaError, lua, Value};
+use piccolo::{error::{LuaError, StaticLuaError}, lua, AnySequence, CallbackReturn, Value, StaticError, AnyCallback, compiler::interning::BasicInterner, StashedExecutor, Executor};
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -386,13 +386,14 @@ pub fn init_lua_sys<'a>(
     lua_ctx: &Lua,
     #[cfg(feature = "picc")] ctx: &Context,
     lua_globals: &Table,
+    executor: &Executor ,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
     main_rast: Rc<RefCell<LuaImg>>,
     sky_rast: Rc<RefCell<LuaImg>>,
-    #[cfg(feature = "headed")] singer: SoundSender,
+    #[cfg(feature = "audio")] singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 13]>>,
@@ -407,10 +408,17 @@ pub fn init_lua_sys<'a>(
 // Option<bool>
 {
     println!("init lua sys");
+        // interner.
 
-    let default_func = lua_ctx
-        .create_function(|_, _: f32| Ok("placeholder func uwu"))
-        .unwrap();
+    let default_func = native_function(ctx, |_, _, stack| {
+
+        let v = Value::String(piccolo::String::from_static(ctx.mutation, "default function"));
+        stack.push_front(v);
+        Ok(CallbackReturn::Return)
+        // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
+        //     vec![Value::String("default function".to_string())]
+        // )))
+    });
 
     #[cfg(feature = "puc_lua")]
     res(
@@ -422,12 +430,13 @@ pub fn init_lua_sys<'a>(
     lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = lua_ctx.create_table()?;
+    let io=Table::new(&ctx.mutation);
 
-    lua_globals.set(ctx, "pi", std::f64::consts::PI);
-    lua_globals.set(ctx, "tau", std::f64::consts::PI * 2.0);
-    lua_globals.set(ctx, "gui", main_rast);
-    lua_globals.set(ctx, "sky", sky_rast);
+    let c= *ctx;
+    lua_globals.set(c, "pi", std::f64::consts::PI);
+    lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
+    lua_globals.set(c, "gui", main_rast);
+    lua_globals.set(c, "sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -750,17 +759,16 @@ function make(asset, x, y, z, scale) end"
     lua_globals.set(
         *ctx,
         "_make",
-        lua_ctx
-            .create_function(move |_, lent: Arc<std::sync::Mutex<LuaEnt>>| {
-                let id = *ent_counter2.lock();
-                *ent_counter2.lock() += 1;
-                match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-                    Ok(_) => {}
-                    Err(_) => return Err(make_err("Unable to create entity")),
-                };
-                Ok(())
-            })
-            .unwrap(),
+        native_function(ctx, move |_, _, st| {
+            // lent: Arc<std::sync::Mutex<LuaEnt>>
+            let id = *ent_counter2.lock();
+            *ent_counter2.lock() += 1;
+            match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+                Ok(_) => {}
+                Err(_) => return Err(make_err("Unable to create entity")),
+            };
+            Ok(CallbackReturn::Return)
+        })?,
     )?;
 
     let pitcher = main_pitcher.clone();
@@ -1558,9 +1566,7 @@ function help() end",
     // );
 
     lua_globals.set(*ctx, "io", io)?;
-    lua_ctx
-        .lua_ctx
-        .run(
+   execute(lua_ctx, executor, 
             "
         add=table.insert 
         del=table.remove 
@@ -1576,8 +1582,7 @@ function help() end",
         main = function() end
         loop = function() end
         ",
-        )
-        .exec()?;
+        )?;
 
     Ok(())
 }
@@ -1894,7 +1899,7 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
 // "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
 // "f10", "f11", "f12", "f13","f14","f15", "snap","snapshot","dele"];
 fn key_match(key: String) -> usize {
-    // VirtualKeyCode::from_str(&key).unwrap() as usize
+    // KeyCode::from_str(&key).unwrap() as usize
     match key.to_lowercase().as_str() {
         "1" => 0,
         "2" => 1,
@@ -2038,9 +2043,9 @@ fn key_match(key: String) -> usize {
         "paste" => 161,
         "cut" => 162,
 
-        // "space" => VirtualKeyCode::Space,
-        // "lctrl" => VirtualKeyCode::LControl,
-        // "rctrl" => VirtualKeyCode::RControl,
+        // "space" => KeyCode::Space,
+        // "lctrl" => KeyCode::LControl,
+        // "rctrl" => KeyCode::RControl,
         "alt" => 247,
         "ctrl" | "control" => 248,
         "shift" => 249,
@@ -2585,8 +2590,13 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
 }
 
 fn make_err(s: &str) -> LuaError {
-    LuaError::RuntimeError(s.to_string())
+    LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
+    // LuaError::RuntimeError(s.to_string())
     // return mlua::Error::RuntimeError(s.to_string());
+}
+
+fn make_static(s: &str)-> StaticError{
+    StaticError::Lua(StaticLuaError(s.to_owned()))
 }
 
 /** Convert string command into easy to use hashmap */
