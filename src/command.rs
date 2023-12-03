@@ -9,7 +9,7 @@ use crate::{
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{native_function, LuaResponse, MainPacket, SoundSender, execute},
+    lua_define::{execute, native_function, LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
@@ -24,7 +24,12 @@ use image::RgbaImage;
 use itertools::Itertools;
 
 use parking_lot::Mutex;
-use piccolo::{error::{LuaError, StaticLuaError}, lua, AnySequence, CallbackReturn, Value, StaticError, AnyCallback, compiler::interning::BasicInterner, StashedExecutor, Executor};
+use piccolo::{
+    compiler::interning::BasicInterner,
+    error::{LuaError, StaticLuaError},
+    lua, AnyCallback, AnySequence, CallbackReturn, Executor, RuntimeError, StashedExecutor,
+    StaticError, Value,
+};
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -49,6 +54,8 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashMap,
+    fmt::Display,
+    io::ErrorKind,
     rc::Rc,
     sync::{
         mpsc::{sync_channel, Sender, SyncSender},
@@ -386,7 +393,7 @@ pub fn init_lua_sys<'a>(
     lua_ctx: &Lua,
     #[cfg(feature = "picc")] ctx: &Context,
     lua_globals: &Table,
-    executor: &Executor ,
+    executor: &Executor,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
@@ -400,7 +407,7 @@ pub fn init_lua_sys<'a>(
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
-) -> Result<(), ExtError<'a>>
+) -> Result<(), Box<dyn std::error::Error>>
 // where N: 
 // #[cfg(feature = "online_capable")]
 // Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
@@ -408,11 +415,13 @@ pub fn init_lua_sys<'a>(
 // Option<bool>
 {
     println!("init lua sys");
-        // interner.
+    // interner.
 
     let default_func = native_function(ctx, |_, _, stack| {
-
-        let v = Value::String(piccolo::String::from_static(ctx.mutation, "default function"));
+        let v = Value::String(piccolo::String::from_static(
+            ctx.mutation,
+            "default function",
+        ));
         stack.push_front(v);
         Ok(CallbackReturn::Return)
         // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
@@ -430,9 +439,9 @@ pub fn init_lua_sys<'a>(
     lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io=Table::new(&ctx.mutation);
+    let io = Table::new(&ctx.mutation);
 
-    let c= *ctx;
+    let c = *ctx;
     lua_globals.set(c, "pi", std::f64::consts::PI);
     lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
     lua_globals.set(c, "gui", main_rast);
@@ -732,7 +741,7 @@ function abtn(button) end"
 
             match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
-                Err(_) => return Err(make_err("Unable to create entity")),
+                Err(_) => return Err(static_err("Unable to create entity")),
             }
             // AnyUserData::
             // AnyUserData::new(lua_ctx, wrapped).to_lua_err()?;
@@ -759,14 +768,19 @@ function make(asset, x, y, z, scale) end"
     lua_globals.set(
         *ctx,
         "_make",
-        native_function(ctx, move |_, _, st| {
+        native_function(ctx, move |_, _, stack| {
             // lent: Arc<std::sync::Mutex<LuaEnt>>
-            let id = *ent_counter2.lock();
-            *ent_counter2.lock() += 1;
-            match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-                Ok(_) => {}
-                Err(_) => return Err(make_err("Unable to create entity")),
-            };
+            if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
+                let id = *ent_counter2.lock();
+                *ent_counter2.lock() += 1;
+                match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+                    Ok(_) => {}
+                    Err(_) => return Err(context_err("Unable to create entity")),
+                };
+            } else {
+                return Err(context_err("Invalid entity passed to make"));
+            }
+
             Ok(CallbackReturn::Return)
         })?,
     )?;
@@ -781,7 +795,7 @@ function make(asset, x, y, z, scale) end"
             match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
                 Ok(_) => {}
                 Err(er) => {
-                   return Err(make_err("Unable to group entity"));
+                   return Err(static_err("Unable to group entity"));
                 },
             };
             match rx.recv(){
@@ -1124,7 +1138,7 @@ function nimg(w, h) end"
                                     )),
                                 ));
                                 if let Err(err) = rx.recv() {
-                                    return Err(make_err(&err.to_string()));
+                                    return Err(static_err(&err.to_string()));
                                 }
                             }
                             _ => {
@@ -1168,17 +1182,17 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(make_err(&err.to_string()));
+                                                return Err(static_err(&err.to_string()));
                                             }
                                             return Ok("Building model in vert mode")
                                         }
                                         _ => {
-                                            return Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
+                                            return Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                             // return Ok(());
                                         }
                                     }
                                 }
-                                Err(make_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
+                                Err(static_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
                             }
                             _ => {
                                 match t.get::<_, Vec<String>>("t") {
@@ -1201,14 +1215,14 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(make_err(&err.to_string()));
+                                                return Err(static_err(&err.to_string()));
                                             }
                                         }
                                         Ok("Building model in texture mode")
                                     }
                                     _ => {
                                         // Err::<(),&str>
-                                        Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
+                                        Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                     }
                                 }
                             }
@@ -1432,7 +1446,7 @@ function over(str) end"
                     Ok(c) => Ok(c),
                     Err(er) => {
                         // println!("Unable to create connection {}", er);
-                        Err(make_err(&format!("conn fail, {}", er.to_string())))
+                        Err(static_err(&format!("conn fail, {}", er.to_string())))
                     }
                 };
             }
@@ -1566,8 +1580,15 @@ function help() end",
     // );
 
     lua_globals.set(*ctx, "io", io)?;
-   execute(lua_ctx, executor, 
-            "
+
+    // if let Err(e) = lua_globals.set(*ctx, "io", io) {
+    //     return Err(context_err("Failed to set io lib"));
+    // }
+
+    execute(
+        *ctx,
+        executor,
+        "
         add=table.insert 
         del=table.remove 
         print=cout 
@@ -1582,7 +1603,7 @@ function help() end",
         main = function() end
         loop = function() end
         ",
-        )?;
+    )?;
 
     Ok(())
 }
@@ -2149,7 +2170,7 @@ pub enum MainCommmand {
 
 pub fn num(x: Value) -> LuaResponse {
     match x {
-        Value::Integer(i) => LuaResponse::Integer(i),
+        Value::Integer(i) => LuaResponse::Integer(i64_to_i32(i)),
         Value::Number(f) => LuaResponse::Number(f),
         Value::String(s) => match s.to_str() {
             Ok(s) => LuaResponse::String(s.to_string()),
@@ -2158,6 +2179,17 @@ pub fn num(x: Value) -> LuaResponse {
         _ => LuaResponse::Integer(0),
     }
 }
+
+fn i64_to_i32(x: i64) -> i32 {
+    if x > i32::MAX as i64 {
+        i32::MAX
+    } else if x < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        x as i32
+    }
+}
+
 pub fn numop(x: Option<Value>) -> LuaResponse {
     match x {
         Some(v) => num(v),
@@ -2251,8 +2283,15 @@ fn nummold(x: Value) -> NumCouple {
 
 fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
-    for it in table.pairs::<String, Value>() {
-        if let Ok((key, val)) = it {
+    for (key, val) in table.iter() {
+        let str_key = if let Some(str_key) = match key {
+            Value::String(s) => match s.to_str() {
+                Ok(s) => Some(s.to_string()),
+                _ => None,
+            },
+            Value::Integer(i) => Some(i.to_string()),
+            _ => None,
+        } {
             let mapped = match val {
                 Value::String(s) => {
                     // println!("string {}", s);
@@ -2266,18 +2305,15 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
                 Value::Boolean(b) => ValueMap::Bool(b),
                 Value::Table(t) => {
                     ValueMap::Array(
-                        t.sequence_values()
-                            .filter_map(|v| match v {
-                                Ok(v) => match v {
-                                    Value::String(s) => match s.to_str() {
-                                        Ok(s) => Some(ValueMap::String(s.to_string())),
-                                        _ => None,
-                                    },
-                                    Value::Integer(i) => Some(ValueMap::Integer(i as i32)),
-                                    Value::Number(n) => Some(ValueMap::Float(n as f32)),
-                                    Value::Boolean(b) => Some(ValueMap::Bool(b)),
+                        t.iter()
+                            .filter_map(|(k, v)| match v {
+                                Value::String(s) => match s.to_str() {
+                                    Ok(s) => Some(ValueMap::String(s.to_string())),
                                     _ => None,
                                 },
+                                Value::Integer(i) => Some(ValueMap::Integer(i64_to_i32(i))),
+                                Value::Number(n) => Some(ValueMap::Float(n as f32)), // TODO inaccurte
+                                Value::Boolean(b) => Some(ValueMap::Bool(b)),
                                 _ => None,
                             })
                             .collect::<Vec<ValueMap>>(),
@@ -2286,8 +2322,8 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
                 }
                 _ => ValueMap::Null(),
             };
-            data.push((key, mapped));
-        }
+            data.push((str_key, mapped));
+        };
     }
     data
 }
@@ -2589,14 +2625,26 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
     (vec, norms, uv, ind)
 }
 
-fn make_err(s: &str) -> LuaError {
-    LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
-    // LuaError::RuntimeError(s.to_string())
-    // return mlua::Error::RuntimeError(s.to_string());
+// fn make_err(s: &str) -> LuaError {
+//     // LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
+//     make_static(s)
+//     // LuaError::RuntimeError(s.to_string())
+//     // return mlua::Error::RuntimeError(s.to_string());
+// }
+
+fn static_err<M>(s: M) -> StaticError
+where
+    M: Display + core::fmt::Debug + Send + Sync + 'static,
+{
+    StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+    // StaticError::Lua(StaticLuaError(s.to_owned()))
 }
 
-fn make_static(s: &str)-> StaticError{
-    StaticError::Lua(StaticLuaError(s.to_owned()))
+fn context_err<M>(s: M) -> piccolo::Error<'static>
+where
+    M: Display + core::fmt::Debug + Send + Sync + 'static,
+{
+    piccolo::Error::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
 }
 
 /** Convert string command into easy to use hashmap */

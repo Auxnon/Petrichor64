@@ -18,7 +18,7 @@ use piccolo::{
     compiler::{self as Compiler, interning::BasicInterner},
     error::{LuaError, StaticLuaError},
     meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Execution, Executor, Function,
-    FunctionProto, Lua, Stack, StashedExecutor, StaticError, Value,
+    FunctionProto, Lua, ProtoCompileError, Stack, StashedExecutor, StaticError, Value,
 };
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Value};
@@ -379,16 +379,15 @@ pub fn run_code(lua: &mut Lua, executor: &StashedExecutor, code: &str) -> Result
 }
 
 pub fn execute<'gc>(
-    lua: &mut Lua,
     ctx: Context,
     executor: &Executor,
     code: &str,
-) -> Result<(), Error<'gc>> {
+) -> Result<(), ProtoCompileError> {
     // lua.try_run(|ctx| {
     let closure = match Closure::load(ctx, code.as_bytes()) {
         Ok(closure) => closure,
         Err(err) => {
-            return Err(err.into());
+            return Err(err);
         }
     };
 
