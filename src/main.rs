@@ -72,6 +72,7 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+use winit::event_loop::EventLoopWindowTarget;
 #[cfg(feature = "headed")]
 use winit::{
     event::{DeviceEvent, Event, WindowEvent},
@@ -95,7 +96,13 @@ fn main() {
     let (pitcher, mut catcher) = channel::<MainPacket>();
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
-        let event_loop = EventLoop::new();
+        let event_loop = match EventLoop::new() {
+            Ok(el) => el,
+            Err(e) => {
+                error_window(Box::new(e));
+                return;
+            }
+        };
         let window_icon = {
             let icon =
                 image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
@@ -198,7 +205,7 @@ fn main() {
     #[cfg(not(feature = "headed"))]
     type Param2 = ();
     #[cfg(feature = "headed")]
-    type Param1 = ControlFlow;
+    type Param1 = EventLoopWindowTarget<()>;
     #[cfg(feature = "headed")]
     type Param2 = Rc<winit::window::Window>;
 
@@ -234,9 +241,7 @@ fn main() {
                                 c.debounced_resize();
                             }
                             #[cfg(feature = "headed")]
-                            StateChange::Quit => {
-                                *control_flow = ControlFlow::Exit;
-                            }
+                            StateChange::Quit => control_flow.exit(),
                             #[cfg(not(feature = "headed"))]
                             StateChange::Quit => {
                                 return true;
@@ -295,7 +300,7 @@ fn main() {
         let mut instance_buffers = vec![];
         let mut updated_bundles = FxHashMap::default();
 
-        event_loop.run(move |event, _, control_flow| {
+        event_loop.run(move |event, mut elwt| {
             // core.loop_helper.loop_start();
             if !core.global.console {
                 controls::bit_check(&event, &mut bits);
@@ -306,7 +311,7 @@ fn main() {
                 bits.1[4] = core.global.mouse_buttons[0];
                 bits.1[5] = core.global.mouse_buttons[1];
                 bits.1[6] = core.global.mouse_buttons[2];
-                bits.1[7] = core.global.scroll_delta;
+                bits.1[7] = core.global.scroll_delta.0;
                 bits.1[8] = core.global.cursor_projected_pos.x;
                 bits.1[9] = core.global.cursor_projected_pos.y;
                 bits.1[10] = core.global.cursor_projected_pos.z;
@@ -317,7 +322,7 @@ fn main() {
             }
 
             if core.input_manager.update(&event) {
-                controls::controls_evaluate(&mut core, control_flow);
+                controls::controls_evaluate(&mut core, &mut elwt);
                 // frame!("START");
 
                 core.global.mouse_delta = vec2(0., 0.);
@@ -326,22 +331,48 @@ fn main() {
             }
 
             match event {
-                Event::RedrawEventsCleared => {
-                    core.loop_helper.loop_start(); //
-                                                   // #[cfg(not(target_arch = "wasm32"))]
-
-                    rwin.request_redraw();
-                }
                 Event::WindowEvent {
                     ref event,
                     window_id: _,
                 } => match event {
+                    WindowEvent::RedrawRequested => {
+                        core.loop_helper.loop_start(); //
+                                                       // #[cfg(not(target_arch = "wasm32"))]
+
+                        // TODO
+                        // rwin.request_redraw();
+
+                        state_change_check(&mut core, &mut elwt, &mut rwin);
+                        // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
+                        // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+                        if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
+                            instance_buffers = buff;
+                        }
+                        core.bundle_manager.call_loop(&mut updated_bundles, bits);
+
+                        match core.render(&instance_buffers) {
+                            Ok(_) => {}
+                            // Reconfigure the surface if lost
+                            // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+                            // The system is out of memory, we should probably quit
+                            // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                            // All other errors (Outdated, Timeout) should be resolved by the next frame
+                            // Err(e) => eprintln!("{:?}", e),
+                            _ => {}
+                        };
+
+                        core.loop_helper.loop_sleep();
+                    }
                     WindowEvent::Resized(physical_size) => {
                         core.resize(*physical_size);
                     }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        // new_inner_size is &&mut so we have to dereference it twice
-                        core.resize(**new_inner_size);
+                    WindowEvent::ScaleFactorChanged {
+                        inner_size_writer, ..
+                    } => {
+                        // TODO do we still need to check for this?
+                        // inner_size_writer.
+                        // // new_inner_size is &&mut so we have to dereference it twice
+                        // core.resize(**new_inner_size);
                     }
                     _ => {}
                 },
@@ -352,28 +383,6 @@ fn main() {
 
                     _ => {}
                 },
-                Event::RedrawRequested(_) => {
-                    state_change_check(&mut core, control_flow, &mut rwin);
-                    // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
-                    // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
-                    if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
-                        instance_buffers = buff;
-                    }
-                    core.bundle_manager.call_loop(&mut updated_bundles, bits);
-
-                    match core.render(&instance_buffers) {
-                        Ok(_) => {}
-                        // Reconfigure the surface if lost
-                        // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-                        // The system is out of memory, we should probably quit
-                        // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                        // All other errors (Outdated, Timeout) should be resolved by the next frame
-                        // Err(e) => eprintln!("{:?}", e),
-                        _ => {}
-                    };
-
-                    core.loop_helper.loop_sleep();
-                }
                 _ => {}
             }
         });
@@ -444,7 +453,7 @@ type IB = InstanceBuffer;
 #[cfg(not(feature = "headed"))]
 type IB = ();
 
-impl Core {
+impl Core<'_> {
     fn update(
         &mut self,
         catcher: &mut Receiver<MainPacket>,
