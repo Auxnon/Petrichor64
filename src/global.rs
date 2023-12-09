@@ -20,7 +20,7 @@ pub struct Global {
     pub smooth_cam_rot: Vec2,
     pub smooth_cam_pos: Vec3,
     pub mouse_delta: Vec2,
-    pub scroll_delta: f32,
+    pub scroll_delta: (f32, f32),
     pub game_controller: bool,
     pub console: bool,
     pub cam_pos: Vec3,
@@ -71,7 +71,7 @@ impl Global {
             background: vec4(0., 0., 0., 0.), //vec4(1., 0.2, 0.3, 1.0),
             delayed: 0,
             iteration: 0,
-            scroll_delta: 0.,
+            scroll_delta: (0., 0.),
             #[cfg(feature = "headed")]
             screen_effects: ScreenBinds::new(),
             aliases: HashMap::new(),
