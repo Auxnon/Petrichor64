@@ -1,12 +1,8 @@
+#[cfg(feature = "audio")]
+use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager,
-    error_window,
-    global::GuiParams,
-    gui::ScreenIndex,
-    lua_define::MainPacket,
-    render,
-    sound::{self, SoundCommand},
-    texture::TexManager,
+    bundle::BundleManager, error_window, global::GuiParams, gui::ScreenIndex,
+    lua_define::MainPacket, render, texture::TexManager,
 };
 use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
 use crate::{gui::Gui, log::LogType};
@@ -15,7 +11,8 @@ use glam::{vec2, vec3, Mat4};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
-use std::{mem, rc::Rc, sync::mpsc::channel};
+use std::sync::mpsc::channel;
+use std::{mem, rc::Rc};
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
@@ -111,7 +108,11 @@ impl Gfx {
             // label: Some("instance"),
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: wgpu::Dx12Compiler::default(),
+            gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+            flags: wgpu::InstanceFlags::empty(), // TODO is it worth discarding debug info
         });
+        // let arc_window = std::sync::Arc::new(window);
+        // arc_window.inn
 
         // wgpu::Backends::all());
         let surface = unsafe {
@@ -605,7 +606,7 @@ impl Gfx {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        self.win_ref.set_inner_size(LogicalSize::new(
+        self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))
