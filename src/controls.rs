@@ -4,22 +4,25 @@ use crate::types::ControlState;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
+use winit::event_loop::EventLoopWindowTarget;
+use winit::keyboard::PhysicalKey;
 use winit::{
-    event::{Event, VirtualKeyCode, WindowEvent},
+    event::{Event, WindowEvent},
     event_loop::ControlFlow,
+    keyboard::{Key, KeyCode},
 };
 
 #[cfg(target_os = "macos")]
-const COMMAND_KEY_L: VirtualKeyCode = VirtualKeyCode::LWin;
+const COMMAND_KEY_L: KeyCode = KeyCode::SuperLeft;
 #[cfg(not(target_os = "macos"))]
-const COMMAND_KEY_L: VirtualKeyCode = VirtualKeyCode::LControl;
+const COMMAND_KEY_L: KeyCode = KeyCode::ControlLeft;
 
 #[cfg(target_os = "macos")]
-const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RWin;
+const COMMAND_KEY_R: KeyCode = KeyCode::SuperRight;
 #[cfg(not(target_os = "macos"))]
-const COMMAND_KEY_R: VirtualKeyCode = VirtualKeyCode::RControl;
+const COMMAND_KEY_R: KeyCode = KeyCode::ControlRight;
 
-pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
+pub fn controls_evaluate(core: &mut Core, window_target: &mut EventLoopWindowTarget<()>) {
     // WindowEvent::Resized(physical_size) => {
     //     core.resize(*physical_size);
     // }
@@ -42,8 +45,8 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     // }
     let input_helper = &core.input_manager;
 
-    if input_helper.quit() {
-        *control_flow = ControlFlow::Exit;
+    if input_helper.close_requested() {
+        window_target.exit();
     }
     match input_helper.dropped_file() {
         // TODO drag and drop
@@ -62,21 +65,18 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
     }
 
     // TODO mouse inputs
-    match input_helper.mouse() {
-        Some((x, y)) => {
-            core.global.game_controller = false;
-            core.global.mouse_pos.x = x / core.gfx.size.width as f32;
-            core.global.mouse_pos.y = y / core.gfx.size.height as f32;
-            // TODO test if this is not needed on WinOS
-            // let diff = input_helper.mouse_diff();
-            // core.global.mouse_delta.x = diff.0;
-            // core.global.mouse_delta.y = diff.1;
+    let (mx, my) = input_helper.mouse_diff();
+    core.global.game_controller = false;
+    core.global.mouse_pos.x = mx / core.gfx.size.width as f32;
+    core.global.mouse_pos.y = my / core.gfx.size.height as f32;
+    // TODO test if this is not needed on WinOS
+    // let diff = input_helper.mouse_diff();
+    // core.global.mouse_delta.x = diff.0;
+    // core.global.mouse_delta.y = diff.1;
 
-            // println!(core.global.)
-            // input_helper.
-        }
-        _ => {}
-    }
+    // println!(core.global.)
+    // input_helper.
+
     // input_helper.mouse
     core.global.scroll_delta = input_helper.scroll_diff();
 
@@ -104,7 +104,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         },
     ];
 
-    if input_helper.key_released(VirtualKeyCode::Grave) {
+    if input_helper.key_released(KeyCode::Backquote) {
         if !core.global.locked {
             core.global.console = !core.global.console;
             if core.global.console {
@@ -114,38 +114,38 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
             }
         }
     } else if core.global.console {
-        if core.global.scroll_delta != 0. {
-            core.loggy.scroll(core.global.scroll_delta);
+        if core.global.scroll_delta.1 != 0. {
+            core.loggy.scroll(core.global.scroll_delta.1);
         }
-        if input_helper.key_released(VirtualKeyCode::Return) {
+        if input_helper.key_released(KeyCode::Enter) {
             let command = core.loggy.carriage();
             if let Some(mut com) = command {
                 // println!("command is {}", com);
                 crate::core_console_command(core, &mut com);
             }
-        } else if input_helper.key_pressed(VirtualKeyCode::Up) {
+        } else if input_helper.key_pressed(KeyCode::ArrowUp) {
             core.loggy.history_up()
-        } else if input_helper.key_pressed(VirtualKeyCode::Down) {
+        } else if input_helper.key_pressed(KeyCode::ArrowDown) {
             core.loggy.history_down()
         } else if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
-            if input_helper.key_pressed(VirtualKeyCode::C) {
+            if input_helper.key_pressed(KeyCode::KeyC) {
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
                     }
                 }
-            } else if input_helper.key_pressed(VirtualKeyCode::V) {
+            } else if input_helper.key_pressed(KeyCode::KeyV) {
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
                         core.loggy.add(s);
                     }
                 }
-            } else if input_helper.key_pressed(VirtualKeyCode::R) {
+            } else if input_helper.key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
-            } else if input_helper.key_pressed(VirtualKeyCode::Escape)
-                || input_helper.key_pressed(VirtualKeyCode::W)
+            } else if input_helper.key_pressed(KeyCode::Escape)
+                || input_helper.key_pressed(KeyCode::KeyW)
             {
-                *control_flow = ControlFlow::Exit;
-            } else if input_helper.key_pressed(VirtualKeyCode::Return) {
+                window_target.exit();
+            } else if input_helper.key_pressed(KeyCode::Enter) {
                 core.toggle_fullscreen();
                 core.global.fullscreen_state = core.global.fullscreen;
             }
@@ -198,15 +198,15 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         }
     } else {
         if core.global.debug {
-            if input_helper.key_pressed(VirtualKeyCode::Left) {
+            if input_helper.key_pressed(KeyCode::ArrowLeft) {
                 core.global.debug_camera_pos.x += 10.;
                 core.loggy.log(
                     LogType::Debug,
                     &format!("x {}", core.global.debug_camera_pos.x),
                 )
-            } else if input_helper.key_pressed(VirtualKeyCode::Right) {
+            } else if input_helper.key_pressed(KeyCode::ArrowRight) {
                 core.global.debug_camera_pos.x -= 10.;
-            } else if input_helper.key_pressed(VirtualKeyCode::Up) {
+            } else if input_helper.key_pressed(KeyCode::ArrowUp) {
                 if input_helper.held_shift() {
                     core.global.debug_camera_pos.z += 10.;
                     core.loggy.log(
@@ -220,7 +220,7 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
                         &format!("y {}", core.global.debug_camera_pos.y),
                     )
                 }
-            } else if input_helper.key_pressed(VirtualKeyCode::Down) {
+            } else if input_helper.key_pressed(KeyCode::ArrowDown) {
                 if input_helper.held_shift() {
                     core.global.debug_camera_pos.z -= 10.;
                     core.loggy.log(
@@ -238,25 +238,25 @@ pub fn controls_evaluate(core: &mut Core, control_flow: &mut ControlFlow) {
         }
 
         if input_helper.key_held(COMMAND_KEY_L) || input_helper.key_held(COMMAND_KEY_R) {
-            if input_helper.key_pressed(VirtualKeyCode::R) {
+            if input_helper.key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
-            } else if input_helper.key_pressed(VirtualKeyCode::Return) {
+            } else if input_helper.key_pressed(KeyCode::Enter) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
                 // TODO is it better to have copy within the control handler or leave it up to an app to bind cmd/ctrl+c ?
-                // } else if input_helper.key_pressed(VirtualKeyCode::C) {
+                // } else if input_helper.key_pressed(KeyCode::C) {
                 //     if let Ok(mut ctx) = ClipboardContext::new() {
                 //         if let Err(_) = ctx.set_contents(core.loggy.get_line()) { // TODO
                 //         }
                 //     }
-            } else if input_helper.key_pressed(VirtualKeyCode::V) {
+            } else if input_helper.key_pressed(KeyCode::KeyV) {
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
                         core.bundle_manager.get_main_bundle().lua.call_drop(s);
                     }
                 }
-            } else if input_helper.key_pressed(VirtualKeyCode::W) {
-                *control_flow = ControlFlow::Exit;
+            } else if input_helper.key_pressed(KeyCode::KeyW) {
+                window_target.exit();
             }
         }
     }
@@ -273,10 +273,9 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
             // Note this deeply nested pattern match
             event:
                 WindowEvent::KeyboardInput {
-                    input:
-                        winit::event::KeyboardInput {
-                            // Which serves to filter out only events we actually want
-                            virtual_keycode: Some(keycode),
+                    event:
+                        winit::event::KeyEvent {
+                            physical_key: PhysicalKey::Code(keycode),
                             state,
                             ..
                         },
@@ -287,21 +286,21 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
             // It also binds these handy variable names!
             match state {
                 winit::event::ElementState::Pressed => {
-                    // VirtualKeycode is an enum with a defined representation
+                    // KeyCode is an enum with a defined representation
                     // DEV
                     // println!("newkey is {}", *keycode as u32);
                     bits.0[*keycode as usize] = true;
                     match *keycode {
-                        VirtualKeyCode::LAlt | VirtualKeyCode::RAlt => {
+                        KeyCode::AltLeft | KeyCode::AltRight => {
                             bits.0[247] = true;
                         }
-                        VirtualKeyCode::LControl | VirtualKeyCode::RControl => {
+                        KeyCode::ControlLeft | KeyCode::ControlRight => {
                             bits.0[248] = true;
                         }
-                        VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
+                        KeyCode::ShiftLeft | KeyCode::ShiftRight => {
                             bits.0[249] = true;
                         }
-                        VirtualKeyCode::LWin | VirtualKeyCode::RWin => {
+                        KeyCode::SuperLeft | KeyCode::SuperRight => {
                             bits.0[250] = true;
                         }
                         _ => {}
@@ -310,16 +309,16 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
                 winit::event::ElementState::Released => {
                     bits.0[*keycode as usize] = false;
                     match *keycode {
-                        VirtualKeyCode::LAlt | VirtualKeyCode::RAlt => {
+                        KeyCode::AltLeft | KeyCode::AltRight => {
                             bits.0[247] = false;
                         }
-                        VirtualKeyCode::LControl | VirtualKeyCode::RControl => {
+                        KeyCode::ControlLeft | KeyCode::ControlRight => {
                             bits.0[248] = false;
                         }
-                        VirtualKeyCode::LShift | VirtualKeyCode::RShift => {
+                        KeyCode::ShiftLeft | KeyCode::ShiftRight => {
                             bits.0[249] = false;
                         }
-                        VirtualKeyCode::LWin | VirtualKeyCode::RWin => {
+                        KeyCode::SuperLeft | KeyCode::SuperRight => {
                             bits.0[250] = false;
                         }
                         _ => {}
@@ -332,37 +331,37 @@ pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
     // drop(bits);
 }
 
-// fn key_match(key: String) -> Option<VirtualKeyCode> {
+// fn key_match(key: String) -> Option<KeyCode> {
 //     Some(match key.to_lowercase().as_str() {
-//         "a" => VirtualKeyCode::A,
-//         "b" => VirtualKeyCode::B,
-//         "c" => VirtualKeyCode::C,
-//         "d" => VirtualKeyCode::D,
-//         "e" => VirtualKeyCode::E,
-//         "f" => VirtualKeyCode::F,
-//         "g" => VirtualKeyCode::G,
-//         "h" => VirtualKeyCode::H,
-//         "i" => VirtualKeyCode::I,
-//         "j" => VirtualKeyCode::J,
-//         "k" => VirtualKeyCode::K,
-//         "l" => VirtualKeyCode::L,
-//         "m" => VirtualKeyCode::M,
-//         "n" => VirtualKeyCode::N,
-//         "o" => VirtualKeyCode::O,
-//         "p" => VirtualKeyCode::P,
-//         "q" => VirtualKeyCode::Q,
-//         "r" => VirtualKeyCode::R,
-//         "s" => VirtualKeyCode::S,
-//         "t" => VirtualKeyCode::T,
-//         "u" => VirtualKeyCode::U,
-//         "v" => VirtualKeyCode::V,
-//         "w" => VirtualKeyCode::W,
-//         "x" => VirtualKeyCode::X,
-//         "y" => VirtualKeyCode::Y,
-//         "z" => VirtualKeyCode::Z,
-//         "space" => VirtualKeyCode::Space,
-//         "lctrl" => VirtualKeyCode::LControl,
-//         "rctrl" => VirtualKeyCode::RControl,
+//         "a" => KeyCode::A,
+//         "b" => KeyCode::B,
+//         "c" => KeyCode::C,
+//         "d" => KeyCode::D,
+//         "e" => KeyCode::E,
+//         "f" => KeyCode::F,
+//         "g" => KeyCode::G,
+//         "h" => KeyCode::H,
+//         "i" => KeyCode::I,
+//         "j" => KeyCode::J,
+//         "k" => KeyCode::K,
+//         "l" => KeyCode::L,
+//         "m" => KeyCode::M,
+//         "n" => KeyCode::N,
+//         "o" => KeyCode::O,
+//         "p" => KeyCode::P,
+//         "q" => KeyCode::Q,
+//         "r" => KeyCode::R,
+//         "s" => KeyCode::S,
+//         "t" => KeyCode::T,
+//         "u" => KeyCode::U,
+//         "v" => KeyCode::V,
+//         "w" => KeyCode::W,
+//         "x" => KeyCode::X,
+//         "y" => KeyCode::Y,
+//         "z" => KeyCode::Z,
+//         "space" => KeyCode::Space,
+//         "lctrl" => KeyCode::LControl,
+//         "rctrl" => KeyCode::RControl,
 //         _ => return None,
 //     })
 // }
