@@ -1,3 +1,5 @@
+#[cfg(feature = "audio")]
+use crate::sound::{sound, SoundCommand};
 use crate::{
     bundle::BundleManager,
     ent_manager::{EntManager, InstanceBuffer},
@@ -7,23 +9,22 @@ use crate::{
     lua_define::MainPacket,
     model::ModelManager,
     render,
-    sound::{self, SoundCommand},
     texture::TexManager,
     types::ValueMap,
 };
-use std::sync::mpsc::SyncSender;
-#[cfg(feature = "audio")]
+
 use std::{
     rc::Rc,
     sync::mpsc::{channel, Receiver, Sender},
 };
+
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
 use winit::window::Window;
 
 /** All centralized engines and factories to be passed around in the main thread */
-pub struct Core {
+pub struct Core<'a> {
     pub global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     #[cfg(feature = "audio")]
@@ -41,7 +42,7 @@ pub struct Core {
     pub tex_manager: TexManager,
     pub model_manager: ModelManager,
     pub ent_manager: EntManager,
-    pub bundle_manager: BundleManager,
+    pub bundle_manager: BundleManager<'a>,
 
     pub loggy: crate::log::Loggy,
 
@@ -50,7 +51,7 @@ pub struct Core {
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
-impl Core {
+impl Core<'_> {
     pub async fn new(rwindow: Rc<Window>, pitcher: Sender<MainPacket>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
