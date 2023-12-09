@@ -329,7 +329,7 @@ impl TexManager {
     pub fn load_tex(
         &mut self,
         world: &mut World,
-        name_like: &String,
+        name_like: &str,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
         loggy: &mut Loggy,
