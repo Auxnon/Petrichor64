@@ -130,7 +130,7 @@ impl<'lt> LuaCore<'lt> {
         lua_handle
     }
 
-    pub fn func(&self, func: &str) -> LuaResponse {
+    pub fn func(&self, func: &'lt str) -> LuaResponse {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         // self.inject(func, &"0", None).0
         self.to_lua_tx.send(LuaTalk::Func(func, tx));
@@ -180,7 +180,7 @@ impl<'lt> LuaCore<'lt> {
     //     }
     // }
 
-    pub fn load<R>(&self, reader: &mut R) -> LuaResponse
+    pub fn load<R>(&self, reader: &'lt mut R) -> LuaResponse
     where
         R: Read + Send,
     {
@@ -231,7 +231,7 @@ impl<'lt> LuaCore<'lt> {
 }
 
 fn run_in_context<'gc, 'lt>(
-    ctx: &Context<'_>,
+    ctx: &Context<'gc>,
     executor: &Executor<'gc>,
     code: &'lt mut (dyn Read + Send),
 ) -> Result<(), Error<'gc>> {
@@ -284,11 +284,7 @@ where
 }
 
 /// Build a lua function to be excuted later
-fn build_function<'a>(
-    lua: &mut Lua,
-    ctx: Context<'_>,
-    code: &str,
-) -> Result<Function<'a>, StaticError> {
+fn build_function<'a>(ctx: Context<'a>, code: &str) -> Result<Function<'a>, StaticError> {
     let closure = match Closure::load(ctx, ("return ".to_string() + code).as_bytes()) {
         Ok(closure) => closure,
         Err(err) => {
@@ -332,7 +328,7 @@ where
 
 fn build_and_run_function(lua: &mut Lua, code: &str) -> Result<StashedExecutor, StaticError> {
     let func = lua.try_run(|ctx| {
-        let func = build_function(lua, ctx, code)?;
+        let func = build_function(ctx, code)?;
         Ok(ctx
             .state
             .registry
@@ -495,7 +491,7 @@ fn start<'lt>(
             //     Lua::new()
             // };
 
-            let lua_instance = Lua::core();
+            let mut lua_instance = Lua::core();
             let interner = BasicInterner::default();
             let thread = lua_instance.run(|ctx| {
                 let globals = &ctx.state.globals;
@@ -506,45 +502,7 @@ fn start<'lt>(
             lua_instance.try_run(|ctx| {
                 let globals = &ctx.state.globals;
 
-                // let closure = Closure::new(
-                //     &ctx,
-                //     FunctionProto::compile(ctx, initial_code)?,
-                //     Some(ctx.state.globals),
-                // )?;
-
                 let executor = Executor::new(ctx);
-
-                // let executor = lua_instance.try_run(|ctx| {
-                //     let closure = Closure::new(
-                //         &ctx,
-                //         FunctionProto::compile(ctx, "print('hello')".as_bytes())?,
-                //         Some(ctx.state.globals),
-                //     )?;
-
-                //     Ok(ctx
-                //         .state
-                //         .registry
-                //         .stash(&ctx, Executor::start(ctx, closure.into(), ())))
-                // })?;
-                // // executor.restart(&lua_instance, || {
-                // //     // rust things
-                // // })?;
-
-                // lua_instance.execute(&executor)?;
-
-                // let executor = lua_runner.run(|ctx| {
-                //     let executor = Executor::new(&ctx);
-                //     executor.restart(ctx, ||{
-
-                //         // rust things
-                //     }, params
-
-                // });
-                // ctx.state.registry.stash(&ctx, executor)
-                // lua_ctx.load_from_std_lib(mlua::StdLib::DEBUG);
-                // lua_ctx.sa
-
-                // let globals = lua_ctx.
 
                 if debug {
                     loggy.send((
@@ -566,7 +524,6 @@ fn start<'lt>(
                 // let mut debounce_error_string = "".to_string();
                 let mut debounce_error_counter = 60;
                 match crate::command::init_lua_sys(
-                    &lua_instance,
                     &ctx,
                     &globals,
                     &executor,
@@ -600,12 +557,10 @@ fn start<'lt>(
                 if debug {
                     loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                 }
-                // let mut counter = 0;
-                let main_lua_func = build_and_run_function(&mut lua_instance, "main() loop()")?;
-                // let main_lua_func = lua_instance.load("main() loop()").into_function()?;
-                let loop_lua_func = build_function(&mut lua_instance, ctx, "loop()")?;
-                let draw_lua_func = build_function(&mut lua_instance, ctx, "draw()")?;
-                let drop_lua_func = build_function(&mut lua_instance, ctx, "drop()")?;
+                let main_lua_func = build_function(ctx, "main() loop()")?;
+                let loop_lua_func = build_function(ctx, "loop()")?;
+                let draw_lua_func = build_function(ctx, "draw()")?;
+                let drop_lua_func = build_function(ctx, "drop()")?;
 
                 // let main_ref = Rc::new(RefCell::new(f));
                 for m in reciever {
@@ -698,7 +653,7 @@ fn start<'lt>(
                             }
                         }
                         LuaTalk::Main => {
-                            lua_instance.execute(&main_lua_func)?;
+                            executor.restart(ctx, main_lua_func, ());
 
                             // if let Err(e) = res {
                             //     async_sender.send((

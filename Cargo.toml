@@ -68,9 +68,9 @@ dirs="4.0.0"
 futures="0.3.26"
 regex="1.7.1"
 native-dialog = "0.6.3"
-silt-lua = {version="0.1.1", optional=true,path="../silt-lua"}
-piccolo = {version="0.2", optional=true}
-gc-arena = "0.4.0"
+silt-lua = {version="0.1.1", optional=true, path="../silt-lua"}
+piccolo = { git="https://github.com/kyren/piccolo", optional=true } # version="0.2.0",
+gc-arena = {git="https://github.com/kyren/gc-arena"}
 # wasm-bindgen = "0.2.83"
 
 # [dependencies.tracy]

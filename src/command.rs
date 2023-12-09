@@ -390,7 +390,6 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 }
 
 pub fn init_lua_sys<'a>(
-    lua_ctx: &Lua,
     #[cfg(feature = "picc")] ctx: &Context,
     lua_globals: &Table,
     executor: &Executor,
@@ -417,7 +416,7 @@ pub fn init_lua_sys<'a>(
     println!("init lua sys");
     // interner.
 
-    let default_func = native_function(ctx, |_, _, stack| {
+    let default_func = native_function(ctx, |_, _, mut stack| {
         let v = Value::String(piccolo::String::from_static(
             ctx.mutation,
             "default function",
