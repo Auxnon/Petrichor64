@@ -143,7 +143,7 @@ fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {
 }
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
 pub fn pack_zip(
-    sources: Vec<String>,
+    sources: Vec<&str>,
     thumb: PathBuf,
     out: &str,
     loggy: &mut Loggy,
@@ -168,7 +168,7 @@ pub fn pack_zip(
             // zip.add_directory(s, options);
             //zip::ZipWriter::start_file;
             if let Err(err) = zip.start_file(
-                &source,
+                source,
                 options.compression_method(zip::CompressionMethod::Stored),
             ) {
                 return Err(handle_zip_error(err, Some(&source)));
@@ -258,20 +258,20 @@ pub fn pack_game_bin(out: &str) -> Result<&str, P64Error> {
 }
 
 /** unpack a packed game image-zip and load all assets into memory and return as asset-path keyed hashmap of u8 buffers  */
-pub fn unpack_and_walk(
+pub fn unpack_and_walk<'a>(
     file: Vec<u8>,
-    sort: Vec<String>,
+    sort: Vec<&str>,
     loggy: &mut Loggy,
-) -> HashMap<String, Vec<(String, Vec<u8>)>> {
+) -> HashMap<&'a str, Vec<(&'a str, Vec<u8>)>> {
     let v = unpack(file, loggy);
-    let mut map: HashMap<String, Vec<(String, Vec<u8>)>> = HashMap::new();
+    let mut map: HashMap<&str, Vec<(&str, Vec<u8>)>> = HashMap::new();
     if v.len() <= 0 {
         return map;
     }
     let reader = std::io::Cursor::new(v);
 
     let mut archive = zip::ZipArchive::new(reader).unwrap();
-    let it: Vec<String> = archive.file_names().map(|x| x.to_string()).collect();
+    let it = archive.file_names();
     // let main_dir = vec![];
 
     for d in sort {
@@ -281,9 +281,9 @@ pub fn unpack_and_walk(
 
     for file_name in it {
         let shorter = if file_name.starts_with("./") {
-            file_name[2..file_name.len()].to_string()
+            &file_name[2..file_name.len()]
         } else {
-            file_name.clone()
+            file_name
         };
 
         let mut part = shorter.split("/").collect::<Vec<&str>>();
@@ -308,20 +308,23 @@ pub fn unpack_and_walk(
                     shorter, dir, name
                 ),
             );
+
             loggy.log(
                 LogType::Config,
                 &format!("full {}, file {}, dir {}", file_name, name, dir),
             );
-            match archive.by_name(file_name.as_str()) {
-                Ok(mut file) => match map.get_mut(&dir.to_string()) {
+            let t = archive.by_index(0).unwrap();
+            match archive.by_name(file_name) {
+                Ok(mut file) => match map.get_mut(dir) {
                     Some(ar) => {
                         let mut contents = Vec::new();
                         // println!("found file");
+
                         match file.read_to_end(&mut contents) {
                             Ok(_) => {}
                             _ => {}
                         }
-                        ar.push((file.name().to_string(), contents));
+                        ar.push((file.name(), contents));
                     }
                     _ => {}
                 },
