@@ -1,7 +1,7 @@
 #[cfg(feature = "puc_lua")]
 use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
-use piccolo::{Function, UserDataFields, UserDataMethods, Value::Nil, Value::UserData};
+use piccolo::{Function, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, MetaMethod, UserData, Value};
 
