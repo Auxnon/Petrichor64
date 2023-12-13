@@ -1,9 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use piccolo::{
-    compiler::{CompilerError, ParserError},
-    ProtoCompileError, StaticError,
-};
+use piccolo::{PrototypeError, StaticError};
 
 pub enum P64Error {
     PermPathTraversal,
@@ -41,17 +38,17 @@ impl From<std::str::Utf8Error> for P64Error {
     }
 }
 
-impl From<ParserError> for P64Error {
-    fn from(value: ParserError) -> Self {
-        P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
-    }
-}
+// impl From<ParserError> for P64Error {
+//     fn from(value: ParserError) -> Self {
+//         P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
+//     }
+// }
 
-impl From<CompilerError> for P64Error {
-    fn from(value: CompilerError) -> Self {
-        P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
-    }
-}
+// impl From<CompilerError> for P64Error {
+//     fn from(value: CompilerError) -> Self {
+//         P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
+//     }
+// }
 
 impl From<StaticError> for P64Error {
     fn from(value: StaticError) -> Self {
@@ -59,13 +56,13 @@ impl From<StaticError> for P64Error {
     }
 }
 
-impl From<ProtoCompileError> for P64Error {
-    fn from(value: ProtoCompileError) -> Self {
+impl From<PrototypeError> for P64Error {
+    fn from(value: PrototypeError) -> Self {
         match value {
-            ProtoCompileError::Parser(e) => {
+            PrototypeError::Parser(e) => {
                 P64Error::LuaParseError(std::io::Error::new(std::io::ErrorKind::Other, e))
             }
-            ProtoCompileError::Compiler(e) => {
+            PrototypeError::Compiler(e) => {
                 P64Error::LuaCompileError(std::io::Error::new(std::io::ErrorKind::Other, e))
             }
         }
