@@ -71,6 +71,7 @@ pub fn render_loop(
 
     // TODO is this expensive? only sometimes?
     core.gui.render(
+        &mut core.bundle_manager,
         &core.gfx.queue,
         0.,
         // core.global.get("value2".to_string()),

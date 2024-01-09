@@ -16,7 +16,7 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=["online_capable", "audio", "headed", "picc"] # "online_capable" ,
+default=["online_capable",  "headed", "picc"] # "online_capable" ,
 include_auto=["studio"]
 online_capable=["tokio", "tokio-util", "rmp-serde", "bytes"]
 headed=["wgpu", "winit", "winit_input_helper"]
@@ -55,7 +55,7 @@ glam="0.24.2"
 rmp-serde={version="1.1.1",optional=true}
 
 # uuid = {version="0.8.2",features = ["serde", "v4"]}
-zip="0.6.4"
+zip="0.6.6"
 spin_sleep = "1.1.1"
 clipboard = "0.5.0"
 rustc-hash = "1.1.0"
@@ -71,6 +71,8 @@ native-dialog = "0.7.0"
 silt-lua = {version="0.1.1", optional=true, path="../silt-lua"}
 piccolo = { git="https://github.com/kyren/piccolo", optional=true } # version="0.2.0",
 gc-arena = {git="https://github.com/kyren/gc-arena"}
+crossbeam = "0.8.2"
+atomicell = "0.2.0"
 # wasm-bindgen = "0.2.83"
 
 # [dependencies.tracy]
