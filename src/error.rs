@@ -12,6 +12,8 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
+    MissingAssets,
+    MissingScripts,
 }
 
 impl Display for P64Error {
@@ -28,6 +30,8 @@ impl Display for P64Error {
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
+            P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
+            P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
         }
     }
 }

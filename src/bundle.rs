@@ -1,6 +1,11 @@
-use std::{cell::RefCell, rc::Rc, sync::mpsc::Receiver};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{mpsc::Receiver, Arc},
+};
 
-use image::RgbaImage;
+use atomicell::AtomicCell;
+use image::{Rgb, RgbaImage};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
@@ -8,19 +13,21 @@ use rustc_hash::FxHashMap;
 use crate::root::Core;
 // use crate::texture::TexManager;
 use crate::{
+    ent::Ent,
     gui::PreGuiMorsel,
     lua_define::{LuaCore, LuaHandle, MainPacket},
+    pool::SharedPool,
     types::ControlState,
 };
 
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
  */
-pub struct Bundle<'a> {
+pub struct Bundle {
     pub id: u8,
     pub name: String,
     directory: Option<String>,
-    pub lua: LuaCore<'a>,
+    pub lua: LuaCore,
     pub children: Vec<u8>,
     pub rasters: FxHashMap<usize, Rc<RefCell<RgbaImage>>>,
     /** acts as a counter for for a frame skipped due to performance or intentionally */
@@ -29,11 +36,12 @@ pub struct Bundle<'a> {
     /** How many frames do we want to intentionally skip to bring our fps down? Not great */
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
+    pub pool: Option<SharedPool>,
 }
 
 pub type BundleResources = PreGuiMorsel;
 
-impl Bundle<'_> {
+impl Bundle {
     pub fn new(id: u8, name: String, lua: LuaCore, directory: Option<String>) -> Self {
         Self {
             id,
@@ -46,6 +54,7 @@ impl Bundle<'_> {
             skipped_control_state: None,
             frame_split: 1,
             lua_ctx_handle: None,
+            pool: None,
         }
     }
 
@@ -71,10 +80,10 @@ impl Bundle<'_> {
     }
 }
 
-pub struct BundleManager<'a> {
+pub struct BundleManager {
     pub console_bundle_target: u8,
     pub bundle_counter: u8,
-    pub bundles: FxHashMap<u8, Bundle<'a>>,
+    pub bundles: FxHashMap<u8, Bundle>,
     // #[cfg(feature = "headed")]
     // pub open_tex_managers: Vec<TexManager>,
     // pub open_lua_box: Vec<LuaCore>,
@@ -83,7 +92,7 @@ pub struct BundleManager<'a> {
     sky_rasters: Vec<Rc<RefCell<RgbaImage>>>,
 }
 
-impl BundleManager<'_> {
+impl BundleManager {
     pub fn new() -> Self {
         Self {
             console_bundle_target: 0,
@@ -329,6 +338,17 @@ impl BundleManager<'_> {
         }
     }
 
+    pub fn get(&self, index: u8) -> Option<&Bundle> {
+        self.bundles.get(&index)
+    }
+
+    pub fn get_pool(&self, index: u8) -> Option<&SharedPool> {
+        match self.bundles.get(&index) {
+            Some(bundle) => bundle.pool.as_ref(),
+            None => None,
+        }
+    }
+
     pub fn hard_reset(&mut self) {
         for (id, bundle) in self.bundles.drain() {
             bundle.shutdown();
@@ -365,4 +385,17 @@ fn combine_states(mut old: ControlState, bits: ControlState) -> ControlState {
     // old.1[7] += bits.1[7];
 
     old
+}
+
+pub struct BundleMutations {
+    pub gui: bool,
+    pub sky: bool,
+}
+impl BundleMutations {
+    pub fn new() -> Self {
+        Self {
+            gui: true,
+            sky: true,
+        }
+    }
 }

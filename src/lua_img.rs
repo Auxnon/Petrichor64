@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use crate::{
     command::{num, numop},
@@ -235,10 +235,10 @@ impl UserData for LuaImg {
     }
 }
 
-pub fn lua_img_constructor<'a>(ctx: &Context, limg: LuaImg) -> AnyUserData<'a> {
+pub fn lua_img_constructor<'gc>(ctx: &Context<'gc>, limg: LuaImg) -> AnyUserData<'gc> {
     // let mc
 
-    let methods = StaticUserMethods::<LuaImg>::new(ctx.mutation);
+    let methods = StaticUserMethods::<LuaImg>::new(ctx.deref());
     methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
     let ud = methods.wrap(*ctx, limg);
     return ud;
@@ -274,7 +274,7 @@ pub fn dehex(s2: &str) -> Vec4 {
     }
 }
 
-pub fn get_color(ctx: &Context, x: Value) -> Vec4 {
+pub fn get_color<'gc>(ctx: &Context<'gc>, x: Value<'gc>) -> Vec4 {
     match x {
         Value::String(s) => match s.to_str() {
             Ok(s2) => dehex(s2),

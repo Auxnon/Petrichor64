@@ -257,21 +257,38 @@ pub fn pack_game_bin(out: &str) -> Result<&str, P64Error> {
     }
 }
 
+pub fn get_archive(file: Vec<u8>, loggy: &mut Loggy) -> Option<zip::ZipArchive<Cursor<Vec<u8>>>> {
+    let v = unpack(file, loggy);
+    if v.len() <= 0 {
+        return None;
+    }
+
+    let reader = std::io::Cursor::new(v);
+    match zip::ZipArchive::new(reader) {
+        Ok(a) => Some(a),
+        Err(e) => {
+            loggy.log(
+                LogType::ConfigError,
+                &format!("unable to open archive: {}", e),
+            );
+            None
+        }
+    }
+}
+
 /** unpack a packed game image-zip and load all assets into memory and return as asset-path keyed hashmap of u8 buffers  */
 pub fn unpack_and_walk<'a>(
-    file: Vec<u8>,
-    sort: Vec<&str>,
+    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+    sort: Vec<&'a str>,
     loggy: &mut Loggy,
-) -> HashMap<&'a str, Vec<(&'a str, Vec<u8>)>> {
-    let v = unpack(file, loggy);
-    let mut map: HashMap<&str, Vec<(&str, Vec<u8>)>> = HashMap::new();
-    if v.len() <= 0 {
-        return map;
-    }
-    let reader = std::io::Cursor::new(v);
+) -> HashMap<&'a str, Vec<(String, Vec<u8>)>> {
+    let mut map: HashMap<&str, Vec<(String, Vec<u8>)>> = HashMap::new();
 
-    let mut archive = zip::ZipArchive::new(reader).unwrap();
-    let it = archive.file_names();
+    let it = archive
+        .file_names()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>();
+
     // let main_dir = vec![];
 
     for d in sort {
@@ -283,10 +300,10 @@ pub fn unpack_and_walk<'a>(
         let shorter = if file_name.starts_with("./") {
             &file_name[2..file_name.len()]
         } else {
-            file_name
+            &file_name
         };
 
-        let mut part = shorter.split("/").collect::<Vec<&str>>();
+        let part = shorter.split("/").collect::<Vec<&str>>();
         if part.len() > 1 {
             // let dir_o = part.next();
             // let name_o = part.next();
@@ -313,8 +330,8 @@ pub fn unpack_and_walk<'a>(
                 LogType::Config,
                 &format!("full {}, file {}, dir {}", file_name, name, dir),
             );
-            let t = archive.by_index(0).unwrap();
-            match archive.by_name(file_name) {
+            // let t = archive.by_index(0).unwrap();
+            match archive.by_name(&file_name) {
                 Ok(mut file) => match map.get_mut(dir) {
                     Some(ar) => {
                         let mut contents = Vec::new();
@@ -324,7 +341,7 @@ pub fn unpack_and_walk<'a>(
                             Ok(_) => {}
                             _ => {}
                         }
-                        ar.push((file.name(), contents));
+                        ar.push((file.name().to_string(), contents));
                     }
                     _ => {}
                 },

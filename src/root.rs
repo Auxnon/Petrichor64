@@ -24,7 +24,7 @@ use crate::{gui::Gui, log::LogType};
 use winit::window::Window;
 
 /** All centralized engines and factories to be passed around in the main thread */
-pub struct Core<'a> {
+pub struct Core {
     pub global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     #[cfg(feature = "audio")]
@@ -42,7 +42,7 @@ pub struct Core<'a> {
     pub tex_manager: TexManager,
     pub model_manager: ModelManager,
     pub ent_manager: EntManager,
-    pub bundle_manager: BundleManager<'a>,
+    pub bundle_manager: BundleManager,
 
     pub loggy: crate::log::Loggy,
 
@@ -51,7 +51,7 @@ pub struct Core<'a> {
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
-impl Core<'_> {
+impl<'core> Core {
     pub async fn new(rwindow: Rc<Window>, pitcher: Sender<MainPacket>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
@@ -126,7 +126,8 @@ impl Core<'_> {
 
     pub fn debounced_resize(&mut self) {
         let gui_scaled = self.gfx.resize(&self.global.gui_params);
-        self.gui.resize(gui_scaled, &self.gfx);
+        self.gui
+            .resize(&mut self.bundle_manager, gui_scaled, &self.gfx);
         let (con_w, con_h) = self.gui.get_console_size();
         self.loggy.set_dimensions(con_w, con_h);
         self.bundle_manager.resize(gui_scaled.0, gui_scaled.1);
@@ -233,12 +234,12 @@ impl Core<'_> {
         }
     }
 
-    pub fn update_raster(&mut self, d: ScreenIndex) {
-        if let Some(rasters) = self.bundle_manager.get_rasters(match d {
-            ScreenIndex::Primary => 0,
-            _ => 1,
-        }) {
-            self.gui.replace_image(rasters, d);
-        }
-    }
+    // pub fn update_raster(&mut self, d: ScreenIndex) {
+    //     if let Some(rasters) = self.bundle_manager.get_rasters(match d {
+    //         ScreenIndex::Primary => 0,
+    //         _ => 1,
+    //     }) {
+    //         self.gui.replace_image(rasters, d);
+    //     }
+    // }
 }
