@@ -5,7 +5,8 @@ use crate::root_headless::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
-    bundle::BundleResources,
+    bundle::{BundleMutations, BundleResources},
+    ent::Ent,
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
@@ -15,6 +16,7 @@ use crate::{
     model::{ModelPacket, TextureStyle},
     online::Online,
     pad::Pad,
+    pool::{LocalPool, SharedPool},
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
@@ -56,6 +58,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     io::ErrorKind,
+    ops::Deref,
     rc::Rc,
     sync::{
         mpsc::{sync_channel, Sender, SyncSender},
@@ -389,16 +392,16 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     Ok(true)
 }
 
-pub fn init_lua_sys<'a>(
-    #[cfg(feature = "picc")] ctx: &Context,
-    lua_globals: &Table,
-    executor: &Executor,
+pub fn init_lua_sys<'a, 'gc>(
+    #[cfg(feature = "picc")] ctx: &Context<'gc>,
+    lua_globals: &Table<'gc>,
+    executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    gui_in: Rc<RefCell<GuiMorsel>>,
-    main_rast: Rc<RefCell<LuaImg>>,
-    sky_rast: Rc<RefCell<LuaImg>>,
+    // gui_in: Rc<RefCell<GuiMorsel>>,
+    // main_rast: Rc<RefCell<LuaImg>>,
+    // sky_rast: Rc<RefCell<LuaImg>>,
     #[cfg(feature = "audio")] singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
@@ -406,6 +409,7 @@ pub fn init_lua_sys<'a>(
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
+    shared: LocalPool,
 ) -> Result<(), Box<dyn std::error::Error>>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -415,13 +419,17 @@ pub fn init_lua_sys<'a>(
 {
     println!("init lua sys");
     // interner.
+    let c = *ctx;
+    let v = Value::String(piccolo::String::from_static(
+        ctx.deref(),
+        "default function",
+    ));
 
-    let default_func = native_function(ctx, |_, _, mut stack| {
-        let v = Value::String(piccolo::String::from_static(
-            ctx.mutation,
-            "default function",
-        ));
-        stack.push_front(v);
+    let default_func = native_function(ctx, |c, _, mut stack| {
+        let s = c.intern_static("default function".as_bytes());
+        stack.push_front(Value::String(s));
+        // let v = Value::String(piccolo::String::from_static(ctx.deref())
+        // stack.push_front(v);
         Ok(CallbackReturn::Return)
         // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
         //     vec![Value::String("default function".to_string())]
@@ -438,13 +446,14 @@ pub fn init_lua_sys<'a>(
     lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = Table::new(&ctx.mutation);
+    let io = Table::new(&ctx.deref());
 
     let c = *ctx;
     lua_globals.set(c, "pi", std::f64::consts::PI);
     lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
-    lua_globals.set(c, "gui", main_rast);
-    lua_globals.set(c, "sky", sky_rast);
+    // MARK required 2
+    // lua_globals.set(c, "gui", main_rast);
+    // lua_globals.set(c, "sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -769,16 +778,17 @@ function make(asset, x, y, z, scale) end"
         "_make",
         native_function(ctx, move |_, _, stack| {
             // lent: Arc<std::sync::Mutex<LuaEnt>>
-            if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
-                let id = *ent_counter2.lock();
-                *ent_counter2.lock() += 1;
-                match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-                    Ok(_) => {}
-                    Err(_) => return Err(context_err("Unable to create entity")),
-                };
-            } else {
-                return Err(context_err("Invalid entity passed to make"));
-            }
+            // MARK required 1
+            // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
+            //     let id = *ent_counter2.lock();
+            //     *ent_counter2.lock() += 1;
+            //     match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+            //         Ok(_) => {}
+            //         Err(_) => return Err(context_err("Unable to create entity")),
+            //     };
+            // } else {
+            //     return Err(context_err("Invalid entity passed to make"));
+            // }
 
             Ok(CallbackReturn::Return)
         })?,
@@ -1032,7 +1042,6 @@ function tex(asset, im) end"
     );
 
     let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
     lua!(
         "gimg",
         move |lu, name: String| {
@@ -1057,7 +1066,6 @@ function tex(asset, im) end"
 function gimg(asset) end"
     );
 
-    let gui = gui_in.clone();
     lua!(
         "nimg",
         move |_, (w, h): (u32, u32)| {
@@ -1587,6 +1595,7 @@ function help() end",
     execute(
         *ctx,
         executor,
+        Some("patch"),
         "
         add=table.insert 
         del=table.remove 
@@ -1675,9 +1684,12 @@ pub fn load_empty(core: &mut Core) {
     let bundle = core.bundle_manager.make_bundle(None, None, None);
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+    bundle.pool = Some(core.gui.make_shared_pool());
+    let shared = bundle.pool.clone().unwrap();
+
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
-        resources,
+        shared,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -1741,13 +1753,18 @@ pub fn load(
             .bundle_manager
             .make_bundle(game_path_in, bundle_relations, game_path_in),
     };
+
+    bundle.pool = Some(core.gui.make_shared_pool());
+
     let bundle_id = bundle.id;
-    let resources = core.gui.make_morsel();
+    // let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
+    let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle_id,
-        resources,
+        shared,
+        // resources,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -1785,6 +1802,9 @@ pub fn load(
             None => {
                 let mut path = crate::asset::determine_path(Some(s.as_ref()));
                 if path.is_dir() {
+                    let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
+                    let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
                     crate::asset::walk_files(
                         #[cfg(feature = "headed")]
                         Some(&core.gfx.device),
@@ -1795,7 +1815,8 @@ pub fn load(
                         &mut core.world,
                         bundle_id,
                         &bundle.lua,
-                        path,
+                        &asset_items,
+                        &script_items,
                         &mut core.loggy,
                         debug,
                     );
@@ -1842,6 +1863,9 @@ pub fn load(
         },
         None => {
             let path = crate::asset::determine_path(None);
+            let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
+            let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
             crate::asset::walk_files(
                 #[cfg(feature = "headed")]
                 Some(&core.gfx.device),
@@ -1852,7 +1876,8 @@ pub fn load(
                 &mut core.world,
                 bundle_id,
                 &bundle.lua,
-                path,
+                &asset_items,
+                &script_items,
                 &mut core.loggy,
                 debug,
             );
@@ -2151,7 +2176,7 @@ pub enum MainCommmand {
     Globals(Vec<(String, ValueMap)>),
     GetGlobal(SyncSender<GlobalMap>),
     AsyncError(String),
-    LoopComplete((Option<image::RgbaImage>, Option<image::RgbaImage>)),
+    LoopComplete(BundleMutations),
     Reload(),
     BundleDropped(BundleResources),
     Load(String),

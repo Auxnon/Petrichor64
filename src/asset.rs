@@ -3,10 +3,12 @@ use std::{
     fs::{self, read_dir},
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
+    vec,
 };
 
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::draw_filled_rect_mut;
+use itertools::Itertools;
 use regex::Regex;
 #[cfg(feature = "headed")]
 use wgpu::Device;
@@ -22,7 +24,7 @@ use crate::{
 };
 
 pub type SourceEntry<'a> = (&'a str, &'a str, &'a str, Option<&'a Vec<u8>>);
-pub type SourceMap<'a> = HashMap<&'a str, SourceEntry<'a>>;
+pub type SourceMap<'a, 'b> = HashMap<&'b str, SourceEntry<'a>>;
 
 // 1.0.0 Applesauce
 // 2.1.0 Avocado
@@ -79,6 +81,9 @@ pub fn pack(
     };
     println!("pack name: {}", pack_name);
 
+    let asset_items = get_asset_items(&path, loggy)?;
+    let script_items = get_script_items(&path, loggy)?;
+
     let sources = walk_files(
         #[cfg(feature = "headed")]
         None,
@@ -89,7 +94,8 @@ pub fn pack(
         world,
         bundle_id,
         lua_master,
-        path.clone(),
+        &asset_items,
+        &script_items,
         loggy,
         debug,
     );
@@ -122,7 +128,14 @@ pub fn unpack(
     if debug {
         loggy.log(LogType::Config, &format!("unpack {}", name));
     }
-    let map = crate::file_util::unpack_and_walk(file, vec!["assets", "scripts"], loggy);
+    let mut archive = match crate::file_util::get_archive(file, loggy) {
+        Some(a) => a,
+        None => {
+            loggy.log(LogType::ConfigError, &format!("failed to unpack {}", name));
+            return;
+        }
+    };
+    let map = crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy);
 
     let mut sources: SourceMap = HashMap::new();
     #[cfg(feature = "headed")]
@@ -135,7 +148,7 @@ pub fn unpack(
                 loggy.log(LogType::Config, &format!("unpacking {} assets", dir.len()));
             }
             for (item_name, item_buffer) in dir {
-                let path = Path::new(&item_name);
+                let path = Path::new(item_name);
 
                 match path.extension() {
                     Some(e) => {
@@ -168,46 +181,43 @@ pub fn unpack(
         bundle_id,
         Some(device),
         configs,
-        sources,
+        &mut sources,
         loggy,
         debug,
     );
 
-    match map.get("scripts") {
-        Some(dir) => {
-            loggy.log(LogType::Config, &format!("unpacking {} scripts", dir.len()));
-            for (item_name, item_buffer) in dir {
-                match Path::new(&item_name).extension() {
-                    Some(e) => {
-                        let file_name = &item_name;
-                        // TODO is it still worth checking for invalid utf8
-                        // let buffer = match std::str::from_utf8(&item_buffer.as_slice()) {
-                        //     Ok(v) => v,
-                        //     Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-                        // };
-                        let mut bufreader = BufReader::new(item_buffer.as_slice());
-                        if e == "lua" {
-                            if debug {
-                                loggy.log(
-                                    LogType::LuaSys,
-                                    &format!("loading script {}", file_name), //buffer.to_string()),
-                                );
-                            }
-                            handle_script(&mut bufreader, lua_master);
-                        } else {
-                            if debug {
-                                loggy.log(
-                                    LogType::Config,
-                                    &format!("skipping file type {}", file_name),
-                                );
-                            }
+    if let Some(dir) = map.get("scripts") {
+        loggy.log(LogType::Config, &format!("unpacking {} scripts", dir.len()));
+        for (item_name, item_buffer) in dir {
+            match Path::new(&item_name).extension() {
+                Some(e) => {
+                    let file_name = &item_name;
+                    // TODO is it still worth checking for invalid utf8
+                    // let buffer = match std::str::from_utf8(&item_buffer.as_slice()) {
+                    //     Ok(v) => v,
+                    //     Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+                    // };
+                    let mut bufreader = BufReader::new(item_buffer.as_slice());
+                    if e == "lua" {
+                        if debug {
+                            loggy.log(
+                                LogType::LuaSys,
+                                &format!("loading script {}", file_name), //buffer.to_string()),
+                            );
+                        }
+                        handle_script(&mut bufreader, lua_master);
+                    } else {
+                        if debug {
+                            loggy.log(
+                                LogType::Config,
+                                &format!("skipping file type {}", file_name),
+                            );
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
-        _ => {}
     }
 }
 
@@ -467,96 +477,38 @@ end",
     simple_square(16, root.join("icon.png"), loggy);
 }
 
-pub fn walk_files<'a>(
-    #[cfg(feature = "headed")] device: Option<&Device>,
-    #[cfg(feature = "headed")] tex_manager: &mut TexManager,
-    model_manager: &mut ModelManager,
-    activate: bool,
-    world: &mut World,
-    bundle_id: u8,
-    lua_master: &LuaCore,
-    current_path: PathBuf,
+pub fn get_asset_items(
+    current_path: &PathBuf,
     loggy: &mut Loggy,
-    debug: bool,
-) -> Vec<&'a str> {
-    loggy.log(
-        LogType::Config,
-        &format!("current dir is {}", current_path.display()),
-    );
+) -> Result<Vec<PathBuf>, P64Error> {
     let assets_path = current_path.join(Path::new("assets"));
-    let scripts_path = current_path.join(Path::new("scripts"));
-
     loggy.log(
         LogType::Config,
         &format!("assets dir is {}", assets_path.display()),
     );
-    let mut sources: SourceMap = HashMap::new();
-    let mut configs = vec![];
-    let mut paths = vec![];
-    let mut version = [0; 3];
-
     match read_dir(&assets_path) {
         Ok(dir) => {
             let assets_dir: Vec<PathBuf> = dir
                 .filter(Result::is_ok)
                 .map(|e| e.unwrap().path())
                 .collect();
-
-            for entry in assets_dir {
-                loggy.log(
-                    LogType::Config,
-                    &format!("asset to load {}", entry.display()),
-                );
-                match entry.extension() {
-                    Some(e) => {
-                        let ext = e.to_str().unwrap_or_default();
-
-                        match entry.file_stem() {
-                            Some(name) => {
-                                let file_name = name.to_str().unwrap_or_default();
-                                let path = entry.to_str().unwrap_or_default();
-                                // sources.insert(file_name, (file_name, ext, path, None));
-                                // process_asset(device, file_name, ext, buffer)
-                                if is_valid_type(ext) {
-                                    let chonk = (file_name, ext, path, None);
-                                    // println!("load🤡chonk {:?}", chonk.0);
-                                    if ext == "ron" || ext == "json" {
-                                        configs.push(chonk);
-                                    } else {
-                                        sources.insert(file_name, chonk);
-                                    }
-                                    paths.push(path);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    None => {
-                        loggy.log(LogType::ConfigError, &format!("invalid asset {:?}", entry));
-                    }
-                }
-            }
+            Ok(assets_dir)
         }
-        _ => {
+        Err(e) => {
             loggy.log(
                 LogType::ConfigError,
-                &"assets directory cannot be located".to_string(),
+                &format!("assets directory cannot be located: {}", e),
             );
+            Err(P64Error::MissingAssets)
         }
     }
-    #[cfg(feature = "headed")]
-    parse_assets(
-        tex_manager,
-        model_manager,
-        world,
-        bundle_id,
-        device,
-        configs,
-        sources,
-        loggy,
-        debug,
-    );
+}
 
+pub fn get_script_items(
+    current_path: &PathBuf,
+    loggy: &mut Loggy,
+) -> Result<Vec<PathBuf>, P64Error> {
+    let scripts_path = current_path.join(Path::new("scripts"));
     loggy.log(
         LogType::Config,
         &format!("scripts dir is {}", scripts_path.display()),
@@ -567,59 +519,132 @@ pub fn walk_files<'a>(
                 .filter(Result::is_ok)
                 .map(|e| e.unwrap().path())
                 .collect();
+            Ok(scripts_dir)
+        }
+        Err(e) => {
+            loggy.log(
+                LogType::ConfigError,
+                &format!("scripts directory cannot be located: {}", e),
+            );
+            Err(P64Error::MissingScripts)
+        }
+    }
+}
 
-            for entry in scripts_dir {
-                match entry.extension() {
-                    Some(e) => {
-                        let s = e.to_ascii_lowercase();
-                        let file_name = entry.to_str().unwrap();
-                        if s == "lua" {
-                            if file_name.ends_with("ignore.lua") {
-                                loggy.log(LogType::Config, "skipping ignore script");
+pub fn walk_files<'a>(
+    #[cfg(feature = "headed")] device: Option<&Device>,
+    #[cfg(feature = "headed")] tex_manager: &mut TexManager,
+    model_manager: &mut ModelManager,
+    activate: bool,
+    world: &mut World,
+    bundle_id: u8,
+    lua_master: &LuaCore,
+    asset_items: &'a Vec<PathBuf>,
+    script_items: &'a Vec<PathBuf>,
+    loggy: &mut Loggy,
+    debug: bool,
+) -> Vec<&'a str> {
+    // loggy.log(
+    //     LogType::Config,
+    //     &format!("current dir is {}", current_path.display()),
+    // );
+
+    let mut sources: SourceMap = HashMap::new();
+    let mut configs = vec![];
+    let mut paths = vec![];
+    let mut version = [0; 3];
+
+    for entry in asset_items.iter() {
+        loggy.log(
+            LogType::Config,
+            &format!("asset to load {}", entry.display()),
+        );
+        match entry.extension() {
+            Some(e) => {
+                let ext = e.to_str().unwrap_or_default();
+
+                match entry.file_stem() {
+                    Some(name) => {
+                        let file_name = name.to_str().unwrap_or_default();
+                        let path = entry.to_str().unwrap_or_default();
+                        // sources.insert(file_name, (file_name, ext, path, None));
+                        // process_asset(device, file_name, ext, buffer)
+                        if is_valid_type(ext) {
+                            let chonk = (file_name, ext, path, None);
+                            // println!("load🤡chonk {:?}", chonk.0);
+                            if ext == "ron" || ext == "json" {
+                                configs.push(chonk);
                             } else {
-                                loggy
-                                    .log(LogType::Config, &format!("reading script {}", file_name));
-
-                                let input_path = Path::new("")
-                                    .join(file_name.to_owned())
-                                    .with_extension("lua");
-
-                                // let name = crate::asset::get_file_name(input_path.to_owned());
-                                let reader = fs::File::open(input_path);
-                                let mut buffered_reader = std::io::BufReader::new(reader.unwrap());
-
-                                // let st = fs::read_to_string(input_path).unwrap_or_default();
-
-                                // let buffered_string_buffer = std::io::BufReader::new(st.as_bytes());
-
-                                // println!("script item is {}", st);
-
-                                if activate {
-                                    let ver = handle_script(&mut buffered_reader, lua_master);
-                                    if ver[0] > version[0]
-                                        || ver[1] > version[1]
-                                        || ver[2] > version[2]
-                                    {
-                                        version = ver;
-                                    }
-                                }
-                                paths.push(file_name);
+                                sources.insert(file_name, chonk);
                             }
-                        } else {
-                            loggy.log(
-                                LogType::ConfigError,
-                                &format!("skipping file type {}", file_name),
-                            );
+                            paths.push(path);
                         }
                     }
-                    None => {
-                        loggy.log(LogType::ConfigError, &format!("invalid script {:?}", entry));
-                    }
+                    _ => {}
                 }
             }
+            None => {
+                loggy.log(LogType::ConfigError, &format!("invalid asset {:?}", entry));
+            }
         }
-        _ => {
-            loggy.log(LogType::ConfigError, &"scripts directory cannot be located");
+    }
+
+    #[cfg(feature = "headed")]
+    parse_assets(
+        tex_manager,
+        model_manager,
+        world,
+        bundle_id,
+        device,
+        configs,
+        &mut sources,
+        loggy,
+        debug,
+    );
+
+    for entry in script_items {
+        match entry.extension() {
+            Some(e) => {
+                let s = e.to_ascii_lowercase();
+                let file_name = entry.to_str().unwrap();
+                if s == "lua" {
+                    if file_name.ends_with("ignore.lua") {
+                        loggy.log(LogType::Config, "skipping ignore script");
+                    } else {
+                        loggy.log(LogType::Config, &format!("reading script {}", file_name));
+
+                        let input_path = Path::new("")
+                            .join(file_name.to_owned())
+                            .with_extension("lua");
+
+                        // let name = crate::asset::get_file_name(input_path.to_owned());
+                        let reader = fs::File::open(input_path);
+                        let mut buffered_reader = std::io::BufReader::new(reader.unwrap());
+
+                        // let st = fs::read_to_string(input_path).unwrap_or_default();
+
+                        // let buffered_string_buffer = std::io::BufReader::new(st.as_bytes());
+
+                        // println!("script item is {}", st);
+
+                        if activate {
+                            let ver = handle_script(&mut buffered_reader, lua_master);
+                            if ver[0] > version[0] || ver[1] > version[1] || ver[2] > version[2] {
+                                version = ver;
+                            }
+                        }
+                        paths.push(file_name);
+                    }
+                } else {
+                    loggy.log(
+                        LogType::ConfigError,
+                        &format!("skipping file type {}", file_name),
+                    );
+                }
+            }
+            None => {
+                loggy.log(LogType::ConfigError, &format!("invalid script {:?}", entry));
+            }
         }
     }
 
@@ -629,14 +654,14 @@ pub fn walk_files<'a>(
 }
 
 #[cfg(feature = "headed")]
-fn parse_assets(
+fn parse_assets<'a>(
     tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
     bundle_id: u8,
     device: Option<&Device>,
-    configs: Vec<SourceEntry>,
-    mut sources: SourceMap,
+    configs: Vec<SourceEntry<'a>>,
+    sources: &mut SourceMap<'a, '_>,
     loggy: &mut Loggy,
     debug: bool,
 ) -> Result<(), P64Error> {
@@ -676,6 +701,12 @@ fn parse_assets(
                     LogType::Config,
                     &format!("loaded template {} or {}", con.0, template.name),
                 );
+                // let name_ref = if template.name.len() > 0 {
+                //     template.name.as_ref()
+                // } else {
+                //     con.0
+                // };
+
                 let name = if template.name.len() > 0 {
                     &template.name
                 } else {
@@ -685,10 +716,12 @@ fn parse_assets(
                 // println!("🟢template {}", name);
                 // now locate a resource that matches the name and take ownership, if none then there's nothing to do
                 // println!("checking {} sources", sources.len());
-                match sources.entry(name) {
-                    Entry::Occupied(o) => {
+                match sources.get(name) {
+                    Some(o) => {
+                        // Entry::Occupied(o) => {
                         // now load the resource with config template stuff
-                        let resource = o.remove_entry().1; // TODO we're removing the entry but only using it if it's a png, this may cause assets to be ignored if they're not png, buggy
+
+                        let resource = o; // TODO we're removing the entry but only using it if it's a png, this may cause assets to be ignored if they're not png, buggy
                         if resource.1 == "png" {
                             if resource.3.is_some() {
                                 tex_manager.load_tex_from_buffer(
@@ -716,7 +749,7 @@ fn parse_assets(
                                 //     template.anims.len()
                                 // );
                                 for a in template.anims {
-                                    let compound = format!("{}.{}", &name, a.0).to_lowercase();
+                                    let compound = format!("{}.{}", "d", a.0).to_lowercase();
                                     // println!("🟢{:?}", a.1);
                                     let v =
                                         a.1.iter()
@@ -736,8 +769,9 @@ fn parse_assets(
                                 }
                             }
                         }
+                        sources.remove_entry(name);
                     }
-                    Entry::Vacant(_) => {}
+                    None => {}
                 };
             }
             None => {}

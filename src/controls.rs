@@ -22,7 +22,7 @@ const COMMAND_KEY_R: KeyCode = KeyCode::SuperRight;
 #[cfg(not(target_os = "macos"))]
 const COMMAND_KEY_R: KeyCode = KeyCode::ControlRight;
 
-pub fn controls_evaluate(core: &mut Core, window_target: &mut EventLoopWindowTarget<()>) {
+pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<()>) {
     // WindowEvent::Resized(physical_size) => {
     //     core.resize(*physical_size);
     // }

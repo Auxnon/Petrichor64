@@ -36,7 +36,11 @@ impl GlobalMap {
     }
 
     #[cfg(feature = "picc")]
-    pub fn convert(&self, ctx: &Context, table: &mut Table) -> Result<(), InvalidTableKey> {
+    pub fn convert<'gc>(
+        &self,
+        ctx: &Context<'gc>,
+        table: &mut Table<'gc>,
+    ) -> Result<(), InvalidTableKey> {
         let c = *ctx;
         table.set(c, "os", self.os)?;
         table.set(c, "hz", self.hertz)?;
