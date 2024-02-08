@@ -23,10 +23,19 @@ impl SharedPool {
         }
     }
 
-    pub fn localize<'a>(&'a self, local: &mut LocalPool<'a>) {
-        local.ent_list.replace(Some(self.ent_list.borrow_mut()));
-        local.gui.replace(Some(self.gui.borrow_mut()));
-        local.sky.replace(Some(self.sky.borrow_mut()));
+    pub fn localize<'a>(&'a self, local: &mut LocalPool<'a>) -> Result<(), ()> {
+        if let (Ok(el), Ok(g), Ok(s)) = (
+            self.ent_list.try_borrow_mut(),
+            self.gui.try_borrow_mut(),
+            self.sky.try_borrow_mut(),
+        ) {
+            local.ent_list.replace(Some(el));
+            local.gui.replace(Some(g));
+            local.sky.replace(Some(s));
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     pub fn clone(&self) -> Self {
