@@ -17,6 +17,7 @@ use crate::{
 };
 
 use glam::{vec3, vec4};
+#[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
 #[cfg(feature = "headed")]
@@ -589,21 +590,21 @@ impl EntManager {
 // fn log(str: String) {
 //     crate::log(format!("ent_manager::", str));
 // }
-struct LuaEntMan {}
-impl UserData for LuaEntMan {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(_methods: &mut M) {
-        //TODO should we allow table field to not return nil? why?
-        // methods.add_meta_method_mut("__index", |lua, this, ()| {
-        //     //test
-        //     Ok(())
-        // });
+// struct LuaEntMan {}
+// impl UserData for LuaEntMan {
+//     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(_methods: &mut M) {
+//         //TODO should we allow table field to not return nil? why?
+//         // methods.add_meta_method_mut("__index", |lua, this, ()| {
+//         //     //test
+//         //     Ok(())
+//         // });
 
-        // methods.add_method("add", |lu, this, ()| {
-        //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
-        //     ents.set(this.get_id(), this);
-        //     // this.get_id();
-        //     Ok(())
-        // });
-        // methods.add_method("get_y", |_, this, ()| Ok(this.y));
-    }
-}
+//         // methods.add_method("add", |lu, this, ()| {
+//         //     let ents = lu.globals().get::<&str, mlua::Table>("_ents")?;
+//         //     ents.set(this.get_id(), this);
+//         //     // this.get_id();
+//         //     Ok(())
+//         // });
+//         // methods.add_method("get_y", |_, this, ()| Ok(this.y));
+//     }
+// }

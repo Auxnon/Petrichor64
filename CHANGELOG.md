@@ -10,6 +10,8 @@
 - Nil console returns at least give a ~
 - Copy command on ents
 - Initial work to get alternative Lua runtimes working to allow for different build targets
+- A large portion of string cloning reduction passing string readers buffer refs directly
+- New lua library: Piccolo
 
 ## 0.4.0
 

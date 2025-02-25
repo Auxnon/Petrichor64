@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::log::{LogType, Loggy};
 
-#[derive(Default, Debug, Deserialize)]
+#[derive(Deserialize, Default, Debug)]
 pub struct AssetTemplate {
     #[serde(default = "default_tile_name")]
     pub name: String,
@@ -59,7 +59,7 @@ fn default_anim() -> Vec<(String, Vec<String>, bool)> {
 }
 
 /** load file as a ron template for asset */
-pub fn load_ron(path: &String, loggy: &mut Loggy) -> Option<AssetTemplate> {
+pub fn load_ron(path: &str, loggy: &mut Loggy) -> Option<AssetTemplate> {
     match std::fs::File::open(path) {
         Ok(f) => match from_reader(f) {
             Ok(x) => Some(x),
@@ -76,7 +76,7 @@ pub fn load_ron(path: &String, loggy: &mut Loggy) -> Option<AssetTemplate> {
 }
 
 /** load file as a ron template for asset */
-pub fn load_json(filename: &String, path: &String) -> Option<AssetTemplate> {
+pub fn load_json(filename: &str, path: &str) -> Option<AssetTemplate> {
     match read_json_from_file(path) {
         Ok(str) => interpret_json(filename, &str),
         _ => None,
@@ -84,7 +84,7 @@ pub fn load_json(filename: &String, path: &String) -> Option<AssetTemplate> {
 }
 
 /** interpret string as a ron template for asset */
-pub fn interpret_ron(s: &String, loggy: &mut Loggy) -> Option<AssetTemplate> {
+pub fn interpret_ron(s: &str, loggy: &mut Loggy) -> Option<AssetTemplate> {
     match ron::from_str(s) {
         Ok(x) => Some(x),
         Err(e) => {
@@ -117,7 +117,7 @@ fn read_json_from_file<P: AsRef<Path>>(path: P) -> Result<String, Box<dyn Error>
 }
 
 /** interpret string as a json template for asset */
-pub fn interpret_json(filename: &String, s: &String) -> Option<AssetTemplate> {
+pub fn interpret_json(filename: &str, s: &str) -> Option<AssetTemplate> {
     match serde_json::from_str::<serde_json::Value>(s) {
         Ok(j) => process_json(filename, j),
         _ => None,
@@ -125,7 +125,7 @@ pub fn interpret_json(filename: &String, s: &String) -> Option<AssetTemplate> {
 }
 
 /** inbetween json process function */
-fn process_json(filename: &String, j: Value) -> Option<AssetTemplate> {
+fn process_json(filename: &str, j: Value) -> Option<AssetTemplate> {
     // println!("🟣we got a json {}", j);
     let dim = match &j["frames"] {
         Value::Object(m) => match m.values().next() {
