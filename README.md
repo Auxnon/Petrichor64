@@ -1,7 +1,10 @@
 # Petrichor64
 
 The console that never was!
-![Alt text](./assets/preview.png)
+
+![An image of the game engine showing an endless white landscape with colorful rain droplets](./assets/preview.png)
+
+https://github.com/Auxnon/social-board-game/assets/527951/09b99588-c7c1-4c54-adf9-0cfdd70521bb
 
 ## Build
 
