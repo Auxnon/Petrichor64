@@ -1,11 +1,12 @@
-# Petrichor64
-
-The console that never was!
+<div align="center">
+<h1>Petrichor64</h1>
+<h4>The console that never was!</h4>
 
 ![An image of the game engine showing an endless white landscape with colorful rain droplets](./assets/preview.png)
 
+  <video src="https://github.com/user-attachments/assets/559cef3e-22a3-486e-b083-42cf337d9bf2" width="400" />
+</div>
 
-https://github.com/user-attachments/assets/559cef3e-22a3-486e-b083-42cf337d9bf2
 
 ## Build
 
