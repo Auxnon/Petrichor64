@@ -4,7 +4,8 @@ The console that never was!
 
 ![An image of the game engine showing an endless white landscape with colorful rain droplets](./assets/preview.png)
 
-https://github.com/Auxnon/social-board-game/assets/527951/09b99588-c7c1-4c54-adf9-0cfdd70521bb
+
+https://github.com/user-attachments/assets/559cef3e-22a3-486e-b083-42cf337d9bf2
 
 ## Build
 
