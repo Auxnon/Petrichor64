@@ -329,7 +329,7 @@ impl TexManager {
     pub fn load_tex(
         &mut self,
         world: &mut World,
-        name_like: &String,
+        name_like: &str,
         bundle_id: u8,
         template: Option<&AssetTemplate>,
         loggy: &mut Loggy,
@@ -616,8 +616,8 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
         // The layout of the texture
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
-            rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+            bytes_per_row: Some(4 * dimensions.0),
+            rows_per_image: Some(dimensions.1),
         },
         texture_size,
     );
@@ -662,8 +662,8 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
         // The layout of the texture
         wgpu::ImageDataLayout {
             offset: 0,
-            bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
-            rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+            bytes_per_row: Some(4 * dimensions.0),
+            rows_per_image: Some(dimensions.1),
         },
         texture_size,
     );
