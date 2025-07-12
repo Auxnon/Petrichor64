@@ -6,7 +6,6 @@ use crate::root_headless::Core;
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
     bundle::{BundleMutations, BundleResources},
-    ent::Ent,
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
@@ -24,14 +23,15 @@ use crate::{
 
 use image::RgbaImage;
 use itertools::Itertools;
+use silt_lua::lua::VM;
 
 use parking_lot::Mutex;
-use piccolo::{
-    compiler::interning::BasicInterner,
-    error::{LuaError, StaticLuaError},
-    lua, AnyCallback, AnySequence, CallbackReturn, Executor, RuntimeError, StashedExecutor,
-    StaticError, Value,
-};
+// use piccolo::{
+//     compiler::interning::BasicInterner,
+//     error::{LuaError, StaticLuaError},
+//     lua, AnyCallback, AnySequence, CallbackReturn, Executor, RuntimeError, StashedExecutor,
+//     StaticError, Value,
+// };
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -42,7 +42,7 @@ use mlua::{
 };
 
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{Lua, LuaError, Table, Value, Variadic};
+use silt_lua::prelude::{ LuaError, Table, Value };
 
 #[cfg(feature = "picc")]
 use piccolo::{Context, Lua, Table};
@@ -394,8 +394,9 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
-    lua_globals: &Table<'gc>,
-    executor: &Executor<'gc>,
+    #[cfg(feature = "silt")] ctx: &VM<'gc>,
+    // lua_globals: &Table<'gc>,
+    // executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
@@ -1594,7 +1595,6 @@ function help() end",
 
     execute(
         *ctx,
-        executor,
         Some("patch"),
         "
         add=table.insert 
@@ -2649,12 +2649,12 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
     (vec, norms, uv, ind)
 }
 
-// fn make_err(s: &str) -> LuaError {
-//     // LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
-//     make_static(s)
-//     // LuaError::RuntimeError(s.to_string())
-//     // return mlua::Error::RuntimeError(s.to_string());
-// }
+fn make_err(s: &str) -> LuaError {
+    // LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
+    make_static(s)
+    // LuaError::RuntimeError(s.to_string())
+    // return mlua::Error::RuntimeError(s.to_string());
+}
 
 fn static_err<M>(s: M) -> StaticError
 where

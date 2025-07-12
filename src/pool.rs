@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 use atomicell::AtomicCell;
 use image::RgbaImage;
 
-use crate::{ent::Ent, lua_ent::LuaEnt};
+use crate::lua_ent::LuaEnt;
 
 pub type Shared<'a, T> = Rc<RefCell<Option<atomicell::Ref<'a, T>>>>;
 pub type SharedMut<'a, T> = Rc<RefCell<Option<atomicell::RefMut<'a, T>>>>;
