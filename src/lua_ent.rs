@@ -1,9 +1,12 @@
+use std::borrow::Borrow;
+
 #[cfg(feature = "puc_lua")]
 use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
-use piccolo::{Function, UserDataFields, UserDataMethods, Value::Nil, Value::UserData};
+use piccolo::{Function, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{Lua, MetaMethod, UserData, Value};
+use silt_lua::prelude::{UserData, UserDataFields, UserDataMethods, Value::Nil};
+use silt_lua::value::Value;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -38,25 +41,36 @@ pub mod lua_ent_flags {
     pub const DEAD: u8 = 0b100;
 }
 
-#[cfg(feature = "silt")]
-impl UserData<'_> for LuaEnt {
-    fn by_meta_method<'a>(
-        &mut self,
-        lua: &mut Lua,
-        method: MetaMethod,
-        inputs: Value<'a>,
-    ) -> Result<Value<'a>> {
-        match method {
-            MetaMethod::ToString => Ok(Value::String(format!(
-                "[entity {}]",
-                inputs.get::<LuaEnt>()?.get_id()
-            ))),
-            _ => Ok(Value::Nil),
-        }
-    }
-}
-#[cfg(feature = "puc_lua")]
+// #[cfg(feature = "silt")]
+// impl UserData for LuaEnt {
+//     fn by_meta_method<'a>(
+//         &mut self,
+//         lua: &mut Lua,
+//         method: MetaMethod,
+//         inputs: Value<'a>,
+//     ) -> Result<Value<'a>> {
+//         match method {
+//             MetaMethod::ToString => Ok(Value::String(format!(
+//                 "[entity {}]",
+//                 inputs.get::<LuaEnt>()?.get_id()
+//             ))),
+//             _ => Ok(Value::Nil),
+//         }
+//     }
+// }
+// #[cfg(feature = "puc_lua")]
 impl UserData for LuaEnt {
+    // fn to_string(&self) -> String {
+    //     let t = String::from("ent");
+    //     return t;
+    // }
+    fn type_name() -> &'static str {
+        "ent"
+    }
+    fn get_id(&self) -> usize {
+        0
+    }
+    
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method("__tostring", |_, this, _: ()| {
             Ok(format!("[entity {}]", this.get_id()))
@@ -82,12 +96,17 @@ impl UserData for LuaEnt {
             Ok(true)
         });
 
-        methods.add_method_mut("copy", |lua, this, ()| {
+        methods.add_method_mut("copy", |lua, this, t| {
             let ent = this.clone();
             let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
-            if let Ok(fun) = lua.globals().get::<&str, Function>("_make") {
-                fun.call(wrapped.clone())?;
+            if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get("_make") {
+                (*v).f(lua, f);
             }
+
+            // if let Ok(fun) = lua.globals).get::<&str, Function>("_make") {
+            //     fun.call(wrapped.clone())?;
+            // }
+            //
 
             Ok(wrapped)
         });

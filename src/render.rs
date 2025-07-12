@@ -1,5 +1,9 @@
 use glam::{vec3, Mat4, Vec2, Vec3};
 use std::{iter, ops::Add, rc::Rc};
+use wgpu::{
+    Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
+};
 // use tracy::frame;
 
 use crate::{
@@ -67,6 +71,7 @@ pub fn render_loop(
 
     // TODO is this expensive? only sometimes?
     core.gui.render(
+        &mut core.bundle_manager,
         &core.gfx.queue,
         0.,
         // core.global.get("value2".to_string()),
@@ -145,35 +150,36 @@ pub fn render_loop(
 
     let mut encoder = gfx
         .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        .create_command_encoder(&CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
     encoder.push_debug_group("World Render");
     {
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(RenderPassColorAttachment {
                 view: &gfx.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                ops: Operations {
+                    load: LoadOp::Clear(Color {
                         r: 0.,
                         g: 0.,
                         b: 0.,
                         a: 1.,
                     }),
-                    store: true,
+                    store: StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
                 view: &gfx.depth_texture,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: true,
+                depth_ops: Some(Operations {
+                    load: LoadOp::Clear(1.0),
+                    store: StoreOp::Store,
                 }),
                 stencil_ops: None,
             }),
+            ..Default::default()
         });
 
         //skybox space
@@ -193,7 +199,7 @@ pub fn render_loop(
             for c in chunks {
                 if c.buffers.is_some() {
                     let b = c.buffers.as_ref().unwrap();
-                    render_pass.set_index_buffer(b.1.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(b.1.slice(..), IndexFormat::Uint32);
                     render_pass.set_vertex_buffer(0, b.0.slice(..));
                     render_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
                     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
@@ -256,17 +262,18 @@ pub fn render_loop(
         .create_view(&wgpu::TextureViewDescriptor::default());
     encoder.push_debug_group("Post Render");
     {
-        let mut post_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut post_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Post Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(RenderPassColorAttachment {
                 view: &view, //&core.post.post_texture_view,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: true,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::BLACK),
+                    store: StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: None,
+            ..Default::default()
         });
 
         {

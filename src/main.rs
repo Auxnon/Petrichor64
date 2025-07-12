@@ -50,6 +50,7 @@ mod online;
 mod packet;
 mod pad;
 mod parse;
+mod pool;
 #[cfg(feature = "headed")]
 mod post;
 #[cfg(feature = "headed")]
@@ -67,9 +68,12 @@ mod template;
 mod texture;
 mod tile;
 mod types;
+#[cfg(feature = "picc")]
+mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+use winit::event_loop::EventLoopWindowTarget;
 #[cfg(feature = "headed")]
 use winit::{
     event::{DeviceEvent, Event, WindowEvent},
@@ -93,7 +97,13 @@ fn main() {
     let (pitcher, mut catcher) = channel::<MainPacket>();
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
-        let event_loop = EventLoop::new();
+        let event_loop = match EventLoop::new() {
+            Ok(el) => el,
+            Err(e) => {
+                error_window(Box::new(e));
+                return;
+            }
+        };
         let window_icon = {
             let icon =
                 image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
@@ -196,96 +206,93 @@ fn main() {
     #[cfg(not(feature = "headed"))]
     type Param2 = ();
     #[cfg(feature = "headed")]
-    type Param1 = ControlFlow;
+    type Param1<'a> = &'a EventLoopWindowTarget<()>;
     #[cfg(feature = "headed")]
     type Param2 = Rc<winit::window::Window>;
 
-    let state_change_check =
-        move |c: &mut Core, control_flow: &mut Param1, rwindow: &mut Param2| {
-            if c.global.is_state_changed {
-                if c.global.state_delay > 0 {
-                    c.global.state_delay -= 1;
-                    // println!("delaying state change {} ", core.global.state_delay);
-                } else {
-                    c.global.is_state_changed = false;
-                    let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
-                    for state in states {
-                        match state {
-                            // StateChange::Fullscreen => {core.check_fullscreen();
-                            #[cfg(feature = "headed")]
-                            StateChange::MouseGrabOn => {
-                                rwindow.set_cursor_visible(false);
-                                rwindow.set_cursor_position(center).unwrap();
-                                rwindow
-                                    .set_cursor_grab(CursorGrabMode::Confined)
-                                    .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
-                                c.global.mouse_grabbed_state = true;
+    let state_change_check = move |c: &mut Core, control_flow: Param1, rwindow: &mut Param2| {
+        if c.global.is_state_changed {
+            if c.global.state_delay > 0 {
+                c.global.state_delay -= 1;
+                // println!("delaying state change {} ", core.global.state_delay);
+            } else {
+                c.global.is_state_changed = false;
+                let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
+                for state in states {
+                    match state {
+                        // StateChange::Fullscreen => {core.check_fullscreen();
+                        #[cfg(feature = "headed")]
+                        StateChange::MouseGrabOn => {
+                            rwindow.set_cursor_visible(false);
+                            rwindow.set_cursor_position(center).unwrap();
+                            rwindow
+                                .set_cursor_grab(CursorGrabMode::Confined)
+                                .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
+                            c.global.mouse_grabbed_state = true;
+                        }
+                        #[cfg(feature = "headed")]
+                        StateChange::MouseGrabOff => {
+                            rwindow.set_cursor_visible(true);
+                            rwindow.set_cursor_grab(CursorGrabMode::None);
+                            c.global.mouse_grabbed_state = false;
+                        }
+                        #[cfg(feature = "headed")]
+                        StateChange::Resized => {
+                            c.debounced_resize();
+                        }
+                        #[cfg(feature = "headed")]
+                        StateChange::Quit => control_flow.exit(),
+                        #[cfg(not(feature = "headed"))]
+                        StateChange::Quit => {
+                            return true;
+                        }
+                        StateChange::Config => {
+                            let res = crate::asset::parse_config(
+                                &mut c.global,
+                                c.bundle_manager.get_lua(),
+                                &mut c.loggy,
+                            );
+                            if let Some(s) = res {
+                                crate::command::run_con_sys(c, &s);
                             }
-                            #[cfg(feature = "headed")]
-                            StateChange::MouseGrabOff => {
-                                rwindow.set_cursor_visible(true);
-                                rwindow.set_cursor_grab(CursorGrabMode::None);
-                                c.global.mouse_grabbed_state = false;
-                            }
-                            #[cfg(feature = "headed")]
-                            StateChange::Resized => {
-                                c.debounced_resize();
-                            }
-                            #[cfg(feature = "headed")]
-                            StateChange::Quit => {
-                                *control_flow = ControlFlow::Exit;
-                            }
-                            #[cfg(not(feature = "headed"))]
-                            StateChange::Quit => {
-                                return true;
-                            }
-                            StateChange::Config => {
-                                let res = crate::asset::parse_config(
-                                    &mut c.global,
-                                    c.bundle_manager.get_lua(),
-                                    &mut c.loggy,
-                                );
-                                if let Some(s) = res {
-                                    crate::command::run_con_sys(c, &s);
-                                }
 
-                                // as a bonus also check command line arguments here
-                                let args: Vec<String> = std::env::args().collect();
-                                if args.len() > 1 {
-                                    // println!("cli args: {:?}", args);
-                                    let mut command = None;
-                                    for (i, arg) in args.iter().enumerate() {
-                                        if arg.starts_with("-") {
-                                            command = Some(arg.to_lowercase());
-                                        } else if command.is_some() {
-                                            match command.unwrap().as_str() {
-                                                "--init" | "-i" => {
-                                                    println!("cli-init: {:?}", arg);
-                                                    crate::command::run_con_sys(c, &arg);
-                                                }
-                                                _ => {}
+                            // as a bonus also check command line arguments here
+                            let args: Vec<String> = std::env::args().collect();
+                            if args.len() > 1 {
+                                // println!("cli args: {:?}", args);
+                                let mut command = None;
+                                for (i, arg) in args.iter().enumerate() {
+                                    if arg.starts_with("-") {
+                                        command = Some(arg.to_lowercase());
+                                    } else if command.is_some() {
+                                        match command.unwrap().as_str() {
+                                            "--init" | "-i" => {
+                                                println!("cli-init: {:?}", arg);
+                                                crate::command::run_con_sys(c, &arg);
                                             }
-                                            command = None;
+                                            _ => {}
                                         }
+                                        command = None;
                                     }
                                 }
+                            }
 
-                                // core.config = crate::config::Config::new();
-                                // core.config.load();
-                                // core.config.apply(&mut core);
-                            }
-                            StateChange::ModelChange(id) => {
-                                #[cfg(feature = "headed")]
-                                c.ent_manager.check_for_model_change(&c.model_manager, &id);
-                            }
+                            // core.config = crate::config::Config::new();
+                            // core.config.load();
+                            // core.config.apply(&mut core);
+                        }
+                        StateChange::ModelChange(id) => {
+                            #[cfg(feature = "headed")]
+                            c.ent_manager.check_for_model_change(&c.model_manager, &id);
                         }
                     }
-                    #[cfg(feature = "headed")]
-                    c.check_fullscreen();
                 }
+                #[cfg(feature = "headed")]
+                c.check_fullscreen();
             }
-            false
-        };
+        }
+        false
+    };
 
     #[cfg(feature = "headed")]
     {
@@ -293,7 +300,7 @@ fn main() {
         let mut instance_buffers = vec![];
         let mut updated_bundles = FxHashMap::default();
 
-        event_loop.run(move |event, _, control_flow| {
+        event_loop.run(move |event, elwt| {
             // core.loop_helper.loop_start();
             if !core.global.console {
                 controls::bit_check(&event, &mut bits);
@@ -304,7 +311,7 @@ fn main() {
                 bits.1[4] = core.global.mouse_buttons[0];
                 bits.1[5] = core.global.mouse_buttons[1];
                 bits.1[6] = core.global.mouse_buttons[2];
-                bits.1[7] = core.global.scroll_delta;
+                bits.1[7] = core.global.scroll_delta.0;
                 bits.1[8] = core.global.cursor_projected_pos.x;
                 bits.1[9] = core.global.cursor_projected_pos.y;
                 bits.1[10] = core.global.cursor_projected_pos.z;
@@ -315,7 +322,7 @@ fn main() {
             }
 
             if core.input_manager.update(&event) {
-                controls::controls_evaluate(&mut core, control_flow);
+                controls::controls_evaluate(&mut core, elwt);
                 // frame!("START");
 
                 core.global.mouse_delta = vec2(0., 0.);
@@ -324,22 +331,48 @@ fn main() {
             }
 
             match event {
-                Event::RedrawEventsCleared => {
-                    core.loop_helper.loop_start(); //
-                                                   // #[cfg(not(target_arch = "wasm32"))]
-
-                    rwin.request_redraw();
-                }
                 Event::WindowEvent {
                     ref event,
                     window_id: _,
                 } => match event {
+                    WindowEvent::RedrawRequested => {
+                        core.loop_helper.loop_start(); //
+                                                       // #[cfg(not(target_arch = "wasm32"))]
+
+                        // TODO
+                        // rwin.request_redraw();
+
+                        state_change_check(&mut core, elwt, &mut rwin);
+                        // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
+                        // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+                        if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
+                            instance_buffers = buff;
+                        }
+                        core.bundle_manager.call_loop(&mut updated_bundles, bits);
+
+                        match core.render(&instance_buffers) {
+                            Ok(_) => {}
+                            // Reconfigure the surface if lost
+                            // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+                            // The system is out of memory, we should probably quit
+                            // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                            // All other errors (Outdated, Timeout) should be resolved by the next frame
+                            // Err(e) => eprintln!("{:?}", e),
+                            _ => {}
+                        };
+
+                        core.loop_helper.loop_sleep();
+                    }
                     WindowEvent::Resized(physical_size) => {
                         core.resize(*physical_size);
                     }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        // new_inner_size is &&mut so we have to dereference it twice
-                        core.resize(**new_inner_size);
+                    WindowEvent::ScaleFactorChanged {
+                        inner_size_writer, ..
+                    } => {
+                        // TODO do we still need to check for this?
+                        // inner_size_writer.
+                        // // new_inner_size is &&mut so we have to dereference it twice
+                        // core.resize(**new_inner_size);
                     }
                     _ => {}
                 },
@@ -350,28 +383,6 @@ fn main() {
 
                     _ => {}
                 },
-                Event::RedrawRequested(_) => {
-                    state_change_check(&mut core, control_flow, &mut rwin);
-                    // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
-                    // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
-                    if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
-                        instance_buffers = buff;
-                    }
-                    core.bundle_manager.call_loop(&mut updated_bundles, bits);
-
-                    match core.render(&instance_buffers) {
-                        Ok(_) => {}
-                        // Reconfigure the surface if lost
-                        // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
-                        // The system is out of memory, we should probably quit
-                        // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                        // All other errors (Outdated, Timeout) should be resolved by the next frame
-                        // Err(e) => eprintln!("{:?}", e),
-                        _ => {}
-                    };
-
-                    core.loop_helper.loop_sleep();
-                }
                 _ => {}
             }
         });
@@ -727,33 +738,49 @@ impl Core {
                     }
                     self.global.is_state_changed = true;
                 }
-                MainCommmand::LoopComplete(img_result) => {
-                    if let Some(main) = img_result.0 {
-                        if !self.bundle_manager.is_single() {
-                            self.bundle_manager.set_raster(id, 0, main);
-                            #[cfg(feature = "headed")]
-                            if only_one_gui_sync {
-                                // DEV is this still necessary to force 1? Wont that break simultaneous syncs?
-                                self.update_raster(ScreenIndex::Primary);
-                                only_one_gui_sync = false;
-                            }
-                        } else {
-                            #[cfg(feature = "headed")]
-                            self.gui.replace_image(main, ScreenIndex::Primary);
-                        }
+                MainCommmand::LoopComplete(mutations) => {
+                    // if let Some(main) = img_result.0 {
+                    //     if !self.bundle_manager.is_single() {
+                    //         self.bundle_manager.set_raster(id, 0, main);
+                    //         #[cfg(feature = "headed")]
+                    //         if only_one_gui_sync {
+                    //             // DEV is this still necessary to force 1? Wont that break simultaneous syncs?
+                    //             self.update_raster(ScreenIndex::Primary);
+                    //             only_one_gui_sync = false;
+                    //         }
+                    //     } else {
+                    //         #[cfg(feature = "headed")]
+                    //         self.gui.replace_image(main, ScreenIndex::Primary);
+                    //     }
+                    // }
+                    // if let Some(sky) = img_result.1 {
+                    //     if !self.bundle_manager.is_single() {
+                    //         self.bundle_manager.set_raster(id, 1, sky);
+                    //         #[cfg(feature = "headed")]
+                    //         if only_one_gui_sync {
+                    //             self.update_raster(ScreenIndex::Sky);
+                    //             only_one_gui_sync = false;
+                    //         }
+                    //     } else {
+                    //         #[cfg(feature = "headed")]
+                    //         self.gui.replace_image(sky, gui::ScreenIndex::Sky);
+                    //     }
+                    // }
+
+                    if mutations.gui {
+                        #[cfg(feature = "headed")]
+                        self.gui.mark_dirty(ScreenIndex::Primary, id);
+                        // if let Some(pool) = self.bundle_manager.get_pool(id) {
+                        //     self.gui
+                        //         .replace_image(pool.gui.borrow(), ScreenIndex::Primary);
+                        // }
                     }
-                    if let Some(sky) = img_result.1 {
-                        if !self.bundle_manager.is_single() {
-                            self.bundle_manager.set_raster(id, 1, sky);
-                            #[cfg(feature = "headed")]
-                            if only_one_gui_sync {
-                                self.update_raster(ScreenIndex::Sky);
-                                only_one_gui_sync = false;
-                            }
-                        } else {
-                            #[cfg(feature = "headed")]
-                            self.gui.replace_image(sky, gui::ScreenIndex::Sky);
-                        }
+                    if mutations.sky {
+                        #[cfg(feature = "headed")]
+                        self.gui.mark_dirty(ScreenIndex::Sky, id);
+                        // if let Some(pool) = self.bundle_manager.get_pool(id) {
+                        //     self.gui.replace_image(pool.sky.borrow(), ScreenIndex::Sky);
+                        // }
                     }
                     completed_bundles.insert(id, true);
                     loop_complete = true;
