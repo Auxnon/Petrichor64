@@ -16,13 +16,14 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use piccolo::{
-    compiler::{self as Compiler, interning::BasicInterner},
-    error::{LuaError, StaticLuaError},
-    lua, meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Execution, Executor,
-    FromMultiValue, Fuel, Function, FunctionPrototype, Lua, PrototypeError, Stack, StashedExecutor,
-    StaticError, Value,
-};
+use silt_lua::{lua::VM, prelude::Compiler};
+// use piccolo::{
+//     compiler::{self as Compiler, interning::BasicInterner},
+//     error::{LuaError, StaticLuaError},
+//     lua, meta_ops, AnyCallback, CallbackReturn, Closure, Context, Error, Execution, Executor,
+//     FromMultiValue, Fuel, Function, FunctionPrototype, Lua, PrototypeError, Stack, StashedExecutor,
+//     StaticError, Value,
+// };
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Value};
 use std::{
@@ -192,7 +193,7 @@ impl<'lt> LuaCore {
         //     Some(r) =>  r,
         //     None => channel::<LuaTalk>().1,
         // };
-        let interner = BasicInterner::default();
+        // let interner = BasicInterner::default();
         if let Err(e) = loggy.send((LogType::LuaSys, format!("init lua core #{}", bundle_id))) {
             println!("lua log failed: {}", e);
         }
@@ -276,8 +277,11 @@ impl<'lt> LuaCore {
                 // } else {
                 //     Lua::new()
                 // };
+                //
 
-                let mut lua_instance = Lua::core();
+                let compiler = Compiler::new();
+
+                let mut lua_instance = Lua::new_with_standard();
                 // let interner = BasicInterner::default();
                 // let thread = lua_instance.enter(|ctx| {
                 //     let globals = &ctx.state.globals;
@@ -287,10 +291,9 @@ impl<'lt> LuaCore {
 
                 let mut local_pool = LocalPool::new();
 
-                lua_instance.try_enter(|ctx| {
-                    let globals = &ctx.globals();
+                lua_instance.enter(|ctx, mc| {
 
-                    let executor = Executor::new(ctx);
+                    // let executor = Executor::new(ctx);
 
                     if debug {
                         loggy.send((
@@ -314,8 +317,6 @@ impl<'lt> LuaCore {
                     let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
                     match crate::command::init_lua_sys(
                         &ctx,
-                        &globals,
-                        &executor,
                         bundle_id,
                         pitcher,
                         world_sender,
@@ -350,10 +351,10 @@ impl<'lt> LuaCore {
                     if debug {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
-                    let main_lua_func = build_function(ctx, Some("main"), "main() loop()")?;
-                    let loop_lua_func = build_function(ctx, Some("loop"), "loop()")?;
-                    let draw_lua_func = build_function(ctx, Some("draw"), "draw()")?;
-                    let drop_lua_func = build_function(ctx, Some("drop"), "drop()")?;
+                    let main_lua_func = ctx.load_fn(mc, &mut compiler, Some("main".to_owned()),"main() loop()")?;
+                    let loop_lua_func = ctx.load_fn(mc, &mut compiler, Some("loop".to_owned()),"loop()")?;
+                    let draw_lua_func = ctx.load_fn(mc, &mut compiler, Some("draw".to_owned()),"draw()")?;
+                    let drop_lua_func = ctx.load_fn(mc, &mut compiler, Some("drop".to_owned()),"drop()")?;
 
                     // let main_ref = Rc::new(RefCell::new(f));
                     for m in receiver {
@@ -426,23 +427,26 @@ impl<'lt> LuaCore {
                         // }
                         match m {
                             LuaTalk::Load(code, sync) => {
-                                if let Err(er) = run_in_context(
-                                    &ctx,
-                                    &executor,
-                                    Some("load ->"),
-                                    &mut code.as_bytes(),
-                                ) {
-                                    loggy.send((LogType::LuaError, er.to_string()))?;
-                                    sync.send(LuaResponse::String(er.to_string()))?;
-                                } else {
-                                    let res = match executor.take_result::<Value>(ctx) {
-                                        Ok(v1) => match v1 {
-                                            Ok(v2) => v2,
-                                            Err(_) => Value::Nil,
-                                        },
-                                        Err(_) => Value::Nil,
-                                    };
-                                    sync.send(res.into())?;
+                                // if let Err(er) = run_in_context(
+                                //     &ctx,
+                                //     Some("load ->"),
+                                //     &mut code.as_bytes(),
+                                // ) {
+                                //     loggy.send((LogType::LuaError, er.to_string()))?;
+                                //     sync.send(LuaResponse::String(er.to_string()))?;
+                                // } else {
+                                //     let res = match executor.take_result::<Value>(ctx) {
+                                //         Ok(v1) => match v1 {
+                                //             Ok(v2) => v2,
+                                //             Err(_) => Value::Nil,
+                                //         },
+                                //         Err(_) => Value::Nil,
+                                //     };
+                                //     sync.send(res.into())?;
+                                // }
+                                match run_in_context(vm, name, code){
+                                    Ok(res)=>,
+                                    Err(er)=>,
                                 }
                             }
                             LuaTalk::AsyncLoad(code) => {
@@ -822,39 +826,47 @@ impl<'lt> LuaCore {
     }
 }
 
+// fn run_in_context<'gc, 'lt>(
+//     ctx: &Context<'gc>,
+//     executor: &Executor<'gc>,
+//     name: Option<&str>,
+//     code: &'lt mut (dyn Read + Send),
+// ) -> Result<(), Error<'gc>> {
+//     let closure = match Closure::load(*ctx, name, code) {
+//         Ok(closure) => closure,
+//         Err(err) => {
+//             return Err(err.into());
+//         }
+//     };
+//     let function = Function::compose(
+//         &ctx,
+//         [
+//             closure.into(),
+//             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+//                 Ok(if stack.is_empty() {
+//                     CallbackReturn::Return
+//                 } else {
+//                     CallbackReturn::Call {
+//                         function: meta_ops::call(ctx, ctx.get_global("print"))?,
+//                         then: None,
+//                     }
+//                 })
+//             })
+//             .into(),
+//         ],
+//     );
+//     // executor.
+//     executor.restart(*ctx, function, ());
+//
+//     Ok(())
+// }
 fn run_in_context<'gc, 'lt>(
-    ctx: &Context<'gc>,
-    executor: &Executor<'gc>,
+    vm: &mut VM<'gc>,
     name: Option<&str>,
     code: &'lt mut (dyn Read + Send),
 ) -> Result<(), Error<'gc>> {
-    let closure = match Closure::load(*ctx, name, code) {
-        Ok(closure) => closure,
-        Err(err) => {
-            return Err(err.into());
-        }
-    };
-    let function = Function::compose(
-        &ctx,
-        [
-            closure.into(),
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                Ok(if stack.is_empty() {
-                    CallbackReturn::Return
-                } else {
-                    CallbackReturn::Call {
-                        function: meta_ops::call(ctx, ctx.get_global("print"))?,
-                        then: None,
-                    }
-                })
-            })
-            .into(),
-        ],
-    );
-    // executor.
-    executor.restart(*ctx, function, ());
-
-    Ok(())
+    vm.load()
+    
 }
 
 fn run_initial_code<R>(lua: &mut Lua, code: R) -> Result<(), StaticError>
@@ -874,129 +886,126 @@ where
 }
 
 /// Build a lua function to be excuted later
-fn build_function<'a>(
-    ctx: Context<'a>,
-    name: Option<&str>,
-    code: &str,
-) -> Result<Function<'a>, StaticError> {
-    let closure = match Closure::load(ctx, name, ("return ".to_string() + code).as_bytes()) {
-        Ok(closure) => closure,
-        Err(err) => {
-            if let Ok(closure) = Closure::load(ctx, name, code.as_bytes()) {
-                closure
-            } else {
-                return Err(StaticError::Runtime(err.into()));
-            }
-        }
-    };
-    Ok(Function::compose(
-        &ctx,
-        [
-            closure.into(),
-            AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                Ok(if stack.is_empty() {
-                    CallbackReturn::Return
-                } else {
-                    CallbackReturn::Call {
-                        function: meta_ops::call(ctx, ctx.get_global("print"))?,
-                        then: None,
-                    }
-                })
-            })
-            .into(),
-        ],
-    ))
-}
+// fn build_function<'a>(
+//     ctx: Context<'a>,
+//     name: Option<&str>,
+//     code: &str,
+// ) -> Result<Function<'a>, StaticError> {
+//     let closure = match Closure::load(ctx, name, ("return ".to_string() + code).as_bytes()) {
+//         Ok(closure) => closure,
+//         Err(err) => {
+//             if let Ok(closure) = Closure::load(ctx, name, code.as_bytes()) {
+//                 closure
+//             } else {
+//                 return Err(StaticError::Runtime(err.into()));
+//             }
+//         }
+//     };
+//     Ok(Function::compose(
+//         &ctx,
+//         [
+//             closure.into(),
+//             AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+//                 Ok(if stack.is_empty() {
+//                     CallbackReturn::Return
+//                 } else {
+//                     CallbackReturn::Call {
+//                         function: meta_ops::call(ctx, ctx.get_global("print"))?,
+//                         then: None,
+//                     }
+//                 })
+//             })
+//             .into(),
+//         ],
+//     ))
+// }
 
-pub fn native_function<'a, 'gc, F>(ctx: &Context<'gc>, func: F) -> Result<Value<'gc>, StaticError>
-where
-    F: 'static
-        + Fn(
-            Context<'gc>,
-            Execution<'gc, '_>,
-            Stack<'gc, '_>,
-        ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
-{
-    Ok(AnyCallback::from_fn(ctx, func).into())
-}
+// pub fn native_function<'a, 'gc, F>(ctx: &Context<'gc>, func: F) -> Result<Value<'gc>, StaticError>
+// where
+//     F: 'static
+//         + Fn(
+//             Context<'gc>,
+//             Execution<'gc, '_>,
+//             Stack<'gc, '_>,
+//         ) -> Result<CallbackReturn<'gc>, Error<'gc>>,
+// {
+//     Ok(AnyCallback::from_fn(ctx, func).into())
+// }
 
-fn build_and_run_function(
-    lua: &mut Lua,
-    name: Option<&str>,
-    code: &str,
-) -> Result<StashedExecutor, StaticError> {
-    let func = lua.try_enter(|ctx| {
-        let func = build_function(ctx, name, code)?;
-        Ok(ctx.stash(Executor::start(ctx, func, ())))
-    })?;
-    Ok(func)
-}
+// fn build_and_run_function(
+//     lua: &mut Lua,
+//     name: Option<&str>,
+//     code: &str,
+// ) -> Result<StashedExecutor, StaticError> {
+//     let func = lua.try_enter(|ctx| {
+//         let func = build_function(ctx, name, code)?;
+//         Ok(ctx.stash(Executor::start(ctx, func, ())))
+//     })?;
+//     Ok(func)
+// }
 
-pub fn run_code(
-    lua: &mut Lua,
-    executor: &StashedExecutor,
-    name: Option<&str>,
-    code: &str,
-) -> Result<(), StaticError> {
-    lua.try_enter(|ctx| {
-        let closure = match Closure::load(ctx, name, ("return ".to_string() + code).as_bytes()) {
-            Ok(closure) => closure,
-            Err(err) => {
-                if let Ok(closure) = Closure::load(ctx, name, code.as_bytes()) {
-                    closure
-                } else {
-                    return Err(err.into());
-                }
-            }
-        };
-        let function = Function::compose(
-            &ctx,
-            [
-                closure.into(),
-                AnyCallback::from_fn(&ctx, |ctx, _, stack| {
-                    Ok(if stack.is_empty() {
-                        CallbackReturn::Return
-                    } else {
-                        CallbackReturn::Call {
-                            function: meta_ops::call(ctx, ctx.get_global("print"))?,
-                            then: None,
-                        }
-                    })
-                })
-                .into(),
-            ],
-        );
-        let executor = ctx.fetch(executor);
-        executor.restart(ctx, function, ());
-        Ok(())
-    })?;
+// pub fn run_code(
+//     lua: &mut Lua,
+//     executor: &StashedExecutor,
+//     name: Option<&str>,
+//     code: &str,
+// ) -> Result<(), StaticError> {
+//     lua.try_enter(|ctx| {
+//         let closure = match Closure::load(ctx, name, ("return ".to_string() + code).as_bytes()) {
+//             Ok(closure) => closure,
+//             Err(err) => {
+//                 if let Ok(closure) = Closure::load(ctx, name, code.as_bytes()) {
+//                     closure
+//                 } else {
+//                     return Err(err.into());
+//                 }
+//             }
+//         };
+//         let function = Function::compose(
+//             &ctx,
+//             [
+//                 closure.into(),
+//                 AnyCallback::from_fn(&ctx, |ctx, _, stack| {
+//                     Ok(if stack.is_empty() {
+//                         CallbackReturn::Return
+//                     } else {
+//                         CallbackReturn::Call {
+//                             function: meta_ops::call(ctx, ctx.get_global("print"))?,
+//                             then: None,
+//                         }
+//                     })
+//                 })
+//                 .into(),
+//             ],
+//         );
+//         let executor = ctx.fetch(executor);
+//         executor.restart(ctx, function, ());
+//         Ok(())
+//     })?;
+//
+//     lua.execute::<()>(executor)
+// }
 
-    lua.execute::<()>(executor)
-}
-
-pub fn execute<'gc>(
-    ctx: Context<'gc>,
-    executor: &Executor<'gc>,
-    name: Option<&str>,
-    code: &str,
-) -> Result<(), PrototypeError> {
-    // lua.try_run(|ctx| {
-    let closure = match Closure::load(ctx, name, code.as_bytes()) {
-        Ok(closure) => closure,
-        Err(err) => {
-            return Err(err);
-        }
-    };
-
-    let func = Function::from(closure);
-
-    // let executor = ctx.state.registry.fetch(executor);
-    executor.restart(ctx, func, ());
-    Ok(())
-    // })?;
-
-    // lua.execute::<()>(executor)
-}
+// pub fn execute<'gc>(
+//     ctx: Context<'gc>,
+//     executor: &Executor<'gc>,
+//     name: Option<&str>,
+//     code: &str,
+// ) -> Result<(), PrototypeError> {
+//     // lua.try_run(|ctx| {
+//     let closure = match Closure::load(ctx, name, code.as_bytes()) {
+//         Ok(closure) => closure,
+//         Err(err) => {
+//             return Err(err);
+//         }
+//     };
+//
+//     let func = Function::from(closure);
+//
+//     executor.restart(ctx, func, ());
+//     Ok(())
+//
+// }
 
 // fn lua_load<'a, R>(
 //     lua: &Lua,
