@@ -26,12 +26,7 @@ use itertools::Itertools;
 use silt_lua::lua::VM;
 
 use parking_lot::Mutex;
-// use piccolo::{
-//     compiler::interning::BasicInterner,
-//     error::{LuaError, StaticLuaError},
-//     lua, AnyCallback, AnySequence, CallbackReturn, Executor, RuntimeError, StashedExecutor,
-//     StaticError, Value,
-// };
+
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -419,7 +414,7 @@ pub fn init_lua_sys<'a, 'gc>(
 // Option<bool>
 {
     println!("init lua sys");
-    // interner.
+
     let c = *ctx;
     let v = Value::String(piccolo::String::from_static(
         ctx.deref(),
