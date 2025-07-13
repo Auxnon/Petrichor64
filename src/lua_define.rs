@@ -16,7 +16,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use silt_lua::{lua::VM, prelude::Compiler};
+use silt_lua::{lua::VM, prelude::Compiler, ExVal};
 // use piccolo::{
 //     compiler::{self as Compiler, interning::BasicInterner},
 //     error::{LuaError, StaticLuaError},
@@ -25,7 +25,7 @@ use silt_lua::{lua::VM, prelude::Compiler};
 //     StaticError, Value,
 // };
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{Lua, LuaError, Value};
+use silt_lua::{Lua, Value};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -48,16 +48,17 @@ pub type MainPacket = (u8, MainCommmand);
 
 pub type LuaHandle = thread::JoinHandle<Result<(), String>>;
 
-pub enum LuaResponse {
-    String(String),
-    Number(f64),
-    Integer(i32),
-    Boolean(bool),
-    Table(HashMap<String, String>),
-    TableOfTuple(HashMap<String, (String, String)>),
-    Nil,
-    Error(String),
-}
+// pub enum LuaResponse {
+//     String(String),
+//     Number(f64),
+//     Integer(i32),
+//     Boolean(bool),
+//     Table(HashMap<String, String>),
+//     TableOfTuple(HashMap<String, (String, String)>),
+//     Nil,
+//     Error(String),
+// }
+pub type LuaResponse = ExVal;
 
 pub trait ReadSend: Read + Send {}
 pub enum LuaTalk {
@@ -291,8 +292,7 @@ impl<'lt> LuaCore {
 
                 let mut local_pool = LocalPool::new();
 
-                lua_instance.enter(|ctx, mc| {
-
+                lua_instance.enter(|vm, mc| {
                     // let executor = Executor::new(ctx);
 
                     if debug {
@@ -316,7 +316,7 @@ impl<'lt> LuaCore {
                     let mut debounce_error_counter = 60;
                     let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
                     match crate::command::init_lua_sys(
-                        &ctx,
+                        &vm,
                         bundle_id,
                         pitcher,
                         world_sender,
@@ -351,10 +351,14 @@ impl<'lt> LuaCore {
                     if debug {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
-                    let main_lua_func = ctx.load_fn(mc, &mut compiler, Some("main".to_owned()),"main() loop()")?;
-                    let loop_lua_func = ctx.load_fn(mc, &mut compiler, Some("loop".to_owned()),"loop()")?;
-                    let draw_lua_func = ctx.load_fn(mc, &mut compiler, Some("draw".to_owned()),"draw()")?;
-                    let drop_lua_func = ctx.load_fn(mc, &mut compiler, Some("drop".to_owned()),"drop()")?;
+                    let main_lua_func =
+                        vm.load_fn(mc, &mut compiler, Some("main".to_owned()), "main() loop()")?;
+                    let loop_lua_func =
+                        vm.load_fn(mc, &mut compiler, Some("loop".to_owned()), "loop()")?;
+                    let draw_lua_func =
+                        vm.load_fn(mc, &mut compiler, Some("draw".to_owned()), "draw()")?;
+                    let drop_lua_func =
+                        vm.load_fn(mc, &mut compiler, Some("drop".to_owned()), "drop()")?;
 
                     // let main_ref = Rc::new(RefCell::new(f));
                     for m in receiver {
@@ -368,56 +372,55 @@ impl<'lt> LuaCore {
                         {
                             // println!("{:?} New event from {}: {:?}", time, id, event);
                             match event {
-                        EventType::ButtonPressed(button, _) => {
-                            match button {
-                                Button::Start => pads.borrow_mut().start = 1.0,
-                                Button::South => pads.borrow_mut().south = 1.0,
-                                Button::East => pads.borrow_mut().east = 1.0,
-                                Button::West => pads.borrow_mut().west = 1.0,
-                                Button::North => pads.borrow_mut().north = 1.0,
+                                EventType::ButtonPressed(button, _) => {
+                                    match button {
+                                        Button::Start => pads.borrow_mut().start = 1.0,
+                                        Button::South => pads.borrow_mut().south = 1.0,
+                                        Button::East => pads.borrow_mut().east = 1.0,
+                                        Button::West => pads.borrow_mut().west = 1.0,
+                                        Button::North => pads.borrow_mut().north = 1.0,
 
-                                // Button::Z => pads.borrow_mut().z = 1.0,
-                                // Button::C => pads.borrow_mut().c = 1.0,
-                                Button::DPadUp => pads.borrow_mut().dup = 1.0,
-                                Button::DPadDown => pads.borrow_mut().ddown = 1.0,
-                                Button::DPadLeft => pads.borrow_mut().dleft = 1.0,
-                                Button::DPadRight => pads.borrow_mut().dright = 1.0,
-                                _ => {}
-                            }
-                        }
-                        EventType::ButtonReleased(button, _) => match button {
-                            Button::Start => pads.borrow_mut().start = 0.,
-                            Button::South => pads.borrow_mut().south = 0.,
-                            Button::East => pads.borrow_mut().east = 0.,
-                            Button::West => pads.borrow_mut().west = 0.,
-                            Button::North => pads.borrow_mut().north = 0.,
-                            // Button::Z => pads.borrow_mut().z = 0.,
-                            // Button::C => pads.borrow_mut().c = 0.,
-                            Button::DPadUp => pads.borrow_mut().dup = 0.,
-                            Button::DPadDown => pads.borrow_mut().ddown = 0.,
-                            Button::DPadLeft => pads.borrow_mut().dleft = 0.,
-                            Button::DPadRight => pads.borrow_mut().dright = 0.,
+                                        // Button::Z => pads.borrow_mut().z = 1.0,
+                                        // Button::C => pads.borrow_mut().c = 1.0,
+                                        Button::DPadUp => pads.borrow_mut().dup = 1.0,
+                                        Button::DPadDown => pads.borrow_mut().ddown = 1.0,
+                                        Button::DPadLeft => pads.borrow_mut().dleft = 1.0,
+                                        Button::DPadRight => pads.borrow_mut().dright = 1.0,
+                                        _ => {}
+                                    }
+                                }
+                                EventType::ButtonReleased(button, _) => match button {
+                                    Button::Start => pads.borrow_mut().start = 0.,
+                                    Button::South => pads.borrow_mut().south = 0.,
+                                    Button::East => pads.borrow_mut().east = 0.,
+                                    Button::West => pads.borrow_mut().west = 0.,
+                                    Button::North => pads.borrow_mut().north = 0.,
+                                    // Button::Z => pads.borrow_mut().z = 0.,
+                                    // Button::C => pads.borrow_mut().c = 0.,
+                                    Button::DPadUp => pads.borrow_mut().dup = 0.,
+                                    Button::DPadDown => pads.borrow_mut().ddown = 0.,
+                                    Button::DPadLeft => pads.borrow_mut().dleft = 0.,
+                                    Button::DPadRight => pads.borrow_mut().dright = 0.,
 
-                            _ => {}
-                        },
-                        EventType::AxisChanged(axis, value, _) => match axis {
-                            Axis::LeftStickX => pads.borrow_mut().laxisx = value,
-                            Axis::LeftStickY => pads.borrow_mut().laxisy = value,
-                            //         Axis::LeftZ => todo!(),
+                                    _ => {}
+                                },
+                                EventType::AxisChanged(axis, value, _) => match axis {
+                                    Axis::LeftStickX => pads.borrow_mut().laxisx = value,
+                                    Axis::LeftStickY => pads.borrow_mut().laxisy = value,
+                                    //         Axis::LeftZ => todo!(),
                                     Axis::RightStickX => pads.borrow_mut().raxisx = value,
                                     Axis::RightStickY => pads.borrow_mut().raxisy = value,
-                            //         Axis::RightZ => todo!(),
-                            //         Axis::DPadX => todo!(),
-                            //         Axis::DPadY => todo!(),
-                            _ => {}
-                        },
-                        _ => {}
-                        //     EventType::ButtonRepeated(_, _) => todo!(),
-                        //     EventType::ButtonChanged(_, _, _) => todo!(),
-                        //     EventType::Connected => todo!(),
-                        //     EventType::Disconnected => todo!(),
-                        //     EventType::Dropped => todo!(),
-                    }
+                                    //         Axis::RightZ => todo!(),
+                                    //         Axis::DPadX => todo!(),
+                                    //         Axis::DPadY => todo!(),
+                                    _ => {}
+                                },
+                                _ => {} //     EventType::ButtonRepeated(_, _) => todo!(),
+                                        //     EventType::ButtonChanged(_, _, _) => todo!(),
+                                        //     EventType::Connected => todo!(),
+                                        //     EventType::Disconnected => todo!(),
+                                        //     EventType::Dropped => todo!(),
+                            }
                         }
 
                         // counter += 1;
@@ -427,27 +430,25 @@ impl<'lt> LuaCore {
                         // }
                         match m {
                             LuaTalk::Load(code, sync) => {
-                                // if let Err(er) = run_in_context(
-                                //     &ctx,
-                                //     Some("load ->"),
-                                //     &mut code.as_bytes(),
-                                // ) {
-                                //     loggy.send((LogType::LuaError, er.to_string()))?;
-                                //     sync.send(LuaResponse::String(er.to_string()))?;
-                                // } else {
-                                //     let res = match executor.take_result::<Value>(ctx) {
-                                //         Ok(v1) => match v1 {
-                                //             Ok(v2) => v2,
-                                //             Err(_) => Value::Nil,
-                                //         },
-                                //         Err(_) => Value::Nil,
-                                //     };
-                                //     sync.send(res.into())?;
-                                // }
-                                match run_in_context(vm, name, code){
-                                    Ok(res)=>,
-                                    Err(er)=>,
-                                }
+                                match run_in_context(vm, Some("load ->"), &code) {
+                                    Err(er) => {
+                                        loggy.send((LogType::LuaError, er.to_string()))?;
+                                        sync.send(LuaResponse::String(er.to_string()))?;
+                                    }
+                                    Ok(v) => {
+                                        let res = match executor.take_result::<Value>(ctx) {
+                                            Ok(v1) => match v1 {
+                                                Ok(v2) => v2,
+                                                Err(_) => Value::Nil,
+                                            },
+                                            Err(_) => Value::Nil,
+                                        };
+                                        sync.send(res.into())?;
+                                    }
+                                } // match run_in_context(vm, Some("load ->"), code){
+                                  //     Ok(res)=>,
+                                  //     Err(er)=>,
+                                  // }
                             }
                             LuaTalk::AsyncLoad(code) => {
                                 if let Err(er) = run_in_context(
@@ -864,24 +865,24 @@ fn run_in_context<'gc, 'lt>(
     vm: &mut VM<'gc>,
     name: Option<&str>,
     code: &'lt mut (dyn Read + Send),
-) -> Result<(), Error<'gc>> {
-    vm.load()
-    
+) -> Result<(), P64Error> {
+    vm.run(mc, object)
 }
 
-fn run_initial_code<R>(lua: &mut Lua, code: R) -> Result<(), StaticError>
+fn run_initial_code<R>(lua: &mut Lua, comp: &mut Compiler, code: R) -> Result<(), StaticError>
 where
     R: ReadSend,
 {
-    let executor = lua.try_enter(|ctx| {
-        let closure = Closure::new(
-            &ctx,
-            FunctionPrototype::compile(ctx, "initial", code)?,
-            Some(ctx.globals()),
-        )?;
-        Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
-    })?;
-    lua.execute(&executor)?;
+    lua.run(code, comp)?;
+    // let executor = lua.try_enter(|ctx| {
+    //     let closure = Closure::new(
+    //         &ctx,
+    //         FunctionPrototype::compile(ctx, "initial", code)?,
+    //         Some(ctx.globals()),
+    //     )?;
+    //     Ok(ctx.stash(Executor::start(ctx, closure.into(), ())))
+    // })?;
+    // lua.execute(&executor)?;
     Ok(())
 }
 
