@@ -9,7 +9,7 @@ use crate::{
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{execute, native_function, LuaResponse, MainPacket, SoundSender},
+    lua_define::{  LuaResponse, MainPacket },
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
@@ -389,8 +389,8 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
-    #[cfg(feature = "silt")] ctx: &VM<'gc>,
-    // lua_globals: &Table<'gc>,
+    #[cfg(feature = "silt")] vm: &VM<'gc>,
+    lua_globals: &Table<'gc>,
     // executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
@@ -415,22 +415,22 @@ pub fn init_lua_sys<'a, 'gc>(
 {
     println!("init lua sys");
 
-    let c = *ctx;
-    let v = Value::String(piccolo::String::from_static(
-        ctx.deref(),
-        "default function",
-    ));
+    // let c = *ctx;
+    // let v = Value::String(piccolo::String::from_static(
+    //     ctx.deref(),
+    //     "default function",
+    // ));
 
-    let default_func = native_function(ctx, |c, _, mut stack| {
-        let s = c.intern_static("default function".as_bytes());
-        stack.push_front(Value::String(s));
-        // let v = Value::String(piccolo::String::from_static(ctx.deref())
-        // stack.push_front(v);
-        Ok(CallbackReturn::Return)
-        // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
-        //     vec![Value::String("default function".to_string())]
-        // )))
-    });
+    // let default_func = native_function(ctx, |c, _, mut stack| {
+    //     let s = c.intern_static("default function".as_bytes());
+    //     stack.push_front(Value::String(s));
+    //     // let v = Value::String(piccolo::String::from_static(ctx.deref())
+    //     // stack.push_front(v);
+    //     Ok(CallbackReturn::Return)
+    //     // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
+    //     //     vec![Value::String("default function".to_string())]
+    //     // )))
+    // });
 
     #[cfg(feature = "puc_lua")]
     res(
@@ -438,13 +438,13 @@ pub fn init_lua_sys<'a, 'gc>(
         lua_globals.set("_default_func", default_func),
         &loggy,
     );
-    #[cfg(feature = "silt")]
-    lua_globals.set("_default_func", default_func);
+    // #[cfg(feature = "silt")]
+    // lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = Table::new(&ctx.deref());
+    let io = Table::new(&vm.deref());
 
-    let c = *ctx;
+    let c = *vm;
     lua_globals.set(c, "pi", std::f64::consts::PI);
     lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
     // MARK required 2
@@ -486,7 +486,7 @@ pub fn init_lua_sys<'a, 'gc>(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            $lib.set(ctx, $name, lua_ctx.create_function($closure).unwrap());
+            $lib.set(vm, $name, vm.create_function($closure).unwrap());
         };
     }
 
@@ -770,9 +770,9 @@ function make(asset, x, y, z, scale) end"
     // single usage method for entity duplication only means it's not listed
     let pitcher = main_pitcher.clone();
     lua_globals.set(
-        *ctx,
+        *vm,
         "_make",
-        native_function(ctx, move |_, _, stack| {
+        native_function(vm, move |_, _, stack| {
             // lent: Arc<std::sync::Mutex<LuaEnt>>
             // MARK required 1
             // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
@@ -1582,14 +1582,14 @@ function help() end",
     //     ""
     // );
 
-    lua_globals.set(*ctx, "io", io)?;
+    lua_globals.set(*vm, "io", io)?;
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
     // }
 
     execute(
-        *ctx,
+        *vm,
         Some("patch"),
         "
         add=table.insert 
@@ -2651,13 +2651,13 @@ fn make_err(s: &str) -> LuaError {
     // return mlua::Error::RuntimeError(s.to_string());
 }
 
-fn static_err<M>(s: M) -> StaticError
-where
-    M: Display + core::fmt::Debug + Send + Sync + 'static,
-{
-    StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
-    // StaticError::Lua(StaticLuaError(s.to_owned()))
-}
+// fn static_err<M>(s: M) -> StaticError
+// where
+//     M: Display + core::fmt::Debug + Send + Sync + 'static,
+// {
+//     StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+//     // StaticError::Lua(StaticLuaError(s.to_owned()))
+// }
 
 fn context_err<M>(s: M) -> piccolo::Error<'static>
 where

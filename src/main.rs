@@ -73,6 +73,7 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+#[cfg(feature = "headed")]
 use winit::event_loop::EventLoopWindowTarget;
 #[cfg(feature = "headed")]
 use winit::{
@@ -399,7 +400,7 @@ fn main() {
             if state_change_check(&mut core, &mut (), &mut ()) {
                 return;
             }
-            core.update(&mut updated_bundles);
+            core.update(&mut catcher, &mut updated_bundles);
             core.bundle_manager.call_loop(&mut updated_bundles, bits);
             core.loop_helper.loop_sleep();
         }
