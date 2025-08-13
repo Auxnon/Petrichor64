@@ -1,9 +1,8 @@
-use std::{ops::Deref, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     command::{num, numop},
     gui::{direct_fill, direct_image, direct_line, direct_pixel, direct_rect, direct_text},
-    userdata_util::StaticUserMethods,
 };
 use glam::{vec4, Vec4};
 use image::RgbaImage;
@@ -11,10 +10,10 @@ use image::RgbaImage;
 use mlua::{AnyUserData, UserData, UserDataMethods, Value};
 #[cfg(feature = "picc")]
 use piccolo::{AnyUserData, Value};
-use piccolo::{Context, Lua};
 
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{UserData, Value};
+use silt_lua::userdata::UserDataMethods;
 
 pub struct LuaImg {
     pub dirty: bool,
@@ -70,8 +69,14 @@ impl LuaImg {
     }
 }
 
-#[cfg(feature = "puc_lua")]
+// #[cfg(feature = "puc_lua")]
 impl UserData for LuaImg {
+    fn type_name() -> &'static str {
+        "Ent"
+    }
+    fn get_id(&self) -> usize {
+        2
+    }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
         methods.add_method("raw", |_, this, _: ()| Ok(this.image.to_vec()));
@@ -156,7 +161,7 @@ impl UserData for LuaImg {
         );
         methods.add_method_mut(
             "img",
-            |_, this, (img, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
+            |_, this, (img, x, y): (UserData, Option<Value>, Option<Value>)| {
                 this.dirty = true;
                 if let Ok(limg) = img.borrow::<LuaImg>() {
                     direct_image(
@@ -235,14 +240,14 @@ impl UserData for LuaImg {
     }
 }
 
-pub fn lua_img_constructor<'gc>(ctx: &Context<'gc>, limg: LuaImg) -> AnyUserData<'gc> {
-    // let mc
-
-    let methods = StaticUserMethods::<LuaImg>::new(ctx.deref());
-    methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
-    let ud = methods.wrap(*ctx, limg);
-    return ud;
-}
+// pub fn lua_img_constructor<'gc>(ctx: &Context<'gc>, limg: LuaImg) -> AnyUserData<'gc> {
+//     // let mc
+//
+//     let methods = StaticUserMethods::<LuaImg>::new(ctx.deref());
+//     methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
+//     let ud = methods.wrap(*ctx, limg);
+//     return ud;
+// }
 
 pub fn dehex(s2: &str) -> Vec4 {
     let s = if s2.starts_with("#") {
@@ -274,13 +279,13 @@ pub fn dehex(s2: &str) -> Vec4 {
     }
 }
 
-pub fn get_color<'gc>(ctx: &Context<'gc>, x: Value<'gc>) -> Vec4 {
+pub fn get_color<'gc>( x: Value<'gc>) -> Vec4 {
     match x {
         Value::String(s) => match s.to_str() {
             Ok(s2) => dehex(s2),
             _ => vec4(0., 0., 0., 0.),
         },
-        Value::Table(t) => {
+        Value::Table(tab) => {
             // let tt = t.next(key)
             //     .sequence_values::<f32>()
             //     .filter_map(|f| match f {
@@ -288,12 +293,13 @@ pub fn get_color<'gc>(ctx: &Context<'gc>, x: Value<'gc>) -> Vec4 {
             //         _ => None,
             //     })
             //     .collect::<Vec<f32>>();
-            let c = *ctx;
+            let t= tab.borrow();
 
-            let mut r = t.get(c, 0).to_number().unwrap_or(0.);
-            let g = t.get(c, 1).to_number().unwrap_or(0.);
-            let b = t.get(c, 2).to_number().unwrap_or(0.);
-            let a = t.get(c, 3).to_number().unwrap_or(0.);
+
+            let mut r = t.get( 0).to_number().unwrap_or(0.);
+            let g = t.get( 1).to_number().unwrap_or(0.);
+            let b = t.get( 2).to_number().unwrap_or(0.);
+            let a = t.get( 3).to_number().unwrap_or(0.);
             if r > 1. {
                 r = r / 255.;
             }
