@@ -9,7 +9,7 @@ use crate::{
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{  LuaResponse, MainPacket },
+    lua_define::{LuaResponse, MainPacket},
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
@@ -21,9 +21,10 @@ use crate::{
     world::{TileCommand, TileResponse, World},
 };
 
+use gc_arena::Mutation;
 use image::RgbaImage;
 use itertools::Itertools;
-use silt_lua::lua::VM;
+use silt_lua::{lua::VM, value::Variadic, Compiler};
 
 use parking_lot::Mutex;
 
@@ -37,7 +38,7 @@ use mlua::{
 };
 
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{ LuaError, Table, Value };
+use silt_lua::prelude::{LuaError, Table, Value};
 
 #[cfg(feature = "picc")]
 use piccolo::{Context, Lua, Table};
@@ -391,11 +392,12 @@ pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
     #[cfg(feature = "silt")] vm: &VM<'gc>,
     lua_globals: &Table<'gc>,
+    mc: &Mutation,
     // executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    // gui_in: Rc<RefCell<GuiMorsel>>,
+    gui_in: Rc<RefCell<GuiMorsel>>,
     // main_rast: Rc<RefCell<LuaImg>>,
     // sky_rast: Rc<RefCell<LuaImg>>,
     #[cfg(feature = "audio")] singer: SoundSender,
@@ -440,6 +442,9 @@ pub fn init_lua_sys<'a, 'gc>(
     );
     // #[cfg(feature = "silt")]
     // lua_globals.set("_default_func", default_func);
+    //
+    let mut compiler = Compiler::new();
+    let gui = gui_in.clone();
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
     let io = Table::new(&vm.deref());
@@ -769,26 +774,22 @@ function make(asset, x, y, z, scale) end"
 
     // single usage method for entity duplication only means it's not listed
     let pitcher = main_pitcher.clone();
-    lua_globals.set(
-        *vm,
-        "_make",
-        native_function(vm, move |_, _, stack| {
-            // lent: Arc<std::sync::Mutex<LuaEnt>>
-            // MARK required 1
-            // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
-            //     let id = *ent_counter2.lock();
-            //     *ent_counter2.lock() += 1;
-            //     match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-            //         Ok(_) => {}
-            //         Err(_) => return Err(context_err("Unable to create entity")),
-            //     };
-            // } else {
-            //     return Err(context_err("Invalid entity passed to make"));
-            // }
+    vm.register_native_function(mc, "_make", |v, mc, stack| {
+        // lent: Arc<std::sync::Mutex<LuaEnt>>
+        // MARK required 1
+        // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
+        //     let id = *ent_counter2.lock();
+        //     *ent_counter2.lock() += 1;
+        //     match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+        //         Ok(_) => {}
+        //         Err(_) => return Err(context_err("Unable to create entity")),
+        //     };
+        // } else {
+        //     return Err(context_err("Invalid entity passed to make"));
+        // }
 
-            Ok(CallbackReturn::Return)
-        })?,
-    )?;
+        Ok(Value::Nil)
+    })?;
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -1018,7 +1019,7 @@ function instr(freqs, half) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "tex",
-        move |_, (name, im): (String, AnyUserData)| {
+        move |_, (name, im): (String, Value)| {
             if let Ok(limg) = im.borrow::<LuaImg>() {
                 let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
                 lua_err!(pitcher.send((
@@ -1264,7 +1265,6 @@ function mod(asset, t) end"
 function lmod(model, bundle) end"
     );
 
-    //     let gui = gui_in.clone();
     //     lua!(
     //         "clr",
     //         move |_, _: ()| {
@@ -1588,9 +1588,9 @@ function help() end",
     //     return Err(context_err("Failed to set io lib"));
     // }
 
-    execute(
-        *vm,
-        Some("patch"),
+    vm.build_and_run(
+        mc,
+        Some("patch".to_owned()),
         "
         add=table.insert 
         del=table.remove 
@@ -1606,6 +1606,7 @@ function help() end",
         main = function() end
         loop = function() end
         ",
+        &mut compiler,
     )?;
 
     Ok(())
@@ -2646,24 +2647,27 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
 
 fn make_err(s: &str) -> LuaError {
     // LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
-    make_static(s)
+    // make_static(s)
+    LuaError::Custom(s.to_string())
     // LuaError::RuntimeError(s.to_string())
     // return mlua::Error::RuntimeError(s.to_string());
 }
 
-// fn static_err<M>(s: M) -> StaticError
-// where
-//     M: Display + core::fmt::Debug + Send + Sync + 'static,
-// {
-//     StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
-//     // StaticError::Lua(StaticLuaError(s.to_owned()))
-// }
-
-fn context_err<M>(s: M) -> piccolo::Error<'static>
+fn static_err<M>(s: M) -> LuaError
 where
     M: Display + core::fmt::Debug + Send + Sync + 'static,
 {
-    piccolo::Error::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+    // StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+    LuaError::Custom(s)
+    // StaticError::Lua(StaticLuaError(s.to_owned()))
+}
+
+fn context_err<M>(s: M) -> LuaError
+where
+    M: Display + core::fmt::Debug + Send + Sync + 'static,
+{
+    // piccolo::Error::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+    LuaError::Custom(s)
 }
 
 /** Convert string command into easy to use hashmap */
