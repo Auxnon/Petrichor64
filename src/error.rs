@@ -1,6 +1,8 @@
 use std::fmt::{Display, Formatter};
 
-use piccolo::{PrototypeError, StaticError};
+use silt_lua::LuaError;
+
+// use piccolo::{PrototypeError, StaticError};
 
 pub enum P64Error {
     PermPathTraversal,
@@ -55,14 +57,16 @@ impl From<std::str::Utf8Error> for P64Error {
 // }
 
 impl From<StaticError> for P64Error {
-    fn from(value: StaticError) -> Self {
+    fn from(value: LuaError ) -> Self {
         P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
     }
 }
 
 impl From<PrototypeError> for P64Error {
-    fn from(value: PrototypeError) -> Self {
+    fn from(value: LuaError) -> Self {
         match value {
+            LuaError::VmCompileError
+            LuaError::VmCompileError
             PrototypeError::Parser(e) => {
                 P64Error::LuaParseError(std::io::Error::new(std::io::ErrorKind::Other, e))
             }

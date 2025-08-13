@@ -47,7 +47,7 @@ image ="0.25.5"
 imageproc="0.25.0"
 gltf="1.4.1"
 itertools="0.14.0"
-serde={version="1.0.218",features=["derive"]}
+serde={version="1.0.219",features=["derive"]}
 
 mlua={version= "0.10.3", optional=true, features=["luau"]}
 rand="0.9.0"
