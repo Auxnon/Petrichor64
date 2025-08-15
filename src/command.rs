@@ -11,7 +11,7 @@ use crate::{
     log::LogType,
     lua_define::{LuaResponse, MainPacket},
     lua_ent::LuaEnt,
-    lua_img::{dehex, LuaImg},
+    lua_img::{self, dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
     online::Online,
     pad::Pad,
@@ -391,7 +391,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
     #[cfg(feature = "silt")] vm: &VM<'gc>,
-    lua_globals: &Table<'gc>,
+    // lua_globals: &Table<'gc>,
     mc: &Mutation,
     // executor: &Executor<'gc>,
     bundle_id: u8,
@@ -450,8 +450,8 @@ pub fn init_lua_sys<'a, 'gc>(
     let io = Table::new(&vm.deref());
 
     let c = *vm;
-    lua_globals.set(c, "pi", std::f64::consts::PI);
-    lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
+    vm.globals.set(c, "pi", std::f64::consts::PI);
+    vm.globals.set(c, "tau", std::f64::consts::PI * 2.0);
     // MARK required 2
     // lua_globals.set(c, "gui", main_rast);
     // lua_globals.set(c, "sky", sky_rast);
@@ -491,7 +491,7 @@ pub fn init_lua_sys<'a, 'gc>(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            $lib.set(vm, $name, vm.create_function($closure).unwrap());
+            vm.register_native_function(mc,$name, $closure);
         };
     }
 
@@ -725,7 +725,7 @@ function abtn(button) end"
     let ent_counter2 = ent_counter.clone();
     lua!(
         "make",
-        move |_,
+        move | vm,mc,
               (asset, x, y, z, s): (
             Option<String>,
             Option<f64>,
@@ -777,16 +777,16 @@ function make(asset, x, y, z, scale) end"
     vm.register_native_function(mc, "_make", |v, mc, stack| {
         // lent: Arc<std::sync::Mutex<LuaEnt>>
         // MARK required 1
-        // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
-        //     let id = *ent_counter2.lock();
-        //     *ent_counter2.lock() += 1;
-        //     match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-        //         Ok(_) => {}
-        //         Err(_) => return Err(context_err("Unable to create entity")),
-        //     };
-        // } else {
-        //     return Err(context_err("Invalid entity passed to make"));
-        // }
+        if let Some(Value::UserData(lent)) = stack.last() {
+            let id = *ent_counter2.lock();
+            *ent_counter2.lock() += 1;
+            match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+                Ok(_) => {}
+                Err(_) => return Err(context_err("Unable to create entity")),
+            };
+        } else {
+            return Err(context_err("Invalid entity passed to make"));
+        }
 
         Ok(Value::Nil)
     })?;
@@ -1038,6 +1038,7 @@ function instr(freqs, half) end"
 function tex(asset, im) end"
     );
 
+    // vm.create_userdata(mc, data)
     let pitcher = main_pitcher.clone();
     lua!(
         "gimg",
@@ -1054,6 +1055,7 @@ function tex(asset, im) end"
                 },
                 _ => LuaImg::empty(),
             };
+            lu.
             Ok(limg)
         },
         "Get image buffer userdata for editing or drawing",
@@ -1068,9 +1070,9 @@ function gimg(asset) end"
         move |_, (w, h): (u32, u32)| {
             let im = GuiMorsel::new_image(w, h);
             let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
-            let ud = lua_img_constructor(lua_img);
+            // let ud = lua_img_constructor(lua_img);
 
-            Ok(ud)
+            Ok(lua_img)
         },
         "Create new image buffer userdata, does not set as asset",
         "
@@ -1582,7 +1584,7 @@ function help() end",
     //     ""
     // );
 
-    lua_globals.set(*vm, "io", io)?;
+   vm.globals.set(*vm, "io", io)?;
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
