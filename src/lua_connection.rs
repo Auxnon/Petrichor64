@@ -1,13 +1,14 @@
 use std::sync::mpsc::{Receiver, Sender};
 
 use futures::FutureExt;
+use silt_lua::userdata::UserDataMethods;
 
 use crate::packet::{Packer, Packet64};
 
 #[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{MetaMethod, UserData};
+use silt_lua::userdata::{MetaMethod, UserData};
 
 type Handle = std::thread::JoinHandle<Result<(), String>>;
 
@@ -49,26 +50,36 @@ impl LuaConnection {
         }
     }
 }
-#[cfg(feature = "silt")]
-impl UserData<'_> for LuaConnection {
-    fn by_meta_method(
-        &self,
-        lua: &mut silt_lua::prelude::Lua,
-        method: MetaMethod,
-        inputs: silt_lua::value::Value<'_>,
-    ) -> Result<silt_lua::value::Value<'_>> {
-        match method {
-            MetaMethod::ToString => Ok(silt_lua::value::Value::String(format!(
-                "connection({})",
-                self.id
-            ))),
-            _ => Ok(silt_lua::value::Value::Nil),
-        }
-    }
-}
 
-#[cfg(feature = "puc_lua")]
+
+// #[cfg(feature = "silt")]
+// impl UserData<'_> for LuaConnection {
+//     
+//
+//     fn by_meta_method(
+//         &self,
+//         lua: &mut silt_lua::prelude::Lua,
+//         method: MetaMethod,
+//         inputs: silt_lua::value::Value<'_>,
+//     ) -> Result<silt_lua::value::Value<'_>> {
+//         match method {
+//             MetaMethod::ToString => Ok(silt_lua::value::Value::String(format!(
+//                 "connection({})",
+//                 self.id
+//             ))),
+//             _ => Ok(silt_lua::value::Value::Nil),
+//         }
+//     }
+// }
+
+// #[cfg(feature = "puc_lua")]
 impl UserData for LuaConnection {
+fn get_id(&self) -> usize {
+        4
+    }
+    fn type_name() -> &'static str {
+        "connection"
+    }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("send", |_, this, s: String| {
             // tokio::spawn(async {

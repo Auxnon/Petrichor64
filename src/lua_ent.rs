@@ -5,7 +5,7 @@ use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
 use piccolo::{Function, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{UserData, UserDataFields, UserDataMethods, Value::Nil};
+use silt_lua::userdata::{UserData, UserDataFields, UserDataMethods};
 use silt_lua::value::Value;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
@@ -70,7 +70,7 @@ impl UserData for LuaEnt {
     fn get_id(&self) -> usize {
         0
     }
-    
+
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_meta_method("__tostring", |_, this, _: ()| {
             Ok(format!("[entity {}]", this.get_id()))
@@ -86,21 +86,24 @@ impl UserData for LuaEnt {
             Ok(())
         });
 
-        methods.add_method_mut("anim", |_, this, (tex, force): (String, Option<bool>)| {
-            if tex != this.tex || force.unwrap_or(false) {
-                this.dirty = true;
-                this.tex = tex;
-            }
-            this.anim = true;
+        methods.add_method_mut(
+            "anim",
+            |_, _, this, (tex, force): (String, Option<bool>)| {
+                if tex != this.tex || force.unwrap_or(false) {
+                    this.dirty = true;
+                    this.tex = tex;
+                }
+                this.anim = true;
 
-            Ok(true)
-        });
+                Ok(true)
+            },
+        );
 
-        methods.add_method_mut("copy", |lua, this, t| {
+        methods.add_method_mut("copy", |lua, mc, this, t| {
             let ent = this.clone();
             let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
             if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get("_make") {
-                (*v).f(lua, f);
+                (*v.f)(lua, mc, t);
             }
 
             // if let Ok(fun) = lua.globals).get::<&str, Function>("_make") {

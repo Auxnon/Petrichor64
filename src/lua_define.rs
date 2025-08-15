@@ -16,7 +16,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use silt_lua::{lua::VM, prelude::Compiler, ExVal};
+use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, LuaError};
 // use piccolo::{
 //     compiler::{self as Compiler, interning::BasicInterner},
 //     error::{LuaError, StaticLuaError},
@@ -29,11 +29,10 @@ use silt_lua::{Lua, Value};
 use std::{
     cell::RefCell,
     collections::HashMap,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, Read},
     rc::Rc,
     sync::{
-        mpsc::{channel, sync_channel, Receiver, Sender, SyncSender},
-        Arc,
+        mpsc::{channel, sync_channel, Sender, SyncSender},
     },
     thread,
     time::Duration,
@@ -75,24 +74,24 @@ pub enum LuaTalk {
     Drop(String),
 }
 
-impl From<Value<'_>> for LuaResponse {
-    fn from(v: Value) -> Self {
-        match v {
-            Value::String(str) => {
-                let s = str.to_string();
-                LuaResponse::String(s)
-            }
-            Value::Integer(i) => LuaResponse::Integer(i.try_into().unwrap_or(0)), // TODO margin of error
-            Value::Number(n) => LuaResponse::Number(n),
-            Value::Boolean(b) => LuaResponse::Boolean(b),
-            Value::Function(_) => LuaResponse::String("[function]".to_string()),
-            Value::Thread(_) => LuaResponse::String("[thread]".to_string()),
-            Value::UserData(_) => LuaResponse::String("[userdata]".to_string()),
-            Value::Table(_) => LuaResponse::String("[table]".to_string()),
-            Value::Nil => LuaResponse::Nil,
-        }
-    }
-}
+// impl From<Value<'_>> for LuaResponse {
+//     fn from(v: Value) -> Self {
+//         match v {
+//             Value::String(str) => {
+//                 let s = str.to_string();
+//                 LuaResponse::String(s)
+//             }
+//             Value::Integer(i) => LuaResponse::Integer(i.try_into().unwrap_or(0)), // TODO margin of error
+//             Value::Number(n) => LuaResponse::Number(n),
+//             Value::Boolean(b) => LuaResponse::Boolean(b),
+//             Value::Function(_) => LuaResponse::String("[function]".to_string()),
+//             Value::Thread(_) => LuaResponse::String("[thread]".to_string()),
+//             Value::UserData(_) => LuaResponse::String("[userdata]".to_string()),
+//             Value::Table(_) => LuaResponse::String("[table]".to_string()),
+//             Value::Nil => LuaResponse::Nil,
+//         }
+//     }
+// }
 
 pub struct LuaCore {
     to_lua_tx: Sender<LuaTalk>,
@@ -317,9 +316,11 @@ impl<'lt> LuaCore {
                     let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
                     match crate::command::init_lua_sys(
                         &vm,
+                        mc,
                         bundle_id,
                         pitcher,
                         world_sender,
+                        gui_link,
                         // Rc::clone(&gui_handle),
                         // Rc::clone(&main_rast),
                         // Rc::clone(&sky_rast),
@@ -430,20 +431,13 @@ impl<'lt> LuaCore {
                         // }
                         match m {
                             LuaTalk::Load(code, sync) => {
-                                match run_in_context(vm, Some("load ->"), &code) {
+                                match run_in_context(vm, mc, Some("load ->"), &code) {
                                     Err(er) => {
                                         loggy.send((LogType::LuaError, er.to_string()))?;
                                         sync.send(LuaResponse::String(er.to_string()))?;
                                     }
                                     Ok(v) => {
-                                        let res = match executor.take_result::<Value>(ctx) {
-                                            Ok(v1) => match v1 {
-                                                Ok(v2) => v2,
-                                                Err(_) => Value::Nil,
-                                            },
-                                            Err(_) => Value::Nil,
-                                        };
-                                        sync.send(res.into())?;
+                                        sync.send(v)?;
                                     }
                                 } // match run_in_context(vm, Some("load ->"), code){
                                   //     Ok(res)=>,
@@ -451,17 +445,13 @@ impl<'lt> LuaCore {
                                   // }
                             }
                             LuaTalk::AsyncLoad(code) => {
-                                if let Err(er) = run_in_context(
-                                    &ctx,
-                                    &executor,
-                                    Some("async load->"),
-                                    &mut code.as_bytes(),
-                                ) {
+                                if let Err(er) = run_in_context(vm, mc, Some("async load->"), &code)
+                                {
                                     loggy.send((LogType::LuaError, er.to_string()))?;
                                 }
                             }
                             LuaTalk::Main => {
-                                executor.restart(ctx, main_lua_func, ());
+                                vm.call_by_index(mc, main_lua_func);
 
                                 // if let Err(e) = res {
                                 //     async_sender.send((
@@ -477,7 +467,7 @@ impl<'lt> LuaCore {
                             }
                             LuaTalk::AsyncFunc(_func) => {}
                             LuaTalk::Loop((key_state, mouse_state)) => {
-                                executor.restart(ctx, loop_lua_func, ());
+                                vm.call_by_index(mc, loop_lua_func);
 
                                 local_pool.check_lock(&shared);
                                 // &lua_instance.execute(&executor)?; // TODO
@@ -557,8 +547,7 @@ impl<'lt> LuaCore {
                             LuaTalk::Func(func, sync) => {
                                 // TODO load's chunk should call set_name to "main" etc, for better error handling
                                 let mut s: &mut (dyn Read + Send) = &mut func.as_bytes();
-                                run_in_context(&ctx, &executor, Some("func ->"), s)?;
-                                let res = executor.take_result::<Value>(ctx)?;
+                                let res = run_in_context(vm, mc, Some("func ->"), s)?;
                                 // let res = match executor.take_result::<Value>(ctx) {
                                 //     Ok(v1) => match v1 {
                                 //         Ok(v2) => v2,
@@ -604,7 +593,8 @@ impl<'lt> LuaCore {
                                                                 );
                                                             }
                                                             Value::Table(tt) => {
-                                                                if tt.length() == 2 {
+                                                                let t = tt.borrow();
+                                                                if t.length() == 2 {
                                                                     hash2.insert(
                                                                         key.to_str()
                                                                             .unwrap_or(
@@ -612,10 +602,8 @@ impl<'lt> LuaCore {
                                                                             )
                                                                             .to_string(),
                                                                         (
-                                                                            tt.get(ctx, 1)
-                                                                                .to_string(),
-                                                                            tt.get(ctx, 2)
-                                                                                .to_string(),
+                                                                            t.get(1).to_string(),
+                                                                            t.get(2).to_string(),
                                                                         ),
                                                                     );
                                                                 }
@@ -662,15 +650,16 @@ impl<'lt> LuaCore {
                                 // gui_handle.borrow_mut().resize(w, h);
                                 // main_rast.borrow_mut().resize(w, h);
                                 // sky_rast.borrow_mut().resize(w, h);
-                                executor.restart(ctx, draw_lua_func, (w, h));
+                                vm.call_fn(mc, draw_lua_func, (w, h));
+
+                                // executor.restart(ctx, draw_lua_func, (w, h));
                                 // lua_instance.execute(draw_lua_func)?;
                                 // let _ = lua_instance
                                 //     .load(&format!("draw({},{})", w, h))
                                 //     .eval::<Value>();
                             }
                             LuaTalk::Drop(s) => {
-                                executor.restart(ctx, drop_lua_func, s);
-                                let res = executor.take_result::<Value>(ctx);
+                                let res=vm.call_fn(mc, drop_lua_func, s);
 
                                 if let Err(e) = res {
                                     async_sender.send((
@@ -681,7 +670,7 @@ impl<'lt> LuaCore {
                             }
                         }
                     }
-                    Ok(())
+                    // Ok(())
                 })?;
                 Ok(())
             }();
@@ -703,36 +692,7 @@ impl<'lt> LuaCore {
         }
     }
 
-    pub fn halt_until_complete<'gc, R: FromMultiValue<'gc>>(
-        &self,
-        ctx: &Context<'gc>,
-        executor: &Executor<'gc>,
-    ) -> Result<R, StaticError> {
-        const FUEL_PER_GC: i32 = 4096;
-        let c = *ctx;
-        loop {
-            let mut fuel = Fuel::with(FUEL_PER_GC);
-            if executor.step(c, &mut fuel) {
-                break;
-            }
-        }
-
-        match executor.take_result::<R>(c) {
-            Ok(v1) => match v1 {
-                Ok(v2) => Ok(v2),
-                Err(e) => Err(e.into_static()),
-            },
-            Err(e) => Err(StaticError::Runtime(e.into())),
-        }
-        // .map_err(piccolo::error::Error::into_static);
-        // match executor.take_result::<R>(c) {
-        //     Ok(v1) => match v1 {
-        //         Ok(v2) => Ok(v2),
-        //         Err(e) =>
-        //     },
-        //     Err(_) => Err(StaticError::from("lua error")),
-        // }
-    }
+   
     // pub fn async_func(&self, func: &String, bits: ControlState) {
     //     self.async_inject(func, Some(bits));
     // }
@@ -863,13 +823,14 @@ impl<'lt> LuaCore {
 // }
 fn run_in_context<'gc, 'lt>(
     vm: &mut VM<'gc>,
+    mc: &Mutation,
     name: Option<&str>,
     code: &'lt mut (dyn Read + Send),
-) -> Result<(), P64Error> {
-    vm.run(mc, object)
+) -> Result<ExVal, P64Error> {
+    vm.build_and_run(mc, mc, name, code)
 }
 
-fn run_initial_code<R>(lua: &mut Lua, comp: &mut Compiler, code: R) -> Result<(), StaticError>
+fn run_initial_code<R>(lua: &mut Lua, comp: &mut Compiler, code: R) -> Result<(), LuaError>
 where
     R: ReadSend,
 {
