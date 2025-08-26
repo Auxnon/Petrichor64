@@ -1,13 +1,18 @@
-use std::rc::Rc;
+use std::{ops::Deref, rc::Rc};
 
 use crate::{
     command::{num, numop},
     gui::{direct_fill, direct_image, direct_line, direct_pixel, direct_rect, direct_text},
+    userdata_util::StaticUserMethods,
 };
 use glam::{vec4, Vec4};
 use image::RgbaImage;
 #[cfg(feature = "puc_lua")]
 use mlua::{AnyUserData, UserData, UserDataMethods, Value};
+#[cfg(feature = "picc")]
+use piccolo::{AnyUserData, Value};
+use piccolo::{Context, Lua};
+
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{UserData, Value};
 
@@ -65,8 +70,8 @@ impl LuaImg {
     }
 }
 
+#[cfg(feature = "puc_lua")]
 impl UserData for LuaImg {
-    #[cfg(feature = "puc_lua")]
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
         methods.add_method("raw", |_, this, _: ()| Ok(this.image.to_vec()));
@@ -230,6 +235,15 @@ impl UserData for LuaImg {
     }
 }
 
+pub fn lua_img_constructor<'gc>(ctx: &Context<'gc>, limg: LuaImg) -> AnyUserData<'gc> {
+    // let mc
+
+    let methods = StaticUserMethods::<LuaImg>::new(ctx.deref());
+    methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
+    let ud = methods.wrap(*ctx, limg);
+    return ud;
+}
+
 pub fn dehex(s2: &str) -> Vec4 {
     let s = if s2.starts_with("#") {
         &s2[1..s2.len()]
@@ -260,25 +274,26 @@ pub fn dehex(s2: &str) -> Vec4 {
     }
 }
 
-pub fn get_color(x: Value) -> Vec4 {
+pub fn get_color<'gc>(ctx: &Context<'gc>, x: Value<'gc>) -> Vec4 {
     match x {
         Value::String(s) => match s.to_str() {
             Ok(s2) => dehex(s2),
             _ => vec4(0., 0., 0., 0.),
         },
         Value::Table(t) => {
-            let tt = t
-                .sequence_values::<f32>()
-                .filter_map(|f| match f {
-                    Ok(v) => Some(v),
-                    _ => None,
-                })
-                .collect::<Vec<f32>>();
+            // let tt = t.next(key)
+            //     .sequence_values::<f32>()
+            //     .filter_map(|f| match f {
+            //         Ok(v) => Some(v),
+            //         _ => None,
+            //     })
+            //     .collect::<Vec<f32>>();
+            let c = *ctx;
 
-            let mut r = *tt.get(0).unwrap_or(&0.);
-            let g = *tt.get(1).unwrap_or(&0.);
-            let b = *tt.get(2).unwrap_or(&0.);
-            let a = *tt.get(3).unwrap_or(&1.);
+            let mut r = t.get(c, 0).to_number().unwrap_or(0.);
+            let g = t.get(c, 1).to_number().unwrap_or(0.);
+            let b = t.get(c, 2).to_number().unwrap_or(0.);
+            let a = t.get(c, 3).to_number().unwrap_or(0.);
             if r > 1. {
                 r = r / 255.;
             }
@@ -292,7 +307,7 @@ pub fn get_color(x: Value) -> Vec4 {
                 r = a / 255.;
             }
 
-            vec4(r, g, b, a)
+            vec4(r as f32, g as f32, b as f32, a as f32)
         }
         _ => vec4(1., 1., 1., 1.),
     }

@@ -5,16 +5,18 @@ use crate::root_headless::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
-    bundle::BundleResources,
+    bundle::{BundleMutations, BundleResources},
+    ent::Ent,
     error::P64Error,
     gui::GuiMorsel,
     log::LogType,
-    lua_define::{LuaResponse, MainPacket, SoundSender},
+    lua_define::{execute, native_function, LuaResponse, MainPacket, SoundSender},
     lua_ent::LuaEnt,
     lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
     online::Online,
     pad::Pad,
+    pool::{LocalPool, SharedPool},
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
@@ -24,6 +26,12 @@ use image::RgbaImage;
 use itertools::Itertools;
 
 use parking_lot::Mutex;
+use piccolo::{
+    compiler::interning::BasicInterner,
+    error::{LuaError, StaticLuaError},
+    lua, AnyCallback, AnySequence, CallbackReturn, Executor, RuntimeError, StashedExecutor,
+    StaticError, Value,
+};
 use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
@@ -35,13 +43,22 @@ use mlua::{
 
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{Lua, LuaError, Table, Value, Variadic};
+
+#[cfg(feature = "picc")]
+use piccolo::{Context, Lua, Table};
+
 #[cfg(feature = "silt")]
 type ExtError = LuaError;
+#[cfg(feature = "picc")]
+type ExtError<'a> = LuaError<'a>;
 
 use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::HashMap,
+    fmt::Display,
+    io::ErrorKind,
+    ops::Deref,
     rc::Rc,
     sync::{
         mpsc::{sync_channel, Sender, SyncSender},
@@ -375,23 +392,25 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     Ok(true)
 }
 
-pub fn init_lua_sys(
-    lua_ctx: &Lua,
-    lua_globals: &Table,
+pub fn init_lua_sys<'a, 'gc>(
+    #[cfg(feature = "picc")] ctx: &Context<'gc>,
+    lua_globals: &Table<'gc>,
+    executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
-    gui_in: Rc<RefCell<GuiMorsel>>,
-    main_rast: Rc<RefCell<LuaImg>>,
-    sky_rast: Rc<RefCell<LuaImg>>,
-    #[cfg(feature = "headed")] singer: SoundSender,
+    // gui_in: Rc<RefCell<GuiMorsel>>,
+    // main_rast: Rc<RefCell<LuaImg>>,
+    // sky_rast: Rc<RefCell<LuaImg>>,
+    #[cfg(feature = "audio")] singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
     mice: Rc<RefCell<[f32; 13]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
-) -> Result<(), ExtError>
+    shared: LocalPool,
+) -> Result<(), Box<dyn std::error::Error>>
 // where N: 
 // #[cfg(feature = "online_capable")]
 // Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
@@ -399,10 +418,23 @@ pub fn init_lua_sys(
 // Option<bool>
 {
     println!("init lua sys");
+    // interner.
+    let c = *ctx;
+    let v = Value::String(piccolo::String::from_static(
+        ctx.deref(),
+        "default function",
+    ));
 
-    let default_func = lua_ctx
-        .create_function(|_, _: f32| Ok("placeholder func uwu"))
-        .unwrap();
+    let default_func = native_function(ctx, |c, _, mut stack| {
+        let s = c.intern_static("default function".as_bytes());
+        stack.push_front(Value::String(s));
+        // let v = Value::String(piccolo::String::from_static(ctx.deref())
+        // stack.push_front(v);
+        Ok(CallbackReturn::Return)
+        // Ok(piccolo::CallbackReturn::Sequence(AnySequence::from(
+        //     vec![Value::String("default function".to_string())]
+        // )))
+    });
 
     #[cfg(feature = "puc_lua")]
     res(
@@ -414,12 +446,14 @@ pub fn init_lua_sys(
     lua_globals.set("_default_func", default_func);
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = lua_ctx.create_table()?;
+    let io = Table::new(&ctx.deref());
 
-    lua_globals.set("pi", std::f64::consts::PI);
-    lua_globals.set("tau", std::f64::consts::PI * 2.0);
-    lua_globals.set("gui", main_rast);
-    lua_globals.set("sky", sky_rast);
+    let c = *ctx;
+    lua_globals.set(c, "pi", std::f64::consts::PI);
+    lua_globals.set(c, "tau", std::f64::consts::PI * 2.0);
+    // MARK required 2
+    // lua_globals.set(c, "gui", main_rast);
+    // lua_globals.set(c, "sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -456,7 +490,7 @@ pub fn init_lua_sys(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            $lib.set($name, lua_ctx.create_function($closure).unwrap());
+            $lib.set(ctx, $name, lua_ctx.create_function($closure).unwrap());
         };
     }
 
@@ -715,8 +749,10 @@ function abtn(button) end"
 
             match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
                 Ok(_) => {}
-                Err(_) => return Err(make_err("Unable to create entity")),
+                Err(_) => return Err(static_err("Unable to create entity")),
             }
+            // AnyUserData::
+            // AnyUserData::new(lua_ctx, wrapped).to_lua_err()?;
 
             // Ok(match rx.recv() {
             //     Ok(mut e) => e.remove(0),
@@ -738,18 +774,24 @@ function make(asset, x, y, z, scale) end"
     // single usage method for entity duplication only means it's not listed
     let pitcher = main_pitcher.clone();
     lua_globals.set(
+        *ctx,
         "_make",
-        lua_ctx
-            .create_function(move |_, lent: Arc<std::sync::Mutex<LuaEnt>>| {
-                let id = *ent_counter2.lock();
-                *ent_counter2.lock() += 1;
-                match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-                    Ok(_) => {}
-                    Err(_) => return Err(make_err("Unable to create entity")),
-                };
-                Ok(())
-            })
-            .unwrap(),
+        native_function(ctx, move |_, _, stack| {
+            // lent: Arc<std::sync::Mutex<LuaEnt>>
+            // MARK required 1
+            // if let Ok(Value::UserData(lent)) = stack.from_back(*ctx) {
+            //     let id = *ent_counter2.lock();
+            //     *ent_counter2.lock() += 1;
+            //     match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
+            //         Ok(_) => {}
+            //         Err(_) => return Err(context_err("Unable to create entity")),
+            //     };
+            // } else {
+            //     return Err(context_err("Invalid entity passed to make"));
+            // }
+
+            Ok(CallbackReturn::Return)
+        })?,
     )?;
 
     let pitcher = main_pitcher.clone();
@@ -762,7 +804,7 @@ function make(asset, x, y, z, scale) end"
             match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
                 Ok(_) => {}
                 Err(er) => {
-                   return Err(make_err("Unable to group entity"));
+                   return Err(static_err("Unable to group entity"));
                 },
             };
             match rx.recv(){
@@ -1000,7 +1042,6 @@ function tex(asset, im) end"
     );
 
     let pitcher = main_pitcher.clone();
-    let gui = gui_in.clone();
     lua!(
         "gimg",
         move |lu, name: String| {
@@ -1025,14 +1066,14 @@ function tex(asset, im) end"
 function gimg(asset) end"
     );
 
-    let gui = gui_in.clone();
     lua!(
         "nimg",
         move |_, (w, h): (u32, u32)| {
             let im = GuiMorsel::new_image(w, h);
             let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
+            let ud = lua_img_constructor(lua_img);
 
-            Ok(lua_img)
+            Ok(ud)
         },
         "Create new image buffer userdata, does not set as asset",
         "
@@ -1104,7 +1145,7 @@ function nimg(w, h) end"
                                     )),
                                 ));
                                 if let Err(err) = rx.recv() {
-                                    return Err(make_err(&err.to_string()));
+                                    return Err(static_err(&err.to_string()));
                                 }
                             }
                             _ => {
@@ -1148,17 +1189,17 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(make_err(&err.to_string()));
+                                                return Err(static_err(&err.to_string()));
                                             }
                                             return Ok("Building model in vert mode")
                                         }
                                         _ => {
-                                            return Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
+                                            return Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                             // return Ok(());
                                         }
                                     }
                                 }
-                                Err(make_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
+                                Err(static_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
                             }
                             _ => {
                                 match t.get::<_, Vec<String>>("t") {
@@ -1181,14 +1222,14 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(make_err(&err.to_string()));
+                                                return Err(static_err(&err.to_string()));
                                             }
                                         }
                                         Ok("Building model in texture mode")
                                     }
                                     _ => {
                                         // Err::<(),&str>
-                                        Err(make_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
+                                        Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
                                     }
                                 }
                             }
@@ -1412,7 +1453,7 @@ function over(str) end"
                     Ok(c) => Ok(c),
                     Err(er) => {
                         // println!("Unable to create connection {}", er);
-                        Err(make_err(&format!("conn fail, {}", er.to_string())))
+                        Err(static_err(&format!("conn fail, {}", er.to_string())))
                     }
                 };
             }
@@ -1545,10 +1586,17 @@ function help() end",
     //     ""
     // );
 
-    lua_globals.set("io", io)?;
-    lua_ctx
-        .load(
-            "
+    lua_globals.set(*ctx, "io", io)?;
+
+    // if let Err(e) = lua_globals.set(*ctx, "io", io) {
+    //     return Err(context_err("Failed to set io lib"));
+    // }
+
+    execute(
+        *ctx,
+        executor,
+        Some("patch"),
+        "
         add=table.insert 
         del=table.remove 
         print=cout 
@@ -1563,8 +1611,7 @@ function help() end",
         main = function() end
         loop = function() end
         ",
-        )
-        .exec()?;
+    )?;
 
     Ok(())
 }
@@ -1637,9 +1684,12 @@ pub fn load_empty(core: &mut Core) {
     let bundle = core.bundle_manager.make_bundle(None, None, None);
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+    bundle.pool = Some(core.gui.make_shared_pool());
+    let shared = bundle.pool.clone().unwrap();
+
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
-        resources,
+        shared,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -1703,13 +1753,18 @@ pub fn load(
             .bundle_manager
             .make_bundle(game_path_in, bundle_relations, game_path_in),
     };
+
+    bundle.pool = Some(core.gui.make_shared_pool());
+
     let bundle_id = bundle.id;
-    let resources = core.gui.make_morsel();
+    // let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
+    let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle_id,
-        resources,
+        shared,
+        // resources,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -1747,6 +1802,9 @@ pub fn load(
             None => {
                 let mut path = crate::asset::determine_path(Some(s.as_ref()));
                 if path.is_dir() {
+                    let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
+                    let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
                     crate::asset::walk_files(
                         #[cfg(feature = "headed")]
                         Some(&core.gfx.device),
@@ -1757,7 +1815,8 @@ pub fn load(
                         &mut core.world,
                         bundle_id,
                         &bundle.lua,
-                        path,
+                        &asset_items,
+                        &script_items,
                         &mut core.loggy,
                         debug,
                     );
@@ -1804,6 +1863,9 @@ pub fn load(
         },
         None => {
             let path = crate::asset::determine_path(None);
+            let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
+            let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
             crate::asset::walk_files(
                 #[cfg(feature = "headed")]
                 Some(&core.gfx.device),
@@ -1814,7 +1876,8 @@ pub fn load(
                 &mut core.world,
                 bundle_id,
                 &bundle.lua,
-                path,
+                &asset_items,
+                &script_items,
                 &mut core.loggy,
                 debug,
             );
@@ -1881,7 +1944,7 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
 // "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
 // "f10", "f11", "f12", "f13","f14","f15", "snap","snapshot","dele"];
 fn key_match(key: String) -> usize {
-    // VirtualKeyCode::from_str(&key).unwrap() as usize
+    // KeyCode::from_str(&key).unwrap() as usize
     match key.to_lowercase().as_str() {
         "1" => 0,
         "2" => 1,
@@ -2025,9 +2088,9 @@ fn key_match(key: String) -> usize {
         "paste" => 161,
         "cut" => 162,
 
-        // "space" => VirtualKeyCode::Space,
-        // "lctrl" => VirtualKeyCode::LControl,
-        // "rctrl" => VirtualKeyCode::RControl,
+        // "space" => KeyCode::Space,
+        // "lctrl" => KeyCode::LControl,
+        // "rctrl" => KeyCode::RControl,
         "alt" => 247,
         "ctrl" | "control" => 248,
         "shift" => 249,
@@ -2113,7 +2176,7 @@ pub enum MainCommmand {
     Globals(Vec<(String, ValueMap)>),
     GetGlobal(SyncSender<GlobalMap>),
     AsyncError(String),
-    LoopComplete((Option<image::RgbaImage>, Option<image::RgbaImage>)),
+    LoopComplete(BundleMutations),
     Reload(),
     BundleDropped(BundleResources),
     Load(String),
@@ -2131,7 +2194,7 @@ pub enum MainCommmand {
 
 pub fn num(x: Value) -> LuaResponse {
     match x {
-        Value::Integer(i) => LuaResponse::Integer(i),
+        Value::Integer(i) => LuaResponse::Integer(i64_to_i32(i)),
         Value::Number(f) => LuaResponse::Number(f),
         Value::String(s) => match s.to_str() {
             Ok(s) => LuaResponse::String(s.to_string()),
@@ -2140,6 +2203,17 @@ pub fn num(x: Value) -> LuaResponse {
         _ => LuaResponse::Integer(0),
     }
 }
+
+fn i64_to_i32(x: i64) -> i32 {
+    if x > i32::MAX as i64 {
+        i32::MAX
+    } else if x < i32::MIN as i64 {
+        i32::MIN
+    } else {
+        x as i32
+    }
+}
+
 pub fn numop(x: Option<Value>) -> LuaResponse {
     match x {
         Some(v) => num(v),
@@ -2233,8 +2307,15 @@ fn nummold(x: Value) -> NumCouple {
 
 fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
-    for it in table.pairs::<String, Value>() {
-        if let Ok((key, val)) = it {
+    for (key, val) in table.iter() {
+        let str_key = if let Some(str_key) = match key {
+            Value::String(s) => match s.to_str() {
+                Ok(s) => Some(s.to_string()),
+                _ => None,
+            },
+            Value::Integer(i) => Some(i.to_string()),
+            _ => None,
+        } {
             let mapped = match val {
                 Value::String(s) => {
                     // println!("string {}", s);
@@ -2248,18 +2329,15 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
                 Value::Boolean(b) => ValueMap::Bool(b),
                 Value::Table(t) => {
                     ValueMap::Array(
-                        t.sequence_values()
-                            .filter_map(|v| match v {
-                                Ok(v) => match v {
-                                    Value::String(s) => match s.to_str() {
-                                        Ok(s) => Some(ValueMap::String(s.to_string())),
-                                        _ => None,
-                                    },
-                                    Value::Integer(i) => Some(ValueMap::Integer(i as i32)),
-                                    Value::Number(n) => Some(ValueMap::Float(n as f32)),
-                                    Value::Boolean(b) => Some(ValueMap::Bool(b)),
+                        t.iter()
+                            .filter_map(|(k, v)| match v {
+                                Value::String(s) => match s.to_str() {
+                                    Ok(s) => Some(ValueMap::String(s.to_string())),
                                     _ => None,
                                 },
+                                Value::Integer(i) => Some(ValueMap::Integer(i64_to_i32(i))),
+                                Value::Number(n) => Some(ValueMap::Float(n as f32)), // TODO inaccurte
+                                Value::Boolean(b) => Some(ValueMap::Bool(b)),
                                 _ => None,
                             })
                             .collect::<Vec<ValueMap>>(),
@@ -2268,8 +2346,8 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
                 }
                 _ => ValueMap::Null(),
             };
-            data.push((key, mapped));
-        }
+            data.push((str_key, mapped));
+        };
     }
     data
 }
@@ -2571,13 +2649,26 @@ fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2
     (vec, norms, uv, ind)
 }
 
-fn make_err(s: &str) -> mlua::prelude::LuaError {
-    // return mlua::Error::CallbackError {
-    //     traceback: s.to_string(),
-    //     cause: Arc::new(*er),
-    // };
+// fn make_err(s: &str) -> LuaError {
+//     // LuaError:::from(Value::String(piccolo::String::from(s.to_string())))
+//     make_static(s)
+//     // LuaError::RuntimeError(s.to_string())
+//     // return mlua::Error::RuntimeError(s.to_string());
+// }
 
-    return mlua::Error::RuntimeError(s.to_string());
+fn static_err<M>(s: M) -> StaticError
+where
+    M: Display + core::fmt::Debug + Send + Sync + 'static,
+{
+    StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
+    // StaticError::Lua(StaticLuaError(s.to_owned()))
+}
+
+fn context_err<M>(s: M) -> piccolo::Error<'static>
+where
+    M: Display + core::fmt::Debug + Send + Sync + 'static,
+{
+    piccolo::Error::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
 }
 
 /** Convert string command into easy to use hashmap */

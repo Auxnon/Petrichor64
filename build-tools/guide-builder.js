@@ -1,4 +1,4 @@
-const fs = require("fs");
+import fs from "fs";
 
 const docHash = {};
 fs.readdirSync("./guide")
@@ -30,9 +30,9 @@ lines.forEach((line) => {
 const missing = Object.keys(docHash);
 if (missing.length) {
   throw new Error(
-    `⛔️ Commands we found no documents for, do they exist?: ${missing.join(
+    `⛔️ Commands we found no documents for: ${missing.join(
       ", "
-    )}`
+    )}. Do they exist?`
   );
 } else {
   console.log("✅ guide built");
