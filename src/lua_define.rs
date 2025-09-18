@@ -27,15 +27,7 @@ use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, LuaError};
 #[cfg(feature = "silt")]
 use silt_lua::{Lua, Value};
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    io::{BufRead, Read},
-    rc::Rc,
-    sync::{
-        mpsc::{channel, sync_channel, Sender, SyncSender},
-    },
-    thread,
-    time::Duration,
+    cell::RefCell, collections::HashMap, error::Error, io::{BufRead, Read}, rc::Rc, sync::mpsc::{channel, sync_channel, Sender, SyncSender}, thread, time::Duration
 };
 
 #[cfg(feature = "audio")]
@@ -291,7 +283,7 @@ impl<'lt> LuaCore {
 
                 let mut local_pool = LocalPool::new();
 
-                lua_instance.enter(|vm, mc| {
+                let res =lua_instance.enter(|vm, mc| {
                     // let executor = Executor::new(ctx);
 
                     if debug {
