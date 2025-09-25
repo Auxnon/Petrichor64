@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use silt_lua::LuaError;
+use silt_lua::{error::ErrorTuple, LuaError};
 
 // use piccolo::{PrototypeError, StaticError};
 
@@ -14,8 +14,12 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
+    LuaRunError(Box<ErrorTuple>),
+    LuaGenericError,
     MissingAssets,
     MissingScripts,
+    ChannelTimeoutError,
+    ChanneDisconnectedError,
 }
 
 impl Display for P64Error {
@@ -34,6 +38,9 @@ impl Display for P64Error {
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
             P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
             P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
+            P64Error::ChannelTimeoutError => write!(f, "Lua channel timed out"),
+            P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
+            P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
         }
     }
 }
@@ -41,6 +48,18 @@ impl Display for P64Error {
 impl From<std::str::Utf8Error> for P64Error {
     fn from(value: std::str::Utf8Error) -> Self {
         P64Error::IoUtf8Error
+    }
+}
+
+impl From<Vec<ErrorTuple>> for P64Error {
+    fn from(mut value: Vec<ErrorTuple>) -> Self {
+        let n = value.len();
+        if n == 0 {
+            return P64Error::LuaGenericError;
+        } else if n == 1 {
+            return P64Error::LuaRunError(Box::new(value.pop().unwrap()));
+        }
+        P64Error::LuaRunError(Box::new(value.swap_remove(0)))
     }
 }
 
@@ -56,23 +75,23 @@ impl From<std::str::Utf8Error> for P64Error {
 //     }
 // }
 
-impl From<StaticError> for P64Error {
-    fn from(value: LuaError ) -> Self {
-        P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
-    }
-}
+// impl From<StaticError> for P64Error {
+//     fn from(value: LuaError ) -> Self {
+//         P64Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, value))
+//     }
+// }
 
-impl From<PrototypeError> for P64Error {
-    fn from(value: LuaError) -> Self {
-        match value {
-            LuaError::VmCompileError
-            LuaError::VmCompileError
-            PrototypeError::Parser(e) => {
-                P64Error::LuaParseError(std::io::Error::new(std::io::ErrorKind::Other, e))
-            }
-            PrototypeError::Compiler(e) => {
-                P64Error::LuaCompileError(std::io::Error::new(std::io::ErrorKind::Other, e))
-            }
-        }
-    }
-}
+// impl From<PrototypeError> for P64Error {
+//     fn from(value: LuaError) -> Self {
+//         match value {
+//             LuaError::VmCompileError
+//             LuaError::VmCompileError
+//             PrototypeError::Parser(e) => {
+//                 P64Error::LuaParseError(std::io::Error::new(std::io::ErrorKind::Other, e))
+//             }
+//             PrototypeError::Compiler(e) => {
+//                 P64Error::LuaCompileError(std::io::Error::new(std::io::ErrorKind::Other, e))
+//             }
+//         }
+//     }
+// }
