@@ -21,10 +21,9 @@ use crate::{
     world::{TileCommand, TileResponse, World},
 };
 
-use gc_arena::Mutation;
 use image::RgbaImage;
 use itertools::Itertools;
-use silt_lua::{lua::VM, value::Variadic, Compiler};
+use silt_lua::{gc_arena::Mutation, lua::VM, value::Variadic, Compiler, ExVal};
 
 use parking_lot::Mutex;
 
@@ -257,9 +256,13 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 let name = segments[1];
 
                 let tout = main_bundle.lua.func("help(true)");
-                if let LuaResponse::TableOfTuple(t) = tout {
-                    for (k, (a, b)) in t.iter() {
-                        println!("### {}::{}::{}", k, a, b);
+                if let Ok(LuaResponse::Table(t)) = tout {
+                    let mut mapper = HashMap::new();
+                    for (k, c) in t.into_iter() {
+                        let d: String = k.into();
+                        let tup: (String,String)=c.into();
+                        println!("### {}::{}::{}", d, tup.0,tup.1 );
+                        mapper.insert(d, tup);
                     }
                     // let mut com = vec![];
                     // let mut cur_com = "";
@@ -275,7 +278,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                     //         alt = false;
                     //     }
                     // }
-                    crate::asset::make_directory(&name, &t, &mut core.loggy);
+                    crate::asset::make_directory(&name, &mapper, &mut core.loggy);
                     core.loggy
                         .log(LogType::Config, &format!("created directory {}", name));
                     hard_reset(core);
@@ -408,7 +411,7 @@ pub fn init_lua_sys<'a, 'gc>(
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
     shared: LocalPool,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), P64Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
 // Option<(Sender<MovePacket>, Receiver<MovePacket>)> 
@@ -447,11 +450,12 @@ pub fn init_lua_sys<'a, 'gc>(
     let gui = gui_in.clone();
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = Table::new(&vm.deref());
+    let io = vm.new_table(mc);
 
     let c = *vm;
-    vm.globals.set(c, "pi", std::f64::consts::PI);
-    vm.globals.set(c, "tau", std::f64::consts::PI * 2.0);
+    let globals = vm.globals.borrow_mut(mc);
+    globals.set("pi", std::f64::consts::PI);
+    globals.set("tau", std::f64::consts::PI * 2.0);
     // MARK required 2
     // lua_globals.set(c, "gui", main_rast);
     // lua_globals.set(c, "sky", sky_rast);
@@ -491,14 +495,14 @@ pub fn init_lua_sys<'a, 'gc>(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            vm.register_native_function(mc,$name, $closure);
+            vm.register_native_function(mc, $name, $closure);
         };
     }
 
     let aux_loggy = loggy.clone();
     lua!(
         "cout",
-        move |_, args: Variadic<String>| {
+        move |_,_, args: Variadic<String>| {
             // println!("cout: {:?}", args);
             #[cfg(feature = "headed")]
             {
@@ -519,7 +523,7 @@ function cout(...) end"
     let sender = world_sender.clone();
     lua!(
         "tile",
-        move |_, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
+        move |_,_, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
             let tile = match t {
                 Value::String(s) => s.to_str().unwrap_or("").to_string(),
                 _ => "".to_string(),
@@ -725,7 +729,8 @@ function abtn(button) end"
     let ent_counter2 = ent_counter.clone();
     lua!(
         "make",
-        move | vm,mc,
+        move |vm,
+              mc,
               (asset, x, y, z, s): (
             Option<String>,
             Option<f64>,
@@ -1055,8 +1060,7 @@ function tex(asset, im) end"
                 },
                 _ => LuaImg::empty(),
             };
-            lu.
-            Ok(limg)
+            lu.Ok(limg)
         },
         "Get image buffer userdata for editing or drawing",
         "
@@ -1521,15 +1525,12 @@ function help() end"
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "get",
-        move |lu, file: String| {
+        move |lu, _, file: String| {
             let (tx, rx) = sync_channel::<Option<String>>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
             match rx.recv() {
                 Ok(o) => match o {
-                    Some(s) => {
-                        let lua_string = lu.create_string(&s)?;
-                        Ok(Value::String(lua_string))
-                    }
+                    Some(s) => Ok(Value::String(s)),
                     None => Ok(Value::Nil),
                 },
                 _ => Ok(Value::Nil),
@@ -1545,12 +1546,12 @@ function get() end",
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "set",
-        move |_, (file, contents): (String, String)| {
+        move |_, _, (file, contents): (String, String)| {
             let (tx, rx) = sync_channel::<bool>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Write(file, contents, tx))));
             match rx.recv() {
-                Ok(o) => Ok(Value::Boolean(o)),
-                Err(_) => Ok(Value::Boolean(false)),
+                Ok(o) => Ok(Value::Bool(o)),
+                Err(_) => Ok(Value::Bool(false)),
             }
         },
         "load a file relative to the game directory",
@@ -1584,7 +1585,7 @@ function help() end",
     //     ""
     // );
 
-   vm.globals.set(*vm, "io", io)?;
+    globals.set("io", io);
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
@@ -2192,12 +2193,9 @@ pub enum MainCommmand {
 
 pub fn num(x: Value) -> LuaResponse {
     match x {
-        Value::Integer(i) => LuaResponse::Integer(i64_to_i32(i)),
+        Value::Integer(i) => LuaResponse::Integer(i),
         Value::Number(f) => LuaResponse::Number(f),
-        Value::String(s) => match s.to_str() {
-            Ok(s) => LuaResponse::String(s.to_string()),
-            _ => LuaResponse::Integer(0),
-        },
+        Value::String(s) => LuaResponse::String(s),
         _ => LuaResponse::Integer(0),
     }
 }
@@ -2307,35 +2305,26 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
     for (key, val) in table.iter() {
         let str_key = if let Some(str_key) = match key {
-            Value::String(s) => match s.to_str() {
-                Ok(s) => Some(s.to_string()),
-                _ => None,
-            },
-            Value::Integer(i) => Some(i.to_string()),
+            Value::String(s) => Some(s.to_owned()),
+
+            Value::Integer(i) => Some((*i).to_string()),
             _ => None,
         } {
             let mapped = match val {
-                Value::String(s) => {
-                    // println!("string {}", s);
-                    match s.to_str() {
-                        Ok(s) => ValueMap::String(s.to_string()),
-                        _ => ValueMap::Null(),
-                    }
-                }
-                Value::Integer(i) => ValueMap::Integer(i as i32),
-                Value::Number(n) => ValueMap::Float(n as f32),
-                Value::Boolean(b) => ValueMap::Bool(b),
+                Value::String(s) => ValueMap::String(s.to_owned()),
+
+                Value::Integer(i) => ValueMap::Integer(i64_to_i32(*i )),
+                Value::Number(n) => ValueMap::Float(*n as f32),
+                Value::Bool(b) => ValueMap::Bool(*b),
                 Value::Table(t) => {
                     ValueMap::Array(
-                        t.iter()
+                        t.borrow()
+                            .iter()
                             .filter_map(|(k, v)| match v {
-                                Value::String(s) => match s.to_str() {
-                                    Ok(s) => Some(ValueMap::String(s.to_string())),
-                                    _ => None,
-                                },
-                                Value::Integer(i) => Some(ValueMap::Integer(i64_to_i32(i))),
-                                Value::Number(n) => Some(ValueMap::Float(n as f32)), // TODO inaccurte
-                                Value::Boolean(b) => Some(ValueMap::Bool(b)),
+                                Value::String(s) => Some(ValueMap::String(s.to_owned())),
+                                Value::Integer(i) => Some(ValueMap::Integer(i64_to_i32(*i))),
+                                Value::Number(n) => Some(ValueMap::Float(*n as f32)), // TODO inaccurate
+                                Value::Bool(b) => Some(ValueMap::Bool(*b)),
                                 _ => None,
                             })
                             .collect::<Vec<ValueMap>>(),
@@ -2655,12 +2644,14 @@ fn make_err(s: &str) -> LuaError {
     // return mlua::Error::RuntimeError(s.to_string());
 }
 
+
+// TODO ???
 fn static_err<M>(s: M) -> LuaError
 where
     M: Display + core::fmt::Debug + Send + Sync + 'static,
 {
     // StaticError::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
-    LuaError::Custom(s)
+    LuaError::Custom(s.to_string())
     // StaticError::Lua(StaticLuaError(s.to_owned()))
 }
 
@@ -2669,7 +2660,7 @@ where
     M: Display + core::fmt::Debug + Send + Sync + 'static,
 {
     // piccolo::Error::Runtime(RuntimeError(Arc::new(anyhow::Error::msg(s))))
-    LuaError::Custom(s)
+    LuaError::Custom(s.to_string())
 }
 
 /** Convert string command into easy to use hashmap */

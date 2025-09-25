@@ -171,11 +171,12 @@ fn main() {
 
     if env::args().count() > 1 {
         let s = env::args().nth(1).unwrap();
-        native_dialog::MessageDialog::new()
-            .set_type(native_dialog::MessageType::Info)
+        native_dialog::DialogBuilder::message()
+            .set_level(native_dialog::MessageLevel::Info)
             .set_title("Petrichor64 Info")
             .set_text(&s)
-            .show_alert()
+            .alert()
+            .show()
             .unwrap();
         insta_load(s);
     } else {
@@ -417,11 +418,11 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
             Ok(false) => {
                 let mut ltype = LogType::Lua;
                 // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
-                if let Some(result) = match core.bundle_manager.get_lua().func(c) {
+                 let r=match core.bundle_manager.get_lua().func(c) {
                     LuaResponse::String(s) => Some(s),
                     LuaResponse::Number(n) => Some(n.to_string()),
                     LuaResponse::Integer(i) => Some(i.to_string()),
-                    LuaResponse::Boolean(b) => Some(b.to_string()),
+                    LuaResponse::Bool(b) => Some(b.to_string()),
                     LuaResponse::Table(t) => {
                         let mut s = String::new();
                         s.push_str("{");
@@ -437,9 +438,11 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
                     } // LuaResponse::Function(f) => format!("function: {}", f),
 
                     _ => Some("~".to_string()), // ignore nils
-                } {
-                    core.loggy.log(ltype, &result);
-                }
+                } ;
+// if let Some(result) =
+//                 {
+//                     core.loggy.log(ltype, &result);
+//                 }
             }
             Ok(true) => {}
             Err(e) => {
@@ -836,11 +839,12 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
     //         );
     //     }
     // }
-    native_dialog::MessageDialog::new()
-        .set_type(native_dialog::MessageType::Error)
+    native_dialog::DialogBuilder::message()
+        .set_level(native_dialog::MessageLevel::Error)
         .set_title("Petrichor64 Error")
         // .set_text(&format!("{:#?}", path))
         .set_text(&e.to_string())
-        .show_alert()
+        .confirm()
+        .show()
         .unwrap();
 }
