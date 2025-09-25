@@ -27,7 +27,14 @@ use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, LuaError};
 #[cfg(feature = "silt")]
 use silt_lua::{Lua, Value};
 use std::{
-    cell::RefCell, collections::HashMap, error::Error, io::{BufRead, Read}, rc::Rc, sync::mpsc::{channel, sync_channel, Sender, SyncSender}, thread, time::Duration
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    io::{BufRead, Read},
+    rc::Rc,
+    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
+    thread,
+    time::Duration,
 };
 
 #[cfg(feature = "audio")]
@@ -283,7 +290,7 @@ impl<'lt> LuaCore {
 
                 let mut local_pool = LocalPool::new();
 
-                let res =lua_instance.enter(|vm, mc| {
+                let res = lua_instance.enter(|vm, mc| {
                     // let executor = Executor::new(ctx);
 
                     if debug {
@@ -651,7 +658,7 @@ impl<'lt> LuaCore {
                                 //     .eval::<Value>();
                             }
                             LuaTalk::Drop(s) => {
-                                let res=vm.call_fn(mc, drop_lua_func, s);
+                                let res = vm.call_fn(mc, drop_lua_func, s);
 
                                 if let Err(e) = res {
                                     async_sender.send((
@@ -674,17 +681,18 @@ impl<'lt> LuaCore {
         thread_join
     }
 
-    pub fn func<'a>(&self, func: &str) -> LuaResponse {
+    pub fn func<'a>(&self, func: &str) -> Result<LuaResponse, P64Error> {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         // self.inject(func, &"0", None).0
         self.to_lua_tx.send(LuaTalk::Func(func.to_string(), tx));
         match rx.recv_timeout(Duration::from_millis(4000)) {
-            Ok(lua_out) => lua_out,
-            Err(e) => LuaResponse::Error(format!("No/slow response from lua -> {}", e)),
+            Ok(lua_out) => Ok(lua_out),
+            Err(_) => Err(P64Error::ChannelTimeoutError), // TODO it could be either Timeout or
+                                                          // Disconnected, is it worth
+                                                          // distinguishing?
         }
     }
 
-   
     // pub fn async_func(&self, func: &String, bits: ControlState) {
     //     self.async_inject(func, Some(bits));
     // }
@@ -725,7 +733,7 @@ impl<'lt> LuaCore {
     //     }
     // }
 
-    pub fn load<R>(&self, reader: &'lt mut R) -> LuaResponse
+    pub fn load<R>(&self, reader: &'lt mut R) -> Result<LuaResponse, P64Error>
     where
         R: Read + Send,
     {
@@ -737,10 +745,10 @@ impl<'lt> LuaCore {
         reader.read_to_string(&mut buf).unwrap(); // DEV can we get the reader instead?
         match self.to_lua_tx.send(LuaTalk::Load(buf, tx)) {
             Ok(_) => match rx.recv_timeout(Duration::from_millis(10000)) {
-                Ok(lua_out) => lua_out,
-                Err(e) => LuaResponse::Error(format!("No / >10s response from lua -> {}", e)),
+                Ok(lua_out) => Ok(lua_out),
+                Err(e) => Err(P64Error::ChannelTimeoutError),
             },
-            Err(e) => LuaResponse::Error(format!("Cannot speak to lua: {}", e)),
+            Err(e) => Err(P64Error::ChanneDisconnectedError),
         }
     }
 
@@ -815,18 +823,34 @@ impl<'lt> LuaCore {
 // }
 fn run_in_context<'gc, 'lt>(
     vm: &mut VM<'gc>,
-    mc: &Mutation,
+    mc: &Mutation<'gc>,
     name: Option<&str>,
     code: &'lt mut (dyn Read + Send),
+    compiler: &mut Compiler,
 ) -> Result<ExVal, P64Error> {
-    vm.build_and_run(mc, mc, name, code)
+    // TODO optimize this
+    let mut s = String::new();
+    code.read_to_string(&mut s);
+    let n = match name {
+        Some(s) => Some(s.to_owned()),
+        None => None,
+    };
+    match vm.build_and_run(mc, n, &s, compiler) {
+        Ok(v) => Ok(v),
+        Err(er) => Err(er.into()),
+    }
 }
 
-fn run_initial_code<R>(lua: &mut Lua, comp: &mut Compiler, code: R) -> Result<(), LuaError>
+fn run_initial_code<R>(lua: &mut Lua, compiler: &mut Compiler, mut code: R) -> Result<(), LuaError>
 where
     R: ReadSend,
 {
-    lua.run(code, comp)?;
+    // TODO optimize this
+    let mut s = String::new();
+    code.read_to_string(&mut s);
+    if let Err(e) = lua.run(&s, compiler) {
+        return Err(e.into());
+    }
     // let executor = lua.try_enter(|ctx| {
     //     let closure = Closure::new(
     //         &ctx,
