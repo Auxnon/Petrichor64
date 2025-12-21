@@ -7,6 +7,7 @@ use piccolo::{Function, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
 use silt_lua::userdata::{UserData, UserDataFields, UserDataMethods};
 use silt_lua::value::Value;
+use silt_lua::LuaError;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -58,6 +59,16 @@ pub mod lua_ent_flags {
 //         }
 //     }
 // }
+
+macro_rules! safe_unwrap {
+    ($ud:ident) => {
+        if let Some(ud) = $ud {
+            ud
+        } else {
+            return Err(LuaError::UDBadCast);
+        }
+    };
+}
 // #[cfg(feature = "puc_lua")]
 impl UserData for LuaEnt {
     // fn to_string(&self) -> String {
@@ -72,13 +83,16 @@ impl UserData for LuaEnt {
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_method("__tostring", |_, _, this: &Self, _: ()| {
+        methods.add_meta_method("__tostring", |_, _, this_res, _: ()| {
+            let this = safe_unwrap!(this_res);
             Ok(format!("[entity {}]", this.get_id()))
         });
-        methods.add_meta_method("__concat", |_, _, this, _: ()| {
+        methods.add_meta_method("__concat", |_, _, this_res, _: ()| {
+            let this = safe_unwrap!(this_res);
             Ok(format!("[entity {}]", this.get_id()))
         });
-        methods.add_method_mut("pos", |_, _, this, p: (f64, f64, f64)| {
+        methods.add_method_mut("pos", |_, _, this_res, p: (f64, f64, f64)| {
+            let this = safe_unwrap!(this_res);
             this.x = p.0;
             this.y = p.1;
             this.z = p.2;
@@ -86,7 +100,9 @@ impl UserData for LuaEnt {
             Ok(Value::Nil)
         });
 
-        methods.add_method_mut("anim", |_, _, this, (tex, force): (String, bool)| {
+        methods.add_method_mut("anim", |_, _, this_res, (tex, force): (String, bool)| {
+
+            let this = safe_unwrap!(this_res);
             if tex != this.tex || force {
                 this.dirty = true;
                 this.tex = tex;
@@ -96,11 +112,13 @@ impl UserData for LuaEnt {
             Ok(Value::Bool(true))
         });
 
-        methods.add_method_mut("copy", |lua, mc, this, t| {
+        methods.add_method_mut("copy", |lua, mc, this_res, _:()| {
+
+            let this = safe_unwrap!(this_res);
             let ent = this.clone();
             // let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
             let wrapped = lua.create_userdata(mc, ent);
-            let arr = vec![wrapped];
+            let arr = vec![wrapped.clone()];
             if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get("_make") {
                 v.f.call(lua, mc, &arr);
             }
@@ -113,11 +131,11 @@ impl UserData for LuaEnt {
             Ok(wrapped)
         });
 
-        methods.add_method_mut("kill", |_, _, this, ()| this.kill());
+        methods.add_method_mut("kill", |_, _, this, ()| Ok(this.unwrap().kill()));
     }
 
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("x", |_, _, this| this.x.into());
+        fields.add_field_method_get("x", |_, _, this| this.x);
         fields.add_field_method_set("x", |_, _, this: &mut Self, x: f64| this.x = x);
 
         fields.add_field_method_get("y", |_, _, this| this.y);
@@ -151,11 +169,11 @@ impl UserData for LuaEnt {
             Ok(this.offset = offset)
         });
 
-        fields.add_field_method_set("scale", |_,_, this, scale: f64| Ok(this.scale = scale));
+        fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
-        fields.add_field_method_get("id", |_,_, this| Ok(this.id));
-        fields.add_field_method_get("tex", |_,_, this| Ok(this.tex.clone()));
-        fields.add_field_method_set("tex", |_,_, this, tex: String| {
+        fields.add_field_method_get("id", |_, _, this| Ok(this.id));
+        fields.add_field_method_get("tex", |_, _, this| Ok(this.tex.clone()));
+        fields.add_field_method_set("tex", |_, _, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;
@@ -167,8 +185,8 @@ impl UserData for LuaEnt {
             }
             Ok(())
         });
-        fields.add_field_method_get("asset", |_, this| Ok(this.asset.clone()));
-        fields.add_field_method_set("asset", |_, this, asset: String| {
+        fields.add_field_method_get("asset", |_, _,this| Ok(this.asset.clone()));
+        fields.add_field_method_set("asset", |_, _,this, asset: String| {
             if this.asset != asset {
                 this.asset = asset;
                 this.flags |= lua_ent_flags::ASSET;
