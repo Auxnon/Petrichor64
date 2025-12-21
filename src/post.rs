@@ -61,16 +61,20 @@ impl Post {
             });
             (
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    cache: None, // TODO this might be handy for caching on android, one of the few
+                                 // OSes that support non-GPU managed cache preferences
                     label: Some("PostProcess"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
+                        compilation_options: Default::default(),
                         module: &shader,
-                        entry_point: "post_vs_main",
+                        entry_point: Some("post_vs_main"),
                         buffers: &[],
                     },
                     fragment: Some(wgpu::FragmentState {
+                        compilation_options: Default::default(),
                         module: &shader,
-                        entry_point: "post_fs_main",
+                        entry_point: Some("post_fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
                             format: config.format,
 
