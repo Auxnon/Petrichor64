@@ -13,7 +13,7 @@ use piccolo::{AnyUserData, Value};
 
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{UserData, Value};
-use silt_lua::userdata::UserDataMethods;
+use silt_lua::{userdata::UserDataMethods, LuaError};
 
 pub struct LuaImg {
     pub dirty: bool,
@@ -69,6 +69,16 @@ impl LuaImg {
     }
 }
 
+macro_rules! safe_unwrap {
+    ($ud:ident) => {
+        if let Some(ud) = $ud {
+            ud
+        } else {
+            return Err(LuaError::UDBadCast);
+        }
+    };
+}
+
 // #[cfg(feature = "puc_lua")]
 impl UserData for LuaImg {
     fn type_name() -> &'static str {
@@ -79,8 +89,9 @@ impl UserData for LuaImg {
     }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
-        methods.add_method("raw", |vm, mc, this: &LuaImg, _: ()| {
-            (this.image).to_vec()
+        methods.add_method("raw", |vm, mc, this, _: ()| {
+            let im = safe_unwrap!(this);
+            Ok(im.image.to_vec())
             // let res = <Vec<u8> as ToLua>::to_lua(v, vm, mc);
             // let res=ToLua::
             //
@@ -89,59 +100,62 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "line",
-            |vm,
-             mc,
-             this: &mut LuaImg,
-             (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
-                this.dirty = true;
+            |vm, mc, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
+                let im = safe_unwrap!(this);
+                im.dirty = true;
                 let c = get_color(rgb);
                 direct_line(
-                    &mut this.image,
-                    this.width,
-                    this.height,
-                    num(&x),
-                    num(&y),
-                    num(&x2),
-                    num(&y2),
+                    &mut im.image,
+                    im.width,
+                    im.height,
+                    num(x),
+                    num(y),
+                    num(x2),
+                    num(y2),
                     c,
                 );
+                Ok(())
             },
         );
 
         methods.add_method_mut(
             "rect",
             |_, mc, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
-                this.dirty = true;
+                let im = safe_unwrap!(this);
+                im.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
-                    &mut this.image,
-                    this.width,
-                    this.height,
-                    num(&x),
-                    num(&y),
-                    num(&w),
-                    num(&h),
+                    &mut im.image,
+                    im.width,
+                    im.height,
+                    num(x),
+                    num(y),
+                    num(w),
+                    num(h),
                     c,
                     None,
                 );
+                Ok(())
             },
         );
         methods.add_method_mut(
             "rrect",
-            |_, _, this, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value)| {
+            |_, _, this_res, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
                     &mut this.image,
                     this.width,
                     this.height,
-                    num(&x),
-                    num(&y),
-                    num(&w),
-                    num(&h),
+                    num(x),
+                    num(y),
+                    num(w),
+                    num(h),
                     c,
-                    Some(num(&ro)),
+                    Some(num(ro)),
                 );
+                Ok(())
             },
         );
 
@@ -149,8 +163,9 @@ impl UserData for LuaImg {
             "text",
             |_,
              _,
-             this,
+             this_res,
              (txt, x, y, rgb): (String, Option<Value>, Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -162,34 +177,38 @@ impl UserData for LuaImg {
                     this.width,
                     this.height,
                     &txt,
-                    numop(&x),
-                    numop(&y),
+                    numop(x),
+                    numop(y),
                     c,
                 );
+                Ok(())
             },
         );
 
         methods.add_method_mut(
             "img",
-            |_, mc, this, (mut img, x, y): (Value, Option<Value>, Option<Value>)| {
+            |_, mc, this_res, (mut img, x, y): (Value, Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
-                img.apply_userdata::<LuaImg>(mc, |limg| {
+                img.apply_userdata::<LuaImg, _, _>(mc, |limg| {
                     direct_image(
                         &mut this.image,
                         &limg.image,
-                        numop(&x),
-                        numop(&y),
+                        numop(x),
+                        numop(y),
                         this.width,
                         this.height,
                     );
                     Ok(())
                 });
+                Ok(())
             },
         );
 
         methods.add_method_mut(
             "pixel",
-            |_, mc, this, (x, y, rgb): (u32, u32, Option<Value>)| {
+            |_, mc, this_res, (x, y, rgb): (u32, u32, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -197,17 +216,21 @@ impl UserData for LuaImg {
                 };
 
                 direct_pixel(&mut this.image, x, y, this.width, this.height, c.to_array());
+                Ok(())
             },
         );
 
-        methods.add_method_mut("clr", |_, mc, this, (): ()| {
+        methods.add_method_mut("clr", |_, mc, this_res, (): ()| {
+            let this = safe_unwrap!(this_res);
             this.dirty = true;
             this.image = RgbaImage::new(this.width, this.height);
+            Ok(())
         });
 
         methods.add_method_mut(
             "fill",
-            |_, _, this, (rgb, map): (Option<Value>, Option<Value>)| {
+            |_, _, this_res, (rgb, map): (Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -220,11 +243,14 @@ impl UserData for LuaImg {
 
                 direct_fill(&mut this.image, this.width, this.height, c, mapper);
                 // this.image = RgbaImage::new(this.width, this.height);
+                Ok(())
             },
         );
 
-        methods.add_method_mut("copy", |vm, mc, this, (): ()| {
-            vm.create_userdata(mc, this.clone())
+        methods.add_method_mut("copy", |vm, mc, this_res, (): ()| {
+            let this = safe_unwrap!(this_res);
+            vm.create_userdata(mc, this.clone());
+            Ok(())
         });
 
         // TODO from raw

@@ -24,7 +24,7 @@ impl SharedPool {
     }
 
     pub fn localize<'a>(&'a self, local: &mut LocalPool<'a>) -> Result<(), ()> {
-        if let (Ok(el), Ok(g), Ok(s)) = (
+        if let (Some(el), Some(g), Some(s)) = (
             self.ent_list.try_borrow_mut(),
             self.gui.try_borrow_mut(),
             self.sky.try_borrow_mut(),
