@@ -418,31 +418,32 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
             Ok(false) => {
                 let mut ltype = LogType::Lua;
                 // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
-                 let r=match core.bundle_manager.get_lua().func(c) {
-                    LuaResponse::String(s) => Some(s),
-                    LuaResponse::Number(n) => Some(n.to_string()),
-                    LuaResponse::Integer(i) => Some(i.to_string()),
-                    LuaResponse::Bool(b) => Some(b.to_string()),
-                    LuaResponse::Table(t) => {
-                        let mut s = String::new();
-                        s.push_str("{");
-                        for (k, v) in t {
-                            s.push_str(&format!("{}: {}, ", k, v));
+                let r = match core.bundle_manager.get_lua().func(c) {
+                    Ok(v) => match v {
+                        LuaResponse::String(s) => Some(s),
+                        LuaResponse::Number(n) => Some(n.to_string()),
+                        LuaResponse::Integer(i) => Some(i.to_string()),
+                        LuaResponse::Bool(b) => Some(b.to_string()),
+                        LuaResponse::Table(t) => {
+                            let mut s = String::new();
+                            s.push_str("{");
+                            for (k, v) in t {
+                                s.push_str(&format!("{}: {}, ", k, v));
+                            }
+                            s.push_str("}");
+                            Some(s)
                         }
-                        s.push_str("}");
-                        Some(s)
-                    }
-                    LuaResponse::Error(e) => {
+                        // _ => Some("~".to_string()), // ignore nils
+                        _ => None, // ignore nils
+                    },
+                    Err(e) => {
                         ltype = LogType::LuaError;
-                        Some(e)
+                        Some(e.to_string())
                     } // LuaResponse::Function(f) => format!("function: {}", f),
-
-                    _ => Some("~".to_string()), // ignore nils
-                } ;
-// if let Some(result) =
-//                 {
-//                     core.loggy.log(ltype, &result);
-//                 }
+                };
+                if let Some(result) = r {
+                    core.loggy.log(ltype, &result);
+                }
             }
             Ok(true) => {}
             Err(e) => {
