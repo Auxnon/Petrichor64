@@ -131,14 +131,18 @@ pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Resu
 
 fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {
     match err {
-        zip::result::ZipError::Io(i) => P64Error::IoError(i),
-        zip::result::ZipError::InvalidArchive(a) | zip::result::ZipError::UnsupportedArchive(a) => {
-            P64Error::IoInvalidArchive(a)
-        }
-        zip::result::ZipError::FileNotFound => match f {
-            Some(ff) => P64Error::IoFileNotFound(ff.into()),
-            None => P64Error::IoFileNotFound("unknown".into()),
-        },
+        ZipError::Io(i) => P64Error::IoError(i),
+        ZipError::InvalidArchive(a) | zip::result::ZipError::UnsupportedArchive(a) => {
+                P64Error::IoInvalidArchive(a)
+            }
+        ZipError::FileNotFound => match f {
+                Some(ff) => P64Error::IoFileNotFound(ff.into()),
+                None => P64Error::IoFileNotFound("unknown".into()),
+            },
+        ZipError::InvalidPassword=> 
+                P64Error::IoInvalidArchive("password zipped"),
+        ZipError::UnsupportedArchive(s) => P64Error::IoInvalidArchive(s),
+        _ => P64Error::IoInvalidArchive("unknown archive error"),
     }
 }
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
@@ -161,7 +165,7 @@ pub fn pack_zip(
         let c = Cursor::new(v);
 
         let mut zip = zip::ZipWriter::new(c);
-        let options = FileOptions::default();
+        let options = FileOptions::<()>::default();
 
         for source in sources {
             //.to_string();
