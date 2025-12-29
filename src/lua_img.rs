@@ -187,10 +187,10 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "img",
-            |_, mc, this_res, (mut img, x, y): (Value, Option<Value>, Option<Value>)| {
+            |_, _, this_res, (img, x, y): (Value, Option<Value>, Option<Value>)| {
                 let this = safe_unwrap!(this_res);
                 this.dirty = true;
-                img.apply_userdata::<LuaImg, _, _>(mc, |limg| {
+                img.apply_userdata( |limg: &LuaImg| {
                     direct_image(
                         &mut this.image,
                         &limg.image,
