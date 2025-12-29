@@ -23,7 +23,13 @@ use crate::{
 
 use image::RgbaImage;
 use itertools::Itertools;
-use silt_lua::{gc_arena::Mutation, lua::VM, value::Variadic, Compiler, ExVal};
+use silt_lua::{
+    gc_arena::{lock::RefLock, Gc, Mutation},
+    lua::VM,
+    userdata::UserDataWrapper,
+    value::{FromLua, Variadic},
+    Compiler, ExVal,
+};
 
 use parking_lot::Mutex;
 
@@ -52,12 +58,9 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     fmt::Display,
-    io::ErrorKind,
-    ops::Deref,
     rc::Rc,
     sync::{
         mpsc::{sync_channel, Sender, SyncSender},
-        Arc,
     },
 };
 
@@ -120,7 +123,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         "pack" => {
             // new: path? name?
             // name, path, cartridge pic
-            let (regular, comHash) = if segments.len() > 1 {
+            let (regular, com_hash) = if segments.len() > 1 {
                 getComHash(segments[1..].to_vec(), ["o", "n", "i", "c"].to_vec())
             } else {
                 (vec![], HashMap::new())
@@ -134,7 +137,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 &mut core.world,
                 bundle_id,
                 &main_bundle.lua,
-                comHash,
+                com_hash,
                 regular,
                 current_game_dir,
                 // &if segments.len() > 1 {
@@ -260,8 +263,8 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                     let mut mapper = HashMap::new();
                     for (k, c) in t.into_iter() {
                         let d: String = k.into();
-                        let tup: (String,String)=c.into();
-                        println!("### {}::{}::{}", d, tup.0,tup.1 );
+                        let tup: (String, String) = c.into();
+                        println!("### {}::{}::{}", d, tup.0, tup.1);
                         mapper.insert(d, tup);
                     }
                     // let mut com = vec![];
@@ -393,9 +396,9 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
-    #[cfg(feature = "silt")] vm: &VM<'gc>,
+    #[cfg(feature = "silt")] vm_init: &mut VM<'gc>,
     // lua_globals: &Table<'gc>,
-    mc: &Mutation,
+    mc_in: &Mutation<'gc>,
     // executor: &Executor<'gc>,
     bundle_id: u8,
     main_pitcher: Sender<MainPacket>,
@@ -450,10 +453,10 @@ pub fn init_lua_sys<'a, 'gc>(
     let gui = gui_in.clone();
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = vm.new_table(mc);
+    let io = vm_init.new_table(mc_in);
 
-    let c = *vm;
-    let globals = vm.globals.borrow_mut(mc);
+    // let c = *vm;
+    let mut globals = vm_init.globals.borrow_mut(mc_in);
     globals.set("pi", std::f64::consts::PI);
     globals.set("tau", std::f64::consts::PI * 2.0);
     // MARK required 2
@@ -495,14 +498,14 @@ pub fn init_lua_sys<'a, 'gc>(
                 &loggy,
             );
             #[cfg(feature = "silt")]
-            vm.register_native_function(mc, $name, $closure);
+            vm_init.register_native_function(mc_in, $name, $closure);
         };
     }
 
     let aux_loggy = loggy.clone();
     lua!(
         "cout",
-        move |_,_, args: Variadic<String>| {
+        move |_, _, args: Variadic| {
             // println!("cout: {:?}", args);
             #[cfg(feature = "headed")]
             {
@@ -523,9 +526,9 @@ function cout(...) end"
     let sender = world_sender.clone();
     lua!(
         "tile",
-        move |_,_, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
+        move |_, _, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
             let tile = match t {
-                Value::String(s) => s.to_str().unwrap_or("").to_string(),
+                Value::String(s) => s,
                 _ => "".to_string(),
             };
             let ro = match r {
@@ -549,7 +552,7 @@ function tile(asset, x, y, z, rot) end"
     let sender = world_sender.clone();
     lua!(
         "dtile",
-        move |_, (x, y, z): (Option<i32>, Option<i32>, Option<i32>)| {
+        move |_,_, (x, y, z): (Option<i32>, Option<i32>, Option<i32>)| {
             match (x, y, z) {
                 (xx,yy,zz) => World::drop_chunk(&sender, xx.unwrap_or(0), yy.unwrap_or(0), zz.unwrap_or(0)),
                 (None,None,None) => World::clear_tiles(&sender),
@@ -569,7 +572,7 @@ function dtile( x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "istile",
-        move |_, (x, y, z): (i32, i32, i32)| { Ok(World::is_tile(&sender, x, y, z)) },
+        move |_, _, (x, y, z): (i32, i32, i32)| { Ok(World::is_tile(&sender, x, y, z)) },
         "Check if a tile is present at a given location",
         "
 ---@param x integer 
@@ -582,7 +585,7 @@ function istile(x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "gtile",
-        move |_, (x, y, z): (i32, i32, i32)| {
+        move |_, _, (x, y, z): (i32, i32, i32)| {
             let t = World::get_tile(&sender, x, y, z);
             Ok(match t {
                 Some(s) => s.0,
@@ -600,13 +603,14 @@ function gtile(x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "ftile",
-        move |l, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
+        move |l, _, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
             let tt = if t.len() == 0 { None } else { Some(t) };
             match World::first_tile(&sender, tt, x, y, z, dx, dy, dz, 100) {
-                Some(v) => l.create_table_from(vec![(0, v[0]), (1, v[1]), (2, v[2])].into_iter()),
+                Some(v) => vec![(0, v[0]), (1, v[1]), (2, v[2])],
                 None => {
-                    let f: Vec<(usize, i32)> = vec![];
-                    l.create_table_from(f.into_iter())
+                    let f: Vec<(u8, i32)> = vec![];
+                    // l.create_table_from(f.into_iter())
+                    f
                 }
             }
         },
@@ -622,10 +626,10 @@ function gtile(x, y, z) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "anim",
-        move |_, (name, items, speed): (String, Vec<String>, Option<f64>)| {
+        move |_, _, (name, items, speed): (String, Vec<String>, Option<u32>)| {
             // println!("we have anims {:?}", items);
             let anim_speed = match speed {
-                Some(s) => s as u32,
+                Some(s) => s,
                 None => 16,
             };
             pitcher.send((bundle_id, MainCommmand::Anim(name, items, anim_speed)));
@@ -642,7 +646,7 @@ function anim(name, items, speed) end"
     let dkeys = diff_keys.clone();
     lua!(
         "key",
-        move |_, (key, volatile): (String, Option<bool>)| {
+        move |_, _, (key, volatile): (String, Option<bool>)| {
             match volatile {
                 Some(true) => Ok(dkeys.borrow()[key_match(key)]),
                 _ => Ok(keys.borrow()[key_match(key)]),
@@ -658,7 +662,7 @@ function key(key, volatile) end"
 
     lua!(
         "cin",
-        move |_, _: ()| {
+        move |_, _, _: ()| {
             let h: String = diff_keys
                 .borrow()
                 .iter()
@@ -676,25 +680,25 @@ function cin() end"
 
     lua!(
         "mus",
-        move |lu, (): ()| {
-            let t = lu.create_table()?;
+        move |vm, _, (): ()| {
+            let mut t = vm.raw_table();
             let m = mice.borrow();
-            t.set("x", m[0])?;
-            t.set("y", m[1])?;
-            t.set("dx", m[2])?;
-            t.set("dy", m[3])?;
-            t.set("px", m[4])?;
-            t.set("py", m[5])?;
+            t.set("x", m[0]);
+            t.set("y", m[1]);
+            t.set("dx", m[2]);
+            t.set("dy", m[3]);
+            t.set("px", m[4]);
+            t.set("py", m[5]);
 
             // t.set("z",m[2])?;
-            t.set("m1", m[6] > 0.)?;
-            t.set("m2", m[7] > 0.)?;
-            t.set("m3", m[8] > 0.)?;
-            t.set("scroll", m[9])?;
+            t.set("m1", m[6] > 0.);
+            t.set("m2", m[7] > 0.);
+            t.set("m3", m[8] > 0.);
+            t.set("scroll", m[9]);
 
-            t.set("vx", m[10])?;
-            t.set("vy", m[11])?;
-            t.set("vz", m[12])?;
+            t.set("vx", m[10]);
+            t.set("vy", m[11]);
+            t.set("vz", m[12]);
 
             Ok(t)
         },
@@ -707,7 +711,7 @@ function mus() end"
     let gam = Rc::clone(&gamepad);
     lua!(
         "btn",
-        move |_, button: String| { Ok(gam.borrow().check(button) != 0.) },
+        move |_, _, button: String| { Ok(gam.borrow().check(button) != 0.) },
         "Check if gamepad button is held down",
         "
 ---@param button string
@@ -717,7 +721,7 @@ function btn(button) end"
 
     lua!(
         "abtn",
-        move |_, button: String| { Ok(gamepad.borrow().check(button)) },
+        move |_, _, button: String| { Ok(gamepad.borrow().check(button)) },
         "Check how much a gamepad is pressed, axis gives value between -1 and 1",
         "
 ---@param button string
@@ -749,11 +753,13 @@ function abtn(button) end"
                 z.unwrap_or(0.),
                 s.unwrap_or(1.),
             );
-            let wrapped = Arc::new(std::sync::Mutex::new(ent));
+            let wrapper = vm.create_userdata_raw(mc, ent);
+            let wrapper_clone = wrapper.clone();
+            // let wrapped = Arc::new(std::sync::Mutex::new(ent));
 
             // match pitcher.send(MainCommmand::Spawn(asset, x, y, z, s.unwrap_or(1.), 1, tx)) {
 
-            match pitcher.send((bundle_id, MainCommmand::Spawn(Arc::clone(&wrapped)))) {
+            match pitcher.send((bundle_id, MainCommmand::Spawn(wrapper_clone))) {
                 Ok(_) => {}
                 Err(_) => return Err(static_err("Unable to create entity")),
             }
@@ -764,7 +770,8 @@ function abtn(button) end"
             //     Ok(mut e) => e.remove(0),
             //     Err(e) => Arc::new(std::sync::Mutex::new(LuaEnt::empty())),
             // })
-            Ok(wrapped)
+            let val = Value::UserData(Gc::new(mc, RefLock::new(wrapper)));
+            Ok(val)
         },
         "Spawn an entity from an asset",
         "
@@ -779,40 +786,56 @@ function make(asset, x, y, z, scale) end"
 
     // single usage method for entity duplication only means it's not listed
     let pitcher = main_pitcher.clone();
-    vm.register_native_function(mc, "_make", |v, mc, stack| {
+    vm_init.register_native_function(mc_in, "_make", move |v, mc, ud: Value| {
         // lent: Arc<std::sync::Mutex<LuaEnt>>
         // MARK required 1
-        if let Some(Value::UserData(lent)) = stack.last() {
+        if let Value::UserData(lent) = ud {
             let id = *ent_counter2.lock();
-            *ent_counter2.lock() += 1;
-            match pitcher.send((bundle_id, MainCommmand::Spawn(lent))) {
-                Ok(_) => {}
-                Err(_) => return Err(context_err("Unable to create entity")),
-            };
+            let lb = lent.borrow();
+            if lb.is_type::<LuaEnt>() {
+                let l2 = lb.clone();
+                *ent_counter2.lock() += 1;
+                match pitcher.send((bundle_id, MainCommmand::Spawn(l2))) {
+                    Ok(_) => {}
+                    Err(_) => return Err(context_err("Unable to create entity")),
+                };
+            } else {
+                return Err(context_err("Invalid entity passed to make"));
+            }
         } else {
             return Err(context_err("Invalid entity passed to make"));
         }
 
         Ok(Value::Nil)
-    })?;
+    });
 
     let pitcher = main_pitcher.clone();
     lua!(
         "lot",
-        move |_, (parent,child ): (Arc<std::sync::Mutex<LuaEnt>>,Arc<std::sync::Mutex<LuaEnt>>)| {
-            let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
-            let parentId=parent.lock().unwrap().get_id();
-            let childId=child.lock().unwrap().get_id();
-            match pitcher.send((bundle_id,MainCommmand::Group(parentId,childId, tx))) {
-                Ok(_) => {}
-                Err(er) => {
-                   return Err(static_err("Unable to group entity"));
-                },
-            };
-            match rx.recv(){
-                Ok(_) => {},
-                Err(_) => {}
-            };
+        move |_, _, pair: (Value, Value)| {
+            if let (Value::UserData(parent), Value::UserData(child)) = pair {
+                let id1 = parent
+                    .borrow()
+                    .downcast_get::<LuaEnt, _, _>(|p| Ok(p.get_id()));
+                let id2 = child
+                    .borrow()
+                    .downcast_get::<LuaEnt, _, _>(|c| Ok(c.get_id()));
+                if let (Ok(parent_id), Ok(child_id)) = (id1, id2) {
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
+                    match pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id, tx))) {
+                        Ok(_) => {}
+                        Err(er) => {
+                            return Err(static_err("Unable to group entity"));
+                        }
+                    };
+                    match rx.recv() {
+                        Ok(_) => {}
+                        Err(_) => {}
+                    };
+                } else {
+                    return Err(static_err("Could not retrieve parent or child id to group"));
+                }
+            }
 
             Ok(())
         },
@@ -825,9 +848,10 @@ function lot(parent, child) end"
 
     lua!(
         "kill",
-        move |_, ent: Arc<std::sync::Mutex<LuaEnt>>| {
-            if let Ok(mut r) = ent.lock() {
-                r.kill();
+        move |_, mc, ent: Value| {
+            if let Value::UserData(mut r) = ent {
+                r.borrow_mut(mc)
+                    .downcast_mut::<LuaEnt, _, _>(|ud| Ok(ud.kill()));
             }
             Ok(())
         },
@@ -840,7 +864,7 @@ function kill(ent) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "init",
-        move |_, (): ()| {
+        move |_, _, (): ()| {
             // println!("hit reset");
             match pitcher.send((bundle_id, MainCommmand::Reload())) {
                 Ok(_) => {}
@@ -856,25 +880,24 @@ function reload() end"
     let pitcher = main_pitcher.clone();
     lua!(
         "attr",
-        move |lu, table: Option<Table>| {
+        move |lu, mc, table: Option<Value>| {
             match table {
-                Some(t) => {
-                    let hash = table_hasher(t);
+                Some(Value::Table(t)) => {
+                    let hash = table_hasher(&t.borrow());
                     lua_err!(pitcher.send((bundle_id, MainCommmand::Globals(hash))));
 
                     Ok(Value::Nil)
                 }
-                None => {
+                _ => {
                     let (tx, rx) = std::sync::mpsc::sync_channel::<GlobalMap>(0);
                     lua_err!(pitcher.send((bundle_id, MainCommmand::GetGlobal(tx))));
                     match rx.recv() {
-                        Ok(arr) => match lu.create_table() {
-                            Ok(mut t) => {
-                                lua_err!(arr.convert(&mut t));
-                                Ok(Value::Table(t))
-                            }
-                            Err(_) => Ok(Value::Nil),
-                        },
+                        Ok(arr) => {
+                            let mut t = lu.raw_table();
+
+                            arr.convert(lu, mc, &mut t);
+                            Ok(lu.wrap_table(mc, t))
+                        }
                         Err(_) => Ok(Value::Nil),
                     }
                 }
@@ -889,32 +912,37 @@ function attr(attributes) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "cam",
-        move |_, table: Table| {
-            let pos = match table.get("pos") {
-                Ok(v) => match v {
-                    Value::Table(t) => {
-                        let x = t.get::<_, f32>(1).unwrap_or(0.);
-                        let y = t.get::<_, f32>(2).unwrap_or(0.);
-                        let z = t.get::<_, f32>(3).unwrap_or(0.);
-                        Some(glam::vec3(x, y, z))
-                    }
+        move |_, _, table_val: Value| {
+            if let Value::Table(t) = table_val {
+                let table = t.borrow();
+                let pos = match table.get("pos") {
+                    Some(v) => match v {
+                        Value::Table(tbl) => {
+                            let t = tbl.borrow();
+                            let x = t.getn(1).unwrap_or(&Value::Nil).into();
+                            let y = t.getn(2).unwrap_or(&Value::Nil).into();
+                            let z = t.getn(3).unwrap_or(&Value::Nil).into();
+                            Some(glam::vec3(x, y, z))
+                        }
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            };
-            let rot = match table.get("rot") {
-                Ok(v) => match v {
-                    Value::Table(t) => {
-                        let x = t.get::<_, f32>(1).unwrap_or(0.);
-                        let y = t.get::<_, f32>(2).unwrap_or(0.);
-                        Some(glam::vec2(x, y))
-                    }
+                };
+                let rot = match table.get("rot") {
+                    Some(v) => match v {
+                        Value::Table(tbl) => {
+                            let t = tbl.borrow();
+                            let x = t.getn(1).unwrap_or(&Value::Nil).into();
+                            let y = t.getn(2).unwrap_or(&Value::Nil).into();
+                            Some(glam::vec2(x, y))
+                        }
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            };
+                };
 
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Cam(pos, rot))));
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Cam(pos, rot))));
+            }
 
             Ok(())
         },
@@ -928,7 +956,7 @@ function cam(params) end"
     let sing = singer.clone();
     lua!(
         "note",
-        move |_, (freq, length): (f32, Option<f32>)| {
+        move |_, _, (freq, length): (f32, Option<f32>)| {
             #[cfg(feature = "audio")]
             {
                 let len = match length {
@@ -949,7 +977,7 @@ function sound(freq, length) end"
     let sing = singer.clone();
     lua!(
         "song",
-        move |_, (notes): (Vec<Value>)| {
+        move |_, _, notes: Vec<Value>| {
             #[cfg(feature = "audio")]
             {
                 let converted = notes
@@ -987,7 +1015,7 @@ function song(notes) end"
     let sing = singer.clone();
     lua!(
         "mute",
-        move |_, (channel): (Option<usize>)| {
+        move |_, _, channel: Option<usize>| {
             #[cfg(feature = "audio")]
             sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
 
@@ -1001,7 +1029,7 @@ function mute(channel) end"
 
     lua!(
         "instr",
-        move |_, (freqs, half): (Vec<f32>, Option<bool>)| {
+        move |_, _, (freqs, half): (Vec<f32>, Option<bool>)| {
             #[cfg(feature = "audio")]
             lua_err!(singer.send(SoundCommand::MakeInstrument(Instrument::new(
                 0,
@@ -1024,14 +1052,17 @@ function instr(freqs, half) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "tex",
-        move |_, (name, im): (String, Value)| {
-            if let Ok(limg) = im.borrow::<LuaImg>() {
-                let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
-                lua_err!(pitcher.send((
-                    bundle_id,
-                    MainCommmand::SetImg(name, limg.image.clone(), tx),
-                )));
-                lua_err!(rx.recv());
+        move |_, _, (name, im): (String, Value)| {
+            if let Value::UserData(ud) = im {
+                ud.borrow().downcast_ref::<LuaImg, _, _>(|limg| {
+                    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+                    lua_err!(pitcher.send((
+                        bundle_id,
+                        MainCommmand::SetImg(name, limg.image.clone(), tx),
+                    )));
+                    lua_err!(rx.recv());
+                    Ok(())
+                })?;
             };
 
             Ok(())
@@ -1047,7 +1078,7 @@ function tex(asset, im) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "gimg",
-        move |lu, name: String| {
+        move |vm, mc, name: String| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, RgbaImage)>(0);
             let limg = match pitcher.send((bundle_id, MainCommmand::GetImg(name, tx))) {
                 Ok(o) => match rx.recv() {
@@ -1060,7 +1091,7 @@ function tex(asset, im) end"
                 },
                 _ => LuaImg::empty(),
             };
-            lu.Ok(limg)
+            Ok(vm.create_userdata(mc, limg))
         },
         "Get image buffer userdata for editing or drawing",
         "
@@ -1068,15 +1099,16 @@ function tex(asset, im) end"
 ---@return image
 function gimg(asset) end"
     );
+    let gui=gui_in.clone();
 
     lua!(
         "nimg",
-        move |_, (w, h): (u32, u32)| {
+        move |vm, mc, (w, h): (u32, u32)| {
             let im = GuiMorsel::new_image(w, h);
             let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
             // let ud = lua_img_constructor(lua_img);
 
-            Ok(lua_img)
+            Ok(vm.create_userdata(mc,lua_img))
         },
         "Create new image buffer userdata, does not set as asset",
         "
@@ -1089,16 +1121,19 @@ function nimg(w, h) end"
     let pitcher = main_pitcher.clone();
     lua!(
             "mod",
-            move |_, (asset, t): (String, Table)| {
+            move |vm,mc, (asset, tval): (String, Value)| {
                 let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+                let t=if let Value::Table(t)=tval{t.borrow()}else{return 
 
-                match t.get::<_, Vec<[f32; 3]>>("q") {
-                    Ok(quads) => {
+                                Err(static_err("expecting table for param 2"));};
+
+                match t.try_get_type::<_, Vec<[f32; 3]>>("q",vm,mc) {
+                    Some(quads) => {
 
                         let (v,n, uv, i) =
-                        match t.get::<_, Vec<[f32;2]>>("u") {
-                            Ok(uvi)=>{
-                                let inds= t.get::<_, Vec<u32>>("i").unwrap_or_else(|_|{
+                        match t.try_get_type::<_,Vec<[f32;2]>>("u",vm,mc) { //Vec<[f32;2]>
+                            Some(uvi)=>{
+                                let inds= t.try_get_type::<_,Vec<u32>>("i",vm,mc).unwrap_or_else(||{ 
                                     let mut ind = Vec::new();
                                     let mut i = 0;
                                     for _ in 0..quads.len() {
@@ -1112,7 +1147,7 @@ function nimg(w, h) end"
                                     }
                                     ind
                                 });
-                                let norms=t.get::<_, Vec<[f32;3]>>("n").unwrap_or_else(|_|{
+                                let norms=t.try_get_type::<_,Vec<[f32;3]>>("n",vm,mc).unwrap_or_else(||{
                                     let mut norms = Vec::new();
                                     for _ in 0..quads.len() {
                                         norms.push([0., 0., 0.]);
@@ -1124,14 +1159,15 @@ function nimg(w, h) end"
                                 });
                                 (quads,norms, uvi, inds)
 
-
                             }
                             _=>{
     convert_quads(quads)
                             }
                         };
-                        match t.get::<_, Vec<String>>("t") {
-                            Ok(textures) => {
+                        match t.try_get_type::<_,Vec<String>>("t",vm,mc) {
+                            Some(textures) => {
+                                // let tt=Vec::<String>::from_lua(tex, vm, mc);
+                                // let tt: Vec<String>= textures.clone().
                                 lua_err!(pitcher.send((
                                     bundle_id,
                                     MainCommmand::Model(
@@ -1148,7 +1184,7 @@ function nimg(w, h) end"
                                     )),
                                 ));
                                 if let Err(err) = rx.recv() {
-                                    return Err(static_err(&err.to_string()));
+                                    return Err(LuaError::Custom(err.to_string()));
                                 }
                             }
                             _ => {
@@ -1159,24 +1195,15 @@ function nimg(w, h) end"
                     }
                     _ => {
                         // println!("got no quads");
-                        let vin = t.get::<_, Vec<[f32; 3]>>("v");
+                        let vin = t.try_get_type::<_, Vec<[f32; 3]>>("v",vm,mc);
                         match vin {
-                            Ok(vecs) => {
+                            Some(vecs) => {
                                 if vecs.len() > 2 {
-                                    let inds = match t.get::<_, Vec<u32>>("i") {
-                                        Ok(o) => o,
-                                        _ => vec![],
-                                    };
-                                    let uvs = match t.get::<_, Vec<[f32; 2]>>("u") {
-                                        Ok(o) => o,
-                                        _ => vec![],
-                                    };
-                                    let norms = match t.get::<_, Vec<[f32; 3]>>("n") {
-                                        Ok(o) => o,
-                                        _ => vec![],
-                                    };
-                                    match t.get::<_, Vec<String>>("t") {
-                                        Ok(textures) => {
+                                    let inds =  t.get_type::<_, Vec<u32>>("i",vm,mc);
+                                    let uvs =  t.get_type::<_, Vec<[f32; 2]>>("u",vm,mc);
+                                    let norms =  t.get_type::<_, Vec<[f32; 3]>>("n",vm,mc);
+                                    match t.try_get_type::<_, Vec<String>>("t",vm,mc) {
+                                        Some(textures) => {
                                             lua_err!( pitcher.send((
                                                 bundle_id,
                                                 MainCommmand::Model(
@@ -1192,7 +1219,7 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(static_err(&err.to_string()));
+                                                return Err(LuaError::Custom(err.to_string()));
                                             }
                                             return Ok("Building model in vert mode")
                                         }
@@ -1205,8 +1232,8 @@ function nimg(w, h) end"
                                 Err(static_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
                             }
                             _ => {
-                                match t.get::<_, Vec<String>>("t") {
-                                    Ok(texture) => {
+                                match t.try_get_type::<_, Vec<String>>("t",vm,mc) {
+                                    Some(texture) => {
                                         if texture.len() > 0 {
                                             let t = texture[0].clone();
                                             lua_err!(pitcher.send((
@@ -1225,7 +1252,7 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                             if let Err(err) = rx.recv() {
-                                                return Err(static_err(&err.to_string()));
+                                                return Err(LuaError::Custom(err.to_string()));
                                             }
                                         }
                                         Ok("Building model in texture mode")
@@ -1252,7 +1279,7 @@ function mod(asset, t) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "gmod",
-        move |_, (model, bundle): (Option<String>, Option<u8>)| {
+        move |_,_, (model, bundle): (Option<String>, Option<u8>)| {
             let (tx, rx) = sync_channel::<Vec<String>>(0);
             lua_err!(pitcher.send((
                 bundle_id,
@@ -1296,7 +1323,7 @@ function lmod(model, bundle) end"
     // let mut rng = rand::thread_rng();
     lua!(
         "rnd",
-        move |_, (a, b): (Option<f64>, Option<f64>)| {
+        move |_,_, (a, b): (Option<f64>, Option<f64>)| {
             match a {
                 Some(fa) => match b {
                     Some(fb) => Ok(rand::random::<f64>() * (fb - fa) + fa),
@@ -1315,11 +1342,11 @@ function rnd(a, b) end"
 
     lua!(
         "irnd",
-        move |_, (a, b): (Option<i64>, Option<i64>)| {
+        move |_,_, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok(rand::thread_rng().gen_range(fa..fb)),
-                    _ => Ok(rand::thread_rng().gen_range(0..fa)),
+                    Some(fb) => Ok(rand::rng().random_range(fa..fb)),
+                    _ => Ok(rand::rng().random_range(0..fa)),
                 },
                 _ => Ok(rand::random::<i64>()),
             }
@@ -1334,7 +1361,7 @@ function irnd(a, b) end"
 
     lua!(
         "flr",
-        move |_, f: f64| { Ok(f.floor() as i64) },
+        move |_,_, f: f64| { Ok(f.floor() as i64) },
         "Floor value",
         "
 ---@param f number
@@ -1344,7 +1371,7 @@ function flr(f) end"
 
     lua!(
         "ceil",
-        move |_, f: f64| { Ok(f.ceil() as i64) },
+        move |_,_, f: f64| { Ok(f.ceil() as i64) },
         "Ceil value",
         "
 ---@param f number
@@ -1354,7 +1381,7 @@ function ceil(f) end"
 
     lua!(
         "rou",
-        move |_, f: f64| { Ok(f.round() as i64) },
+        move |_,_, f: f64| { Ok(f.round() as i64) },
         "Round value",
         "
 ---@param f number
@@ -1364,7 +1391,7 @@ function rou(f) end"
 
     lua!(
         "abs",
-        move |_, f: f64| { Ok(f.abs()) },
+        move |_,_, f: f64| { Ok(f.abs()) },
         "Absolute value",
         "
 ---@param f number
@@ -1374,7 +1401,7 @@ function abs(f) end"
 
     lua!(
         "cos",
-        move |_, f: f64| { Ok(f.cos()) },
+        move |_,_, f: f64| { Ok(f.cos()) },
         "Cosine value",
         "
 ---@param f number  
@@ -1383,7 +1410,7 @@ function cos(f) end"
     );
     lua!(
         "sin",
-        move |_, f: f64| { Ok(f.sin()) },
+        move |_,_, f: f64| { Ok(f.sin()) },
         "Sine value",
         "
 ---@param f number
@@ -1392,7 +1419,7 @@ function sin(f) end"
     );
     lua!(
         "sqrt",
-        move |_, f: f64| { Ok(f.sqrt()) },
+        move |_,_, f: f64| { Ok(f.sqrt()) },
         "Squareroot value",
         "
 ---@param f number
@@ -1402,7 +1429,7 @@ function sqrt(f) end"
 
     lua!(
         "pow",
-        move |_, (f, e): (f64, f64)| { Ok(f.powf(e)) },
+        move |_,_, (f, e): (f64, f64)| { Ok(f.powf(e)) },
         "Squareroot value",
         "
 ---@param f number target
@@ -1412,7 +1439,7 @@ function pow(f,e) end"
     );
     lua!(
         "log",
-        move |_, f: f64| { Ok(f.log10()) },
+        move |_,_, f: f64| { Ok(f.log10()) },
         "Base 10 logarithm of the value",
         "
 ---@param f number target
@@ -1423,7 +1450,7 @@ function log(f) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "sub",
-        move |_, str: String| {
+        move |_,_, str: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, false))));
             Ok(())
         },
@@ -1436,7 +1463,7 @@ function sub(str) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "over",
-        move |_, str: String| {
+        move |_,_, str: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, true))));
             Ok(())
         },
@@ -1448,14 +1475,14 @@ function over(str) end"
 
     lua!(
         "conn",
-        move |_, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
+        move |vm, mc, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
             #[cfg(feature = "online_capable")]
             {
                 return match Online::open(&addr, udp.unwrap_or(false), server.unwrap_or(false)) {
-                    Ok(c) => Ok(c),
+                    Ok(c) => Ok(vm.create_userdata(mc,c)),
                     Err(er) => {
                         // println!("Unable to create connection {}", er);
-                        Err(static_err(&format!("conn fail, {}", er.to_string())))
+                        Err(LuaError::Custom(format!("conn fail, {}", er.to_string())))
                     }
                 };
             }
@@ -1474,7 +1501,7 @@ function conn(addr,udp,server) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "quit",
-        move |_, u: Option<u8>| {
+        move |_,_, u: Option<u8>| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0)))));
             Ok(())
         },
@@ -1497,25 +1524,18 @@ function quit(u) end"
     let command_map_clone = command_map.clone();
     lua!(
         "help",
-        move |lu, b: bool| {
-            if let Ok(t) = lu.create_table() {
-                t.set("help", "list all lua commands. In fact, the command used by this program to list this very command")?;
+        move |vm,mc, b: bool| {
+            let mut t = vm.raw_table() ;
+                t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
                 for (k, (desc, examp)) in command_map_clone.iter() {
                     if b {
-                        t.set(k.to_string(), [desc.to_string(), examp.to_string()])?;
+                        t.set(k.to_string(), vm.table_from_array(mc,[desc.to_string(), examp.to_string()]));
                     } else {
-                        t.set(k.to_string(), desc.to_string())?;
+                        t.set(k.to_string(), desc.to_string());
                     }
                 }
-                Ok(t)
-            } else {
-                // #[cfg(feature = "silt")]
-                // Err(LuaError::VmRuntimeErrorWithMessage("no table".to_string()))
-
-                #[cfg(feature = "puc_lua")]
-                Err(mlua::Error::RuntimeError("no table".to_string()))
-            }
-        },
+                Ok(vm.wrap_table(mc,t))
+                    },
         "List all commands",
         "
 ---@return table
@@ -1525,7 +1545,7 @@ function help() end"
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "get",
-        move |lu, _, file: String| {
+        move |_, _, file: String| {
             let (tx, rx) = sync_channel::<Option<String>>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
             match rx.recv() {
@@ -1564,7 +1584,7 @@ function get() end",
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "copy",
-        move |_, content: String| {
+        move |_,_, content: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
             Ok(())
         },
@@ -1591,8 +1611,8 @@ function help() end",
     //     return Err(context_err("Failed to set io lib"));
     // }
 
-    vm.build_and_run(
-        mc,
+    vm_init.build_and_run(
+        mc_in,
         Some("patch".to_owned()),
         "
         add=table.insert 
@@ -1689,6 +1709,7 @@ pub fn load_empty(core: &mut Core) {
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle.id,
         shared,
+        resources,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -1756,14 +1777,14 @@ pub fn load(
     bundle.pool = Some(core.gui.make_shared_pool());
 
     let bundle_id = bundle.id;
-    // let resources = core.gui.make_morsel();
+    let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
     let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(
         bundle_id,
         shared,
-        // resources,
+        resources,
         world_sender,
         core.pitcher.clone(),
         core.loggy.make_sender(),
@@ -2168,7 +2189,8 @@ pub enum MainCommmand {
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
-    Spawn(Arc<std::sync::Mutex<LuaEnt>>),
+    // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
+    Spawn(UserDataWrapper),
     Group(u64, u64, SyncSender<bool>),
     Model(Box<ModelPacket>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
@@ -2301,7 +2323,7 @@ fn nummold(x: Value) -> NumCouple {
 //     }
 // }
 
-fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
+fn table_hasher(table: &Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
     for (key, val) in table.iter() {
         let str_key = if let Some(str_key) = match key {
@@ -2313,7 +2335,7 @@ fn table_hasher(table: Table) -> Vec<(String, ValueMap)> {
             let mapped = match val {
                 Value::String(s) => ValueMap::String(s.to_owned()),
 
-                Value::Integer(i) => ValueMap::Integer(i64_to_i32(*i )),
+                Value::Integer(i) => ValueMap::Integer(i64_to_i32(*i)),
                 Value::Number(n) => ValueMap::Float(*n as f32),
                 Value::Bool(b) => ValueMap::Bool(*b),
                 Value::Table(t) => {
@@ -2643,7 +2665,6 @@ fn make_err(s: &str) -> LuaError {
     // LuaError::RuntimeError(s.to_string())
     // return mlua::Error::RuntimeError(s.to_string());
 }
-
 
 // TODO ???
 fn static_err<M>(s: M) -> LuaError
