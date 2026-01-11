@@ -453,12 +453,13 @@ pub fn init_lua_sys<'a, 'gc>(
     let gui = gui_in.clone();
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
-    let io = vm_init.new_table(mc_in);
+    let mut io = vm_init.raw_table();
 
     // let c = *vm;
     let mut globals = vm_init.globals.borrow_mut(mc_in);
     globals.set("pi", std::f64::consts::PI);
     globals.set("tau", std::f64::consts::PI * 2.0);
+    drop(globals);
     // MARK required 2
     // lua_globals.set(c, "gui", main_rast);
     // lua_globals.set(c, "sky", sky_rast);
@@ -471,13 +472,13 @@ pub fn init_lua_sys<'a, 'gc>(
     #[macro_export]
     macro_rules! lua {
         ($name:expr,$closure:expr,$desc:expr,$exam:expr) => {
-            lua_lib!($name, $closure, $desc, $exam, lua_globals);
+            lua_lib!($name, $closure, $desc, $exam);
         };
     }
 
     #[macro_export]
     macro_rules! lua_lib {
-        ($name:expr,$closure:expr,$desc:expr,$exam:expr,$lib:expr) => {
+        ($name:expr,$closure:expr,$desc:expr,$exam:expr) => {
             #[cfg(debug_assertions)]
             {
                 let _f = include_bytes!(concat!("../guide/", $name, ".md"));
@@ -491,14 +492,38 @@ pub fn init_lua_sys<'a, 'gc>(
                 // }
             }
             command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
-            #[cfg(feature = "puc_lua")]
-            res(
-                $name,
-                $lib.set($name, lua_ctx.create_function($closure).unwrap()),
-                &loggy,
-            );
+            // #[cfg(feature = "puc_lua")]
+            // res(
+            //     $name,
+            //     $lib.set($name, lua_ctx.create_function($closure).unwrap()),
+            //     &loggy,
+            // );
             #[cfg(feature = "silt")]
             vm_init.register_native_function(mc_in, $name, $closure);
+        };
+
+        ($name:expr,$closure:expr,$desc:expr,$exam:expr, $lib:expr) => {
+            #[cfg(debug_assertions)]
+            {
+                let _f = include_bytes!(concat!("../guide/", $name, ".md"));
+                // read to string
+                // let st = std::str::from_utf8(f).unwrap();
+                // let ar = st.split("```").collect::<Vec<&str>>();
+                // if ar.len() > 2 {
+                //     let s = ar[1].to_string();
+                //     let exam = s.trim();
+                //     assert_eq!(exam, $exam);
+                // }
+            }
+            command_map.push(($name.to_string(), ($desc.to_string(), $exam.to_string())));
+            // #[cfg(feature = "puc_lua")]
+            // res(
+            //     $name,
+            //     $lib.set($name, lua_ctx.create_function($closure).unwrap()),
+            //     &loggy,
+            // );
+            #[cfg(feature = "silt")]
+            vm_init.register_native_function_to(mc_in, $lib, $name, $closure);
         };
     }
 
@@ -506,7 +531,7 @@ pub fn init_lua_sys<'a, 'gc>(
     lua!(
         "cout",
         move |_, _, args: Variadic| {
-            // println!("cout: {:?}", args);
+            println!("cout: {:?}", args.len());
             #[cfg(feature = "headed")]
             {
                 aux_loggy.send((LogType::Lua, args.iter().join(", ")));
@@ -1560,7 +1585,7 @@ function help() end"
         "
 ---@return table
 function get() end",
-        io
+        &mut io
     );
 
     let pitcher = main_pitcher.clone();
@@ -1578,7 +1603,7 @@ function get() end",
         "
 ---@return table
 function get() end",
-        io
+        &mut io
     );
 
     let pitcher = main_pitcher.clone();
@@ -1592,7 +1617,7 @@ function get() end",
         "
 ---@return table
 function help() end",
-        io
+        &mut io
     );
 
     // lua!(
@@ -1605,7 +1630,7 @@ function help() end",
     //     ""
     // );
 
-    globals.set("io", io);
+    vm_init.globals.borrow_mut(mc_in).set("io", vm_init.wrap_table(mc_in,io));
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
