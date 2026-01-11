@@ -15,7 +15,7 @@ use crate::{
 
 use std::{
     rc::Rc,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{Arc, mpsc::{Receiver, Sender, channel}},
 };
 
 // use tracy::frame;
@@ -36,7 +36,7 @@ pub struct Core {
     pub pitcher: Sender<MainPacket>,
 
     pub gui: Gui,
-    pub gfx: Gfx,
+    pub gfx: Gfx<'static>,
 
     pub loop_helper: spin_sleep::LoopHelper,
     pub tex_manager: TexManager,
@@ -52,7 +52,7 @@ pub struct Core {
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
-    pub async fn new(rwindow: Rc<Window>, pitcher: Sender<MainPacket>) -> Self {
+    pub async fn new(rwindow: Arc<Window>, pitcher: Sender<MainPacket>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
         let model_manager = ModelManager::init(&gfx.device);

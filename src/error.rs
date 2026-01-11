@@ -1,4 +1,7 @@
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    sync::mpsc::SendError,
+};
 
 use silt_lua::{error::ErrorTuple, LuaError};
 
@@ -19,7 +22,7 @@ pub enum P64Error {
     MissingAssets,
     MissingScripts,
     ChannelTimeoutError,
-    ChanneDisconnectedError,
+    ChannelDisconnectedError,
 }
 
 impl Display for P64Error {
@@ -31,8 +34,8 @@ impl Display for P64Error {
             P64Error::IoInvalidArchive(err) => write!(f, "IO Error: Invalid archive {}", err),
             P64Error::IoFileNotFound(fi) => write!(f, "IO Error: File {} not found", fi),
             P64Error::IoNotFileOrDir(fi) => {
-                write!(f, "IO Error: {} is not a File or directory", fi)
-            }
+                        write!(f, "IO Error: {} is not a File or directory", fi)
+                    }
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
@@ -41,6 +44,7 @@ impl Display for P64Error {
             P64Error::ChannelTimeoutError => write!(f, "Lua channel timed out"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
+            P64Error::LuaRunError(error_tuple) => todo!(),
         }
     }
 }
@@ -48,6 +52,12 @@ impl Display for P64Error {
 impl From<std::str::Utf8Error> for P64Error {
     fn from(value: std::str::Utf8Error) -> Self {
         P64Error::IoUtf8Error
+    }
+}
+
+impl<T> From<SendError<T>> for P64Error {
+    fn from(_: SendError<T>) -> Self {
+        P64Error::ChannelDisconnectedError
     }
 }
 

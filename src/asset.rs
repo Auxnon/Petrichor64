@@ -306,7 +306,7 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
             lua.load(&mut buffer);
 
             globals.debug = eval_bool(lua.func("dev"));
-            if let LuaResponse::Table(t) = lua.func("alias") {
+            if let Ok(LuaResponse::Table(t)) = lua.func("alias") {
                 if globals.debug {
                     loggy.log(LogType::Config, &format!("{} aliases", t.len()));
                 }
@@ -315,10 +315,10 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
                     if globals.debug {
                         loggy.log(LogType::Config, &format!("{} -> {}", k, v));
                     }
-                    globals.aliases.insert(k, v);
+                    globals.aliases.insert(k.coerce_string(), v.coerce_string());
                 }
             }
-            if let LuaResponse::String(s) = lua.func("init") {
+            if let Ok(LuaResponse::String(s)) = lua.func("init") {
                 result = Some(s);
             }
             if globals.debug {
@@ -329,12 +329,15 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
     return result;
 }
 
-fn eval_bool(res: LuaResponse) -> bool {
+fn eval_bool<T>(res: Result<LuaResponse, T>) -> bool {
     match res {
-        LuaResponse::String(s) => s == "true",
-        LuaResponse::Number(n) => n == 1.0,
-        LuaResponse::Integer(i) => i != 0,
-        LuaResponse::Boolean(b) => b,
+        Ok(r) => match r {
+            LuaResponse::String(s) => s == "true",
+            LuaResponse::Number(n) => n == 1.0,
+            LuaResponse::Integer(i) => i != 0,
+            LuaResponse::Bool(b) => b,
+            _ => false,
+        },
         _ => false,
     }
 }

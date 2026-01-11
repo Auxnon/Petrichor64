@@ -60,12 +60,12 @@ impl Loggy {
     }
 
     /** USER: adds text to current line, always user typed */
-    pub fn add(&mut self, str: String) {
+    pub fn add(&mut self, str: &str) {
         // let mut s = str.lines().map(|l| l.to_string()).collect::<Vec<String>>();
         // let last=s.last();
         // s.truncate(s.len()-1);
 
-        self.current_line.push_str(&str);
+        self.current_line.push_str(str);
 
         self.log_dirty = true;
     }
