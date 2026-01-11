@@ -570,17 +570,17 @@ impl World {
     pub fn destroy_it_all(&mut self) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
         let mut remaining = self.senders.len();
-        for (b, sender) in self.senders.drain() {
+        for (_b, sender) in self.senders.drain() {
             match sender.send((TileCommand::Destroy(), tx.clone())) {
                 Ok(_) => {}
-                Err(e) => {
+                Err(_e) => {
                     remaining -= 1;
                     // println!("error sending destroy command: {}", e);
                 }
             }
         }
         // wait for all threads to end before completing function syncronously
-        for r in rx {
+        for _ in rx {
             remaining -= 1;
             if remaining == 0 {
                 break;

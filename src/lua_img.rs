@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
     command::{num, numop},
@@ -21,7 +21,7 @@ pub struct LuaImg {
     pub width: u32,
     pub height: u32,
     pub image: RgbaImage,
-    letters: Rc<RgbaImage>,
+    letters: Arc<RgbaImage>,
 }
 
 impl LuaImg {
@@ -30,7 +30,7 @@ impl LuaImg {
         image: RgbaImage,
         width: u32,
         height: u32,
-        letters: Rc<RgbaImage>,
+        letters: Arc<RgbaImage>,
     ) -> Self {
         Self {
             dirty: true,
@@ -48,7 +48,7 @@ impl LuaImg {
             image: RgbaImage::new(1, 1),
             width: 1,
             height: 1,
-            letters: Rc::new(RgbaImage::new(1, 1)),
+            letters: Arc::new(RgbaImage::new(1, 1)),
         }
     }
     pub fn clone(&self) -> Self {
