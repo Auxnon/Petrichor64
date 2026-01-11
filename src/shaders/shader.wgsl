@@ -105,11 +105,11 @@ fn vs_main(
 			vec4<f32>(0.,0.,0.,1.),
 		);
 
-	out.world_normal =  mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * vec3<f32>(0.,1.,0.);
+	out.world_normal =  mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * vec3<f32>(0.,1.,0.);
 		// out.proj_position=globals.proj_mat*(globals.view_mat*billbo*w*vec4<f32>(1.,1.,1.,1.)+ pos);
 	out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.,0.,0.,1./bb)+roo*vec4<f32>(pos.x,pos.y,0.,0.));
 	}else{
-	out.world_normal = mat3x3<f32>(w.x.xyz, w.y.xyz, w.z.xyz) * (vec3<f32>(normal.xyz)/100.);
+	out.world_normal = mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * (vec3<f32>(normal.xyz)/100.);
 		out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
 	}
 	let uv_mod=instance.uv_mod;
