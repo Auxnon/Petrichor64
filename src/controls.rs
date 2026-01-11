@@ -4,8 +4,10 @@ use crate::types::ControlState;
 use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
+use crossbeam::epoch::Pointable;
+use winit::event::MouseButton;
 use winit::event_loop::EventLoopWindowTarget;
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{NamedKey, PhysicalKey};
 use winit::{
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
@@ -82,22 +84,22 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
 
     // core.input_helper.key_pressed(check_key_code)
     core.global.mouse_buttons = [
-        if core.input_manager.mouse_held(0) {
+        if core.input_manager.mouse_held(MouseButton::Left) {
             1.
         } else {
             0.
         },
-        if core.input_manager.mouse_held(1) {
+        if core.input_manager.mouse_held(MouseButton::Right) {
             1.
         } else {
             0.
         },
-        if core.input_manager.mouse_held(2) {
+        if core.input_manager.mouse_held(MouseButton::Middle) {
             1.
         } else {
             0.
         },
-        if core.input_manager.mouse_held(3) {
+        if core.input_manager.mouse_held(MouseButton::Forward) {
             1.
         } else {
             0.
@@ -136,7 +138,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
             } else if input_helper.key_pressed(KeyCode::KeyV) {
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
-                        core.loggy.add(s);
+                        core.loggy.add(&s);
                     }
                 }
             } else if input_helper.key_pressed(KeyCode::KeyR) {
@@ -157,20 +159,27 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
 
                 t.iter().for_each(|s| {
                     match s {
-                        winit_input_helper::TextChar::Char(c) => match *c as u32 {
-                            96 => {}
-                            127 => {
-                                core.loggy.back();
-                            }
-                            _ => {
-                                // println!("char {}  {}", *c as u32, c);
-                                core.loggy.add(String::from(*c))
-                            } //st.push(*c),
-                        },
-                        winit_input_helper::TextChar::Back => {
+                        Key::Character(c)=>{
+
+                                core.loggy.add(c)
+                        }
+                        // TODO is this borked without the 96 and 127?
+                        // winit_input_helper::TextChar::Char(c) => match *c as u32 {
+                        //     96 => {}
+                        //     127 => {
+                        //         core.loggy.back();
+                        //     }
+                        //     _ => {
+                        //         // println!("char {}  {}", *c as u32, c);
+                        //         core.loggy.add(String::from(*c))
+                        //     } //st.push(*c),
+                        // },
+                        Key::Named(NamedKey::Backspace)=>{
+                        // winit_input_helper::TextChar::Back => {
                             #[cfg(target_os = "windows")]
                             core.loggy.back();
                         }
+                        _=>{}
                     }
                 });
 

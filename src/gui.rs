@@ -660,14 +660,14 @@ impl Notif {
 
 pub type PreGuiMorsel = (RgbaImage, RgbaImage, RgbaImage, [u32; 2]);
 pub struct GuiMorsel {
-    pub letters: Rc<RgbaImage>,
+    pub letters: Arc<RgbaImage>,
     pub size: [u32; 2],
 }
 
 impl GuiMorsel {
     pub fn new(letters: RgbaImage, size: [u32; 2]) -> Self {
         // letters: Rc<RgbaImage>, main: RgbaImage, sky: RgbaImage, size: [u32; 2]
-        let letters = Rc::new(letters);
+        let letters = Arc::new(letters);
         Self { letters, size }
     }
 
@@ -797,14 +797,9 @@ impl GuiMorsel {
 
 pub fn eval(val: LuaResponse, l: u32) -> i32 {
     match val {
-        LuaResponse::Integer(i) => {
-            if i < 0 {
-                // l as i32 - i
-                i
-            } else {
-                i
-            }
-        }
+        LuaResponse::Integer(i) => 
+            i.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+                    
         LuaResponse::Number(f) => {
             let ff = (f * l as f64) as i32;
             if f < 0. {
@@ -1036,7 +1031,7 @@ pub fn direct_line(
 /** evaluate position with GuiUnits then draw letters over image. Returns the line count */
 pub fn direct_text(
     target: &mut RgbaImage,
-    letters: &Rc<RgbaImage>,
+    letters: &Arc<RgbaImage>,
     width: u32,
     height: u32,
     txt: &str,

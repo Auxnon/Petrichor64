@@ -1,7 +1,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 
 use futures::FutureExt;
-use silt_lua::userdata::UserDataMethods;
+use silt_lua::{userdata::UserDataMethods, LuaError};
 
 use crate::packet::{Packer, Packet64};
 
@@ -51,10 +51,9 @@ impl LuaConnection {
     }
 }
 
-
 // #[cfg(feature = "silt")]
 // impl UserData<'_> for LuaConnection {
-//     
+//
 //
 //     fn by_meta_method(
 //         &self,
@@ -74,21 +73,25 @@ impl LuaConnection {
 
 // #[cfg(feature = "puc_lua")]
 impl UserData for LuaConnection {
-fn get_id(&self) -> usize {
+    fn get_id(&self) -> usize {
         4
     }
     fn type_name() -> &'static str {
         "connection"
     }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method_mut("send", |_, this, s: String| {
+        methods.add_method_mut("send", |_, _, this, s: String| {
             // tokio::spawn(async {
             // let c = this.sender.clone();
             // let id = this.id;
             // tokio::spawn(async move {
-            if let Err(_) = this.sender.send(Packet64::str(this.id, 0, s)) {
-                this.shutdown();
-            };
+            if let Some(conn) = this {
+                if let Err(_) = conn.sender.send(Packet64::str(conn.id, 0, s)) {
+                    conn.shutdown();
+                };
+            } else {
+                // TODO safe error handling multi return? Err(
+            }
             // });
             // this.sender
             //     .send(Packet64::str(this.id, 0, s))
@@ -114,40 +117,50 @@ fn get_id(&self) -> usize {
 
             Ok(())
         });
-        methods.add_method_mut("recv", |_, this, (): ()| {
-            if let Ok(r) = this.reciever.try_recv() {
-                if let Packer::Str(s) = r.body() {
-                    return Ok(Some(s.to_owned()));
+        methods.add_method_mut("recv", |_, _, this, (): ()| {
+            if let Some(conn) = this {
+                if let Ok(r) = conn.reciever.try_recv() {
+                    if let Packer::Str(s) = r.body() {
+                        return Ok(Some(s.to_owned()));
+                    }
                 }
             }
             Ok(None)
         });
-        methods.add_method_mut("test", |_, this, (): ()| {
-            if this.closed {
-                return Ok(Some("closed".to_owned()));
-            }
-            let finished = match &this.handle {
-                Some(h) => h.is_finished(),
-                None => return Ok(Some("closed".to_owned())),
-            };
-
-            if finished {
-                this.closed = true;
-                let h = this.handle.take().unwrap();
-                let message = match h.join() {
-                    Err(_) => "join failed".to_string(),
-                    Ok(r) => match r {
-                        Ok(_) => "safe close".to_string(),
-                        Err(e) => e.to_owned(),
-                    },
+        methods.add_method_mut("test", |_, _, conn, (): ()| {
+            if let Some(this) = conn {
+                if this.closed {
+                    return Ok(Some("closed".to_owned()));
+                }
+                let finished = match &this.handle {
+                    Some(h) => h.is_finished(),
+                    None => return Ok(Some("closed".to_owned())),
                 };
-                return Ok(Some(message));
+
+                if finished {
+                    this.closed = true;
+                    let h = this.handle.take().unwrap();
+                    let message = match h.join() {
+                        Err(_) => "join failed".to_string(),
+                        Ok(r) => match r {
+                            Ok(_) => "safe close".to_string(),
+                            Err(e) => e.to_owned(),
+                        },
+                    };
+                    return Ok(Some(message));
+                }
             }
             Ok(None)
         });
 
-        methods.add_method_mut("kill", |_, this, (): ()| {
-            this.shutdown();
+        methods.add_method_mut("kill", |_, _, this, (): ()| {
+            // TODO make sure all userdata method has some variation of this non-self-call warning
+            match this {
+                Some(conn) => conn.shutdown(),
+                None => {
+                    return Err(LuaError::UDBadCall);
+                }
+            };
             Ok(())
         });
     }

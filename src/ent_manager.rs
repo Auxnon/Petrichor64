@@ -21,6 +21,8 @@ use glam::{vec3, vec4};
 use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
 #[cfg(feature = "headed")]
+use silt_lua::userdata::UserDataWrapper;
+#[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Buffer};
 
 #[cfg(feature = "headed")]
@@ -30,7 +32,7 @@ pub struct EntManager {
     pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
     #[cfg(feature = "headed")]
-    pub ent_array: Vec<(Arc<Mutex<LuaEnt>>, Ent, Rc<RefCell<EntityUniforms>>)>,
+    pub ent_array: Vec<(UserDataWrapper, Ent, Rc<RefCell<EntityUniforms>>)>,
     #[cfg(not(feature = "headed"))]
     pub ent_array: Vec<Arc<Mutex<LuaEnt>>>,
     pub uniform_alignment: u32,
@@ -97,29 +99,31 @@ impl EntManager {
         &mut self,
         tex_manager: &TexManager,
         model_manager: &ModelManager,
-        wrapped_lua: Arc<Mutex<LuaEnt>>,
+        wrapped_lua: UserDataWrapper,
     ) {
-        let lua = wrapped_lua.lock().unwrap();
-        let id = lua.get_id();
-        let mut asset = lua.get_asset();
-        if asset.len() == 0 {
-            asset = "example".to_string();
-        }
+        let (ent, uni) = wrapped_lua
+            .downcast_ref::<LuaEnt, _, _>(|lent| {
+                let id = lent.get_id();
+                let mut asset = lent.get_asset();
+                if asset.is_empty() {
+                    asset = "example".to_string();
+                }
+                // MARK should change plane to a model if the texture doesn't exist as one
+                let ent = Ent::new_dynamic(
+                    tex_manager,
+                    model_manager,
+                    vec3(lent.x as f32, lent.y as f32, lent.z as f32),
+                    0.,
+                    lent.scale as f32,
+                    0.,
+                    asset,
+                    self.uniform_alignment * (id + 1) as u32,
+                );
+                let uni = Rc::new(RefCell::new(ent.get_uniform(&lent, 0, None)));
+                Ok((ent, uni))
+            })
+            .unwrap(); // should be safe since no errors within our closure
 
-        // MARK should change plane to a model if the texture doesn't exist as one
-        let ent = Ent::new_dynamic(
-            tex_manager,
-            model_manager,
-            vec3(lua.x as f32, lua.y as f32, lua.z as f32),
-            0.,
-            lua.scale as f32,
-            0.,
-            asset,
-            self.uniform_alignment * (id + 1) as u32,
-        );
-        let uni = Rc::new(RefCell::new(ent.get_uniform(&lua, 0, None)));
-
-        drop(lua);
         self.ent_array.push((wrapped_lua, ent, uni));
         self.hash_dirty = true
     }
@@ -137,37 +141,57 @@ impl EntManager {
      * It is possible to get some bad ordering if a user decides not to group in some sensible hiearchical order */
     pub fn group(&mut self, targetId: u64, childId: u64) {
         let mut parentIndex = -1;
-        let mut childIndex = -1;
-        for (i, lent) in self.ent_array.iter().enumerate() {
-            #[cfg(feature = "headed")]
-            let ll = lent.0.lock();
-            #[cfg(not(feature = "headed"))]
-            let ll = lent.lock();
-            match ll {
-                Ok(mut l) => {
-                    let id = l.get_id();
-                    if id == childId {
-                        childIndex = i as i64;
-                        if parentIndex != -1 {
-                            l.parent = Some(targetId);
-                            break;
-                        }
-                    } else if id == targetId {
-                        parentIndex = i as i64;
-                        if childIndex != -1 {
-                            #[cfg(feature = "headed")]
-                            let t = self.ent_array[childIndex as usize].0.lock();
-                            #[cfg(not(feature = "headed"))]
-                            let t = self.ent_array[childIndex as usize].lock();
-                            t.unwrap().parent = Some(targetId);
-                            break;
-                        }
-                    }
+        let mut childIndex: i64 = -1;
+        let tt = self.ent_array[childId as usize]
+            .0
+            .downcast_mut::<LuaEnt, _, _>(|e| {
+                if e.get_id() == childId {
+                    childIndex = childId as i64;
+                    parentIndex = targetId as i64;
+                    e.parent = Some(targetId)
                 }
-                _ => {}
-            }
-        }
-        if parentIndex != -1 && childIndex != -1 {
+                Ok(())
+            });
+        // TODO headed?
+        //
+        // for (i, lent) in self.ent_array.iter().enumerate() {
+        //     #[cfg(feature = "headed")]
+        //     let mut ll = lent.0;
+        //     #[cfg(not(feature = "headed"))]
+        //     let mut ll = lent;
+        //
+        //     if ll
+        //         .downcast_mut::<LuaEnt, _, _>(|l| {
+        //             let id = l.get_id();
+        //             if id == childId {
+        //                 childIndex = i as i64;
+        //                 if parentIndex != -1 {
+        //                     l.parent = Some(targetId);
+        //                     return Ok(true);
+        //                 }
+        //             } else if id == targetId {
+        //                 parentIndex = i as i64;
+        //                 if childIndex != -1 {
+        //                     #[cfg(feature = "headed")]
+        //                     let mut t = self.ent_array[childIndex as usize].0;
+        //                     #[cfg(not(feature = "headed"))]
+        //                     let mut t = self.ent_array[childIndex as usize];
+        //                     t.downcast_mut::<LuaEnt, _, _>(|c| {
+        //                         c.parent = Some(targetId);
+        //                         Ok(())
+        //                     });
+        //                     return Ok(true);
+        //                 }
+        //             }
+        //             Ok(false)
+        //         })
+        //         .unwrap()
+        //     {
+        //         break;
+        //     }
+        // }
+
+        if childIndex != -1 {
             if childIndex < parentIndex {
                 let parent = self.ent_array.remove(parentIndex as usize);
                 self.ent_array.insert(childIndex as usize, parent);
@@ -203,7 +227,7 @@ impl EntManager {
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
         for (alent, ent, uni_ref) in self.ent_array.iter() {
-            if let Ok(lent) = alent.lock() {
+            alent.downcast_ref(|lent: &LuaEnt| {
                 let parent = match lent.parent {
                     Some(u) => mats.get(&u),
                     None => None,
@@ -213,7 +237,8 @@ impl EntManager {
                 let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
                 uni_ref.replace(uni);
                 mats.insert(lent.get_id(), mat);
-            }
+                Ok(())
+            });
         }
 
         let instance_buffers = self
@@ -270,27 +295,28 @@ impl EntManager {
             self.ent_array.len()
         );
         #[cfg(feature = "headed")]
-        self.ent_array.retain(|(le, e, u)| match le.lock() {
-            Ok(lent) => {
-                if lent.bundle_id == bundle_id {
+        self.ent_array.retain(|(le, _, _)| {
+            le.downcast_ref(|lent: &LuaEnt| {
+                Ok(if lent.bundle_id == bundle_id {
                     false
                 } else {
                     true
-                }
-            }
-            _ => false,
+                })
+            })
+            .unwrap()
         });
         #[cfg(not(feature = "headed"))]
-        self.ent_array.retain(|le| match le.lock() {
-            Ok(lent) => {
-                if lent.bundle_id == bundle_id {
+        self.ent_array.retain(|le| {
+            le.downcast_ref(|lent: &LuaEnt| {
+                Ok(if lent.bundle_id == bundle_id {
                     false
                 } else {
                     true
-                }
-            }
-            _ => false,
+                })
+            })
+            .unwrap()
         });
+
         println!("ent count after bundle purge {}", self.ent_array.len());
     }
 
@@ -332,71 +358,69 @@ impl EntManager {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
         self.ent_array.retain_mut(|(lent, ent, uni_ref)| {
-            match lent.lock() {
-                Ok(mut l) => {
-                    let parent = match l.parent {
-                        Some(u) => mats.get(&u),
-                        None => None,
-                    };
-                    if l.is_dirty() {
-                        let flags = l.get_flags();
+            if let Err(_) = lent.downcast_mut(|l: &mut LuaEnt| {
+                let parent = match l.parent {
+                    Some(u) => mats.get(&u),
+                    None => None,
+                };
+                if l.is_dirty() {
+                    let flags = l.get_flags();
 
-                        if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
-                            self.hash_dirty = true;
-                            return false;
-                        }
-                        l.clear_dirt();
-
-                        if flags & lua_ent_flags::ASSET == lua_ent_flags::ASSET {
-                            let asset = l.get_asset();
-                            ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
-                                Some(m) => {
-                                    // billboard
-                                    if asset == "plane" {
-                                        ent.effects.x = 1.;
-                                    } else {
-                                        ent.effects.x = 0.;
-                                    }
-
-                                    ent.tex = vec4(0., 0., 1., 1.);
-                                    m
-                                }
-                                None => {
-                                    // println!("no model found for {}", asset);
-                                    if let Some(t) = tm.get_tex_or_not(&asset) {
-                                        ent.tex = t;
-                                    }
-                                    &mm.CUBE
-                                }
-                            });
-                            self.hash_dirty = true;
-                        }
-
-                        if flags & lua_ent_flags::TEX == lua_ent_flags::TEX {
-                            ent.tex = tm.get_tex(l.get_tex());
-                            ent.remove_anim();
-                        }
-
-                        if l.is_anim() {
-                            let t = l.get_tex();
-                            match tm.animations.get(t) {
-                                Some(t) => {
-                                    ent.set_anim(t.clone(), iteration);
-                                }
-                                _ => {}
-                            }
-                        }
-                    } else {
-                        // println!("not dirty");
+                    if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
+                        self.hash_dirty = true;
+                        return Ok(false);
                     }
-                    let mat = ent.build_meta(&l, parent);
-                    let uni = ent.get_uniforms_with_mat(&l, iteration, mat);
-                    uni_ref.replace(uni);
-                    mats.insert(l.get_id(), mat);
+                    l.clear_dirt();
+
+                    if flags & lua_ent_flags::ASSET == lua_ent_flags::ASSET {
+                        let asset = l.get_asset();
+                        ent.model = Rc::clone(match mm.get_model_or_not(&asset) {
+                            Some(m) => {
+                                // billboard
+                                if asset == "plane" {
+                                    ent.effects.x = 1.;
+                                } else {
+                                    ent.effects.x = 0.;
+                                }
+
+                                ent.tex = vec4(0., 0., 1., 1.);
+                                m
+                            }
+                            None => {
+                                // println!("no model found for {}", asset);
+                                if let Some(t) = tm.get_tex_or_not(&asset) {
+                                    ent.tex = t;
+                                }
+                                &mm.CUBE
+                            }
+                        });
+                        self.hash_dirty = true;
+                    }
+
+                    if flags & lua_ent_flags::TEX == lua_ent_flags::TEX {
+                        ent.tex = tm.get_tex(l.get_tex());
+                        ent.remove_anim();
+                    }
+
+                    if l.is_anim() {
+                        let t = l.get_tex();
+                        match tm.animations.get(t) {
+                            Some(t) => {
+                                ent.set_anim(t.clone(), iteration);
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    // println!("not dirty");
                 }
-                _ => {
-                    failed += 1;
-                }
+                let mat = ent.build_meta(&l, parent);
+                let uni = ent.get_uniforms_with_mat(&l, iteration, mat);
+                uni_ref.replace(uni);
+                mats.insert(l.get_id(), mat);
+                Ok(true)
+            }) {
+                failed += 1;
             }
             return true;
         });

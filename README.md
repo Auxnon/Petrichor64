@@ -52,7 +52,8 @@ Application with cart bundled:
 
 Prerequisites:
 `cargo install cargo-appimage`
-`sudo apt install libfontconfig1-dev`
+`sudo apt install libfontconfig1-dev alsa-lib`
+may also need pkgconf and systemd-devel depending on distro
 
 Build Standalone:
 `cargo appimage`

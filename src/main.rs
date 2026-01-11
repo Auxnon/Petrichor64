@@ -1,5 +1,7 @@
 // #![windows_subsystem = "console"]
 #![windows_subsystem = "windows"]
+#[cfg(feature = "headed")]
+use std::sync::Arc;
 // #![allow(warnings)]
 use std::{
     env,
@@ -98,6 +100,8 @@ fn main() {
     let (pitcher, mut catcher) = channel::<MainPacket>();
     #[cfg(feature = "headed")]
     let (mut core, mut rwin, center, event_loop) = {
+        use std::sync::Arc;
+
         let event_loop = match EventLoop::new() {
             Ok(el) => el,
             Err(e) => {
@@ -134,11 +138,11 @@ fn main() {
         win.set_title("Petrichor64");
 
         let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
-        let rwindow = Rc::new(win);
+        let rwindow = Arc::new(win);
 
         // State::new uses async code, so we're going to wait for it to finish
         (
-            pollster::block_on(Core::new(Rc::clone(&rwindow), pitcher)),
+            pollster::block_on(Core::new(rwindow.clone(), pitcher)),
             rwindow,
             center,
             event_loop,
@@ -210,7 +214,7 @@ fn main() {
     #[cfg(feature = "headed")]
     type Param1<'a> = &'a EventLoopWindowTarget<()>;
     #[cfg(feature = "headed")]
-    type Param2 = Rc<winit::window::Window>;
+    type Param2 = Arc<winit::window::Window>;
 
     let state_change_check = move |c: &mut Core, control_flow: Param1, rwindow: &mut Param2| {
         if c.global.is_state_changed {

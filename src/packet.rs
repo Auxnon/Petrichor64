@@ -84,6 +84,8 @@ impl Packet64 {
     // }
 }
 
+unsafe impl Sync for Packet64 {}
+
 pub struct Packy {}
 impl Decoder for Packy {
     type Item = Packet64;
