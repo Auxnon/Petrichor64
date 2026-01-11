@@ -291,7 +291,7 @@ impl<'lt> LuaCore {
 
                 let mut local_pool = LocalPool::new();
 
-                let res = lua_instance.enter::<_, Result<(), P64Error>>(|vm, mc| {
+                lua_instance.enter::<_, Result<(), P64Error>>(|vm, mc| {
                     // let executor = Executor::new(ctx);
 
                     let mut compiler = Compiler::new();
@@ -364,9 +364,8 @@ impl<'lt> LuaCore {
                     let drop_lua_func =
                         vm.load_fn(mc, &mut compiler, Some("drop".to_owned()), "drop()")?;
 
-                    
                     // let main_ref = Rc::new(RefCell::new(f));
-                    for m in &receiver{
+                    for m in &receiver {
                         // let (s1, s2, bit_in, channel) = m;
                         #[cfg(feature = "headed")]
                         while let Some(Event {
@@ -658,8 +657,7 @@ impl<'lt> LuaCore {
                     }
 
                     Ok(())
-                })?;
-                Ok(())
+                })
             }();
             match thread_result {
                 Ok(_) => Ok(()),
