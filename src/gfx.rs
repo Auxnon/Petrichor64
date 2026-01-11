@@ -177,7 +177,9 @@ impl<'w> Gfx<'w> {
             format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Immediate,
+            // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
+            // lost? can we check if immediate is better?
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: CompositeAlphaMode::Opaque,
             view_formats: vec![],
         };
