@@ -34,8 +34,8 @@ impl Display for P64Error {
             P64Error::IoInvalidArchive(err) => write!(f, "IO Error: Invalid archive {}", err),
             P64Error::IoFileNotFound(fi) => write!(f, "IO Error: File {} not found", fi),
             P64Error::IoNotFileOrDir(fi) => {
-                        write!(f, "IO Error: {} is not a File or directory", fi)
-                    }
+                write!(f, "IO Error: {} is not a File or directory", fi)
+            }
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
@@ -44,7 +44,20 @@ impl Display for P64Error {
             P64Error::ChannelTimeoutError => write!(f, "Lua channel timed out"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
-            P64Error::LuaRunError(error_tuple) => todo!(),
+            P64Error::LuaRunError(err) => {
+                // writeln!("\n❌ Lua Parse Errors:\n");
+                // for (i, err) in (*error_tuple).iter().enumerate() {
+                //     writeln!(
+                //         "  [{}] {}:{} - {}",
+                //         i + 1,
+                //         err.location.0, err.location.1, err.code
+                //     );
+                // }
+                // writeln!("\nFound {} error(s)\n", errors.len());
+                // Ok(())
+
+                write!(f, "  {}:{} - {}", err.location.0, err.location.1, err.code)
+            }
         }
     }
 }
