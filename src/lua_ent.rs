@@ -101,7 +101,6 @@ impl UserData for LuaEnt {
         });
 
         methods.add_method_mut("anim", |_, _, this_res, (tex, force): (String, bool)| {
-
             let this = safe_unwrap!(this_res);
             if tex != this.tex || force {
                 this.dirty = true;
@@ -112,8 +111,7 @@ impl UserData for LuaEnt {
             Ok(Value::Bool(true))
         });
 
-        methods.add_method_mut("copy", |lua, mc, this_res, _:()| {
-
+        methods.add_method_mut("copy", |lua, mc, this_res, _: ()| {
             let this = safe_unwrap!(this_res);
             let ent = this.clone();
             // let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
@@ -185,8 +183,8 @@ impl UserData for LuaEnt {
             }
             Ok(())
         });
-        fields.add_field_method_get("asset", |_, _,this| Ok(this.asset.clone()));
-        fields.add_field_method_set("asset", |_, _,this, asset: String| {
+        fields.add_field_method_get("asset", |_, _, this| Ok(this.asset.clone()));
+        fields.add_field_method_set("asset", |_, _, this, asset: String| {
             if this.asset != asset {
                 this.asset = asset;
                 this.flags |= lua_ent_flags::ASSET;
