@@ -1,5 +1,9 @@
 #[cfg(feature = "silt")]
-use silt_lua::{gc_arena::Mutation, prelude::{LuaError, Table}, VM};
+use silt_lua::{
+    gc_arena::Mutation,
+    prelude::{LuaError, Table},
+    VM,
+};
 
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Table};
@@ -56,15 +60,14 @@ impl GlobalMap {
         Ok(())
     }
 
-    
     #[cfg(feature = "silt")]
-    pub fn convert<'gc>(&self, vm: &mut VM<'gc>, mc: &Mutation<'gc>, table: &mut Table<'gc>)  {
+    pub fn convert<'gc>(&self, vm: &mut VM<'gc>, mc: &Mutation<'gc>, table: &mut Table<'gc>) {
         table.set("os", self.os);
         table.set("hz", self.hertz);
 
-        let mut res_tbl= vm.raw_table();
-        res_tbl.set(0,  self.resolution.0);
-        res_tbl.set(1,  self.resolution.1);
-        table.set("res", vm.wrap_table(mc,res_tbl));
+        let mut res_tbl = vm.raw_table();
+        res_tbl.set(0, self.resolution.0);
+        res_tbl.set(1, self.resolution.1);
+        table.set("res", vm.wrap_table(mc, res_tbl));
     }
 }

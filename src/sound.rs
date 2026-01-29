@@ -274,96 +274,84 @@ where
             match audience.try_recv() {
                 Ok(packet) => {
                     match packet {
-                    SoundCommand::PlayNote(note,ichannel) => {
+                        SoundCommand::PlayNote(note, ichannel) => {
+                            // occupied[note as usize] = true;
 
-                        // occupied[note as usize] = true;
+                            // let channel = match ichannel {
+                            //     Some(u)=>u,
+                            //     None=> match occupied.iter().position(|x| *x == false) {
+                            //     Some(i) => i,
+                            //     None => 0,
+                            // }};
+                            let channel = 0;
 
+                            // note, timer, current_level aka volume, channel
+                            sound_channels[channel].push_back(note);
+                            // notes.push((packet.0, packet.1, 0., channel));
+                        }
+                        SoundCommand::Chain(notes, ichannel) => {
+                            println!("chain {}", notes.len());
+                            let channel = 0;
+                            sound_channels[channel].extend(notes);
+                            // for note in notes {
+                            //     sound_channels[channel].push(note);
+                            // }
+                        }
+                        SoundCommand::MakeInstrument(mut inst) => {
+                            // println!("instrument {}", inst);
+                            // instrument = inst;
+                            // instrument_diviser = 0.;
+                            // for (i, n) in instrument.iter().enumerate() {
+                            //     let ii = (i + 1) as f32;
+                            //     instrument_diviser += n * ii;
+                            // }
+                            // instrument_diviser = 1. / instrument_diviser;
 
-                        // let channel = match ichannel {
-                        //     Some(u)=>u,
-                        //     None=> match occupied.iter().position(|x| *x == false) {
-                        //     Some(i) => i,
-                        //     None => 0,
-                        // }};
-                        let channel = 0;
+                            inst.divisor = (inst.freqs.len() as f32).ln();
 
+                            let div = *inst.freqs.get(0).unwrap_or(&1.);
 
-                        // note, timer, current_level aka volume, channel
-                        sound_channels[channel].push_back(note);
-                        // notes.push((packet.0, packet.1, 0., channel));
+                            inst.base_freq = if div != 0. { 1. / div } else { 1. };
+                            // println!(
+                            //     "channel {} and volume divisor {} from length {}",
+                            //     channel,
+                            //     instrument_diviser,
+                            //     instrument.len()
+                            // );
+
+                            last_amp = *inst.freqs.get(0).unwrap_or(&0.);
+
+                            instruments.insert(inst.name, inst);
+                            // notes.push((1., packet.1, 0., channel));
+                        }
+
+                        SoundCommand::FadeChannel(ichannel, duration) => {}
+                        SoundCommand::Stop(ichannel) => {
+                            sound_channels[ichannel].clear();
+                            current_notes[ichannel] = None;
+                        } // Packet::Wave(wave) => {
+                          //     println!("wave {}", wave);
+                          //     match wave {
+                          //         Wave::Flat => func = musician,
+                          //         Wave::Square => func = square,
+                          //         Wave::Triangle => func = triangle,
+                          //         Wave::Saw => func = saw,
+                          //         Wave::Noise => func = noise,
+                          //         Wave::Flute => func = flute,
+                          //         Wave::Flute1 => func = flute1,
+                          //         Wave::LowSquare => func = lowsquare,
+                          //         Wave::Wave => func = wave,
+                          //     }
+                          // },
+
+                          // Packet::Fade(fade) => {
+                          //     println!("fade {}", fade);
+                          // },
+                          // Packet::VolumeSpeed(speed) => {
+                          //     println!("volume speed {}", speed);
+                          //     //volume_speed = speed;
+                          // },
                     }
-                    SoundCommand::Chain(notes,ichannel ) => {
-                        println!("chain {}",notes.len());
-                        let channel=0;
-                        sound_channels[channel].extend(notes);
-                        // for note in notes {
-                        //     sound_channels[channel].push(note);
-                        // }
-                    }
-                    SoundCommand::MakeInstrument(mut inst) => {
-                        // println!("instrument {}", inst);
-                        // instrument = inst;
-                        // instrument_diviser = 0.;
-                        // for (i, n) in instrument.iter().enumerate() {
-                        //     let ii = (i + 1) as f32;
-                        //     instrument_diviser += n * ii;
-                        // }
-                        // instrument_diviser = 1. / instrument_diviser;
-
-                        inst.divisor = (inst.freqs.len() as f32).ln();
-
-                        let div = *inst.freqs.get(0).unwrap_or(&1.);
-
-                        inst.base_freq=if div != 0. {
-                             1. / div
-                        } else {
-                             1.
-                        };
-                        // println!(
-                        //     "channel {} and volume divisor {} from length {}",
-                        //     channel,
-                        //     instrument_diviser,
-                        //     instrument.len()
-                        // );
-
-
-                        last_amp = *inst.freqs.get(0).unwrap_or(&0.);
-
-                        instruments.insert(inst.name,inst);
-                        // notes.push((1., packet.1, 0., channel));
-                    }
-
-                    SoundCommand::FadeChannel(ichannel,duration )=>{
-
-                    }
-                    SoundCommand::Stop(ichannel)=>{
-                        sound_channels[ichannel].clear();
-                        current_notes[ichannel]=None;
-
-                    }
-                    // Packet::Wave(wave) => {
-                    //     println!("wave {}", wave);
-                    //     match wave {
-                    //         Wave::Flat => func = musician,
-                    //         Wave::Square => func = square,
-                    //         Wave::Triangle => func = triangle,
-                    //         Wave::Saw => func = saw,
-                    //         Wave::Noise => func = noise,
-                    //         Wave::Flute => func = flute,
-                    //         Wave::Flute1 => func = flute1,
-                    //         Wave::LowSquare => func = lowsquare,
-                    //         Wave::Wave => func = wave,
-                    //     }
-                    // },
-
-                    // Packet::Fade(fade) => {
-                    //     println!("fade {}", fade);
-                    // },
-                    // Packet::VolumeSpeed(speed) => {
-                    //     println!("volume speed {}", speed);
-                    //     //volume_speed = speed;
-                    // },
-                }
 
                     // if !once && !record {
                     //     // record = true;

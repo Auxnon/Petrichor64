@@ -159,10 +159,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
 
                 t.iter().for_each(|s| {
                     match s {
-                        Key::Character(c)=>{
-
-                                core.loggy.add(c)
-                        }
+                        Key::Character(c) => core.loggy.add(c),
                         // TODO is this borked without the 96 and 127?
                         // winit_input_helper::TextChar::Char(c) => match *c as u32 {
                         //     96 => {}
@@ -174,12 +171,12 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
                         //         core.loggy.add(String::from(*c))
                         //     } //st.push(*c),
                         // },
-                        Key::Named(NamedKey::Backspace)=>{
-                        // winit_input_helper::TextChar::Back => {
+                        Key::Named(NamedKey::Backspace) => {
+                            // winit_input_helper::TextChar::Back => {
                             #[cfg(target_os = "windows")]
                             core.loggy.back();
                         }
-                        _=>{}
+                        _ => {}
                     }
                 });
 

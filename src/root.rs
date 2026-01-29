@@ -15,7 +15,10 @@ use crate::{
 
 use std::{
     rc::Rc,
-    sync::{Arc, mpsc::{Receiver, Sender, channel}},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
 
 // use tracy::frame;
