@@ -62,7 +62,7 @@ impl Post {
             (
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     cache: None, // TODO this might be handy for caching on android, one of the few
-                                 // OSes that support non-GPU managed cache preferences
+                    // OSes that support non-GPU managed cache preferences
                     label: Some("PostProcess"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {

@@ -10,9 +10,9 @@ use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
 #[cfg(feature = "audio")]
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::{mem, rc::Rc};
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
 use wgpu::{BackendOptions, Features, SurfaceTarget};
@@ -126,8 +126,7 @@ impl<'w> Gfx<'w> {
                 error_window(Box::new(e));
                 std::process::exit(1);
             }
-        }
-        ;
+        };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),

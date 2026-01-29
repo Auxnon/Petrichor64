@@ -797,9 +797,8 @@ impl GuiMorsel {
 
 pub fn eval(val: LuaResponse, l: u32) -> i32 {
     match val {
-        LuaResponse::Integer(i) => 
-            i.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-                    
+        LuaResponse::Integer(i) => i.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+
         LuaResponse::Number(f) => {
             let ff = (f * l as f64) as i32;
             if f < 0. {
