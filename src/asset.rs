@@ -32,7 +32,7 @@ pub fn get_codex_version_string() -> String {
     "-- Codex 3.0.0 \"Artichoke\"".to_owned()
 }
 
-pub fn pack(
+pub async fn pack(
     #[cfg(feature = "headed")] tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
     world: &mut World,
@@ -104,7 +104,7 @@ pub fn pack(
         Some(pic) => pic.to_owned(),
         None => "icon.png".to_string(),
     });
-    crate::file_util::pack_zip(sources, icon, &pack_name, loggy)
+    crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
 }
 pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     // let sources = walk_files(None);
@@ -113,7 +113,7 @@ pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     crate::file_util::pack_game_bin(name)
 }
 
-pub fn unpack(
+pub async fn unpack(
     #[cfg(feature = "headed")] device: &Device,
     #[cfg(feature = "headed")] tex_manager: &mut TexManager,
     model_manager: &mut ModelManager,
@@ -128,14 +128,20 @@ pub fn unpack(
     if debug {
         loggy.log(LogType::Config, &format!("unpack {}", name));
     }
-    let mut archive = match crate::file_util::get_archive(file, loggy) {
-        Some(a) => a,
-        None => {
-            loggy.log(LogType::ConfigError, &format!("failed to unpack {}", name));
+    let mut archive = match crate::file_util::get_archive(file, loggy).await {
+        Ok(a) => a,
+        Err(e) => {
+            loggy.log(LogType::ConfigError, &format!("couldn't retrieve archive {} -> {}", name,e));
             return;
         }
     };
-    let map = crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy);
+    let map = match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy).await{
+        Ok(a) => a,
+        Err(e) => {
+            loggy.log(LogType::ConfigError, &format!("failed to unpack {} -> {}", name,e));
+            return;
+        }
+    };
 
     let mut sources: SourceMap = HashMap::new();
     #[cfg(feature = "headed")]

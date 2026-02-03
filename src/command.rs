@@ -13,13 +13,15 @@ use crate::{
     lua_ent::LuaEnt,
     lua_img::{self, dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
-    online::Online,
     pad::Pad,
     pool::{LocalPool, SharedPool},
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
 };
+
+#[cfg(feature = "online_capable")]
+use online::Online;
 
 use image::RgbaImage;
 use itertools::Itertools;
@@ -33,7 +35,6 @@ use silt_lua::{
 
 use parking_lot::Mutex;
 
-use rand::Rng;
 
 #[cfg(feature = "puc_lua")]
 use mlua::{
@@ -59,9 +60,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     rc::Rc,
-    sync::{
-        mpsc::{sync_channel, Sender, SyncSender},
-    },
+    sync::mpsc::{sync_channel, Sender, SyncSender},
 };
 
 macro_rules! lua_err {
@@ -102,7 +101,7 @@ static com_list: [&str; 20] = [
 pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let main_bundle = core.bundle_manager.get_main_bundle();
-    if s.len() <= 0 {
+    if s.is_empty() {
         return Ok(false);
     }
     let segments = s.trim().split(" ").collect::<Vec<&str>>();
@@ -1124,7 +1123,7 @@ function tex(asset, im) end"
 ---@return image
 function gimg(asset) end"
     );
-    let gui=gui_in.clone();
+    let gui = gui_in.clone();
 
     lua!(
         "nimg",
@@ -1133,7 +1132,7 @@ function gimg(asset) end"
             let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
             // let ud = lua_img_constructor(lua_img);
 
-            Ok(vm.create_userdata(mc,lua_img))
+            Ok(vm.create_userdata(mc, lua_img))
         },
         "Create new image buffer userdata, does not set as asset",
         "
@@ -1304,7 +1303,7 @@ function mod(asset, t) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "gmod",
-        move |_,_, (model, bundle): (Option<String>, Option<u8>)| {
+        move |_, _, (model, bundle): (Option<String>, Option<u8>)| {
             let (tx, rx) = sync_channel::<Vec<String>>(0);
             lua_err!(pitcher.send((
                 bundle_id,
@@ -1348,13 +1347,13 @@ function lmod(model, bundle) end"
     // let mut rng = rand::thread_rng();
     lua!(
         "rnd",
-        move |_,_, (a, b): (Option<f64>, Option<f64>)| {
+        move |_, _, (a, b): (Option<f64>, Option<f64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok(rand::random::<f64>() * (fb - fa) + fa),
-                    _ => Ok(rand::random::<f64>() * fa),
+                    Some(fb) => Ok(fastrand::f64() * (fb - fa) + fa),
+                    _ => Ok(fastrand::f64() * fa),
                 },
-                _ => Ok(rand::random::<f64>()),
+                _ => Ok(fastrand::f64()),
             }
         },
         "Random float from 0-1, or provide a range",
@@ -1367,13 +1366,13 @@ function rnd(a, b) end"
 
     lua!(
         "irnd",
-        move |_,_, (a, b): (Option<i64>, Option<i64>)| {
+        move |_, _, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok(rand::rng().random_range(fa..fb)),
-                    _ => Ok(rand::rng().random_range(0..fa)),
+                    Some(fb) => Ok (fastrand::i64(fa..fb)),
+                    _ => Ok(fastrand::i64(0..fa)),
                 },
-                _ => Ok(rand::random::<i64>()),
+                _ => Ok(fastrand::i64(..)),
             }
         },
         "An imperfect random number generator for integers. May suffer from modulo bias.",
@@ -1386,7 +1385,7 @@ function irnd(a, b) end"
 
     lua!(
         "flr",
-        move |_,_, f: f64| { Ok(f.floor() as i64) },
+        move |_, _, f: f64| { Ok(f.floor() as i64) },
         "Floor value",
         "
 ---@param f number
@@ -1396,7 +1395,7 @@ function flr(f) end"
 
     lua!(
         "ceil",
-        move |_,_, f: f64| { Ok(f.ceil() as i64) },
+        move |_, _, f: f64| { Ok(f.ceil() as i64) },
         "Ceil value",
         "
 ---@param f number
@@ -1406,7 +1405,7 @@ function ceil(f) end"
 
     lua!(
         "rou",
-        move |_,_, f: f64| { Ok(f.round() as i64) },
+        move |_, _, f: f64| { Ok(f.round() as i64) },
         "Round value",
         "
 ---@param f number
@@ -1416,7 +1415,7 @@ function rou(f) end"
 
     lua!(
         "abs",
-        move |_,_, f: f64| { Ok(f.abs()) },
+        move |_, _, f: f64| { Ok(f.abs()) },
         "Absolute value",
         "
 ---@param f number
@@ -1426,7 +1425,7 @@ function abs(f) end"
 
     lua!(
         "cos",
-        move |_,_, f: f64| { Ok(f.cos()) },
+        move |_, _, f: f64| { Ok(f.cos()) },
         "Cosine value",
         "
 ---@param f number  
@@ -1435,7 +1434,7 @@ function cos(f) end"
     );
     lua!(
         "sin",
-        move |_,_, f: f64| { Ok(f.sin()) },
+        move |_, _, f: f64| { Ok(f.sin()) },
         "Sine value",
         "
 ---@param f number
@@ -1444,7 +1443,7 @@ function sin(f) end"
     );
     lua!(
         "sqrt",
-        move |_,_, f: f64| { Ok(f.sqrt()) },
+        move |_, _, f: f64| { Ok(f.sqrt()) },
         "Squareroot value",
         "
 ---@param f number
@@ -1454,7 +1453,7 @@ function sqrt(f) end"
 
     lua!(
         "pow",
-        move |_,_, (f, e): (f64, f64)| { Ok(f.powf(e)) },
+        move |_, _, (f, e): (f64, f64)| { Ok(f.powf(e)) },
         "Squareroot value",
         "
 ---@param f number target
@@ -1464,7 +1463,7 @@ function pow(f,e) end"
     );
     lua!(
         "log",
-        move |_,_, f: f64| { Ok(f.log10()) },
+        move |_, _, f: f64| { Ok(f.log10()) },
         "Base 10 logarithm of the value",
         "
 ---@param f number target
@@ -1475,7 +1474,7 @@ function log(f) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "sub",
-        move |_,_, str: String| {
+        move |_, _, str: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, false))));
             Ok(())
         },
@@ -1488,7 +1487,7 @@ function sub(str) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "over",
-        move |_,_, str: String| {
+        move |_, _, str: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, true))));
             Ok(())
         },
@@ -1504,7 +1503,7 @@ function over(str) end"
             #[cfg(feature = "online_capable")]
             {
                 return match Online::open(&addr, udp.unwrap_or(false), server.unwrap_or(false)) {
-                    Ok(c) => Ok(vm.create_userdata(mc,c)),
+                    Ok(c) => Ok(vm.create_userdata(mc, c)),
                     Err(er) => {
                         // println!("Unable to create connection {}", er);
                         Err(LuaError::Custom(format!("conn fail, {}", er.to_string())))
@@ -1526,7 +1525,7 @@ function conn(addr,udp,server) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "quit",
-        move |_,_, u: Option<u8>| {
+        move |_, _, u: Option<u8>| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Quit(u.unwrap_or(0)))));
             Ok(())
         },
@@ -1549,18 +1548,21 @@ function quit(u) end"
     let command_map_clone = command_map.clone();
     lua!(
         "help",
-        move |vm,mc, b: bool| {
-            let mut t = vm.raw_table() ;
-                t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
-                for (k, (desc, examp)) in command_map_clone.iter() {
-                    if b {
-                        t.set(k.to_string(), vm.table_from_array(mc,[desc.to_string(), examp.to_string()]));
-                    } else {
-                        t.set(k.to_string(), desc.to_string());
-                    }
+        move |vm, mc, b: bool| {
+            let mut t = vm.raw_table();
+            t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
+            for (k, (desc, examp)) in command_map_clone.iter() {
+                if b {
+                    t.set(
+                        k.to_string(),
+                        vm.table_from_array(mc, [desc.to_string(), examp.to_string()]),
+                    );
+                } else {
+                    t.set(k.to_string(), desc.to_string());
                 }
-                Ok(vm.wrap_table(mc,t))
-                    },
+            }
+            Ok(vm.wrap_table(mc, t))
+        },
         "List all commands",
         "
 ---@return table
@@ -1609,7 +1611,7 @@ function get() end",
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "copy",
-        move |_,_, content: String| {
+        move |_, _, content: String| {
             lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
             Ok(())
         },
@@ -1630,7 +1632,10 @@ function help() end",
     //     ""
     // );
 
-    vm_init.globals.borrow_mut(mc_in).set("io", vm_init.wrap_table(mc_in,io));
+    vm_init
+        .globals
+        .borrow_mut(mc_in)
+        .set("io", vm_init.wrap_table(mc_in, io));
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
