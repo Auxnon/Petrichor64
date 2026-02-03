@@ -3,11 +3,25 @@ use std::io::{BufReader, BufWriter, Cursor, Read, Write};
 use std::path::{Component, PathBuf};
 use std::{fs::File, path::Path};
 
-use zip::result::ZipError;
-use zip::write::FileOptions;
+// use zip::result::ZipError;
+// use zip::write::FileOptions;
+
+use async_zip::base::read::WithoutEntry;
+// use async_zip::base::read::mem::ZipFileReader;
+// use async_zip::base::read::seek::ZipFileReader;
+use async_zip::base::write::ZipFileWriter;
+use async_zip::error::ZipError;
+use async_zip::tokio::read::ZipEntryReader;
+// use async_zip::tokio::read::ZipEntryReader;
+use async_zip::tokio::read::seek::ZipFileReader;
+use async_zip::{Compression, ZipEntryBuilder};
+// use futures::TryFutureExt;
+// use futures_lite::io::Cursor;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use crate::error::P64Error;
 use crate::log::{LogType, Loggy};
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 /**
  * Squish a data file on to the end of an image file. PoC.
@@ -77,9 +91,10 @@ pub fn write_file_string(path: PathBuf, contents: &str) -> Result<(), P64Error> 
 
 /** Load file contents as buffer */
 pub fn get_file_buffer_from_path(path: PathBuf) -> Result<Vec<u8>, P64Error> {
-    let mut v = vec![];
-    match File::open(&path) {
+    Ok(match File::open(&path) {
         Ok(f) => {
+            let size = f.metadata().map_err(|e| P64Error::IoError(e))?.len() as usize;
+            let mut v = Vec::with_capacity(size);
             let mut reader = BufReader::new(f);
 
             match reader.read_to_end(&mut v) {
@@ -90,10 +105,10 @@ pub fn get_file_buffer_from_path(path: PathBuf) -> Result<Vec<u8>, P64Error> {
                     return Err(P64Error::IoError(e));
                 }
             };
+            v
         }
-        _ => {}
-    }
-    Ok(v)
+        _ => vec![],
+    })
 }
 
 /** Load file contents as utf8 string from path */
@@ -129,88 +144,136 @@ pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Resu
     write_file_string(p, contents)
 }
 
-fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {
+fn handle_zip_error(err: ZipError) -> P64Error {
     match err {
-        ZipError::Io(i) => P64Error::IoError(i),
-        ZipError::InvalidArchive(a) | zip::result::ZipError::UnsupportedArchive(a) => {
-                P64Error::IoInvalidArchive(a)
-            }
-        ZipError::FileNotFound => match f {
-                Some(ff) => P64Error::IoFileNotFound(ff.into()),
-                None => P64Error::IoFileNotFound("unknown".into()),
-            },
-        ZipError::InvalidPassword=> 
-                P64Error::IoInvalidArchive("password zipped"),
-        ZipError::UnsupportedArchive(s) => P64Error::IoInvalidArchive(s),
+        ZipError::UpstreamReadError(i) => P64Error::IoError(i),
         _ => P64Error::IoInvalidArchive("unknown archive error"),
     }
 }
+
+// fn handle_zip_error(err: ZipError, f: Option<&str>) -> P64Error {
+//     match err {
+//         ZipError::Io(i) => P64Error::IoError(i),
+//         ZipError::InvalidArchive(a) | zip::result::ZipError::UnsupportedArchive(a) => {
+//             P64Error::IoInvalidArchive(a)
+//         }
+//         ZipError::FileNotFound => match f {
+//             Some(ff) => P64Error::IoFileNotFound(ff.into()),
+//             None => P64Error::IoFileNotFound("unknown".into()),
+//         },
+//         ZipError::InvalidPassword => P64Error::IoInvalidArchive("password zipped"),
+//         ZipError::UnsupportedArchive(s) => P64Error::IoInvalidArchive(s),
+//         _ => P64Error::IoInvalidArchive("unknown archive error"),
+//     }
+// }
+
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
-pub fn pack_zip(
+// pub fn pack_zip1(
+//     sources: Vec<&str>,
+//     thumb: PathBuf,
+//     out: &str,
+//     loggy: &mut Loggy,
+// ) -> Result<(), P64Error> {
+//     // let zipfile = std::fs::File::open(name).unwrap();
+//     let mut bin = get_file_buffer_from_path(thumb)?;
+//
+//     if bin.is_empty() {
+//         loggy.log(LogType::ConfigError,&"unable to pack file as icon chosen is not available, is it in the game directory root?");
+//         return Err(P64Error::IoEmptyFile);
+//     }
+//     loggy.log(
+//         LogType::Config,
+//         &format!("using icon of {} bytes", bin.len()),
+//     );
+//
+//     // let new_file = File::create(&Path::new("temp")).unwrap();
+//     let v = Vec::new();
+//     let c = Cursor::new(v);
+//
+//     let mut zip = zip::ZipWriter::new(c);
+//     let options = FileOptions::<()>::default();
+//     for source in sources {
+//         if let Err(err) = zip.start_file(
+//             source,
+//             options.compression_method(zip::CompressionMethod::Stored),
+//         ) {
+//             return Err(handle_zip_error(err, Some(&source)));
+//         }
+//
+//         let buff = get_file_buffer(&source)?;
+//         let buffy = buff.as_slice();
+//         if let Err(err) = zip.write(buffy) {
+//             loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
+//         }
+//     }
+//
+//     match zip.finish() {
+//         Ok(mut f) => {
+//             f.set_position(0);
+//
+//             // Read the "file's" contents into a vector
+//             let mut buf = Vec::new();
+//             f.read_to_end(&mut buf).unwrap();
+//             loggy.log(LogType::Config, &format!("zip buffer size {}", buf.len()));
+//
+//             bin.append(&mut buf);
+//             let new_file = File::create(&Path::new(out)).unwrap();
+//             let mut writer = BufWriter::new(new_file);
+//             match writer.write(bin.as_slice()) {
+//                 Ok(_) => {
+//                     loggy.log(LogType::Config, &"cartridge zipped!");
+//                     Ok(())
+//                 }
+//                 Err(err) => Err(P64Error::IoError(err)),
+//             }
+//         }
+//         Err(e) => Err(handle_zip_error(e, Some(out))),
+//     }
+// }
+
+/** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
+pub async fn pack_zip(
     sources: Vec<&str>,
     thumb: PathBuf,
     out: &str,
     loggy: &mut Loggy,
 ) -> Result<(), P64Error> {
-    // let zipfile = std::fs::File::open(name).unwrap();
+    // use tokio::io::AsyncWriteExt;
+
     let mut bin = get_file_buffer_from_path(thumb)?;
-    if bin.len() > 0 {
+    if bin.is_empty() {
         loggy.log(
-            LogType::Config,
-            &format!("using icon of {} bytes", bin.len()),
+            LogType::ConfigError,
+            &"unable to pack file as icon chosen is not available, is it in the game directory root?",
         );
+        return Err(P64Error::IoEmptyFile);
+    }
 
-        // let new_file = File::create(&Path::new("temp")).unwrap();
-        let v = Vec::new();
-        let c = Cursor::new(v);
+    loggy.log(
+        LogType::Config,
+        &format!("using icon of {} bytes", bin.len()),
+    );
 
-        let mut zip = zip::ZipWriter::new(c);
-        let options = FileOptions::<()>::default();
+    let new_file = tokio::fs::File::create(&Path::new(out)).await;
 
-        for source in sources {
-            //.to_string();
-            // zip.add_directory(s, options);
-            //zip::ZipWriter::start_file;
-            if let Err(err) = zip.start_file(
-                source,
-                options.compression_method(zip::CompressionMethod::Stored),
-            ) {
-                return Err(handle_zip_error(err, Some(&source)));
-            }
+    let mut new_file = new_file.map_err(|e| P64Error::IoError(e))?;
+    let mut writer = ZipFileWriter::with_tokio(&mut new_file);
 
-            let buff = get_file_buffer(&source)?;
-            let buffy = buff.as_slice();
-            if let Err(err) = zip.write(buffy) {
-                loggy.log(LogType::ConfigError, &format!("zipping error: {}", err));
-            }
-        }
+    for source in sources {
+        let builder = ZipEntryBuilder::new(source.into(), async_zip::Compression::Stored);
+        // let entry=writer.write_entry_stream(builder).await.map_err(|e| handle_zip_error(e))?;
 
-        // zip.write_all(buf)
-        match zip.finish() {
-            Ok(mut f) => {
-                f.set_position(0);
+        let data = get_file_buffer(&source)?;
+        writer.write_entry_whole(builder, &data).await?;
+    }
 
-                // Read the "file's" contents into a vector
-                let mut buf = Vec::new();
-                f.read_to_end(&mut buf).unwrap();
-                loggy.log(LogType::Config, &format!("zip buffer size {}", buf.len()));
+    writer.close().await?;
+    Ok(())
+}
 
-                bin.append(&mut buf);
-                let new_file = File::create(&Path::new(out)).unwrap();
-                let mut writer = BufWriter::new(new_file);
-                match writer.write(bin.as_slice()) {
-                    Ok(_) => {
-                        loggy.log(LogType::Config, &"cartridge zipped!");
-                        Ok(())
-                    }
-                    Err(err) => Err(P64Error::IoError(err)),
-                }
-            }
-            Err(e) => Err(handle_zip_error(e, Some(out))),
-        }
-    } else {
-        loggy.log(LogType::ConfigError,&"unable to pack file as icon chosen is not available, is it in the game directory root?");
-        Err(P64Error::IoEmptyFile)
+impl From<ZipError> for P64Error {
+    fn from(e: ZipError) -> Self {
+        handle_zip_error(e)
     }
 }
 
@@ -261,65 +324,54 @@ pub fn pack_game_bin(out: &str) -> Result<&str, P64Error> {
     }
 }
 
-pub fn get_archive(file: Vec<u8>, loggy: &mut Loggy) -> Option<zip::ZipArchive<Cursor<Vec<u8>>>> {
+pub async fn get_archive(
+    file: Vec<u8>,
+    loggy: &mut Loggy,
+) -> Result<ZipFileReader<Cursor<Vec<u8>>>, &'static str> {
     let v = unpack(file, loggy);
     if v.len() <= 0 {
-        return None;
+        return Err("archive is empty");
     }
+    let c = Cursor::new(v);
 
-    let reader = std::io::Cursor::new(v);
-    match zip::ZipArchive::new(reader) {
-        Ok(a) => Some(a),
-        Err(e) => {
-            loggy.log(
-                LogType::ConfigError,
-                &format!("unable to open archive: {}", e),
-            );
-            None
-        }
-    }
+    ZipFileReader::new(c.compat())
+        .await
+        .map_err(|_| "failed to build archive")
+    // let rr=reader.reader_without_entry(0).await.map_err(|_| "archive empty")?;
+    //
+    // // let rrr=(rr.compat());
 }
 
 /** unpack a packed game image-zip and load all assets into memory and return as asset-path keyed hashmap of u8 buffers  */
-pub fn unpack_and_walk<'a>(
-    archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>,
+pub async fn unpack_and_walk<'a>(
+    archive: &mut ZipFileReader<Cursor<Vec<u8>>>,
     sort: Vec<&'a str>,
     loggy: &mut Loggy,
-) -> HashMap<&'a str, Vec<(String, Vec<u8>)>> {
+) -> Result<HashMap<&'a str, Vec<(String, Vec<u8>)>>, &'static str> {
     let mut map: HashMap<&str, Vec<(String, Vec<u8>)>> = HashMap::new();
 
-    let it = archive
-        .file_names()
-        .map(|x| x.to_string())
-        .collect::<Vec<String>>();
-
-    // let main_dir = vec![];
-
     for d in sort {
-        println!("make {}", d);
+        println!("make {}", d); // TODO remove need for this
         map.insert(d, vec![]);
     }
+    let entries: Result<Vec<(usize,String)>,&'static str> =archive.file().entries().iter().enumerate().map(|(id,entry)|{
+let file_name = entry
+            .filename()
+            .as_str()
+            .map_err(|_| "non UTF8 zip asset")?.to_string();
+        Ok((id,file_name))
+    }).collect();
+    let entries=entries?;
 
-    for file_name in it {
+    for (id, file_name) in entries {
+        
         let shorter = if file_name.starts_with("./") {
             &file_name[2..file_name.len()]
         } else {
             &file_name
         };
-
         let part = shorter.split("/").collect::<Vec<&str>>();
         if part.len() > 1 {
-            // let dir_o = part.next();
-            // let name_o = part.next();
-
-            // if dir_o.is_none() && name_o.is_none() {
-            // match archive.by_name(file_name.as_str()) {
-            //     Ok(file) => {main_dir.push(file)},
-            //     Err(..) => {
-            //         println!("?");
-            //     }
-            // };
-            // } else {
             let dir = part[part.len() - 2];
             let name = part[part.len() - 1];
             loggy.log(
@@ -334,35 +386,28 @@ pub fn unpack_and_walk<'a>(
                 LogType::Config,
                 &format!("full {}, file {}, dir {}", file_name, name, dir),
             );
-            // let t = archive.by_index(0).unwrap();
-            match archive.by_name(&file_name) {
-                Ok(mut file) => match map.get_mut(dir) {
-                    Some(ar) => {
-                        let mut contents = Vec::new();
-                        // println!("found file");
 
-                        match file.read_to_end(&mut contents) {
-                            Ok(_) => {}
-                            _ => {}
-                        }
-                        ar.push((file.name().to_string(), contents));
-                    }
-                    _ => {}
-                },
-                Err(..) => {
-                    loggy.log(LogType::ConfigError, &"problem reading archive");
-                    println!("?");
+            match map.get_mut(dir) {
+                Some(ar) => {
+                    let mut contents:Vec<u8> = Vec::new();
+                    // println!("found file");
+
+                    let mut data_reader = archive
+                        .reader_with_entry(id)
+                        .await
+                        .map_err(|_| "problem reading zip entry header")?;
+                    // match file.read_to_end(&mut contents) {
+                    //     Ok(_) => {}
+                    //     _ => {}
+                    // }
+                    data_reader.read_to_end_checked(&mut contents);
+                    ar.push((shorter.to_owned(), contents));
                 }
-            };
-            // }
-
-            loggy.log(LogType::Config, &format!("list: {}", file_name));
-        } else {
-            loggy.log(LogType::ConfigError, &format!("bad path for {}", file_name));
+                _ => {}
+            }
         }
     }
-
-    map
+    Ok(map)
 }
 
 /** Unpacked a packed game image-zip into just the zip as a u8 buffer, buffer will still need unzipping */

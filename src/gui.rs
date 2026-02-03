@@ -1157,7 +1157,7 @@ pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4, map
                 (mv.w * 255.).floor() as u8,
             ]);
             // println!("map {:?} to {:?}", mapper, mv);
-            imageproc::map::map_pixels_mut(target, |x, y, p| {
+            imageproc::map::map_pixels_mut(target, | p| {
                 if mapper == p {
                     color
                 } else {
