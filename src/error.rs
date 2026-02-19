@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::SendError,
 };
 
-use silt_lua::{error::ErrorTuple, LuaError};
+use silt_lua::{LuaError, error::{ErrorOut, ErrorTuple}};
 
 // use piccolo::{PrototypeError, StaticError};
 
@@ -17,7 +17,7 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
-    LuaRunError(Box<ErrorTuple>),
+    LuaRunError(Box<ErrorOut>),
     LuaGenericError,
     MissingAssets,
     MissingScripts,
@@ -56,7 +56,8 @@ impl Display for P64Error {
                 // writeln!("\nFound {} error(s)\n", errors.len());
                 // Ok(())
 
-                write!(f, "  {}:{} - {}", err.location.0, err.location.1, err.code)
+                // write!(f, "  {}:{} - {}", err.location.0, err.location.1, err.code)
+                write!(f,"{}",err.to_string())
             }
         }
     }
@@ -74,15 +75,10 @@ impl<T> From<SendError<T>> for P64Error {
     }
 }
 
-impl From<Vec<ErrorTuple>> for P64Error {
-    fn from(mut value: Vec<ErrorTuple>) -> Self {
-        let n = value.len();
-        if n == 0 {
-            return P64Error::LuaGenericError;
-        } else if n == 1 {
-            return P64Error::LuaRunError(Box::new(value.pop().unwrap()));
-        }
-        P64Error::LuaRunError(Box::new(value.swap_remove(0)))
+impl From<ErrorOut> for P64Error {
+    fn from(mut value: ErrorOut) -> Self {
+        // let n = value.errors.len();
+        P64Error::LuaRunError(Box::new(value))
     }
 }
 

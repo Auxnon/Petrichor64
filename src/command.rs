@@ -26,11 +26,7 @@ use online::Online;
 use image::RgbaImage;
 use itertools::Itertools;
 use silt_lua::{
-    gc_arena::{lock::RefLock, Gc, Mutation},
-    lua::VM,
-    userdata::UserDataWrapper,
-    value::{FromLua, Variadic},
-    Compiler, ExVal,
+    Compiler, ExVal, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::{FromLua, Variadic}
 };
 
 use parking_lot::Mutex;
@@ -459,9 +455,10 @@ pub fn init_lua_sys<'a, 'gc>(
     globals.set("pi", std::f64::consts::PI);
     globals.set("tau", std::f64::consts::PI * 2.0);
     drop(globals);
-    // MARK required 2
-    // lua_globals.set(c, "gui", main_rast);
-    // lua_globals.set(c, "sky", sky_rast);
+
+    // vm_init.create_userdata(mc, data)
+    // globals.set( "gui", main_rast);
+    // globals.set( "sky", sky_rast);
 
     // lua_ctx.set_warning_function(|a, b, f| {
     //     log(format!("hi {:?}", b));
@@ -1643,7 +1640,7 @@ function help() end",
 
     vm_init.build_and_run(
         mc_in,
-        Some("patch".to_owned()),
+        Some("patch"),
         "
         add=table.insert 
         del=table.remove 
