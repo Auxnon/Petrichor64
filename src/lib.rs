@@ -748,6 +748,10 @@ impl Core {
                     }
                     self.global.is_state_changed = true;
                 }
+                MainCommmand::InitBack(refs) => {
+                    let (main_ref, sky_ref) = *refs;
+                    self.bundle_manager.set_img_refs(id, main_ref, sky_ref);
+                }
                 MainCommmand::LoopComplete(mutations) => {
                     // if let Some(main) = img_result.0 {
                     //     if !self.bundle_manager.is_single() {
@@ -779,18 +783,23 @@ impl Core {
 
                     if mutations.gui {
                         #[cfg(feature = "headed")]
-                        self.gui.mark_dirty(ScreenIndex::Primary, id);
-                        // if let Some(pool) = self.bundle_manager.get_pool(id) {
-                        //     self.gui
-                        //         .replace_image(pool.gui.borrow(), ScreenIndex::Primary);
-                        // }
+                        if let Some(pool) = self.bundle_manager.get_pool(id) {
+                            if let Some(img) = pool.gui.try_borrow() {
+                                self.gui.replace_image(img.clone(), ScreenIndex::Primary);
+                            } else {
+                                self.gui.mark_dirty(ScreenIndex::Primary, id);
+                            }
+                        }
                     }
                     if mutations.sky {
                         #[cfg(feature = "headed")]
-                        self.gui.mark_dirty(ScreenIndex::Sky, id);
-                        // if let Some(pool) = self.bundle_manager.get_pool(id) {
-                        //     self.gui.replace_image(pool.sky.borrow(), ScreenIndex::Sky);
-                        // }
+                        if let Some(pool) = self.bundle_manager.get_pool(id) {
+                            if let Some(img) = pool.sky.try_borrow() {
+                                self.gui.replace_image(img.clone(), ScreenIndex::Sky);
+                            } else {
+                                self.gui.mark_dirty(ScreenIndex::Sky, id);
+                            }
+                        }
                     }
                     completed_bundles.insert(id, true);
                     loop_complete = true;
