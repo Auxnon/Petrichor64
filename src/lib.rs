@@ -753,34 +753,6 @@ impl Core {
                     self.bundle_manager.set_img_refs(id, main_ref, sky_ref);
                 }
                 MainCommmand::LoopComplete(mutations) => {
-                    // if let Some(main) = img_result.0 {
-                    //     if !self.bundle_manager.is_single() {
-                    //         self.bundle_manager.set_raster(id, 0, main);
-                    //         #[cfg(feature = "headed")]
-                    //         if only_one_gui_sync {
-                    //             // DEV is this still necessary to force 1? Wont that break simultaneous syncs?
-                    //             self.update_raster(ScreenIndex::Primary);
-                    //             only_one_gui_sync = false;
-                    //         }
-                    //     } else {
-                    //         #[cfg(feature = "headed")]
-                    //         self.gui.replace_image(main, ScreenIndex::Primary);
-                    //     }
-                    // }
-                    // if let Some(sky) = img_result.1 {
-                    //     if !self.bundle_manager.is_single() {
-                    //         self.bundle_manager.set_raster(id, 1, sky);
-                    //         #[cfg(feature = "headed")]
-                    //         if only_one_gui_sync {
-                    //             self.update_raster(ScreenIndex::Sky);
-                    //             only_one_gui_sync = false;
-                    //         }
-                    //     } else {
-                    //         #[cfg(feature = "headed")]
-                    //         self.gui.replace_image(sky, gui::ScreenIndex::Sky);
-                    //     }
-                    // }
-
                     if mutations.gui {
                         #[cfg(feature = "headed")]
                         if let Some(pool) = self.bundle_manager.get_pool(id) {
