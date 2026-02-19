@@ -755,23 +755,11 @@ impl Core {
                 MainCommmand::LoopComplete(mutations) => {
                     if mutations.gui {
                         #[cfg(feature = "headed")]
-                        if let Some(pool) = self.bundle_manager.get_pool(id) {
-                            if let Some(img) = pool.gui.try_borrow() {
-                                self.gui.replace_image(img.clone(), ScreenIndex::Primary);
-                            } else {
-                                self.gui.mark_dirty(ScreenIndex::Primary, id);
-                            }
-                        }
+                        self.gui.mark_dirty(ScreenIndex::Primary, id);
                     }
                     if mutations.sky {
                         #[cfg(feature = "headed")]
-                        if let Some(pool) = self.bundle_manager.get_pool(id) {
-                            if let Some(img) = pool.sky.try_borrow() {
-                                self.gui.replace_image(img.clone(), ScreenIndex::Sky);
-                            } else {
-                                self.gui.mark_dirty(ScreenIndex::Sky, id);
-                            }
-                        }
+                        self.gui.mark_dirty(ScreenIndex::Sky, id);
                     }
                     completed_bundles.insert(id, true);
                     loop_complete = true;

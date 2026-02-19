@@ -45,21 +45,21 @@ impl ScreenLayer {
     ) {
         match bundle_manager.get_pool(self.bundle_target) {
             Some(pool) => {
-                if let Some(mut img) = match self.index {
-                    ScreenIndex::Primary => pool.gui.try_borrow_mut(),
-                    ScreenIndex::Secondary => pool.gui.try_borrow_mut(),
-                    ScreenIndex::Trinary => pool.gui.try_borrow_mut(),
-                    ScreenIndex::System => pool.gui.try_borrow_mut(),
-                    ScreenIndex::Sky => pool.sky.try_borrow_mut(),
-                } {
-                    {
-                        *img = image::imageops::resize(
-                            &*img,
-                            size[0],
-                            size[1],
-                            image::imageops::FilterType::Nearest,
-                        );
-                        // self.image.replace(img);
+                // Get the weak ref for this screen index
+                let weak_ref = match self.index {
+                    ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
+                        pool.gui.as_ref()
+                    }
+                    ScreenIndex::Sky => pool.sky.as_ref(),
+                };
+
+                // Try to upgrade and resize the LuaImg
+                if let Some(weak) = weak_ref {
+                    if let Some(lua_img) = weak.upgrade() {
+                        lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
+                            img.resize(size[0], size[1]);
+                            Ok(())
+                        });
                     }
                 }
             }
@@ -68,21 +68,40 @@ impl ScreenLayer {
             }
         }
         self.dirty = true;
-        // self.texture = crate::texture::make_tex(device, queue, &img);
     }
     pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {
         if self.dirty {
             match bundle_manager.get_pool(self.bundle_target) {
                 Some(pool) => {
-                    if let Some(img) = match self.index {
-                        ScreenIndex::Primary => pool.gui.try_borrow(),
-                        ScreenIndex::Secondary => pool.gui.try_borrow(),
-                        ScreenIndex::Trinary => pool.gui.try_borrow(),
-                        ScreenIndex::System => pool.gui.try_borrow(),
-                        ScreenIndex::Sky => pool.sky.try_borrow(),
-                    } {
-                        {
-                            crate::texture::write_tex(queue, &self.texture.texture, &img);
+                    // Get the weak ref for this screen index
+                    let weak_ref = match self.index {
+                        ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
+                            pool.gui.as_ref()
+                        }
+                        ScreenIndex::Sky => pool.sky.as_ref(),
+                    };
+
+                    // Try to upgrade and access the LuaImg
+                    if let Some(weak) = weak_ref {
+                        if let Some(lua_img) = weak.upgrade() {
+                            // Use downcast_mut to get access to LuaImg
+                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
+                                // Check the appropriate dirty flag
+                                let is_dirty = match self.index {
+                                    ScreenIndex::Sky => pool.sky_dirty.load(),
+                                    _ => pool.gui_dirty.load(),
+                                };
+                                
+                                if is_dirty {
+                                    crate::texture::write_tex(queue, &self.texture.texture, &img.image);
+                                    // Clear the dirty flag
+                                    match self.index {
+                                        ScreenIndex::Sky => pool.sky_dirty.store(false),
+                                        _ => pool.gui_dirty.store(false),
+                                    }
+                                }
+                                Ok(())
+                            });
                         }
                     }
 
