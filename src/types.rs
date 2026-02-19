@@ -71,3 +71,9 @@ impl GlobalMap {
         table.set("res", vm.wrap_table(mc, res_tbl));
     }
 }
+
+
+pub struct Script{
+    pub name: String,
+    pub content: String,
+}

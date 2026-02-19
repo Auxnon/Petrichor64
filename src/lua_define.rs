@@ -8,7 +8,7 @@ use crate::{
     lua_img::LuaImg,
     pad::Pad,
     pool::{LocalPool, SharedPool},
-    types::ControlState,
+    types::{ControlState, Script},
     world::{TileCommand, TileResponse},
 };
 use crossbeam::channel::bounded;
@@ -27,7 +27,7 @@ use silt_lua::{
 //     StaticError, Value,
 // };
 #[cfg(feature = "silt")]
-use silt_lua::{Lua, Value};
+use silt_lua::{error::ErrorOut, Lua, Value};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -67,9 +67,9 @@ pub enum LuaTalk {
     Main,
     Loop(ControlState),
     // Load(&'lt mut (dyn Read + Send), SyncSender<LuaResponse>), // DEV try using reader
-    Load(String, SyncSender<LuaResponse>),
+    Load(Box<Script>, SyncSender<LuaResponse>),
     // AsyncLoad(&'lt mut (dyn Read + Send)),
-    AsyncLoad(String),
+    AsyncLoad(Box<Script>),
     Resize(u32, u32),
     Die,
     Drop(String),
@@ -234,7 +234,7 @@ impl<'lt> LuaCore {
 
         let thread_join = thread::spawn(move || -> Result<(), String> {
             // let receiver = receiver;
-            let thread_result = || -> Result<(), P64Error> {
+            let thread_closure = || -> Result<(), P64Error> {
                 // let reciever = receiver;
                 // #[cfg(feature = "online_capable")]
                 // let net = Rc::new(RefCell::new(crate::online::Online::new()));
@@ -356,13 +356,10 @@ impl<'lt> LuaCore {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
                     let main_lua_func =
-                        vm.load_fn(mc, &mut compiler, Some("main".to_owned()), "main() loop()")?;
-                    let loop_lua_func =
-                        vm.load_fn(mc, &mut compiler, Some("loop".to_owned()), "loop()")?;
-                    let draw_lua_func =
-                        vm.load_fn(mc, &mut compiler, Some("draw".to_owned()), "draw()")?;
-                    let drop_lua_func =
-                        vm.load_fn(mc, &mut compiler, Some("drop".to_owned()), "drop()")?;
+                        vm.load_fn(mc, &mut compiler, Some("main"), "main() loop()")?;
+                    let loop_lua_func = vm.load_fn(mc, &mut compiler, Some("loop"), "loop()")?;
+                    let draw_lua_func = vm.load_fn(mc, &mut compiler, Some("draw"), "draw()")?;
+                    let drop_lua_func = vm.load_fn(mc, &mut compiler, Some("drop"), "drop()")?;
 
                     // let main_ref = Rc::new(RefCell::new(f));
                     for m in &receiver {
@@ -437,8 +434,8 @@ impl<'lt> LuaCore {
                                 match run_in_context(
                                     vm,
                                     mc,
-                                    Some("load ->"),
-                                    &mut code.as_bytes(),
+                                    Some(&code.name),
+                                    &mut code.content.as_bytes(),
                                     &mut compiler,
                                 ) {
                                     Err(er) => {
@@ -457,15 +454,15 @@ impl<'lt> LuaCore {
                                 if let Err(er) = run_in_context(
                                     vm,
                                     mc,
-                                    Some("async load->"),
-                                    &mut code.as_bytes(),
+                                    Some(&code.name),
+                                    &mut code.content.as_bytes(),
                                     &mut compiler,
                                 ) {
                                     loggy.send((LogType::LuaError, er.to_string()))?;
                                 }
                             }
                             LuaTalk::Main => {
-                                vm.call_fn(mc, main_lua_func, ());
+                                vm.call_fn(mc, Some("main"), main_lua_func, ());
 
                                 // if let Err(e) = res {
                                 //     async_sender.send((
@@ -481,7 +478,7 @@ impl<'lt> LuaCore {
                             }
                             LuaTalk::AsyncFunc(_func) => {}
                             LuaTalk::Loop((key_state, mouse_state)) => {
-                                vm.call_fn(mc, loop_lua_func, ());
+                                vm.call_fn(mc, Some("loop"), loop_lua_func, ());
 
                                 local_pool.check_lock(&shared);
                                 // &lua_instance.execute(&executor)?; // TODO
@@ -633,7 +630,7 @@ impl<'lt> LuaCore {
                                 // gui_handle.borrow_mut().resize(w, h);
                                 // main_rast.borrow_mut().resize(w, h);
                                 // sky_rast.borrow_mut().resize(w, h);
-                                vm.call_fn(mc, draw_lua_func, (w, h));
+                                vm.call_fn(mc, Some("redraw"), draw_lua_func, (w, h));
 
                                 // executor.restart(ctx, draw_lua_func, (w, h));
                                 // lua_instance.execute(draw_lua_func)?;
@@ -642,14 +639,12 @@ impl<'lt> LuaCore {
                                 //     .eval::<Value>();
                             }
                             LuaTalk::Drop(s) => {
-                                let res = vm.call_fn(mc, drop_lua_func, s);
+                                let res = vm.call_fn(mc, Some("drop"), drop_lua_func, s);
 
                                 if let Err(e) = res {
                                     async_sender.send((
                                         bundle_id,
-                                        MainCommmand::AsyncError(
-                                            e.into_iter().next().unwrap().to_string(),
-                                        ),
+                                        MainCommmand::AsyncError(e.to_string()),
                                     ))?;
                                 }
                             }
@@ -658,8 +653,8 @@ impl<'lt> LuaCore {
 
                     Ok(())
                 })
-            }();
-            match thread_result {
+            };
+            match thread_closure() {
                 Ok(_) => Ok(()),
                 Err(e) => Err(format!("lua ctx failure: {}", e)),
             }
@@ -719,7 +714,7 @@ impl<'lt> LuaCore {
     //     }
     // }
 
-    pub fn load<R>(&self, reader: &'lt mut R) -> Result<LuaResponse, P64Error>
+    pub fn load<R>(&self, name: String, reader: &'lt mut R) -> Result<LuaResponse, P64Error>
     where
         R: Read + Send,
     {
@@ -729,7 +724,10 @@ impl<'lt> LuaCore {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         let mut buf = String::new();
         reader.read_to_string(&mut buf).unwrap(); // DEV can we get the reader instead?
-        match self.to_lua_tx.send(LuaTalk::Load(buf, tx)) {
+        match self
+            .to_lua_tx
+            .send(LuaTalk::Load(Box::new(Script { name, content: buf }), tx))
+        {
             Ok(_) => match rx.recv_timeout(Duration::from_millis(10000)) {
                 Ok(lua_out) => Ok(lua_out),
                 Err(_) => Err(P64Error::ChannelTimeoutError),
@@ -743,10 +741,11 @@ impl<'lt> LuaCore {
         self.to_lua_tx.send(LuaTalk::Resize(w, h));
     }
 
-    pub fn async_load(&self, reader: &'lt mut (dyn Read + Send)) {
+    pub fn async_load(&self, name: String, reader: &'lt mut (dyn Read + Send)) {
         let mut buf = String::new();
         reader.read_to_string(&mut buf).unwrap(); // DEV can we get the reader instead?
-        self.to_lua_tx.send(LuaTalk::AsyncLoad(buf));
+        self.to_lua_tx
+            .send(LuaTalk::AsyncLoad(Box::new(Script { name, content: buf })));
     }
 
     /** Call main function within lua app */
@@ -820,24 +819,21 @@ where
     // TODO optimize this
     let mut s = String::new();
     code.read_to_string(&mut s);
-    let n = match name {
-        Some(s) => Some(s.to_owned()),
-        None => None,
-    };
-    match vm.build_and_run(mc, n, &s, compiler) {
+
+    match vm.build_and_run(mc, name, &s, compiler) {
         Ok(v) => Ok(v),
         Err(er) => Err(er.into()),
     }
 }
 
-fn run_initial_code<R>(lua: &mut Lua, compiler: &mut Compiler, mut code: R) -> Result<(), LuaError>
+fn run_initial_code<R>(lua: &mut Lua, compiler: &mut Compiler, mut code: R) -> Result<(), ErrorEnum>
 where
     R: ReadSend,
 {
     // TODO optimize this
     let mut s = String::new();
     code.read_to_string(&mut s);
-    lua.run(&s, compiler)?;
+    lua.run(Some("initial"), &s, compiler)?;
     // if let Err(e) = lua.run(&s, compiler)? ;
     //     return Err(e);
     // }
@@ -1009,21 +1005,21 @@ where
 // }
 
 #[cfg(feature = "puc_lua")]
-type ErrorOut = mlua::Error;
+type ErrorEnum = mlua::Error;
 #[cfg(feature = "silt")]
-type ErrorOut = silt_lua::prelude::LuaError;
+type ErrorEnum = ErrorOut;
 
 #[cfg(feature = "picc")]
-type ErrorOut<'a> = LuaError<'a>;
+type ErrorEnum<'a> = LuaError<'a>;
 
-fn unwrap_err<T>(re: Result<T, Vec<ErrorTuple>>) -> Result<T, P64Error> {
-    re.map_err(|e| P64Error::from(e))
-}
-fn unwrap<T>(re: Result<T, Vec<ErrorTuple>>) -> Result<T, Box<P64Error>> {
+// fn unwrap_err<T>(re: Result<T, ErrorEnum>) -> Result<T, P64Error> {
+//     re.map_err(|e| P64Error::LuaRunError(e))
+// }
+fn unwrap<T>(re: Result<T, ErrorEnum>) -> Result<T, P64Error> {
     // re.map_err(|e|Box::new(P64Error::from(e)))
-    Ok(re.map_err(Box::new(P64Error::from))?)
+    re.map_err(|e| P64Error::LuaRunError(Box::new(e)))
 }
-fn format_error(e: ErrorOut) -> String {
+fn format_error(e: ErrorEnum) -> String {
     format_error_string(e.to_string())
 }
 
