@@ -255,39 +255,8 @@ impl<'lt> LuaCore {
                 let ent_counter = Rc::new(Mutex::new(2u64));
                 let (letters, main_im, sky_im, size) = resources;
                 let morsel = crate::gui::GuiMorsel::new(letters, size);
-                // let main_rast2 = Rc::new(RefCell::new(LuaImg::new(
-                //     bundle_id,
-                //     main_im,
-                //     size[0],
-                //     size[1],
-                //     morsel.letters.clone(),
-                // )));
-                // let sky_rast2 = Rc::new(RefCell::new(LuaImg::new(
-                //     bundle_id,
-                //     sky_im,
-                //     size[0],
-                //     size[1],
-                //     morsel.letters.clone(),
-                // )));
-
-                // morsel.sky
-                //     let im = GuiMorsel::new_image(w, h);
-
-                // TODO safety?
-                // let lua_ctx = if false {
-                //     unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL, mlua::LuaOptions::new()) }
-                // } else {
-                //     Lua::new()
-                // };
-                //
 
                 let mut lua_instance = Lua::new_with_standard();
-                // let interner = BasicInterner::default();
-                // let thread = lua_instance.enter(|ctx| {
-                //     let globals = &ctx.state.globals;
-
-                //     // ctx.state.registry.stash(&ctx, Thread::new(&ctx)
-                // });
                 let letters = morsel.letters.clone();
 
                 let gui_handle = Rc::new(RefCell::new(morsel));
@@ -328,7 +297,6 @@ impl<'lt> LuaCore {
                     let sky_rast =
                         LuaImg::new(bundle_id, sky_im.clone(), size[0], size[1], letters.clone());
 
-                    // let rast=LuaImg::new(bundle_id, image, width, height, letters)
                     let (main_val, main_ref) = vm.create_userdata_tuple(mc, main_rast);
                     let (sky_val, sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
 
@@ -339,18 +307,14 @@ impl<'lt> LuaCore {
                     let pong = Box::new((main_ref, sky_ref));
 
                     async_sender.send((bundle_id, MainCommmand::InitBack(pong)))?;
-                    // let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
-                    // gui_link.borrow_mut().height()
+                    
                     match crate::command::init_lua_sys(
                         vm,
                         mc,
                         bundle_id,
                         pitcher.clone(),
                         world_sender.clone(),
-                        // gui_link,
                         Rc::clone(&gui_handle),
-                        // Rc::clone(&main_rast),
-                        // Rc::clone(&sky_rast),
                         #[cfg(feature = "audio")]
                         singer,
                         Rc::clone(&keys_mutex),
@@ -359,7 +323,7 @@ impl<'lt> LuaCore {
                         Rc::clone(&pads),
                         Rc::clone(&ent_counter),
                         loggy.clone(),
-                        local_pool.clone(), // shared,
+                        local_pool.clone(),
                     ) {
                         Err(err) => {
                             loggy.send((
