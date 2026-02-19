@@ -516,9 +516,8 @@ impl<'lt> LuaCore {
                                     mouse_state[10],
                                 ];
                                 drop(mm);
-                                // mouse_state;
 
-                                // Check if the gui or sky raster has been modified and copy to shared pool
+                                // Check if the gui or sky raster has been modified
                                 let mut mutations = BundleMutations::new();
                                 mutations.gui = false;
                                 mutations.sky = false;
@@ -529,10 +528,8 @@ impl<'lt> LuaCore {
                                         if img.dirty {
                                             img.dirty = false;
                                             mutations.gui = true;
-                                            // Copy image to shared pool
-                                            if let Some(mut pool_img) = local_pool.gui.borrow_mut().as_mut() {
-                                                **pool_img = img.image.clone();
-                                            }
+                                            // Set dirty flag in shared pool
+                                            shared.gui_dirty.store(true);
                                         }
                                         Ok(())
                                     });
@@ -542,10 +539,8 @@ impl<'lt> LuaCore {
                                         if img.dirty {
                                             img.dirty = false;
                                             mutations.sky = true;
-                                            // Copy image to shared pool
-                                            if let Some(mut pool_img) = local_pool.sky.borrow_mut().as_mut() {
-                                                **pool_img = img.image.clone();
-                                            }
+                                            // Set dirty flag in shared pool
+                                            shared.sky_dirty.store(true);
                                         }
                                         Ok(())
                                     });
@@ -557,7 +552,6 @@ impl<'lt> LuaCore {
                                     MainCommmand::LoopComplete(mutations),
                                 ))?;
                                 local_pool.drop();
-                                // }
                             }
                             LuaTalk::Func(func, sync) => {
                                 // TODO load's chunk should call set_name to "main" etc, for better error handling
