@@ -211,7 +211,7 @@ pub async fn unpack(
                                 &format!("loading script {}", file_name), //buffer.to_string()),
                             );
                         }
-                        handle_script(&mut bufreader, lua_master);
+                        handle_script(file_name.to_string(),&mut bufreader, lua_master);
                     } else {
                         if debug {
                             loggy.log(
@@ -227,7 +227,7 @@ pub async fn unpack(
     }
 }
 
-fn handle_script<F>(buffer: &mut BufReader<F>, lua_master: &LuaCore) -> [u16; 3]
+fn handle_script<F>(name:String, buffer: &mut BufReader<F>, lua_master: &LuaCore) -> [u16; 3]
 where
     F: Read + Send,
 {
@@ -253,7 +253,7 @@ where
             false
         }
     });
-    lua_master.async_load(buffer);
+    lua_master.async_load(name, buffer);
     ver
 }
 
@@ -309,7 +309,7 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
     if p.exists() {
         if let Ok(file) = fs::File::open(p) {
             let mut buffer = std::io::BufReader::new(file);
-            lua.load(&mut buffer);
+            lua.load(".petrichor64/config.lua".to_owned(),&mut buffer);
 
             globals.debug = eval_bool(lua.func("dev"));
             if let Ok(LuaResponse::Table(t)) = lua.func("alias") {
@@ -637,7 +637,7 @@ pub fn walk_files<'a>(
                         // println!("script item is {}", st);
 
                         if activate {
-                            let ver = handle_script(&mut buffered_reader, lua_master);
+                            let ver = handle_script(file_name.to_owned(),&mut buffered_reader, lua_master);
                             if ver[0] > version[0] || ver[1] > version[1] || ver[2] > version[2] {
                                 version = ver;
                             }
