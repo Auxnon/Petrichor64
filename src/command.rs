@@ -2237,6 +2237,7 @@ pub enum MainCommmand {
     Copy(String),
     //for testing
     // Meta(crate::gui::ScreenIndex),
+    InitBack(Box<(WeakWrapper,WeakWrapper)>),
     Quit(u8),
 }
 

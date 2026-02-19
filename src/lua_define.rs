@@ -269,9 +269,9 @@ impl<'lt> LuaCore {
                 //     size[1],
                 //     morsel.letters.clone(),
                 // )));
+
                 // morsel.sky
                 //     let im = GuiMorsel::new_image(w, h);
-                let gui_handle = Rc::new(RefCell::new(morsel));
 
                 // TODO safety?
                 // let lua_ctx = if false {
@@ -288,11 +288,12 @@ impl<'lt> LuaCore {
 
                 //     // ctx.state.registry.stash(&ctx, Thread::new(&ctx)
                 // });
+                let letters = morsel.letters.clone();
 
-                let mut local_pool = LocalPool::new();
+                let gui_handle = Rc::new(RefCell::new(morsel));
 
-                lua_instance.enter::<_, Result<(), P64Error>>(|vm, mc| {
-                    // let executor = Executor::new(ctx);
+                lua_instance.enter::<_, Result<(), P64Error>>(move |vm, mc| {
+                    let mut local_pool = LocalPool::new();
 
                     let mut compiler = Compiler::new();
 
@@ -315,7 +316,30 @@ impl<'lt> LuaCore {
                     let async_sender = pitcher.clone();
                     // let mut debounce_error_string = "".to_string();
                     let mut debounce_error_counter = 60;
-                    let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
+
+                    let main_rast = LuaImg::new(
+                        bundle_id,
+                        main_im.clone(),
+                        size[0],
+                        size[1],
+                        letters.clone(),
+                    );
+
+                    let sky_rast =
+                        LuaImg::new(bundle_id, sky_im.clone(), size[0], size[1], letters.clone());
+
+                    // let rast=LuaImg::new(bundle_id, image, width, height, letters)
+                    let (main_val, main_ref) = vm.create_userdata_tuple(mc, main_rast);
+                    let (sky_val, sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
+
+                    let mut globals = vm.globals.borrow_mut(mc);
+                    globals.set("gui", main_val);
+                    globals.set("sky", sky_val);
+                    drop(globals);
+                    let pong = Box::new((main_ref, sky_ref));
+
+                    async_sender.send((bundle_id, MainCommmand::InitBack(pong)))?;
+                    // let gui_link = Rc::new(RefCell::new(shared.gui.borrow_mut()));
                     // gui_link.borrow_mut().height()
                     match crate::command::init_lua_sys(
                         vm,
