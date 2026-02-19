@@ -554,27 +554,43 @@ impl<'lt> LuaCore {
                                 drop(mm);
                                 // mouse_state;
 
-                                // only send if a change was made, otherwise the old image is cached on the main thread
-                                // let mut m = main_rast.borrow_mut();
-                                // let mm = if m.dirty {
-                                //     m.dirty = false;
-                                //     Some(m.image.clone())
-                                // } else {
-                                //     None
-                                // };
+                                // Check if the gui or sky raster has been modified and copy to shared pool
+                                let mut mutations = BundleMutations::new();
+                                mutations.gui = false;
+                                mutations.sky = false;
 
-                                // let mut s = sky_rast.borrow_mut();
-                                // let ss = if s.dirty {
-                                //     s.dirty = false;
-                                //     Some(s.image.clone())
-                                // } else {
-                                //     None
-                                // };
+                                let globals = vm.globals.borrow(mc);
+                                if let Some(gui_val) = globals.get("gui") {
+                                    gui_val.apply_userdata(|img: &mut LuaImg| {
+                                        if img.dirty {
+                                            img.dirty = false;
+                                            mutations.gui = true;
+                                            // Copy image to shared pool
+                                            if let Some(mut pool_img) = local_pool.gui.borrow_mut().as_mut() {
+                                                **pool_img = img.image.clone();
+                                            }
+                                        }
+                                        Ok(())
+                                    });
+                                }
+                                if let Some(sky_val) = globals.get("sky") {
+                                    sky_val.apply_userdata(|img: &mut LuaImg| {
+                                        if img.dirty {
+                                            img.dirty = false;
+                                            mutations.sky = true;
+                                            // Copy image to shared pool
+                                            if let Some(mut pool_img) = local_pool.sky.borrow_mut().as_mut() {
+                                                **pool_img = img.image.clone();
+                                            }
+                                        }
+                                        Ok(())
+                                    });
+                                }
+                                drop(globals);
 
-                                // if ss.is_some() || mm.is_some() {
                                 async_sender.send((
                                     bundle_id,
-                                    MainCommmand::LoopComplete(BundleMutations::new()),
+                                    MainCommmand::LoopComplete(mutations),
                                 ))?;
                                 local_pool.drop();
                                 // }
