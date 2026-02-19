@@ -2,6 +2,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use atomicell::AtomicCell;
 use image::RgbaImage;
+use silt_lua::userdata::WeakWrapper;
 
 use crate::lua_ent::LuaEnt;
 
@@ -10,28 +11,31 @@ pub type SharedMut<'a, T> = Rc<RefCell<Option<atomicell::RefMut<'a, T>>>>;
 pub type AtomicImage = Arc<AtomicCell<RgbaImage>>;
 pub struct SharedPool {
     pub ent_list: Arc<AtomicCell<Vec<LuaEnt>>>,
-    pub gui: Arc<AtomicCell<RgbaImage>>,
-    pub sky: Arc<AtomicCell<RgbaImage>>,
+    pub gui: Option<WeakWrapper>,
+    pub sky: Option<WeakWrapper>,
+    pub gui_dirty: Arc<AtomicCell<bool>>,
+    pub sky_dirty: Arc<AtomicCell<bool>>,
 }
 
 impl SharedPool {
     pub fn new(gui: AtomicImage, sky: AtomicImage) -> Self {
         Self {
             ent_list: Arc::new(AtomicCell::new(Vec::new())),
-            gui,
-            sky,
+            gui: None,
+            sky: None,
+            gui_dirty: Arc::new(AtomicCell::new(false)),
+            sky_dirty: Arc::new(AtomicCell::new(false)),
         }
     }
 
+    pub fn set_img_refs(&mut self, gui: WeakWrapper, sky: WeakWrapper) {
+        self.gui = Some(gui);
+        self.sky = Some(sky);
+    }
+
     pub fn localize<'a>(&'a self, local: &mut LocalPool<'a>) -> Result<(), ()> {
-        if let (Some(el), Some(g), Some(s)) = (
-            self.ent_list.try_borrow_mut(),
-            self.gui.try_borrow_mut(),
-            self.sky.try_borrow_mut(),
-        ) {
+        if let Some(el) = self.ent_list.try_borrow_mut() {
             local.ent_list.replace(Some(el));
-            local.gui.replace(Some(g));
-            local.sky.replace(Some(s));
             Ok(())
         } else {
             Err(())
@@ -41,24 +45,22 @@ impl SharedPool {
     pub fn clone(&self) -> Self {
         Self {
             ent_list: self.ent_list.clone(),
-            gui: self.gui.clone(),
-            sky: self.sky.clone(),
+            gui: None,
+            sky: None,
+            gui_dirty: self.gui_dirty.clone(),
+            sky_dirty: self.sky_dirty.clone(),
         }
     }
-
-    // pub fn make(&mut self) {
-    //     // AtomicCell::is_lock_free()
-    //     let b = self.ent_list.borrow();
-    //     let a = self.ent_list.borrow_mut();
-    // }
 }
 
 impl Clone for SharedPool {
     fn clone(&self) -> Self {
         Self {
             ent_list: self.ent_list.clone(),
-            gui: self.gui.clone(),
-            sky: self.sky.clone(),
+            gui: None,
+            sky: None,
+            gui_dirty: self.gui_dirty.clone(),
+            sky_dirty: self.sky_dirty.clone(),
         }
     }
 }
@@ -66,8 +68,6 @@ impl Clone for SharedPool {
 pub struct LocalPool<'a> {
     pub active: bool,
     pub ent_list: SharedMut<'a, Vec<LuaEnt>>,
-    pub gui: SharedMut<'a, RgbaImage>,
-    pub sky: SharedMut<'a, RgbaImage>,
 }
 
 impl<'a> LocalPool<'a> {
@@ -75,16 +75,12 @@ impl<'a> LocalPool<'a> {
         Self {
             active: false,
             ent_list: Rc::new(RefCell::new(None)),
-            gui: Rc::new(RefCell::new(None)),
-            sky: Rc::new(RefCell::new(None)),
         }
     }
 
     pub fn drop(&mut self) {
         self.active = false;
         self.ent_list.replace(None);
-        self.gui.replace(None);
-        self.sky.replace(None);
     }
 
     pub fn check_lock(&mut self, pool: &'a SharedPool) {
@@ -100,8 +96,6 @@ impl Clone for LocalPool<'_> {
         Self {
             active: false, // not the controller so we can ignore this in additional clones
             ent_list: self.ent_list.clone(),
-            gui: self.gui.clone(),
-            sky: self.sky.clone(),
         }
     }
 }
