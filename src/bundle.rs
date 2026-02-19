@@ -8,6 +8,7 @@ use atomicell::AtomicCell;
 use image::{Rgb, RgbaImage};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
+use silt_lua::userdata::WeakWrapper;
 
 #[cfg(feature = "headed")]
 use crate::root::Core;
@@ -37,6 +38,10 @@ pub struct Bundle {
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
     pub pool: Option<SharedPool>,
+    /** Weak reference to main raster LuaImg userdata in lua thread */
+    pub main_img_ref: Option<WeakWrapper>,
+    /** Weak reference to sky raster LuaImg userdata in lua thread */
+    pub sky_img_ref: Option<WeakWrapper>,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -55,6 +60,8 @@ impl Bundle {
             frame_split: 1,
             lua_ctx_handle: None,
             pool: None,
+            main_img_ref: None,
+            sky_img_ref: None,
         }
     }
 
@@ -340,6 +347,13 @@ impl BundleManager {
 
     pub fn get(&self, index: u8) -> Option<&Bundle> {
         self.bundles.get(&index)
+    }
+
+    pub fn set_img_refs(&mut self, bundle_id: u8, main_ref: WeakWrapper, sky_ref: WeakWrapper) {
+        if let Some(bundle) = self.bundles.get_mut(&bundle_id) {
+            bundle.main_img_ref = Some(main_ref);
+            bundle.sky_img_ref = Some(sky_ref);
+        }
     }
 
     pub fn get_pool(&self, index: u8) -> Option<&SharedPool> {
