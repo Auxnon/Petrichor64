@@ -11,10 +11,10 @@ use crate::{
     log::LogType,
     lua_define::{LuaResponse, MainPacket},
     lua_ent::LuaEnt,
-    lua_img::{self, dehex, LuaImg},
+    lua_img::{ dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
     pad::Pad,
-    pool::{LocalPool, SharedPool},
+    pool::{LocalPool},
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
@@ -23,10 +23,11 @@ use crate::{
 #[cfg(feature = "online_capable")]
 use online::Online;
 
-use image::RgbaImage;
+use image::{RgbaImage };
 use itertools::Itertools;
+use pollster::FutureExt;
 use silt_lua::{
-    Compiler, ExVal, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::{FromLua, Variadic}
+    Compiler, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::Variadic
 };
 
 use parking_lot::Mutex;
@@ -119,7 +120,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             // new: path? name?
             // name, path, cartridge pic
             let (regular, com_hash) = if segments.len() > 1 {
-                getComHash(segments[1..].to_vec(), ["o", "n", "i", "c"].to_vec())
+                get_com_hash(segments[1..].to_vec(), ["o", "n", "i", "c"].to_vec())
             } else {
                 (vec![], HashMap::new())
             };
@@ -152,12 +153,12 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 // },
                 &mut core.loggy,
                 core.global.debug,
-            );
+            ).block_on()?;
         }
         "superpack" => {
             core.loggy.log(
                 LogType::Config,
-                crate::asset::super_pack(&if segments.len() > 1 {
+                crate::asset::super_pack(if segments.len() > 1 {
                     segments[1]
                 } else {
                     "game"
@@ -180,7 +181,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 
         "load" => {
             hard_reset(core);
-            load(
+            load_app(
                 core,
                 if segments.len() > 1 {
                     // let targ = format!("{}.game.png", segments[1].to_string());
@@ -192,7 +193,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 None,
                 None,
                 None,
-            );
+            )?;
         }
         "exit" => {
             hard_reset(core);
@@ -276,11 +277,11 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                     //         alt = false;
                     //     }
                     // }
-                    crate::asset::make_directory(&name, &mapper, &mut core.loggy);
+                    crate::asset::make_directory(name, Some(&mapper), &mut core.loggy);
                     core.loggy
                         .log(LogType::Config, &format!("created directory {}", name));
                     hard_reset(core);
-                    load(core, Some(name), None, None, None);
+                    load_app(core, Some(name), None, None, None)?;
                 } else {
                     core.loggy.log(
                         LogType::ConfigError,
@@ -1721,7 +1722,7 @@ pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
 }
 
 pub fn load_from_string(core: &mut Core, sub_command: Option<&str>) {
-    load(core, sub_command, None, None, None);
+    load_app(core, sub_command, None, None, None);
 }
 
 /** Load an empty game state or bundle for issuing commands */
@@ -1784,7 +1785,27 @@ pub fn load_empty(core: &mut Core) {
  * @param [bundle_in]: optional, if based on an existing bundle, reuse it's resources and game_path. Will ignore the game_path param
  * @param [bundle_relations]: optional, if it's attached to another bundle, either as a a sub or overlay
  */
-pub fn load(
+pub fn load_app( core: &mut Core,
+    game_path_in: Option<&str>,
+    payload: Option<Vec<u8>>,
+    bundle_in: Option<u8>,
+    bundle_relations: Option<(u8, bool)>,
+) -> Result<(), P64Error> {
+    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations).block_on()
+}
+pub async fn load_app_and_log( core: &mut Core,
+    game_path_in: Option<&str>,
+    payload: Option<Vec<u8>>,
+    bundle_in: Option<u8>,
+    bundle_relations: Option<(u8, bool)>,
+) {
+   if let Err(e)= load_app(core, game_path_in, payload, bundle_in, bundle_relations){
+ let res: String=format!("{}",e);
+                core.loggy.log(LogType::LuaError, &res);
+   }
+}
+
+async fn async_load_app(
     core: &mut Core,
     game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
@@ -1843,7 +1864,7 @@ pub fn load(
                     p,
                     &mut core.loggy,
                     debug,
-                );
+                ).await;
                 // println!("unpacked");
             }
             None => {
@@ -1896,7 +1917,7 @@ pub fn load(
                                     buff,
                                     &mut core.loggy,
                                     debug,
-                                );
+                                ).await;
                             } else {
                                 return Err(P64Error::IoNotFileOrDir(s.into()));
                             }
@@ -1964,16 +1985,17 @@ pub fn load(
 pub fn reload(core: &mut Core, bundle_id: u8) {
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
-        load(core, None, None, Some(bundle_id), None);
+        load_app_and_log(core, None, None, Some(bundle_id), None);
     } else {
         #[cfg(feature = "include_auto")]
         {
-            log("auto loading included bytes".to_string());
+
+            core.loggy.log(LogType::Config,"auto loading included bytes");
             let payload = include_bytes!("../auto.game.png").to_vec();
             println!("auto load bin from reload command");
-            load(
+           load_app_and_log(
                 core,
-                Some("INCLUDE_AUTO".to_string()),
+                Some("INCLUDE_AUTO"),
                 Some(payload),
                 None,
                 None,
@@ -1982,10 +2004,11 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
         #[cfg(not(feature = "include_auto"))]
         {
             println!("reload into empty bundle");
-            load(core, None, None, None, None);
+            load_app_and_log(core, None, None, None, None);
         }
     }
 }
+
 // static KEYS: [String; 256] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "a", "b",
 // "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
 // "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
@@ -2713,7 +2736,7 @@ where
 }
 
 /** Convert string command into easy to use hashmap */
-fn getComHash(svec: Vec<&str>, paired: Vec<&str>) -> (Vec<String>, HashMap<String, String>) {
+fn get_com_hash(svec: Vec<&str>, paired: Vec<&str>) -> (Vec<String>, HashMap<String, String>) {
     let mut comhash = HashMap::new();
     let mut current = "";
     let mut regular = vec![];
