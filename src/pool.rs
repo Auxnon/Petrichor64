@@ -18,7 +18,7 @@ pub struct SharedPool {
 }
 
 impl SharedPool {
-    pub fn new(gui: AtomicImage, sky: AtomicImage) -> Self {
+    pub fn new() -> Self {
         Self {
             ent_list: Arc::new(AtomicCell::new(Vec::new())),
             gui: None,

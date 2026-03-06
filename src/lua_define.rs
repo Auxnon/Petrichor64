@@ -11,13 +11,12 @@ use crate::{
     types::{ControlState, Script},
     world::{TileCommand, TileResponse},
 };
-use crossbeam::channel::bounded;
 use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
 use silt_lua::{
-    error::ErrorTuple, gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, LuaError,
+    gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, 
 };
 // use piccolo::{
 //     compiler::{self as Compiler, interning::BasicInterner},
@@ -466,7 +465,7 @@ impl<'lt> LuaCore {
                             }
                             LuaTalk::AsyncFunc(_func) => {}
                             LuaTalk::Loop((key_state, mouse_state)) => {
-                                vm.call_fn(mc, Some("loop"), loop_lua_func, ());
+                                vm.call_fn(mc, Some("loop"), loop_lua_func, ())?;
 
                                 local_pool.check_lock(&shared);
                                 // &lua_instance.execute(&executor)?; // TODO
@@ -522,30 +521,31 @@ impl<'lt> LuaCore {
                                 mutations.gui = false;
                                 mutations.sky = false;
 
-                                let globals = vm.globals.borrow(mc);
-                                if let Some(gui_val) = globals.get("gui") {
-                                    gui_val.apply_userdata(|img: &mut LuaImg| {
-                                        if img.dirty {
-                                            img.dirty = false;
-                                            mutations.gui = true;
-                                            // Set dirty flag in shared pool
-                                            shared.gui_dirty.store(true);
-                                        }
-                                        Ok(())
-                                    });
-                                }
-                                if let Some(sky_val) = globals.get("sky") {
-                                    sky_val.apply_userdata(|img: &mut LuaImg| {
-                                        if img.dirty {
-                                            img.dirty = false;
-                                            mutations.sky = true;
-                                            // Set dirty flag in shared pool
-                                            shared.sky_dirty.store(true);
-                                        }
-                                        Ok(())
-                                    });
-                                }
-                                drop(globals);
+                                // let globals = vm.globals.borrow();
+                                // if let Some(gui_val) = globals.get("gui") {
+                                //     gui_val.apply_userdata_mut(mc,|img: &mut LuaImg| {
+                                //         if img.dirty {
+                                //             img.dirty = false;
+                                //             mutations.gui = true;
+                                //             // Set dirty flag in shared pool
+                                //             shared.gui_dirty.replace(true);
+                                //         }
+                                //         Ok(())
+                                //     });
+                                // }
+                                // if let Some(sky_val) = globals.get("sky") {
+                                //     sky_val.apply_userdata_mut(mc,|img: &mut LuaImg| {
+                                //         if img.dirty {
+                                //             img.dirty = false;
+                                //             mutations.sky = true;
+                                //             // Set dirty flag in shared pool
+                                //             shared.sky_dirty.replace(true);
+                                //         }
+                                //         Ok(())
+                                //     });
+                                // }
+                                // drop(globals);
+
 
                                 async_sender.send((
                                     bundle_id,
@@ -660,7 +660,7 @@ impl<'lt> LuaCore {
         thread_join
     }
 
-    pub fn func<'a>(&self, func: &str) -> Result<LuaResponse, P64Error> {
+    pub fn func(&self, func: &str) -> Result<LuaResponse, P64Error> {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         // self.inject(func, &"0", None).0
         self.to_lua_tx.send(LuaTalk::Func(func.to_string(), tx));

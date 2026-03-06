@@ -699,7 +699,7 @@ impl Core {
                     self.bundle_manager.reclaim_resources(b);
                 }
                 MainCommmand::Subload(file, is_overlay) => {
-                    crate::command::load(
+                    crate::command::load_app(
                         self,
                         Some(file.as_str()),
                         None,
@@ -735,7 +735,7 @@ impl Core {
                                 self.log(LogType::Sys, &format!("load {}", l));
                                 crate::command::hard_reset(self);
 
-                                crate::command::load(self, Some(&to_load), None, None, None);
+                                crate::command::load_app(self, Some(&to_load), None, None, None);
                             }
                             _ => {
                                 //DEV if a load quit is triggered and then the lua context spams it too fast it technically quits to empty comnsole. should ahve it be code based or not trigger too quickly
