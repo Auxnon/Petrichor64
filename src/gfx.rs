@@ -622,7 +622,7 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        self.win_ref.request_inner_size(LogicalSize::new(
+        let _=self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))
