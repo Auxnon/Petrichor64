@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, rc::Rc, sync::Arc};
+use std::{borrow::Borrow, sync::Arc};
 
 use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
@@ -55,7 +55,7 @@ impl ScreenLayer {
 
                 // Try to upgrade and resize the LuaImg
                 if let Some(weak) = weak_ref {
-                    if let Some(lua_img) = weak.upgrade() {
+                    if let Some(mut lua_img) = weak.upgrade() {
                         lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
                             img.resize(size[0], size[1]);
                             Ok(())
@@ -88,17 +88,12 @@ impl ScreenLayer {
                             lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
                                 // Check the appropriate dirty flag
                                 let is_dirty = match self.index {
-                                    ScreenIndex::Sky => pool.sky_dirty.load(),
-                                    _ => pool.gui_dirty.load(),
+                                    ScreenIndex::Sky => pool.sky_dirty.take(),
+                                    _ => pool.gui_dirty.take()
                                 };
                                 
                                 if is_dirty {
                                     crate::texture::write_tex(queue, &self.texture.texture, &img.image);
-                                    // Clear the dirty flag
-                                    match self.index {
-                                        ScreenIndex::Sky => pool.sky_dirty.store(false),
-                                        _ => pool.gui_dirty.store(false),
-                                    }
                                 }
                                 Ok(())
                             });
@@ -540,8 +535,8 @@ impl Gui {
 
     pub fn make_shared_pool(&self) -> SharedPool {
         SharedPool::new(
-            self.primary_layer.image.clone(),
-            self.sky_layer.image.clone(),
+            // self.primary_layer.image.clone(),
+            // self.sky_layer.image.clone(),
         )
     }
 
