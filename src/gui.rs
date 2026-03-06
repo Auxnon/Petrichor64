@@ -1,8 +1,11 @@
-use std::{borrow::Borrow, rc::Rc};
+use std::{borrow::Borrow, sync::Arc};
 
+use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
 
-use crate::{global::GuiParams, log::Loggy, lua_define::LuaResponse};
+use crate::{
+    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse, pool::SharedPool,
+};
 
 #[cfg(feature = "headed")]
 use crate::texture::TexTuple;
@@ -26,26 +29,83 @@ pub enum ScreenIndex {
 #[cfg(feature = "headed")]
 struct ScreenLayer {
     pub texture: TexTuple,
-    pub image: RgbaImage,
+    pub image: Arc<AtomicCell<RgbaImage>>,
+    pub bundle_target: u8,
+    pub index: ScreenIndex,
     pub dirty: bool,
 }
 #[cfg(feature = "headed")]
 impl ScreenLayer {
-    pub fn resize(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, size: &[u32; 2]) {
-        self.image = RgbaImage::new(size[0], size[1]);
+    pub fn resize(
+        &mut self,
+        bundle_manager: &mut BundleManager,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: &[u32; 2],
+    ) {
+        match bundle_manager.get_pool(self.bundle_target) {
+            Some(pool) => {
+                // Get the weak ref for this screen index
+                let weak_ref = match self.index {
+                    ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
+                        pool.gui.as_ref()
+                    }
+                    ScreenIndex::Sky => pool.sky.as_ref(),
+                };
+
+                // Try to upgrade and resize the LuaImg
+                if let Some(weak) = weak_ref {
+                    if let Some(mut lua_img) = weak.upgrade() {
+                        lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
+                            img.resize(size[0], size[1]);
+                            Ok(())
+                        });
+                    }
+                }
+            }
+            None => {
+                println!("no pool");
+            }
+        }
         self.dirty = true;
-        self.image = image::imageops::resize(
-            &mut self.image,
-            size[0],
-            size[1],
-            image::imageops::FilterType::Nearest,
-        );
-        self.texture = crate::texture::make_tex(device, queue, &self.image);
     }
-    pub fn check_render(&mut self, queue: &wgpu::Queue) {
+    pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {
         if self.dirty {
-            crate::texture::write_tex(queue, &self.texture.texture, &self.image);
-            self.dirty = false;
+            match bundle_manager.get_pool(self.bundle_target) {
+                Some(pool) => {
+                    // Get the weak ref for this screen index
+                    let weak_ref = match self.index {
+                        ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
+                            pool.gui.as_ref()
+                        }
+                        ScreenIndex::Sky => pool.sky.as_ref(),
+                    };
+
+                    // Try to upgrade and access the LuaImg
+                    if let Some(weak) = weak_ref {
+                        if let Some(lua_img) = weak.upgrade() {
+                            // Use downcast_mut to get access to LuaImg
+                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
+                                // Check the appropriate dirty flag
+                                let is_dirty = match self.index {
+                                    ScreenIndex::Sky => pool.sky_dirty.take(),
+                                    _ => pool.gui_dirty.take()
+                                };
+                                
+                                if is_dirty {
+                                    crate::texture::write_tex(queue, &self.texture.texture, &img.image);
+                                }
+                                Ok(())
+                            });
+                        }
+                    }
+
+                    self.dirty = false;
+                }
+                None => {
+                    println!("no pool");
+                }
+            }
         }
     }
 }
@@ -147,31 +207,41 @@ impl Gui {
             system_layer: ScreenLayer {
                 // index: ScreenIndex::System,
                 texture: system_texture,
-                image: system_image,
+                image: Arc::new(AtomicCell::new(system_image)),
+                index: ScreenIndex::System,
+                bundle_target: 0,
                 dirty: true,
             },
             primary_layer: ScreenLayer {
                 // index: ScreenIndex::Primary,
                 texture: primary_texture,
-                image: primary_image,
+                image: Arc::new(AtomicCell::new(primary_image)),
+                index: ScreenIndex::Primary,
+                bundle_target: 0,
                 dirty: true,
             },
             secondary_layer: ScreenLayer {
                 // index: ScreenIndex::Secondary,
                 texture: secondary_texture,
-                image: secondary_image,
+                image: Arc::new(AtomicCell::new(secondary_image)),
+                index: ScreenIndex::Secondary,
+                bundle_target: 0,
                 dirty: true,
             },
             trinary_layer: ScreenLayer {
                 // index: ScreenIndex::Trinary,
                 texture: trinary_texture,
-                image: trinary_image,
+                image: Arc::new(AtomicCell::new(trinary_image)),
+                index: ScreenIndex::Trinary,
+                bundle_target: 0,
                 dirty: true,
             },
             sky_layer: ScreenLayer {
                 // index: ScreenIndex::Sky,
                 texture: sky_bundle,
-                image: sky_image,
+                image: Arc::new(AtomicCell::new(sky_image)),
+                index: ScreenIndex::Sky,
+                bundle_target: 0,
                 dirty: true,
             },
 
@@ -283,36 +353,39 @@ impl Gui {
     #[cfg(feature = "headed")]
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
-        image::imageops::replace(&mut self.system_layer.image, &im, 0, 0);
+        if let Some(mut sys_im) = self.system_layer.image.try_borrow_mut() {
+            let sys_ref = &mut *sys_im;
+            image::imageops::replace(sys_ref, &im, 0, 0);
 
-        for (i, line) in self.console_string.lines().enumerate() {
-            let y = i as i64 * (LETTER_SIZE as i64 + 2);
-            let mut x = (LETTER_SIZE) as i64;
-            for c in line.chars() {
-                let mut ind = c as u32;
+            for (i, line) in self.console_string.lines().enumerate() {
+                let y = i as i64 * (LETTER_SIZE as i64 + 2);
+                let mut x = (LETTER_SIZE) as i64;
+                for c in line.chars() {
+                    let mut ind = c as u32;
 
-                if ind > 255 {
-                    ind = 255;
+                    if ind > 255 {
+                        ind = 255;
+                    }
+                    let index_x = ind % 16;
+                    let index_y = ind / 16;
+                    //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
+                    let sub = image::imageops::crop_imm(
+                        &self.letters,
+                        index_x * LETTER_SIZE,
+                        index_y * LETTER_SIZE,
+                        LETTER_SIZE,
+                        LETTER_SIZE,
+                    );
+
+                    draw_filled_rect_mut(
+                        sys_ref,
+                        imageproc::rect::Rect::at((x) as i32, (y - 1) as i32)
+                            .of_size(LETTER_SIZE + 1, LETTER_SIZE + 2 as u32),
+                        self.console_background_color,
+                    );
+                    image::imageops::overlay(sys_ref, &mut sub.to_image(), x, y);
+                    x += (LETTER_SIZE - 1) as i64;
                 }
-                let index_x = ind % 16;
-                let index_y = ind / 16;
-                //println!("c{} ind{} x {} y{}", c, ind, index_x, index_y);
-                let sub = image::imageops::crop_imm(
-                    &self.letters,
-                    index_x * LETTER_SIZE,
-                    index_y * LETTER_SIZE,
-                    LETTER_SIZE,
-                    LETTER_SIZE,
-                );
-
-                draw_filled_rect_mut(
-                    &mut self.system_layer.image,
-                    imageproc::rect::Rect::at((x) as i32, (y - 1) as i32)
-                        .of_size(LETTER_SIZE + 1, LETTER_SIZE + 2 as u32),
-                    self.console_background_color,
-                );
-                image::imageops::overlay(&mut self.system_layer.image, &mut sub.to_image(), x, y);
-                x += (LETTER_SIZE - 1) as i64;
             }
         }
 
@@ -341,49 +414,70 @@ impl Gui {
         self.apply_console_out_text();
     }
 
-    // pub fn overlay_image(&mut self, image: &RgbaImage) {
-    //     image::imageops::overlay(&mut self.main, image, 0, 0);
-    //     self.dirty = true;
+    // #[cfg(feature = "headed")]
+    // pub fn replace_image(&mut self, img: RgbaImage, index: ScreenIndex) {
+    //     // println!("replacing image of size {:?}", img.dimensions());
+    //     match index {
+    //         ScreenIndex::System => {
+    //             self.system_layer.image = img;
+    //             self.system_layer.dirty = true;
+    //         }
+    //         ScreenIndex::Primary => {
+    //             self.primary_layer.image = img;
+    //             self.primary_layer.dirty = true;
+    //         }
+    //         ScreenIndex::Secondary => {
+    //             self.secondary_layer.image = img;
+    //             self.secondary_layer.dirty = true;
+    //         }
+    //         ScreenIndex::Trinary => {
+    //             self.trinary_layer.image = img;
+    //             self.trinary_layer.dirty = true;
+    //         }
+    //         ScreenIndex::Sky => {
+    //             self.sky_layer.image = img;
+    //             self.sky_layer.dirty = true;
+    //         }
+    //     }
     // }
 
     #[cfg(feature = "headed")]
-    pub fn replace_image(&mut self, img: RgbaImage, index: ScreenIndex) {
-        // println!("replacing image of size {:?}", img.dimensions());
+    pub fn mark_dirty(&mut self, index: ScreenIndex, bundle_id: u8) {
         match index {
             ScreenIndex::System => {
-                self.system_layer.image = img;
                 self.system_layer.dirty = true;
+                self.system_layer.bundle_target = bundle_id;
             }
             ScreenIndex::Primary => {
-                self.primary_layer.image = img;
                 self.primary_layer.dirty = true;
+                self.primary_layer.bundle_target = bundle_id;
             }
             ScreenIndex::Secondary => {
-                self.secondary_layer.image = img;
                 self.secondary_layer.dirty = true;
+                self.secondary_layer.bundle_target = bundle_id;
             }
             ScreenIndex::Trinary => {
-                self.trinary_layer.image = img;
                 self.trinary_layer.dirty = true;
+                self.trinary_layer.bundle_target = bundle_id;
             }
             ScreenIndex::Sky => {
-                self.sky_layer.image = img;
                 self.sky_layer.dirty = true;
+                self.sky_layer.bundle_target = bundle_id;
             }
         }
     }
 
     #[cfg(feature = "headed")]
-    pub fn resize(&mut self, size: (u32, u32), gfx: &crate::gfx::Gfx) {
+    pub fn resize(&mut self, bm: &mut BundleManager, size: (u32, u32), gfx: &crate::gfx::Gfx) {
         let device = &gfx.device;
         let queue = &gfx.queue;
         self.size = [size.0, size.1];
         // resize all layer fields
-        self.system_layer.resize(device, queue, &self.size);
-        self.primary_layer.resize(device, queue, &self.size);
-        self.secondary_layer.resize(device, queue, &self.size);
-        self.trinary_layer.resize(device, queue, &self.size);
-        self.sky_layer.resize(device, queue, &self.size);
+        self.system_layer.resize(bm, device, queue, &self.size);
+        self.primary_layer.resize(bm, device, queue, &self.size);
+        self.secondary_layer.resize(bm, device, queue, &self.size);
+        self.trinary_layer.resize(bm, device, queue, &self.size);
+        self.sky_layer.resize(bm, device, queue, &self.size);
 
         let (gui_group, gui_aux_group, sky_group) = rebuild_group(
             [
@@ -412,7 +506,7 @@ impl Gui {
     // }
 
     #[cfg(feature = "headed")]
-    pub fn render(&mut self, queue: &Queue, time: f32, loggy: &mut Loggy) {
+    pub fn render(&mut self, bm: &mut BundleManager, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
         if loggy.is_dirty_and_listen() && self.output_console {
             self.console_string = loggy.get();
@@ -421,11 +515,11 @@ impl Gui {
         }
         self.process_notifications(false);
 
-        self.system_layer.check_render(queue);
-        self.primary_layer.check_render(queue);
-        self.secondary_layer.check_render(queue);
-        self.trinary_layer.check_render(queue);
-        self.sky_layer.check_render(queue);
+        self.system_layer.check_render(bm, queue);
+        self.primary_layer.check_render(bm, queue);
+        self.secondary_layer.check_render(bm, queue);
+        self.trinary_layer.check_render(bm, queue);
+        self.sky_layer.check_render(bm, queue);
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
@@ -436,6 +530,13 @@ impl Gui {
             RgbaImage::new(self.size[0], self.size[1]),
             RgbaImage::new(self.size[0], self.size[1]),
             self.size,
+        )
+    }
+
+    pub fn make_shared_pool(&self) -> SharedPool {
+        SharedPool::new(
+            // self.primary_layer.image.clone(),
+            // self.sky_layer.image.clone(),
         )
     }
 
@@ -450,32 +551,40 @@ impl Gui {
                     n.position -= (n.position - n.dest) / 20;
 
                     if !self.output_console {
-                        if !should {
-                            self.system_layer.image = RgbaImage::new(self.size[0], self.size[1]);
-                            should = true;
+                        if let Some(mut sys_im) = self.system_layer.image.try_borrow_mut() {
+                            let sys_ref = &mut *sys_im;
+                            if !should {
+                                image::imageops::replace(
+                                    sys_ref,
+                                    &RgbaImage::new(self.size[0], self.size[1]),
+                                    0,
+                                    0,
+                                );
+                                should = true;
+                            }
+                            // if n.image.is_none() {
+                            //     n.render(&self.letters, self.size);
+                            // }
+
+                            // //guaranteed to be Some so unwrap ref
+                            // if let Some(im) = &n.image {
+                            //     image::imageops::replace(&mut self.notif, im, 0, n.position as i64);
+                            //     // image::imageops::overlay(&mut self.notif, im, 0, n.position as i64);
+                            // }
+
+                            direct_text_raw(
+                                sys_ref,
+                                &self.letters,
+                                &n.message,
+                                0,
+                                n.position,
+                                if i % 2 == 0 {
+                                    vec4(1., 0., 1., 1.)
+                                } else {
+                                    vec4(1., 0., 0., 1.)
+                                },
+                            );
                         }
-                        // if n.image.is_none() {
-                        //     n.render(&self.letters, self.size);
-                        // }
-
-                        // //guaranteed to be Some so unwrap ref
-                        // if let Some(im) = &n.image {
-                        //     image::imageops::replace(&mut self.notif, im, 0, n.position as i64);
-                        //     // image::imageops::overlay(&mut self.notif, im, 0, n.position as i64);
-                        // }
-
-                        direct_text_raw(
-                            &mut self.system_layer.image,
-                            &self.letters,
-                            &n.message,
-                            0,
-                            n.position,
-                            if i % 2 == 0 {
-                                vec4(1., 0., 1., 1.)
-                            } else {
-                                vec4(1., 0., 0., 1.)
-                            },
-                        );
                     }
 
                     // println!("notif pos {} dest {}", n.position, n.dest);
@@ -565,14 +674,14 @@ impl Notif {
 
 pub type PreGuiMorsel = (RgbaImage, RgbaImage, RgbaImage, [u32; 2]);
 pub struct GuiMorsel {
-    pub letters: Rc<RgbaImage>,
+    pub letters: Arc<RgbaImage>,
     pub size: [u32; 2],
 }
 
 impl GuiMorsel {
     pub fn new(letters: RgbaImage, size: [u32; 2]) -> Self {
         // letters: Rc<RgbaImage>, main: RgbaImage, sky: RgbaImage, size: [u32; 2]
-        let letters = Rc::new(letters);
+        let letters = Arc::new(letters);
         Self { letters, size }
     }
 
@@ -702,14 +811,8 @@ impl GuiMorsel {
 
 pub fn eval(val: LuaResponse, l: u32) -> i32 {
     match val {
-        LuaResponse::Integer(i) => {
-            if i < 0 {
-                // l as i32 - i
-                i
-            } else {
-                i
-            }
-        }
+        LuaResponse::Integer(i) => i.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+
         LuaResponse::Number(f) => {
             let ff = (f * l as f64) as i32;
             if f < 0. {
@@ -941,7 +1044,7 @@ pub fn direct_line(
 /** evaluate position with GuiUnits then draw letters over image. Returns the line count */
 pub fn direct_text(
     target: &mut RgbaImage,
-    letters: &Rc<RgbaImage>,
+    letters: &Arc<RgbaImage>,
     width: u32,
     height: u32,
     txt: &str,
@@ -1068,7 +1171,7 @@ pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4, map
                 (mv.w * 255.).floor() as u8,
             ]);
             // println!("map {:?} to {:?}", mapper, mv);
-            imageproc::map::map_pixels_mut(target, |x, y, p| {
+            imageproc::map::map_pixels_mut(target, | p| {
                 if mapper == p {
                     color
                 } else {

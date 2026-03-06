@@ -28,6 +28,12 @@ Consider that some command naming takes on a role of "setting" a value or data, 
 
 ## connection
 
+## get
+
+## copy
+
+## set
+
 # system
 
 ## attr

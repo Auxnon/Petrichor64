@@ -1,3 +1,5 @@
+#[cfg(feature = "audio")]
+use crate::sound::{sound, SoundCommand};
 use crate::{
     bundle::BundleManager,
     ent_manager::{EntManager, InstanceBuffer},
@@ -7,16 +9,18 @@ use crate::{
     lua_define::MainPacket,
     model::ModelManager,
     render,
-    sound::{self, SoundCommand},
     texture::TexManager,
     types::ValueMap,
 };
-use std::sync::mpsc::SyncSender;
-#[cfg(feature = "audio")]
+
 use std::{
     rc::Rc,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
+
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
@@ -35,7 +39,7 @@ pub struct Core {
     pub pitcher: Sender<MainPacket>,
 
     pub gui: Gui,
-    pub gfx: Gfx,
+    pub gfx: Gfx<'static>,
 
     pub loop_helper: spin_sleep::LoopHelper,
     pub tex_manager: TexManager,
@@ -50,8 +54,8 @@ pub struct Core {
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
-impl Core {
-    pub async fn new(rwindow: Rc<Window>, pitcher: Sender<MainPacket>) -> Self {
+impl<'core> Core {
+    pub async fn new(rwindow: Arc<Window>, pitcher: Sender<MainPacket>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
         let model_manager = ModelManager::init(&gfx.device);
@@ -125,7 +129,8 @@ impl Core {
 
     pub fn debounced_resize(&mut self) {
         let gui_scaled = self.gfx.resize(&self.global.gui_params);
-        self.gui.resize(gui_scaled, &self.gfx);
+        self.gui
+            .resize(&mut self.bundle_manager, gui_scaled, &self.gfx);
         let (con_w, con_h) = self.gui.get_console_size();
         self.loggy.set_dimensions(con_w, con_h);
         self.bundle_manager.resize(gui_scaled.0, gui_scaled.1);
@@ -232,12 +237,12 @@ impl Core {
         }
     }
 
-    pub fn update_raster(&mut self, d: ScreenIndex) {
-        if let Some(rasters) = self.bundle_manager.get_rasters(match d {
-            ScreenIndex::Primary => 0,
-            _ => 1,
-        }) {
-            self.gui.replace_image(rasters, d);
-        }
-    }
+    // pub fn update_raster(&mut self, d: ScreenIndex) {
+    //     if let Some(rasters) = self.bundle_manager.get_rasters(match d {
+    //         ScreenIndex::Primary => 0,
+    //         _ => 1,
+    //     }) {
+    //         self.gui.replace_image(rasters, d);
+    //     }
+    // }
 }

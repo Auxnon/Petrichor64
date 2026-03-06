@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
     command::{num, numop},
@@ -8,8 +8,12 @@ use glam::{vec4, Vec4};
 use image::RgbaImage;
 #[cfg(feature = "puc_lua")]
 use mlua::{AnyUserData, UserData, UserDataMethods, Value};
+#[cfg(feature = "picc")]
+use piccolo::{AnyUserData, Value};
+
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{UserData, Value};
+use silt_lua::{userdata::UserDataMethods, LuaError};
 
 pub struct LuaImg {
     pub dirty: bool,
@@ -17,7 +21,7 @@ pub struct LuaImg {
     pub width: u32,
     pub height: u32,
     pub image: RgbaImage,
-    letters: Rc<RgbaImage>,
+    letters: Arc<RgbaImage>,
 }
 
 impl LuaImg {
@@ -26,7 +30,7 @@ impl LuaImg {
         image: RgbaImage,
         width: u32,
         height: u32,
-        letters: Rc<RgbaImage>,
+        letters: Arc<RgbaImage>,
     ) -> Self {
         Self {
             dirty: true,
@@ -44,7 +48,7 @@ impl LuaImg {
             image: RgbaImage::new(1, 1),
             width: 1,
             height: 1,
-            letters: Rc::new(RgbaImage::new(1, 1)),
+            letters: Arc::new(RgbaImage::new(1, 1)),
         }
     }
     pub fn clone(&self) -> Self {
@@ -65,20 +69,45 @@ impl LuaImg {
     }
 }
 
+macro_rules! safe_unwrap {
+    ($ud:ident) => {
+        if let Some(ud) = $ud {
+            ud
+        } else {
+            return Err(LuaError::UDBadCast);
+        }
+    };
+}
+
+// #[cfg(feature = "puc_lua")]
 impl UserData for LuaImg {
-    #[cfg(feature = "puc_lua")]
+    fn type_name() -> &'static str {
+        "Ent"
+    }
+    fn get_id(&self) -> usize {
+        2
+    }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
-        methods.add_method("raw", |_, this, _: ()| Ok(this.image.to_vec()));
+        methods.add_method("raw", |vm, mc, this, _: ()| {
+            let im = safe_unwrap!(this);
+            Ok(im.image.to_vec())
+            // let res = <Vec<u8> as ToLua>::to_lua(v, vm, mc);
+            // let res=ToLua::
+            //
+            // Ok(Value::Nil)
+        });
+
         methods.add_method_mut(
             "line",
-            |_, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
-                this.dirty = true;
+            |vm, mc, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
+                let im = safe_unwrap!(this);
+                im.dirty = true;
                 let c = get_color(rgb);
                 direct_line(
-                    &mut this.image,
-                    this.width,
-                    this.height,
+                    &mut im.image,
+                    im.width,
+                    im.height,
                     num(x),
                     num(y),
                     num(x2),
@@ -91,13 +120,14 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "rect",
-            |_, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
-                this.dirty = true;
+            |_, mc, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
+                let im = safe_unwrap!(this);
+                im.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
-                    &mut this.image,
-                    this.width,
-                    this.height,
+                    &mut im.image,
+                    im.width,
+                    im.height,
                     num(x),
                     num(y),
                     num(w),
@@ -110,7 +140,8 @@ impl UserData for LuaImg {
         );
         methods.add_method_mut(
             "rrect",
-            |_, this, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value)| {
+            |_, _, this_res, (x, y, w, h, ro, rgb): (Value, Value, Value, Value, Value, Value)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = get_color(rgb);
                 direct_rect(
@@ -130,7 +161,11 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "text",
-            |_, this, (txt, x, y, rgb): (String, Option<Value>, Option<Value>, Option<Value>)| {
+            |_,
+             _,
+             this_res,
+             (txt, x, y, rgb): (String, Option<Value>, Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -149,11 +184,13 @@ impl UserData for LuaImg {
                 Ok(())
             },
         );
+
         methods.add_method_mut(
             "img",
-            |_, this, (img, x, y): (AnyUserData, Option<Value>, Option<Value>)| {
+            |_, _, this_res, (img, x, y): (Value, Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
-                if let Ok(limg) = img.borrow::<LuaImg>() {
+                img.apply_userdata(|limg: &LuaImg| {
                     direct_image(
                         &mut this.image,
                         &limg.image,
@@ -162,13 +199,16 @@ impl UserData for LuaImg {
                         this.width,
                         this.height,
                     );
-                }
+                    Ok(())
+                });
                 Ok(())
             },
         );
+
         methods.add_method_mut(
             "pixel",
-            |_, this, (x, y, rgb): (u32, u32, Option<Value>)| {
+            |_, mc, this_res, (x, y, rgb): (u32, u32, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -176,18 +216,21 @@ impl UserData for LuaImg {
                 };
 
                 direct_pixel(&mut this.image, x, y, this.width, this.height, c.to_array());
-
                 Ok(())
             },
         );
-        methods.add_method_mut("clr", |_, this, (): ()| {
+
+        methods.add_method_mut("clr", |_, mc, this_res, (): ()| {
+            let this = safe_unwrap!(this_res);
             this.dirty = true;
             this.image = RgbaImage::new(this.width, this.height);
             Ok(())
         });
+
         methods.add_method_mut(
             "fill",
-            |_, this, (rgb, map): (Option<Value>, Option<Value>)| {
+            |_, _, this_res, (rgb, map): (Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
                     Some(rgba) => get_color(rgba),
@@ -203,7 +246,12 @@ impl UserData for LuaImg {
                 Ok(())
             },
         );
-        methods.add_method("copy", |_, this, (): ()| Ok(this.clone()));
+
+        methods.add_method_mut("copy", |vm, mc, this_res, (): ()| {
+            let this = safe_unwrap!(this_res);
+            vm.create_userdata(mc, this.clone());
+            Ok(())
+        });
 
         // TODO from raw
         // if let Ok(img) = im.get::<_, Vec<u8>>("data") {
@@ -229,6 +277,15 @@ impl UserData for LuaImg {
         // }
     }
 }
+
+// pub fn lua_img_constructor<'gc>(ctx: &Context<'gc>, limg: LuaImg) -> AnyUserData<'gc> {
+//     // let mc
+//
+//     let methods = StaticUserMethods::<LuaImg>::new(ctx.deref());
+//     methods.add("raw", *ctx, |this, x, fuel, _: ()| Ok(this.image.to_vec()));
+//     let ud = methods.wrap(*ctx, limg);
+//     return ud;
+// }
 
 pub fn dehex(s2: &str) -> Vec4 {
     let s = if s2.starts_with("#") {
@@ -260,25 +317,23 @@ pub fn dehex(s2: &str) -> Vec4 {
     }
 }
 
-pub fn get_color(x: Value) -> Vec4 {
+pub fn get_color<'gc>(x: Value<'gc>) -> Vec4 {
     match x {
-        Value::String(s) => match s.to_str() {
-            Ok(s2) => dehex(s2),
-            _ => vec4(0., 0., 0., 0.),
-        },
-        Value::Table(t) => {
-            let tt = t
-                .sequence_values::<f32>()
-                .filter_map(|f| match f {
-                    Ok(v) => Some(v),
-                    _ => None,
-                })
-                .collect::<Vec<f32>>();
+        Value::String(s) => dehex(&s),
+        Value::Table(tab) => {
+            // let tt = t.next(key)
+            //     .sequence_values::<f32>()
+            //     .filter_map(|f| match f {
+            //         Ok(v) => Some(v),
+            //         _ => None,
+            //     })
+            //     .collect::<Vec<f32>>();
+            let t = tab.borrow();
 
-            let mut r = *tt.get(0).unwrap_or(&0.);
-            let g = *tt.get(1).unwrap_or(&0.);
-            let b = *tt.get(2).unwrap_or(&0.);
-            let a = *tt.get(3).unwrap_or(&1.);
+            let mut r = t.get_number(0);
+            let g = t.get_number(1);
+            let b = t.get_number(2);
+            let a = t.get_number(3);
             if r > 1. {
                 r = r / 255.;
             }
@@ -292,7 +347,7 @@ pub fn get_color(x: Value) -> Vec4 {
                 r = a / 255.;
             }
 
-            vec4(r, g, b, a)
+            vec4(r as f32, g as f32, b as f32, a as f32)
         }
         _ => vec4(1., 1., 1., 1.),
     }

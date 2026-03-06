@@ -1,12 +1,8 @@
+#[cfg(feature = "audio")]
+use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager,
-    error_window,
-    global::GuiParams,
-    gui::ScreenIndex,
-    lua_define::MainPacket,
-    render,
-    sound::{self, SoundCommand},
-    texture::TexManager,
+    bundle::BundleManager, error_window, global::GuiParams, gui::ScreenIndex,
+    lua_define::MainPacket, render, texture::TexManager,
 };
 use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
 use crate::{gui::Gui, log::LogType};
@@ -15,8 +11,11 @@ use glam::{vec2, vec3, Mat4};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
-use std::{mem, rc::Rc, sync::mpsc::channel};
+use std::sync::mpsc::channel;
+use std::sync::Arc;
+use std::{mem, rc::Rc};
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
+use wgpu::{BackendOptions, Features, SurfaceTarget};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
     event::*,
@@ -27,7 +26,7 @@ use winit::{
 
 const MAX_ENTS: u64 = 10000;
 
-pub struct Gfx {
+pub struct Gfx<'w> {
     pub uniform_buf: Buffer,
     pub uniform_alignment: u64,
     pub entity_bind_group: BindGroup,
@@ -35,11 +34,11 @@ pub struct Gfx {
     pub main_bind_group: BindGroup,
     pub master_texture: Texture,
     pub post: Post,
-    pub win_ref: Rc<Window>,
+    pub win_ref: Arc<Window>,
     pub main_layout: wgpu::BindGroupLayout,
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
-    pub surface: wgpu::Surface,
+    pub surface: wgpu::Surface<'w>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -96,31 +95,36 @@ fn create_depth_texture(
     (depth_texture, view, sampler)
 }
 
-impl Gfx {
+impl<'w> Gfx<'w> {
     pub async fn new(
-        rwindow: Rc<Window>,
+        rwindow: Arc<Window>,
         tex_manager: &TexManager,
     ) -> (Self, RenderPipeline, RenderPipeline) {
         // crate::texture::save_audio_buffer(&vec![255u8; 1024]);
-        let window = &*rwindow;
-        let size = window.inner_size();
+        // let b=Box::new(*rwindow);
+        // let window = &*rwindow;
+        // let ww= SurfaceTarget::Window(Box::new(*rwindow));
+        let size = rwindow.inner_size();
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             // label: Some("instance"),
             backends: wgpu::Backends::all(),
-            dx12_shader_compiler: wgpu::Dx12Compiler::default(),
+            backend_options: BackendOptions::from_env_or_default(),
+            // dx12_shader_compiler: wgpu::Dx12Compiler::default(),
+            // gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
+            flags: wgpu::InstanceFlags::empty(), // TODO is it worth discarding debug info
         });
+        // let arc_window = std::sync::Arc::new(window);
+        // arc_window.inn
 
         // wgpu::Backends::all());
-        let surface = unsafe {
-            match instance.create_surface(window) {
-                Ok(surface) => surface,
-                Err(e) => {
-                    error_window(Box::new(e));
-                    std::process::exit(1);
-                }
+        let surface = match instance.create_surface(rwindow.clone()) {
+            Ok(surface) => surface,
+            Err(e) => {
+                error_window(Box::new(e));
+                std::process::exit(1);
             }
         };
         let adapter = instance
@@ -136,11 +140,12 @@ impl Gfx {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits {
+                    required_features: Features::empty(),
+                    required_limits: wgpu::Limits {
                         max_storage_textures_per_shader_stage: 8,
                         ..wgpu::Limits::default()
                     },
+                    memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
                 },
                 None,
             )
@@ -167,10 +172,13 @@ impl Gfx {
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            desired_maximum_frame_latency: 1,
             format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::Immediate,
+            // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
+            // lost? can we check if immediate is better?
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: CompositeAlphaMode::Opaque,
             view_formats: vec![],
         };
@@ -323,11 +331,13 @@ impl Gfx {
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None, // TODO will this save us startup time?
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 //targets:&[wgpu::],
                 buffers: &[
                     crate::model::Vertex::desc(),
@@ -337,7 +347,8 @@ impl Gfx {
 
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                compilation_options: Default::default(),
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     // blend: Some(wgpu::BlendState {
@@ -417,17 +428,20 @@ impl Gfx {
         });
 
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
             label: Some("Gui Pipeline"),
             layout: Some(&gui_pipeline_layout),
             vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
                 module: &shader,
-                entry_point: "gui_vs_main",
+                entry_point: Some("gui_vs_main"),
                 buffers: &[], //&vertex_buffers, //,
             },
 
             fragment: Some(wgpu::FragmentState {
+                compilation_options: Default::default(),
                 module: &shader,
-                entry_point: "gui_fs_main",
+                entry_point: Some("gui_fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -471,16 +485,19 @@ impl Gfx {
         });
 
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
             label: Some("Sky Pipeline"),
             layout: Some(&sky_pipeline_layout),
             vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
                 module: &shader,
-                entry_point: "sky_vs_main",
+                entry_point: Some("sky_vs_main"),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
+                compilation_options: Default::default(),
                 module: &shader,
-                entry_point: "sky_fs_main",
+                entry_point: Some("sky_fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -605,7 +622,7 @@ impl Gfx {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        self.win_ref.set_inner_size(LogicalSize::new(
+        let _=self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))

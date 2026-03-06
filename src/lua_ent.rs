@@ -1,9 +1,13 @@
+use std::borrow::Borrow;
+
 #[cfg(feature = "puc_lua")]
 use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
-use piccolo::{Function, UserDataFields, UserDataMethods, Value::Nil, Value::UserData};
+use piccolo::{Function, Value::Nil, Value::UserData};
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{Lua, MetaMethod, UserData, Value};
+use silt_lua::userdata::{UserData, UserDataFields, UserDataMethods};
+use silt_lua::value::Value;
+use silt_lua::LuaError;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 pub struct LuaEnt {
@@ -38,107 +42,136 @@ pub mod lua_ent_flags {
     pub const DEAD: u8 = 0b100;
 }
 
-#[cfg(feature = "silt")]
-impl UserData<'_> for LuaEnt {
-    fn by_meta_method<'a>(
-        &mut self,
-        lua: &mut Lua,
-        method: MetaMethod,
-        inputs: Value<'a>,
-    ) -> Result<Value<'a>> {
-        match method {
-            MetaMethod::ToString => Ok(Value::String(format!(
-                "[entity {}]",
-                inputs.get::<LuaEnt>()?.get_id()
-            ))),
-            _ => Ok(Value::Nil),
+// #[cfg(feature = "silt")]
+// impl UserData for LuaEnt {
+//     fn by_meta_method<'a>(
+//         &mut self,
+//         lua: &mut Lua,
+//         method: MetaMethod,
+//         inputs: Value<'a>,
+//     ) -> Result<Value<'a>> {
+//         match method {
+//             MetaMethod::ToString => Ok(Value::String(format!(
+//                 "[entity {}]",
+//                 inputs.get::<LuaEnt>()?.get_id()
+//             ))),
+//             _ => Ok(Value::Nil),
+//         }
+//     }
+// }
+
+macro_rules! safe_unwrap {
+    ($ud:ident) => {
+        if let Some(ud) = $ud {
+            ud
+        } else {
+            return Err(LuaError::UDBadCast);
         }
-    }
+    };
 }
-#[cfg(feature = "puc_lua")]
+// #[cfg(feature = "puc_lua")]
 impl UserData for LuaEnt {
+    // fn to_string(&self) -> String {
+    //     let t = String::from("ent");
+    //     return t;
+    // }
+    fn type_name() -> &'static str {
+        "ent"
+    }
+    fn get_id(&self) -> usize {
+        0
+    }
+
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_method("__tostring", |_, this, _: ()| {
+        methods.add_meta_method("__tostring", |_, _, this_res, _: ()| {
+            let this = safe_unwrap!(this_res);
             Ok(format!("[entity {}]", this.get_id()))
         });
-        methods.add_meta_method("__concat", |_, this, _: ()| {
+        methods.add_meta_method("__concat", |_, _, this_res, _: ()| {
+            let this = safe_unwrap!(this_res);
             Ok(format!("[entity {}]", this.get_id()))
         });
-        methods.add_method_mut("pos", |_, this, p: (f64, f64, f64)| {
+        methods.add_method_mut("pos", |_, _, this_res, p: (f64, f64, f64)| {
+            let this = safe_unwrap!(this_res);
             this.x = p.0;
             this.y = p.1;
             this.z = p.2;
 
-            Ok(())
+            Ok(Value::Nil)
         });
 
-        methods.add_method_mut("anim", |_, this, (tex, force): (String, Option<bool>)| {
-            if tex != this.tex || force.unwrap_or(false) {
+        methods.add_method_mut("anim", |_, _, this_res, (tex, force): (String, bool)| {
+            let this = safe_unwrap!(this_res);
+            if tex != this.tex || force {
                 this.dirty = true;
                 this.tex = tex;
             }
             this.anim = true;
 
-            Ok(true)
+            Ok(Value::Bool(true))
         });
 
-        methods.add_method_mut("copy", |lua, this, ()| {
+        methods.add_method_mut("copy", |lua, mc, this_res, _: ()| {
+            let this = safe_unwrap!(this_res);
             let ent = this.clone();
-            let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
-            if let Ok(fun) = lua.globals().get::<&str, Function>("_make") {
-                fun.call(wrapped.clone())?;
+            // let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
+            let wrapped = lua.create_userdata(mc, ent);
+            let arr = vec![wrapped.clone()];
+            if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get("_make") {
+                v.f.call(lua, mc, &arr);
             }
+
+            // if let Ok(fun) = lua.globals).get::<&str, Function>("_make") {
+            //     fun.call(wrapped.clone())?;
+            // }
+            //
 
             Ok(wrapped)
         });
 
-        methods.add_method_mut("kill", |_, this, ()| {
-            this.kill();
-            Ok(Nil)
-        });
+        methods.add_method_mut("kill", |_, _, this, ()| Ok(this.unwrap().kill()));
     }
 
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("x", |_, this| Ok(this.x));
-        fields.add_field_method_set("x", |_, this, x: f64| Ok(this.x = x));
+        fields.add_field_method_get("x", |_, _, this| this.x);
+        fields.add_field_method_set("x", |_, _, this: &mut Self, x: f64| this.x = x);
 
-        fields.add_field_method_get("y", |_, this| Ok(this.y));
-        fields.add_field_method_set("y", |_, this, y: f64| Ok(this.y = y));
+        fields.add_field_method_get("y", |_, _, this| this.y);
+        fields.add_field_method_set("y", |_, _, this, y: f64| this.y = y);
 
-        fields.add_field_method_get("z", |_, this| Ok(this.z));
-        fields.add_field_method_set("z", |_, this, z: f64| Ok(this.z = z));
+        fields.add_field_method_get("z", |_, _, this| this.z);
+        fields.add_field_method_set("z", |_, _, this, z: f64| this.z = z);
 
-        fields.add_field_method_get("rx", |_, this| Ok(this.rot_x));
-        fields.add_field_method_get("ry", |_, this| Ok(this.rot_y));
-        fields.add_field_method_get("rz", |_, this| Ok(this.rot_z));
+        fields.add_field_method_get("rx", |_, _, this| (this.rot_x));
+        fields.add_field_method_get("ry", |_, _, this| (this.rot_y));
+        fields.add_field_method_get("rz", |_, _, this| (this.rot_z));
 
-        fields.add_field_method_set("rz", |_, this, rot_z: f64| Ok(this.rot_z = rot_z));
-        fields.add_field_method_set("ry", |_, this, rot_y: f64| Ok(this.rot_y = rot_y));
-        fields.add_field_method_set("rx", |_, this, rot_x: f64| Ok(this.rot_x = rot_x));
+        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| (this.rot_z = rot_z));
+        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| (this.rot_y = rot_y));
+        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| (this.rot_x = rot_x));
 
-        fields.add_field_method_get("vx", |_, this| Ok(this.vx));
-        fields.add_field_method_set("vx", |_, this, vx: f64| Ok(this.vx = vx));
-        fields.add_field_method_get("vy", |_, this| Ok(this.vy));
-        fields.add_field_method_set("vy", |_, this, vy: f64| Ok(this.vy = vy));
-        fields.add_field_method_get("vz", |_, this| Ok(this.vz));
-        fields.add_field_method_set("vz", |_, this, vz: f64| Ok(this.vz = vz));
+        fields.add_field_method_get("vx", |_, _, this| (this.vx));
+        fields.add_field_method_set("vx", |_, _, this, vx: f64| (this.vx = vx));
+        fields.add_field_method_get("vy", |_, _, this| (this.vy));
+        fields.add_field_method_set("vy", |_, _, this, vy: f64| (this.vy = vy));
+        fields.add_field_method_get("vz", |_, _, this| (this.vz));
+        fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
-        fields.add_field_method_get("flipped", |_, this| Ok(this.flipped));
-        fields.add_field_method_set("flipped", |_, this, flipped: bool| {
-            // println!("flipped it {}", flipped);
-            Ok(this.flipped = flipped)
+        fields.add_field_method_get("flipped", |_, _, this| this.flipped);
+        fields.add_field_method_set("flipped", |_, _, this, flipped: bool| {
+            this.flipped = flipped
         });
 
-        fields.add_field_method_get("offset", |_, this| Ok(this.offset));
-        fields.add_field_method_set("offset", |_, this, offset: [f64; 3]| {
+        fields.add_field_method_get("offset", |_, _, this| Ok(this.offset));
+        fields.add_field_method_set("offset", |_, _, this, offset: [f64; 3]| {
             Ok(this.offset = offset)
         });
 
-        fields.add_field_method_set("scale", |_, this, scale: f64| Ok(this.scale = scale));
+        fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
-        fields.add_field_method_get("id", |_, this| Ok(this.id));
-        fields.add_field_method_get("tex", |_, this| Ok(this.tex.clone()));
-        fields.add_field_method_set("tex", |_, this, tex: String| {
+        fields.add_field_method_get("id", |_, _, this| Ok(this.id));
+        fields.add_field_method_get("tex", |_, _, this| Ok(this.tex.clone()));
+        fields.add_field_method_set("tex", |_, _, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
                 this.dirty = true;
@@ -150,8 +183,8 @@ impl UserData for LuaEnt {
             }
             Ok(())
         });
-        fields.add_field_method_get("asset", |_, this| Ok(this.asset.clone()));
-        fields.add_field_method_set("asset", |_, this, asset: String| {
+        fields.add_field_method_get("asset", |_, _, this| Ok(this.asset.clone()));
+        fields.add_field_method_set("asset", |_, _, this, asset: String| {
             if this.asset != asset {
                 this.asset = asset;
                 this.flags |= lua_ent_flags::ASSET;

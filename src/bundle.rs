@@ -1,15 +1,19 @@
-use std::{cell::RefCell, rc::Rc, sync::mpsc::Receiver};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+};
 
-use image::RgbaImage;
+use image::{RgbaImage};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
+use silt_lua::userdata::WeakWrapper;
 
-#[cfg(feature = "headed")]
-use crate::root::Core;
-// use crate::texture::TexManager;
+// #[cfg(feature = "headed")]
+// use crate::root::Core;
 use crate::{
     gui::PreGuiMorsel,
-    lua_define::{LuaCore, LuaHandle, MainPacket},
+    lua_define::{LuaCore, LuaHandle},
+    pool::SharedPool,
     types::ControlState,
 };
 
@@ -29,6 +33,7 @@ pub struct Bundle {
     /** How many frames do we want to intentionally skip to bring our fps down? Not great */
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
+    pub pool: Option<SharedPool>,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -46,6 +51,7 @@ impl Bundle {
             skipped_control_state: None,
             frame_split: 1,
             lua_ctx_handle: None,
+            pool: None,
         }
     }
 
@@ -77,7 +83,7 @@ pub struct BundleManager {
     pub bundles: FxHashMap<u8, Bundle>,
     // #[cfg(feature = "headed")]
     // pub open_tex_managers: Vec<TexManager>,
-    pub open_lua_box: Vec<LuaCore>,
+    // pub open_lua_box: Vec<LuaCore>,
     pub call_order: Vec<u8>,
     main_rasters: Vec<Rc<RefCell<RgbaImage>>>,
     sky_rasters: Vec<Rc<RefCell<RgbaImage>>>,
@@ -91,7 +97,7 @@ impl BundleManager {
             bundles: FxHashMap::default(),
             // #[cfg(feature = "headed")]
             // open_tex_managers: Vec::new(),
-            open_lua_box: Vec::new(),
+            // open_lua_box: Vec::new(),
             call_order: Vec::new(),
             main_rasters: Vec::new(),
             sky_rasters: Vec::new(),
@@ -329,6 +335,25 @@ impl BundleManager {
         }
     }
 
+    pub fn get(&self, index: u8) -> Option<&Bundle> {
+        self.bundles.get(&index)
+    }
+
+    pub fn set_img_refs(&mut self, bundle_id: u8, main_ref: WeakWrapper, sky_ref: WeakWrapper) {
+        if let Some(bundle) = self.bundles.get_mut(&bundle_id) {
+            if let Some(pool) = &mut bundle.pool {
+                pool.set_img_refs(main_ref, sky_ref);
+            }
+        }
+    }
+
+    pub fn get_pool(&self, index: u8) -> Option<&SharedPool> {
+        match self.bundles.get(&index) {
+            Some(bundle) => bundle.pool.as_ref(),
+            None => None,
+        }
+    }
+
     pub fn hard_reset(&mut self) {
         for (id, bundle) in self.bundles.drain() {
             bundle.shutdown();
@@ -365,4 +390,17 @@ fn combine_states(mut old: ControlState, bits: ControlState) -> ControlState {
     // old.1[7] += bits.1[7];
 
     old
+}
+
+pub struct BundleMutations {
+    pub gui: bool,
+    pub sky: bool,
+}
+impl BundleMutations {
+    pub fn new() -> Self {
+        Self {
+            gui: true,
+            sky: true,
+        }
+    }
 }

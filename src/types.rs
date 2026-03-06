@@ -1,8 +1,15 @@
 #[cfg(feature = "silt")]
-use silt_lua::prelude::{LuaError, Table};
+use silt_lua::{
+    gc_arena::Mutation,
+    prelude::{LuaError, Table},
+    VM,
+};
 
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Table};
+
+#[cfg(feature = "picc")]
+use piccolo::{Context, InvalidTableKey, Table};
 
 pub enum ValueMap {
     String(String),
@@ -31,10 +38,42 @@ impl GlobalMap {
             resolution: res,
         }
     }
+
+    #[cfg(feature = "picc")]
+    pub fn convert<'gc>(
+        &self,
+        ctx: &Context<'gc>,
+        table: &mut Table<'gc>,
+    ) -> Result<(), InvalidTableKey> {
+        let c = *ctx;
+        table.set(c, "os", self.os)?;
+        table.set(c, "hz", self.hertz)?;
+        table.set(c, "res", [self.resolution.0, self.resolution.1])?;
+        Ok(())
+    }
+
+    #[cfg(feature = "puc_lua")]
     pub fn convert(&self, table: &mut Table) -> Result<(), LuaError> {
         table.set("os", self.os)?;
         table.set("hz", self.hertz)?;
         table.set("res", [self.resolution.0, self.resolution.1])?;
         Ok(())
     }
+
+    #[cfg(feature = "silt")]
+    pub fn convert<'gc>(&self, vm: &mut VM<'gc>, mc: &Mutation<'gc>, table: &mut Table<'gc>) {
+        table.set("os", self.os);
+        table.set("hz", self.hertz);
+
+        let mut res_tbl = vm.raw_table();
+        res_tbl.set(0, self.resolution.0);
+        res_tbl.set(1, self.resolution.1);
+        table.set("res", vm.wrap_table(mc, res_tbl));
+    }
+}
+
+
+pub struct Script{
+    pub name: String,
+    pub content: String,
 }
