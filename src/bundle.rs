@@ -1,22 +1,18 @@
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::{mpsc::Receiver, Arc},
 };
 
-use atomicell::AtomicCell;
-use image::{Rgb, RgbaImage};
+use image::{RgbaImage};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::WeakWrapper;
 
-#[cfg(feature = "headed")]
-use crate::root::Core;
-// use crate::texture::TexManager;
+// #[cfg(feature = "headed")]
+// use crate::root::Core;
 use crate::{
-    ent::Ent,
     gui::PreGuiMorsel,
-    lua_define::{LuaCore, LuaHandle, MainPacket},
+    lua_define::{LuaCore, LuaHandle},
     pool::SharedPool,
     types::ControlState,
 };
@@ -137,7 +133,6 @@ impl BundleManager {
                                 bundle.call_loop(bits);
                             }
                         }
-                        bundle.call_loop(bits);
                         true
                     } else {
                         false
