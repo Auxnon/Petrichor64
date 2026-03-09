@@ -308,6 +308,7 @@ pub fn start() {
         let mut updated_bundles = FxHashMap::default();
 
         event_loop.run(move |event, elwt| {
+            elwt.set_control_flow(ControlFlow::Poll);
             // core.loop_helper.loop_start();
             if !core.global.console {
                 controls::bit_check(&event, &mut bits);
@@ -344,10 +345,6 @@ pub fn start() {
                 } => match event {
                     WindowEvent::RedrawRequested => {
                         core.loop_helper.loop_start(); //
-                                                       // #[cfg(not(target_arch = "wasm32"))]
-
-                        // TODO
-                        // rwin.request_redraw();
 
                         state_change_check(&mut core, elwt, &mut rwin);
                         // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
@@ -359,15 +356,17 @@ pub fn start() {
 
                         match core.render(&instance_buffers) {
                             Ok(_) => {}
-                            // Reconfigure the surface if lost
-                            // Err(wgpu::SurfaceError::Lost) => core.resize(core.size),
+                            // Reconfigure the surface if it is lost or outdated
+                            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
+                                core.resize(core.gfx.size);
+                            }
                             // The system is out of memory, we should probably quit
-                            // Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                            // All other errors (Outdated, Timeout) should be resolved by the next frame
-                            // Err(e) => eprintln!("{:?}", e),
-                            _ => {}
+                            Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
+                            // All other errors (Timeout) should be resolved by the next frame
+                            Err(e) => eprintln!("{:?}", e),
                         };
 
+                        rwin.request_redraw();
                         core.loop_helper.loop_sleep();
                     }
                     WindowEvent::Resized(physical_size) => {

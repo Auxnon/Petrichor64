@@ -163,9 +163,9 @@ pub fn render_loop(
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Clear(Color {
-                        r: 0.,
+                        r: 0.5,
                         g: 0.,
-                        b: 0.,
+                        b: 0.5,
                         a: 1.,
                     }),
                     store: StoreOp::Store,

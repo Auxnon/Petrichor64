@@ -133,7 +133,6 @@ impl BundleManager {
                                 bundle.call_loop(bits);
                             }
                         }
-                        bundle.call_loop(bits);
                         true
                     } else {
                         false
