@@ -131,17 +131,26 @@ pub async fn unpack(
     let mut archive = match crate::file_util::get_archive(file, loggy).await {
         Ok(a) => a,
         Err(e) => {
-            loggy.log(LogType::ConfigError, &format!("couldn't retrieve archive {} -> {}", name,e));
+            loggy.log(
+                LogType::ConfigError,
+                &format!("couldn't retrieve archive {} -> {}", name, e),
+            );
             return;
         }
     };
-    let map = match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy).await{
-        Ok(a) => a,
-        Err(e) => {
-            loggy.log(LogType::ConfigError, &format!("failed to unpack {} -> {}", name,e));
-            return;
-        }
-    };
+    let map =
+        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy)
+            .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                loggy.log(
+                    LogType::ConfigError,
+                    &format!("failed to unpack {} -> {}", name, e),
+                );
+                return;
+            }
+        };
 
     let mut sources: SourceMap = HashMap::new();
     #[cfg(feature = "headed")]
@@ -211,7 +220,7 @@ pub async fn unpack(
                                 &format!("loading script {}", file_name), //buffer.to_string()),
                             );
                         }
-                        handle_script(file_name.to_string(),&mut bufreader, lua_master);
+                        handle_script(file_name.to_string(), &mut bufreader, lua_master);
                     } else {
                         if debug {
                             loggy.log(
@@ -227,7 +236,7 @@ pub async fn unpack(
     }
 }
 
-fn handle_script<F>(name:String, buffer: &mut BufReader<F>, lua_master: &LuaCore) -> [u16; 3]
+fn handle_script<F>(name: String, buffer: &mut BufReader<F>, lua_master: &LuaCore) -> [u16; 3]
 where
     F: Read + Send,
 {
@@ -309,7 +318,9 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
     if p.exists() {
         if let Ok(file) = fs::File::open(p) {
             let mut buffer = std::io::BufReader::new(file);
-            lua.load(".petrichor64/config.lua".to_owned(),&mut buffer);
+            if let Err(e) = lua.load(".petrichor64/config.lua".to_owned(), &mut buffer) {
+                loggy.log(LogType::LuaError, &format!("{}", e));
+            }
 
             globals.debug = eval_bool(lua.func("dev"));
             if let Ok(LuaResponse::Table(t)) = lua.func("alias") {
@@ -328,11 +339,11 @@ pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> O
                 result = Some(s);
             }
             if globals.debug {
-                loggy.log(LogType::Config, &"dev is enabled");
+                loggy.log(LogType::Config, "dev is enabled");
             }
         };
     }
-    return result;
+    result
 }
 
 fn eval_bool<T>(res: Result<LuaResponse, T>) -> bool {
@@ -353,7 +364,7 @@ pub fn is_valid_type(s: &str) -> bool {
 }
 
 pub fn check_for_auto() -> Option<String> {
-    let mut p;
+    let p;
     #[cfg(target_os = "macos")]
     {
         // if it's built it's 2 levels up, if it's bundled it's 4 levels up
@@ -413,18 +424,14 @@ pub fn determine_path(directory: Option<&str>) -> PathBuf {
     let current = PathBuf::from(".");
 
     match directory {
-        Some(s) => {
-            let new_dir = current.join(s);
-
-            new_dir
-        }
+        Some(s) => current.join(s),
         None => current,
     }
 }
 
 pub fn make_directory(
     directory: &str,
-    command_map: &HashMap<String, (String, String)>,
+    command_map: Option<&HashMap<String, (String, String)>>,
     loggy: &mut Loggy,
 ) {
     let root = determine_path(Some(directory));
@@ -480,7 +487,9 @@ end",
     )
     .unwrap();
 
-    fs::write(scripts.join("ignore.lua"), make_codex_file(command_map));
+    if let Some(mapper) = command_map {
+        fs::write(scripts.join("ignore.lua"), make_codex_file(mapper));
+    }
 
     simple_square(16, assets.join("example.png"), loggy);
     simple_square(16, root.join("icon.png"), loggy);
@@ -637,7 +646,11 @@ pub fn walk_files<'a>(
                         // println!("script item is {}", st);
 
                         if activate {
-                            let ver = handle_script(file_name.to_owned(),&mut buffered_reader, lua_master);
+                            let ver = handle_script(
+                                file_name.to_owned(),
+                                &mut buffered_reader,
+                                lua_master,
+                            );
                             if ver[0] > version[0] || ver[1] > version[1] || ver[2] > version[2] {
                                 version = ver;
                             }

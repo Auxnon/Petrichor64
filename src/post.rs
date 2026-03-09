@@ -1,8 +1,6 @@
 use wgpu::{BindGroup, Buffer};
 use winit::dpi::PhysicalSize;
 
-const RENDER_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
 pub struct Post {
     pub post_bind_group: BindGroup,
     pub post_pipeline: wgpu::RenderPipeline,
@@ -10,6 +8,7 @@ pub struct Post {
     post_sampler: wgpu::Sampler,
     // uniform_buf: Buffer,
     pub post_texture: wgpu::Texture,
+    pub format: wgpu::TextureFormat,
 }
 
 pub struct ScreenBinds {
@@ -51,7 +50,7 @@ impl Post {
         uniform_buf: &Buffer,
     ) -> Post {
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(&device, (config.width, config.height));
+            crate::texture::render_sampler(&device, (config.width, config.height), config.format);
 
         let (post_pipeline, post_bind_group_layout) = {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -140,6 +139,7 @@ impl Post {
 
             post_texture,
             post_sampler,
+            format: config.format,
         }
     }
 
@@ -151,7 +151,7 @@ impl Post {
         main_group_layout: &wgpu::BindGroupLayout,
     ) {
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(device, (size.width, size.height));
+            crate::texture::render_sampler(device, (size.width, size.height), self.format);
 
         self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post bind group"),
