@@ -540,9 +540,9 @@ pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
     }
 }
 
-pub fn render_sampler(device: &wgpu::Device, size: (u32, u32)) -> (TextureView, Sampler, Texture) {
+pub fn render_sampler(device: &wgpu::Device, size: (u32, u32), format: wgpu::TextureFormat) -> (TextureView, Sampler, Texture) {
     let img: RgbaImage = ImageBuffer::new(size.0, size.1);
-    make_render_tex(device, &img)
+    make_render_tex(device, &img, format)
 }
 
 fn get_name(str: &str, from_unpack: bool) -> (String, u32) {
@@ -684,7 +684,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
     }
 }
 
-pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, Sampler, Texture) {
+pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage, format: wgpu::TextureFormat) -> (TextureView, Sampler, Texture) {
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
         width: dimensions.0,
@@ -700,7 +700,7 @@ pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage) -> (TextureView, 
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         // Most images are stored using sRGB so we need to reflect that here.
-        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        format,
         // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
         // COPY_DST means that we want to copy data to this texture
         usage: wgpu::TextureUsages::TEXTURE_BINDING

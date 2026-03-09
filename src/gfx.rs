@@ -170,10 +170,19 @@ impl<'w> Gfx<'w> {
             texture: diff_tex,
         } = tex_manager.finalize(&device, &queue);
 
+        let surface_caps = surface.get_capabilities(&adapter);
+        // Prefer sRGB surface formats; fall back to first available
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             desired_maximum_frame_latency: 1,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
+            format: surface_format,
             width: size.width,
             height: size.height,
             // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
