@@ -21,7 +21,7 @@ pub enum P64Error {
     LuaGenericError,
     MissingAssets,
     MissingScripts,
-    ChannelTimeoutError,
+    ChannelTimeoutError(u8),
     ChannelDisconnectedError,
 }
 
@@ -41,7 +41,7 @@ impl Display for P64Error {
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
             P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
             P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
-            P64Error::ChannelTimeoutError => write!(f, "Lua channel timed out"),
+            P64Error::ChannelTimeoutError(i) => write!(f, "Lua channel ({i}) timed out"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
             P64Error::LuaRunError(err) => {

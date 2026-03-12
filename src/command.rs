@@ -108,7 +108,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             core.loggy.log(
                 LogType::Config,
-                &format!("killing lua instance {}", bundle_id),
+                &format!("killing lua instance {bundle_id}" ),
             );
             main_bundle.lua.die();
         }
@@ -231,7 +231,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 }
                 Err(er) => {
                     core.loggy
-                        .log(LogType::ConfigError, &format!("read error: {}", er));
+                        .log(LogType::ConfigError, &format!("read error: {er}" ));
                 }
             }
         }

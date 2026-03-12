@@ -153,7 +153,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
             }
         } else {
             let t = input_helper.text();
-            if t.len() > 0 {
+            if !t.is_empty(){
                 // let neg = 0;
                 // let emp: char;
 
