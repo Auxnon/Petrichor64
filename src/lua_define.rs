@@ -666,7 +666,7 @@ impl<'lt> LuaCore {
         self.to_lua_tx.send(LuaTalk::Func(func.to_string(), tx));
         match rx.recv_timeout(Duration::from_millis(4000)) {
             Ok(lua_out) => Ok(lua_out),
-            Err(_) => Err(P64Error::ChannelTimeoutError), // TODO it could be either Timeout or
+            Err(_) => Err(P64Error::ChannelTimeoutError(1)), // TODO it could be either Timeout or
                                                           // Disconnected, is it worth
                                                           // distinguishing?
         }
@@ -728,7 +728,7 @@ impl<'lt> LuaCore {
         {
             Ok(_) => match rx.recv_timeout(Duration::from_millis(10000)) {
                 Ok(lua_out) => Ok(lua_out),
-                Err(_) => Err(P64Error::ChannelTimeoutError),
+                Err(_) => Err(P64Error::ChannelTimeoutError(0)),
             },
             Err(_) => Err(P64Error::ChannelDisconnectedError),
         }
