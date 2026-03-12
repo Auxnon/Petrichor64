@@ -171,6 +171,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
                         //         core.loggy.add(String::from(*c))
                         //     } //st.push(*c),
                         // },
+                        Key::Named(NamedKey::Space)=>{core.loggy.add(" ")}
                         Key::Named(NamedKey::Backspace) => {
                             // winit_input_helper::TextChar::Back => {
                             #[cfg(target_os = "windows")]
