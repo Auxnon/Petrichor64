@@ -64,6 +64,7 @@ impl Loggy {
         // let mut s = str.lines().map(|l| l.to_string()).collect::<Vec<String>>();
         // let last=s.last();
         // s.truncate(s.len()-1);
+        println!("#{str}#");
 
         self.current_line.push_str(str);
 

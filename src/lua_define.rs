@@ -516,35 +516,14 @@ impl<'lt> LuaCore {
                                 ];
                                 drop(mm);
 
-                                // Check if the gui or sky raster has been modified
-                                let mut mutations = BundleMutations::new();
-                                mutations.gui = false;
-                                mutations.sky = false;
-
-                                // let globals = vm.globals.borrow();
-                                // if let Some(gui_val) = globals.get("gui") {
-                                //     gui_val.apply_userdata_mut(mc,|img: &mut LuaImg| {
-                                //         if img.dirty {
-                                //             img.dirty = false;
-                                //             mutations.gui = true;
-                                //             // Set dirty flag in shared pool
-                                //             shared.gui_dirty.replace(true);
-                                //         }
-                                //         Ok(())
-                                //     });
-                                // }
-                                // if let Some(sky_val) = globals.get("sky") {
-                                //     sky_val.apply_userdata_mut(mc,|img: &mut LuaImg| {
-                                //         if img.dirty {
-                                //             img.dirty = false;
-                                //             mutations.sky = true;
-                                //             // Set dirty flag in shared pool
-                                //             shared.sky_dirty.replace(true);
-                                //         }
-                                //         Ok(())
-                                //     });
-                                // }
-                                // drop(globals);
+                                // Check if the gui or sky raster has been modified.
+                                // BundleMutations defaults gui/sky to true so that mark_dirty
+                                // is always called after a loop, uploading the latest LuaImg
+                                // content to the GPU textures every frame. A more fine-grained
+                                // dirty optimisation can be restored later via pool.gui_dirty /
+                                // pool.sky_dirty once the silt-lua apply_userdata_mut path is
+                                // re-implemented (see PLAN.md §5).
+                                let mutations = BundleMutations::new();
 
 
                                 async_sender

@@ -98,6 +98,7 @@ static com_list: [&str; 20] = [
 pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let main_bundle = core.bundle_manager.get_main_bundle();
+    println!(" ({s})");
     if s.is_empty() {
         return Ok(false);
     }
@@ -236,7 +237,11 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             }
         }
         "ugh" => {
+            if segments.len()>1{
+            core.loggy.log(LogType::Sys, &format!("heh, ya {}",segments[1]));
+            }else{
             core.loggy.log(LogType::Sys, "heh, ya");
+            }
         }
         "clear" => core.loggy.clear(),
         "cls" => core.loggy.clear(),
@@ -251,11 +256,14 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             }
         }
         "new" => {
+                println!("here");
             if segments.len() > 1 {
                 let name = segments[1];
 
+                println!("new in");
                 let tout = main_bundle.lua.func("help(true)");
                 if let Ok(LuaResponse::Table(t)) = tout {
+                println!("ok in");
                     let mut mapper = HashMap::new();
                     for (k, c) in t.into_iter() {
                         let d: String = k.into();
@@ -764,6 +772,7 @@ function abtn(button) end"
             Option<f64>,
             Option<f64>
         )| {
+                  print!("we called make!");
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 

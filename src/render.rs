@@ -186,7 +186,7 @@ pub fn render_loop(
         {
             render_pass.set_pipeline(&core.gui.sky_pipeline);
             render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
-            render_pass.draw(0..4, 0..4);
+            render_pass.draw(0..4, 0..1);
         }
 
         //world space
@@ -230,12 +230,7 @@ pub fn render_loop(
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
 
-            render_pass.draw(0..4, 0..4);
-
-            // frame!("render pass");
-            //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-            //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-            //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            render_pass.draw(0..4, 0..1);
         }
     }
     // drop(render_pass);
@@ -279,8 +274,7 @@ pub fn render_loop(
         {
             post_pass.set_pipeline(&gfx.post.post_pipeline);
             post_pass.set_bind_group(0, &gfx.post.post_bind_group, &[]);
-            post_pass.draw(0..4, 0..4);
-            // frame!("post pass");
+            post_pass.draw(0..4, 0..1);
         }
     }
 
