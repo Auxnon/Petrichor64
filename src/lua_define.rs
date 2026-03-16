@@ -15,9 +15,7 @@ use gilrs::{Axis, Button, Event, EventType, Gilrs};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use silt_lua::{
-    gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal, 
-};
+use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal};
 // use piccolo::{
 //     compiler::{self as Compiler, interning::BasicInterner},
 //     error::{LuaError, StaticLuaError},
@@ -449,7 +447,9 @@ impl<'lt> LuaCore {
                                 }
                             }
                             LuaTalk::Main => {
-                                vm.call_fn(mc, Some("main"), main_lua_func, ());
+                                if let Err(er) = vm.call_fn(mc, Some("main"), main_lua_func, ()) {
+                                    loggy.send((LogType::LuaError, er.to_string()))?;
+                                };
 
                                 // if let Err(e) = res {
                                 //     async_sender.send((
@@ -547,10 +547,8 @@ impl<'lt> LuaCore {
                                 // drop(globals);
 
 
-                                async_sender.send((
-                                    bundle_id,
-                                    MainCommmand::LoopComplete(mutations),
-                                ))?;
+                                async_sender
+                                    .send((bundle_id, MainCommmand::LoopComplete(mutations)))?;
                                 local_pool.drop();
                             }
                             LuaTalk::Func(func, sync) => {
@@ -667,8 +665,8 @@ impl<'lt> LuaCore {
         match rx.recv_timeout(Duration::from_millis(4000)) {
             Ok(lua_out) => Ok(lua_out),
             Err(_) => Err(P64Error::ChannelTimeoutError(1)), // TODO it could be either Timeout or
-                                                          // Disconnected, is it worth
-                                                          // distinguishing?
+                                                             // Disconnected, is it worth
+                                                             // distinguishing?
         }
     }
 

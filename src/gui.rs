@@ -55,7 +55,7 @@ impl ScreenLayer {
 
                 // Try to upgrade and resize the LuaImg
                 if let Some(weak) = weak_ref {
-                    if let Some(lua_img) = weak.upgrade() {
+                    if let Some(mut lua_img) = weak.upgrade() {
                         lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
                             img.resize(size[0], size[1]);
                             Ok(())
@@ -69,15 +69,20 @@ impl ScreenLayer {
         }
         self.dirty = true;
     }
-    pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {
+    pub fn check_render(
+        &mut self,
+        bundle_manager: &mut BundleManager,
+        queue: &wgpu::Queue,
+    ) -> Result<(), LuaError> {
         if self.dirty {
             match bundle_manager.get_pool(self.bundle_target) {
                 Some(pool) => {
                     // Get the weak ref for this screen index
                     let weak_ref = match self.index {
-                        ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
-                            pool.gui.as_ref()
-                        }
+                        ScreenIndex::Primary
+                        | ScreenIndex::Secondary
+                        | ScreenIndex::Trinary
+                        | ScreenIndex::System => pool.gui.as_ref(),
                         ScreenIndex::Sky => pool.sky.as_ref(),
                     };
 
@@ -88,15 +93,19 @@ impl ScreenLayer {
                             lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
                                 // Check the appropriate dirty flag
                                 let is_dirty = match self.index {
-                                    ScreenIndex::Sky => pool.sky_dirty.load(),
-                                    _ => pool.gui_dirty.load(),
+                                    ScreenIndex::Sky => pool.sky_dirty.take(),
+                                    _ => pool.gui_dirty.take(),
                                 };
-                                
+
                                 if is_dirty {
-                                    crate::texture::write_tex(queue, &self.texture.texture, &img.image);
+                                    crate::texture::write_tex(
+                                        queue,
+                                        &self.texture.texture,
+                                        &img.image,
+                                    );
                                 }
                                 Ok(())
-                            });
+                            })?;
                         }
                     }
 
@@ -107,6 +116,7 @@ impl ScreenLayer {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -515,11 +525,21 @@ impl Gui {
         }
         self.process_notifications(false);
 
-        self.system_layer.check_render(bm, queue);
-        self.primary_layer.check_render(bm, queue);
-        self.secondary_layer.check_render(bm, queue);
-        self.trinary_layer.check_render(bm, queue);
-        self.sky_layer.check_render(bm, queue);
+        if let Err(e) = self.system_layer.check_render(bm, queue) {
+            eprintln!("sytem_layer {e}");
+        }
+        if let Err(e) = self.primary_layer.check_render(bm, queue) {
+            eprintln!("primary_layer {e}");
+        }
+        if let Err(e) = self.secondary_layer.check_render(bm, queue) {
+            eprintln!("secondary_layer {e}");
+        }
+        if let Err(e) = self.trinary_layer.check_render(bm, queue) {
+            eprintln!("trinary_layer {e}");
+        }
+        if let Err(e) = self.sky_layer.check_render(bm, queue) {
+            eprintln!("sky_layer {e}");
+        }
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
@@ -1171,7 +1191,7 @@ pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4, map
                 (mv.w * 255.).floor() as u8,
             ]);
             // println!("map {:?} to {:?}", mapper, mv);
-            imageproc::map::map_pixels_mut(target, | p| {
+            imageproc::map::map_pixels_mut(target, |p| {
                 if mapper == p {
                     color
                 } else {
