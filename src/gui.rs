@@ -69,51 +69,51 @@ impl ScreenLayer {
         }
         self.dirty = true;
     }
-    pub fn check_render(
-        &mut self,
-        bundle_manager: &mut BundleManager,
-        queue: &wgpu::Queue,
-    ) -> Result<(), LuaError> {
-        if self.dirty {
-            match bundle_manager.get_pool(self.bundle_target) {
-                Some(pool) => {
-                    // Get the weak ref for this screen index
-                    let weak_ref = match self.index {
-                        ScreenIndex::Primary
-                        | ScreenIndex::Secondary
-                        | ScreenIndex::Trinary
-                        | ScreenIndex::System => pool.gui.as_ref(),
-                        ScreenIndex::Sky => pool.sky.as_ref(),
-                    };
+    pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {
+        if !self.dirty {
+            return;
+        }
 
-                    // Try to upgrade and access the LuaImg
-                    if let Some(weak) = weak_ref {
-                        if let Some(lua_img) = weak.upgrade() {
-                            // Use downcast_mut to get access to LuaImg
-                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
-                                // Check the appropriate dirty flag
-                                let is_dirty = match self.index {
-                                    ScreenIndex::Sky => pool.sky_dirty.take(),
-                                    _ => pool.gui_dirty.take(),
-                                };
-
-                                if is_dirty {
-                                    crate::texture::write_tex(
-                                        queue,
-                                        &self.texture.texture,
-                                        &img.image,
-                                    );
-                                }
-                                Ok(())
-                            })?;
-                        }
-                    }
-
+        match self.index {
+            // System/console layer: upload directly from the Rust-owned image
+            // (written by apply_console_out_text). Does not need the pool.
+            ScreenIndex::System => {
+                // try_borrow() fails only if apply_console_out_text holds a mutable
+                // borrow concurrently, which is impossible on the main thread.
+                // If it does fail we leave dirty=true to retry on the next frame.
+                if let Some(img) = self.image.try_borrow() {
+                    crate::texture::write_tex(queue, &self.texture.texture, &*img);
                     self.dirty = false;
                 }
-                None => {
-                    println!("no pool");
+            }
+            // Lua-driven layers: upload from the shared LuaImg.
+            // No pool.gui_dirty gate — we upload whenever the layer is marked
+            // dirty and the LuaImg is available. The dirty flag is only cleared
+            // after a successful upload so that the attempt is retried if the
+            // pool or weak-ref is not yet ready.
+            _ => {
+                if let Some(pool) = bundle_manager.get_pool(self.bundle_target) {
+                    let weak_ref = match self.index {
+                        ScreenIndex::Sky => pool.sky.as_ref(),
+                        _ => pool.gui.as_ref(),
+                    };
+                    if let Some(weak) = weak_ref {
+                        if let Some(lua_img) = weak.upgrade() {
+                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
+                                crate::texture::write_tex(
+                                    queue,
+                                    &self.texture.texture,
+                                    &img.image,
+                                );
+                                Ok(())
+                            });
+                            self.dirty = false;
+                        }
+                        // LuaImg not yet available — keep dirty for retry next frame
+                    }
+                    // No weak-ref yet (before InitBack) — keep dirty for retry
                 }
+                // Pool not ready yet — keep dirty for retry
             }
         }
         Ok(())

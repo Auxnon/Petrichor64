@@ -578,6 +578,7 @@ impl Core {
                     }
                 }
                 MainCommmand::Spawn(lent) => {
+println!("make heard!");
                     self.ent_manager.create_from_lua(
                         #[cfg(feature = "headed")]
                         &self.tex_manager,
