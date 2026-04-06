@@ -15,7 +15,7 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::{mem, rc::Rc};
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
-use wgpu::{BackendOptions, Features, SurfaceTarget};
+use wgpu::{BackendOptions, ExperimentalFeatures, Features, SurfaceTarget, Trace};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
     event::*,
@@ -109,6 +109,7 @@ impl<'w> Gfx<'w> {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds { for_resource_creation: None, for_device_loss: None },
             // label: Some("instance"),
             backends: wgpu::Backends::all(),
             backend_options: BackendOptions::from_env_or_default(),
@@ -139,6 +140,8 @@ impl<'w> Gfx<'w> {
         let (device, queue) = match adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
+                    trace: Trace::Off, // TODO make this on, where should it save?
+                    experimental_features: ExperimentalFeatures::disabled(),
                     label: None,
                     required_features: Features::empty(),
                     required_limits: wgpu::Limits {
@@ -147,7 +150,6 @@ impl<'w> Gfx<'w> {
                     },
                     memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
                 },
-                None,
             )
             .await
         {
