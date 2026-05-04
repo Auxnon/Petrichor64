@@ -21,7 +21,7 @@ use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
-    window::{CursorGrabMode, Window, WindowBuilder},
+    window::{CursorGrabMode, Window},
 };
 
 const MAX_ENTS: u64 = 10000;
@@ -110,12 +110,10 @@ impl<'w> Gfx<'w> {
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds { for_resource_creation: None, for_device_loss: None },
-            // label: Some("instance"),
             backends: wgpu::Backends::all(),
             backend_options: BackendOptions::from_env_or_default(),
-            // dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            // gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
-            flags: wgpu::InstanceFlags::empty(), // TODO is it worth discarding debug info
+            flags: wgpu::InstanceFlags::empty(),
+            display: None,
         });
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
@@ -159,7 +157,7 @@ impl<'w> Gfx<'w> {
                 std::process::exit(1);
             }
         };
-        device.on_uncaptured_error(Box::new(|e| {
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
             error_window(Box::new(e));
             std::process::exit(1);
         }));
@@ -337,8 +335,8 @@ impl<'w> Gfx<'w> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&main_layout, &entity_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout)],
+                ..Default::default()
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -401,7 +399,7 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         let depth = create_depth_texture(&config, &device);
@@ -434,8 +432,8 @@ impl<'w> Gfx<'w> {
 
         let gui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Gui Render Pipeline Layout"),
-            bind_group_layouts: &[&main_layout, &gui_aux_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&main_layout), Some(&gui_aux_layout)],
+            ..Default::default()
         });
 
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
