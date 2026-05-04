@@ -5,7 +5,6 @@ use crate::{
     ent_manager::{EntManager, InstanceBuffer},
     gfx::Gfx,
     global::{Global, StateChange},
-    gui::ScreenIndex,
     lua_define::MainPacket,
     model::ModelManager,
     render::{self, DrawState},
@@ -13,12 +12,9 @@ use crate::{
     types::ValueMap,
 };
 
-use std::{
-    rc::Rc,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc,
-    },
+use std::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Arc,
 };
 
 // use tracy::frame;
@@ -57,14 +53,13 @@ pub struct Core {
 
     pub loggy: crate::log::Loggy,
 
-    pub input_manager: winit_input_helper::WinitInputHelper,
     pub instance_buffers: IB,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
-    pub async fn new(rwindow: Arc<Window>) -> Self {
+    pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
         let model_manager = ModelManager::init(&gfx.device);
@@ -103,10 +98,9 @@ impl<'core> Core {
             }
         };
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
-        let input_manager = winit_input_helper::WinitInputHelper::new();
 
-        let (pitcher, mut catcher) = channel::<MainPacket>();
-        Self {
+        let (pitcher, catcher) = channel::<MainPacket>();
+        let core = Self {
             global,
             #[cfg(feature = "audio")]
             _stream: stream_result,
@@ -114,7 +108,6 @@ impl<'core> Core {
             singer,
             world,
             pitcher,
-            catcher,
             gui,
             loop_helper,
             tex_manager,
@@ -122,14 +115,14 @@ impl<'core> Core {
             ent_manager,
             bundle_manager: BundleManager::new(),
             loggy,
-            input_manager,
             gfx,
             completed_bundles: FxHashMap::default(),
             #[cfg(feature = "headed")]
             instance_buffers: vec![],
             #[cfg(not(feature = "headed"))]
             instance_buffers: (),
-        }
+        };
+        (core, catcher)
     }
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
