@@ -5,7 +5,7 @@ use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use crossbeam::epoch::Pointable;
-use winit::event::MouseButton;
+use winit::event::{ElementState, MouseButton};
 use winit::event_loop::EventLoopWindowTarget;
 use winit::keyboard::{NamedKey, PhysicalKey};
 use winit::{
@@ -153,7 +153,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
             }
         } else {
             let t = input_helper.text();
-            if !t.is_empty(){
+            if !t.is_empty() {
                 // let neg = 0;
                 // let emp: char;
 
@@ -171,7 +171,7 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
                         //         core.loggy.add(String::from(*c))
                         //     } //st.push(*c),
                         // },
-                        Key::Named(NamedKey::Space)=>{core.loggy.add(" ")}
+                        Key::Named(NamedKey::Space) => core.loggy.add(" "),
                         Key::Named(NamedKey::Backspace) => {
                             // winit_input_helper::TextChar::Back => {
                             #[cfg(target_os = "windows")]
@@ -269,72 +269,55 @@ pub fn controls_evaluate(core: &mut Core, window_target: &EventLoopWindowTarget<
     }
 }
 
-pub fn bit_check<T>(events: &winit::event::Event<T>, bits: &mut ControlState) {
+pub fn bit_check(state: &ElementState, keycode: KeyCode,bits: &mut ControlState) {
     // match events{
     // winit::event::WindowEvent::KeyboardInput { device_id: (), input: (), is_synthetic: () },
     // _=>{}
     // }
 
-    match events {
-        Event::WindowEvent {
-            // Note this deeply nested pattern match
-            event:
-                WindowEvent::KeyboardInput {
-                    event:
-                        winit::event::KeyEvent {
-                            physical_key: PhysicalKey::Code(keycode),
-                            state,
-                            ..
-                        },
-                    ..
-                },
-            ..
-        } => {
-            // It also binds these handy variable names!
-            match state {
-                winit::event::ElementState::Pressed => {
-                    // KeyCode is an enum with a defined representation
-                    // DEV
-                    // println!("newkey is {}", *keycode as u32);
-                    bits.0[*keycode as usize] = true;
-                    match *keycode {
-                        KeyCode::AltLeft | KeyCode::AltRight => {
-                            bits.0[247] = true;
-                        }
-                        KeyCode::ControlLeft | KeyCode::ControlRight => {
-                            bits.0[248] = true;
-                        }
-                        KeyCode::ShiftLeft | KeyCode::ShiftRight => {
-                            bits.0[249] = true;
-                        }
-                        KeyCode::SuperLeft | KeyCode::SuperRight => {
-                            bits.0[250] = true;
-                        }
-                        _ => {}
-                    }
+    // It also binds these handy variable names!
+    match state {
+        winit::event::ElementState::Pressed => {
+            // KeyCode is an enum with a defined representation
+            // DEV
+            // println!("newkey is {}", *keycode as u32);
+            bits.0[keycode as usize] = true;
+            match keycode {
+                KeyCode::AltLeft | KeyCode::AltRight => {
+                    bits.0[247] = true;
                 }
-                winit::event::ElementState::Released => {
-                    bits.0[*keycode as usize] = false;
-                    match *keycode {
-                        KeyCode::AltLeft | KeyCode::AltRight => {
-                            bits.0[247] = false;
-                        }
-                        KeyCode::ControlLeft | KeyCode::ControlRight => {
-                            bits.0[248] = false;
-                        }
-                        KeyCode::ShiftLeft | KeyCode::ShiftRight => {
-                            bits.0[249] = false;
-                        }
-                        KeyCode::SuperLeft | KeyCode::SuperRight => {
-                            bits.0[250] = false;
-                        }
-                        _ => {}
-                    }
+                KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    bits.0[248] = true;
                 }
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+                    bits.0[249] = true;
+                }
+                KeyCode::SuperLeft | KeyCode::SuperRight => {
+                    bits.0[250] = true;
+                }
+                _ => {}
             }
         }
-        _ => {}
+        winit::event::ElementState::Released => {
+            bits.0[keycode as usize] = false;
+            match keycode {
+                KeyCode::AltLeft | KeyCode::AltRight => {
+                    bits.0[247] = false;
+                }
+                KeyCode::ControlLeft | KeyCode::ControlRight => {
+                    bits.0[248] = false;
+                }
+                KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+                    bits.0[249] = false;
+                }
+                KeyCode::SuperLeft | KeyCode::SuperRight => {
+                    bits.0[250] = false;
+                }
+                _ => {}
+            }
+        }
     }
+
     // drop(bits);
 }
 

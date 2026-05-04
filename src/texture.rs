@@ -605,20 +605,32 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
 
     queue.write_texture(
         // Tells wgpu where to copy the pixel data
-        wgpu::ImageCopyTexture {
-            texture: texture,
+        wgpu::TexelCopyTextureInfoBase{
+  texture: texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
+
         },
+        // wgpu::ImageCopyTexture {
+        //     texture: texture,
+        //     mip_level: 0,
+        //     origin: wgpu::Origin3d::ZERO,
+        //     aspect: wgpu::TextureAspect::All,
+        // },
         // The actual pixel data
         img,
         // The layout of the texture
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout{
             offset: 0,
             bytes_per_row: Some(4 * dimensions.0),
             rows_per_image: Some(dimensions.1),
         },
+        // wgpu::ImageDataLayout {
+        //     offset: 0,
+        //     bytes_per_row: Some(4 * dimensions.0),
+        //     rows_per_image: Some(dimensions.1),
+        // },
         texture_size,
     );
 }
@@ -651,7 +663,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
 
     queue.write_texture(
         // Tells wgpu where to copy the pixel data
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfoBase{
             texture: &tex,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
@@ -660,7 +672,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
         // The actual pixel data
         rgba,
         // The layout of the texture
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout{
             offset: 0,
             bytes_per_row: Some(4 * dimensions.0),
             rows_per_image: Some(dimensions.1),
@@ -674,7 +686,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
         address_mode_w: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Nearest,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
     TexTuple {
@@ -718,7 +730,7 @@ pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage, format: wgpu::Tex
         address_mode_w: wgpu::AddressMode::Repeat,
         mag_filter: wgpu::FilterMode::Nearest,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         ..Default::default()
     });
     (diffuse_texture_view, diffuse_sampler, tex)

@@ -8,7 +8,7 @@ use crate::{
     gui::ScreenIndex,
     lua_define::MainPacket,
     model::ModelManager,
-    render,
+    render::{self, DrawState},
     texture::TexManager,
     types::ValueMap,
 };
@@ -24,7 +24,13 @@ use std::{
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
+use rustc_hash::FxHashMap;
 use winit::window::Window;
+
+#[cfg(feature = "headed")]
+type IB = InstanceBuffer;
+#[cfg(not(feature = "headed"))]
+type IB = ();
 
 /** All centralized engines and factories to be passed around in the main thread */
 pub struct Core {
@@ -47,15 +53,18 @@ pub struct Core {
     pub ent_manager: EntManager,
     pub bundle_manager: BundleManager,
 
+    pub completed_bundles: FxHashMap<u8, bool>,
+
     pub loggy: crate::log::Loggy,
 
     pub input_manager: winit_input_helper::WinitInputHelper,
+    pub instance_buffers: IB,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
-    pub async fn new(rwindow: Arc<Window>, pitcher: Sender<MainPacket>) -> Self {
+    pub async fn new(rwindow: Arc<Window>) -> Self {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
         let model_manager = ModelManager::init(&gfx.device);
@@ -96,6 +105,7 @@ impl<'core> Core {
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
         let input_manager = winit_input_helper::WinitInputHelper::new();
 
+        let (pitcher, mut catcher) = channel::<MainPacket>();
         Self {
             global,
             #[cfg(feature = "audio")]
@@ -104,6 +114,7 @@ impl<'core> Core {
             singer,
             world,
             pitcher,
+            catcher,
             gui,
             loop_helper,
             tex_manager,
@@ -113,6 +124,11 @@ impl<'core> Core {
             loggy,
             input_manager,
             gfx,
+            completed_bundles: FxHashMap::default(),
+            #[cfg(feature = "headed")]
+            instance_buffers: vec![],
+            #[cfg(not(feature = "headed"))]
+            instance_buffers: (),
         }
     }
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -188,7 +204,7 @@ impl<'core> Core {
         }
     }
 
-    pub fn render(&mut self, instance_buffers: &InstanceBuffer) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self) -> DrawState {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
@@ -196,12 +212,12 @@ impl<'core> Core {
         }
         // self.loop_helper.loop_start();
 
-        let s = render::render_loop(self, self.global.iteration, instance_buffers);
+        let res = render::render_loop(self, self.global.iteration);
         if let Some(fps) = self.loop_helper.report_rate() {
             self.global.fps = fps;
         }
+        res
         // self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
-        s
     }
 
     pub fn toggle_fullscreen(&mut self) {

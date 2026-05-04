@@ -5,11 +5,11 @@ use std::sync::Arc;
 // #![allow(warnings)]
 use std::{
     env,
-    rc::Rc,
     sync::mpsc::{channel, Receiver},
+    time::{Duration, Instant},
 };
 
-use crate::log::LogType;
+use crate::{controls::bit_check, log::LogType};
 use clipboard::{ClipboardContext, ClipboardProvider};
 #[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
@@ -76,13 +76,20 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+use wgpu::naga::back::spv::MeshReturnInfo;
 #[cfg(feature = "headed")]
-use winit::event_loop::EventLoopWindowTarget;
+use winit::event_loop::ActiveEventLoop;
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalPosition,
+    keyboard::PhysicalKey,
+    window::{Window, WindowAttributes, WindowId},
+};
 #[cfg(feature = "headed")]
 use winit::{
     event::{DeviceEvent, Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::{CursorGrabMode, WindowBuilder},
+    window::CursorGrabMode,
 };
 
 #[cfg(target_os = "windows")]
@@ -94,66 +101,372 @@ const OS: &str = "nix";
 #[cfg(target_os = "macos")]
 const OS: &str = "mac";
 
+const FPS: f32 = 60.;
+
+pub struct App {
+    window: Option<Arc<Window>>,
+    center: LogicalPosition<f64>,
+    core: Option<Core>,
+    next_frame_time: Instant,
+    frame_duration: Duration,
+    catcher: Option<Receiver<MainPacket>>,
+    bits: ControlState
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            window: None,
+            center: LogicalPosition::new(320.0f64, 240.0f64),
+            core: None,
+            next_frame_time: Instant::now(),
+            frame_duration: Duration::from_secs_f32(1.0 / FPS),
+            catcher: None,
+            bits: ControlState::default()
+        }
+    }
+}
+
+#[cfg(not(feature = "headed"))]
+type Param1 = ();
+#[cfg(not(feature = "headed"))]
+type Param2 = ();
+#[cfg(feature = "headed")]
+type Param1<'a> = &'a ActiveEventLoop;
+#[cfg(feature = "headed")]
+type Param2 = Arc<winit::window::Window>;
+#[cfg(feature = "headed")]
+type Param3 = LogicalPosition<f64>;
+#[cfg(not(feature = "headed"))]
+type Param3 = ();
+
+fn state_change_checker(
+    c: &mut Core,
+    control_flow: Param1,
+    rwindow: &mut Param2,
+    center: Param3,
+) -> bool {
+    if c.global.is_state_changed {
+        if c.global.state_delay > 0 {
+            c.global.state_delay -= 1;
+            // println!("delaying state change {} ", core.global.state_delay);
+        } else {
+            c.global.is_state_changed = false;
+            let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
+            for state in states {
+                match state {
+                    // StateChange::Fullscreen => {core.check_fullscreen();
+                    #[cfg(feature = "headed")]
+                    StateChange::MouseGrabOn => {
+                        rwindow.set_cursor_visible(false);
+                        rwindow.set_cursor_position(center).unwrap();
+                        rwindow
+                            .set_cursor_grab(CursorGrabMode::Confined)
+                            .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
+                        c.global.mouse_grabbed_state = true;
+                    }
+                    #[cfg(feature = "headed")]
+                    StateChange::MouseGrabOff => {
+                        rwindow.set_cursor_visible(true);
+                        rwindow.set_cursor_grab(CursorGrabMode::None);
+                        c.global.mouse_grabbed_state = false;
+                    }
+                    #[cfg(feature = "headed")]
+                    StateChange::Resized => {
+                        c.debounced_resize();
+                    }
+                    #[cfg(feature = "headed")]
+                    StateChange::Quit => control_flow.exit(),
+                    #[cfg(not(feature = "headed"))]
+                    StateChange::Quit => {
+                        return true;
+                    }
+                    StateChange::Config => {
+                        let res = crate::asset::parse_config(
+                            &mut c.global,
+                            c.bundle_manager.get_lua(),
+                            &mut c.loggy,
+                        );
+                        if let Some(s) = res {
+                            crate::command::run_con_sys(c, &s);
+                        }
+
+                        // as a bonus also check command line arguments here
+                        let args: Vec<String> = std::env::args().collect();
+                        if args.len() > 1 {
+                            // println!("cli args: {:?}", args);
+                            let mut command = None;
+                            for (i, arg) in args.iter().enumerate() {
+                                if arg.starts_with("-") {
+                                    command = Some(arg.to_lowercase());
+                                } else if command.is_some() {
+                                    match command.unwrap().as_str() {
+                                        "--init" | "-i" => {
+                                            println!("cli-init: {:?}", arg);
+                                            crate::command::run_con_sys(c, &arg);
+                                        }
+                                        _ => {}
+                                    }
+                                    command = None;
+                                }
+                            }
+                        }
+
+                        // core.config = crate::config::Config::new();
+                        // core.config.load();
+                        // core.config.apply(&mut core);
+                    }
+                    StateChange::ModelChange(id) => {
+                        #[cfg(feature = "headed")]
+                        c.ent_manager.check_for_model_change(&c.model_manager, &id);
+                    }
+                }
+            }
+            #[cfg(feature = "headed")]
+            c.check_fullscreen();
+        }
+    }
+    false
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        println!("App resumed");
+        if self.window.is_none() {
+            let window_icon = {
+                let icon =
+                    image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
+                        .expect("failed to load icon.png");
+                let rgba = icon.as_rgba8().unwrap();
+                let (width, height) = icon.dimensions();
+                let rgba = rgba
+                    .chunks_exact(4)
+                    .flat_map(|rgba| rgba.iter().cloned())
+                    .collect::<Vec<_>>();
+                winit::window::Icon::from_rgba(rgba, width, height).unwrap()
+            };
+
+            let win_attr = WindowAttributes::default()
+                .with_title("Petrichor64")
+                .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+                .with_window_icon(Some(window_icon));
+
+            let window = Arc::new(event_loop.create_window(win_attr).unwrap());
+            self.window = Some(window.clone());
+
+            let (pitcher, mut catcher) = channel::<MainPacket>();
+            let core = pollster::block_on(Core::new(window.clone()));
+            self.catcher = Some(catcher);
+            self.core = Some(core);
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let win_ref = match self.window.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+        if id != win_ref.id() {
+            return;
+        }
+
+        match event {
+            WindowEvent::CloseRequested => {
+                println!("Close requested");
+                event_loop.exit()
+            }
+            WindowEvent::Resized(physical_size) => {
+                if let Some(core) = &mut self.core {
+                    core.resize(physical_size);
+                }
+            }
+            WindowEvent::ScaleFactorChanged {
+                inner_size_writer, ..
+            } => {
+                // TODO do we still need to check for this?
+                // inner_size_writer.
+                // // new_inner_size is &&mut so we have to dereference it twice
+                // core.resize(**new_inner_size);
+            }
+            WindowEvent::RedrawRequested => {
+                if let Some(core) = &mut self.core {
+                    match core.render() {
+                        render::DrawState::Success => {}
+                        // Reconfigure the surface if it is lost or outdated
+                        render::DrawState::Resize => {
+                            core.resize(core.gfx.size);
+                        } // The system is out of memory, we should probably quit
+                        // Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
+                        // All other errors (Timeout) should be resolved by the next frame
+                        // Err(e) => eprintln!("{:?}", e),
+                        render::DrawState::Skip => {
+                            return;
+                        }
+                    };
+
+                    win_ref.request_redraw();
+                    core.loop_helper.loop_sleep();
+                }
+            }
+            WindowEvent::ActivationTokenDone { serial, token } => {}
+            WindowEvent::KeyboardInput {
+                event:
+                    winit::event::KeyEvent {
+                        physical_key: PhysicalKey::Code(keycode),
+                        state,
+                        ..
+                    },
+                ..
+            } => {
+                bit_check(&state, keycode, &mut self.bits);
+            }
+
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+
+        if now >= self.next_frame_time {
+            // 1. Run your core update logic
+            let core = match self.core.as_mut() {
+                Some(s) => s,
+                None => return,
+            };
+            let win_ref = match self.window.as_mut() {
+                Some(s) => s,
+                None => return,
+            };
+            let catcher = match self.catcher.as_ref() {
+                Some(s) => s,
+                None => return,
+            };
+
+
+            core.loop_helper.loop_start(); //
+
+            state_change_checker(core, event_loop, win_ref, self.center);
+            // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
+            // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+
+            core.update(catcher);
+            core.bundle_manager
+                .call_loop(&mut core.completed_bundles, &self.bits);
+
+            // TODO isnt this meant ot be called once, or is it every iter?
+            event_loop.set_control_flow(ControlFlow::Poll);
+            // core.loop_helper.loop_start();
+            if !core.global.console {
+                controls::bit_check(&event, &mut self.bits);
+                bits.1[0] = core.global.mouse_pos.x;
+                bits.1[1] = core.global.mouse_pos.y;
+                bits.1[2] = core.global.mouse_delta.x;
+                bits.1[3] = core.global.mouse_delta.y;
+                bits.1[4] = core.global.mouse_buttons[0];
+                bits.1[5] = core.global.mouse_buttons[1];
+                bits.1[6] = core.global.mouse_buttons[2];
+                bits.1[7] = core.global.scroll_delta.0;
+                bits.1[8] = core.global.cursor_projected_pos.x;
+                bits.1[9] = core.global.cursor_projected_pos.y;
+                bits.1[10] = core.global.cursor_projected_pos.z;
+            } else if core.global.mouse_grabbed_state {
+                rwin.set_cursor_visible(true);
+                rwin.set_cursor_grab(CursorGrabMode::None);
+                core.global.mouse_grabbed_state = false;
+            }
+
+            if core.input_manager.update(&event) {
+                controls::controls_evaluate(&mut core, elwt);
+                // frame!("START");
+
+                core.global.mouse_delta = vec2(0., 0.);
+                // frame!("END");
+                // frame!();
+            }
+
+            match event {
+                Event::WindowEvent {
+                    ref event,
+                    window_id: _,
+                } => match event {
+                    _ => {}
+                },
+                Event::DeviceEvent { device_id, event } => match event {
+                    DeviceEvent::MouseMotion { delta } => {
+                        core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
+                    }
+
+                    _ => {}
+                },
+                _ => {}
+            }
+
+            // 2. Request a redraw from the window
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+
+            // 3. Set the time for the next frame
+            // We add the duration to the previous target to avoid "drift"
+            self.next_frame_time = now + self.frame_duration;
+        }
+
+        // 4. Tell the event loop to sleep until exactly when we need the next frame
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_time));
+    }
+}
+
 pub fn start() {
     // crate::parse::test(&"test.lua".to_string());
     env_logger::init();
 
-    let (pitcher, mut catcher) = channel::<MainPacket>();
-    #[cfg(feature = "headed")]
-    let (mut core, mut rwin, center, event_loop) = {
-        use std::sync::Arc;
-
-        let event_loop = match EventLoop::new() {
+    // #[cfg(feature = "headed")]
+    let (mut app, event_loop) = {
+        let event_loop = match EventLoop::<()>::new() {
             Ok(el) => el,
             Err(e) => {
                 error_window(Box::new(e));
                 return;
             }
         };
-        let window_icon = {
-            let icon =
-                image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
-                    .expect("failed to load icon.png");
-            let rgba = icon.as_rgba8().unwrap();
-            let (width, height) = icon.dimensions();
-            let rgba = rgba
-                .chunks_exact(4)
-                .flat_map(|rgba| rgba.iter().cloned())
-                .collect::<Vec<_>>();
-            winit::window::Icon::from_rgba(rgba, width, height).unwrap()
-        };
+        let mut app = App::default();
+        event_loop.run_app(&mut app);
 
-        let win = match WindowBuilder::new()
-            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
-            .with_window_icon(Some(window_icon))
-            .build(&event_loop)
-        {
-            Ok(win) => win,
-            Err(e) => {
-                error_window(Box::new(e));
-                // println!("Error: {}", e);
-                return;
-            }
-        };
+        // let win = match            .build(&event_loop)
+        // {
+        //     Ok(win) => win,
+        //     Err(e) => {
+        //         error_window(Box::new(e));
+        //         // println!("Error: {}", e);
+        //         return;
+        //     }
+        // };
+        //
 
-        win.set_title("Petrichor64");
-
-        let center = winit::dpi::LogicalPosition::new(320.0f64, 240.0f64);
-        let rwindow = Arc::new(win);
+        // let rwindow = Arc::new(win);
 
         // State::new uses async code, so we're going to wait for it to finish
-        (
-            pollster::block_on(Core::new(rwindow.clone(), pitcher)),
-            rwindow,
-            center,
-            event_loop,
-        )
+        (app, event_loop)
     };
 
-    #[cfg(not(feature = "headed"))]
-    let mut core = pollster::block_on(Core::new(pitcher));
+    // #[cfg(not(feature = "headed"))]
+    // let mut core = pollster::block_on(Core::new(pitcher));
+
+    let core = app
+        .core
+        .unwrap_or_else(|| panic!("Somehow failed to create core"));
 
     crate::command::load_empty(&mut core);
+    {
+        crate::asset::make_directory("test", None, &mut core.loggy);
+        // core.loggy
+        //     .log(LogType::Config, &format!("created directory {}", name));
+        crate::command::hard_reset(&mut core);
+        if let Err(e) = crate::command::load_app(&mut core, Some("test"), None, None, None) {
+            core.loggy.log(LogType::CoreError, &format!("{}", e));
+        }
+    }
 
     core.loggy.clear();
 
@@ -208,208 +521,30 @@ pub fn start() {
         }
     }
 
-    #[cfg(not(feature = "headed"))]
-    type Param1 = ();
-    #[cfg(not(feature = "headed"))]
-    type Param2 = ();
-    #[cfg(feature = "headed")]
-    type Param1<'a> = &'a EventLoopWindowTarget<()>;
-    #[cfg(feature = "headed")]
-    type Param2 = Arc<winit::window::Window>;
-
-    let state_change_check = move |c: &mut Core, control_flow: Param1, rwindow: &mut Param2| {
-        if c.global.is_state_changed {
-            if c.global.state_delay > 0 {
-                c.global.state_delay -= 1;
-                // println!("delaying state change {} ", core.global.state_delay);
-            } else {
-                c.global.is_state_changed = false;
-                let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
-                for state in states {
-                    match state {
-                        // StateChange::Fullscreen => {core.check_fullscreen();
-                        #[cfg(feature = "headed")]
-                        StateChange::MouseGrabOn => {
-                            rwindow.set_cursor_visible(false);
-                            rwindow.set_cursor_position(center).unwrap();
-                            rwindow
-                                .set_cursor_grab(CursorGrabMode::Confined)
-                                .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
-                            c.global.mouse_grabbed_state = true;
-                        }
-                        #[cfg(feature = "headed")]
-                        StateChange::MouseGrabOff => {
-                            rwindow.set_cursor_visible(true);
-                            rwindow.set_cursor_grab(CursorGrabMode::None);
-                            c.global.mouse_grabbed_state = false;
-                        }
-                        #[cfg(feature = "headed")]
-                        StateChange::Resized => {
-                            c.debounced_resize();
-                        }
-                        #[cfg(feature = "headed")]
-                        StateChange::Quit => control_flow.exit(),
-                        #[cfg(not(feature = "headed"))]
-                        StateChange::Quit => {
-                            return true;
-                        }
-                        StateChange::Config => {
-                            let res = crate::asset::parse_config(
-                                &mut c.global,
-                                c.bundle_manager.get_lua(),
-                                &mut c.loggy,
-                            );
-                            if let Some(s) = res {
-                                crate::command::run_con_sys(c, &s);
-                            }
-
-                            // as a bonus also check command line arguments here
-                            let args: Vec<String> = std::env::args().collect();
-                            if args.len() > 1 {
-                                // println!("cli args: {:?}", args);
-                                let mut command = None;
-                                for (i, arg) in args.iter().enumerate() {
-                                    if arg.starts_with("-") {
-                                        command = Some(arg.to_lowercase());
-                                    } else if command.is_some() {
-                                        match command.unwrap().as_str() {
-                                            "--init" | "-i" => {
-                                                println!("cli-init: {:?}", arg);
-                                                crate::command::run_con_sys(c, &arg);
-                                            }
-                                            _ => {}
-                                        }
-                                        command = None;
-                                    }
-                                }
-                            }
-
-                            // core.config = crate::config::Config::new();
-                            // core.config.load();
-                            // core.config.apply(&mut core);
-                        }
-                        StateChange::ModelChange(id) => {
-                            #[cfg(feature = "headed")]
-                            c.ent_manager.check_for_model_change(&c.model_manager, &id);
-                        }
-                    }
-                }
-                #[cfg(feature = "headed")]
-                c.check_fullscreen();
-            }
-        }
-        false
-    };
+    // let state_change_check = move ;
 
     #[cfg(feature = "headed")]
     {
         // :reload(core);
         let mut instance_buffers = vec![];
-        let mut updated_bundles = FxHashMap::default();
-
-        event_loop.run(move |event, elwt| {
-            elwt.set_control_flow(ControlFlow::Poll);
-            // core.loop_helper.loop_start();
-            if !core.global.console {
-                controls::bit_check(&event, &mut bits);
-                bits.1[0] = core.global.mouse_pos.x;
-                bits.1[1] = core.global.mouse_pos.y;
-                bits.1[2] = core.global.mouse_delta.x;
-                bits.1[3] = core.global.mouse_delta.y;
-                bits.1[4] = core.global.mouse_buttons[0];
-                bits.1[5] = core.global.mouse_buttons[1];
-                bits.1[6] = core.global.mouse_buttons[2];
-                bits.1[7] = core.global.scroll_delta.0;
-                bits.1[8] = core.global.cursor_projected_pos.x;
-                bits.1[9] = core.global.cursor_projected_pos.y;
-                bits.1[10] = core.global.cursor_projected_pos.z;
-            } else if core.global.mouse_grabbed_state {
-                rwin.set_cursor_visible(true);
-                rwin.set_cursor_grab(CursorGrabMode::None);
-                core.global.mouse_grabbed_state = false;
-            }
-
-            if core.input_manager.update(&event) {
-                controls::controls_evaluate(&mut core, elwt);
-                // frame!("START");
-
-                core.global.mouse_delta = vec2(0., 0.);
-                // frame!("END");
-                // frame!();
-            }
-
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id: _,
-                } => match event {
-                    WindowEvent::RedrawRequested => {
-                        core.loop_helper.loop_start(); //
-
-                        state_change_check(&mut core, elwt, &mut rwin);
-                        // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
-                        // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
-                        if let Some(buff) = core.update(&mut catcher, &mut updated_bundles) {
-                            instance_buffers = buff;
-                        }
-                        core.bundle_manager.call_loop(&mut updated_bundles, bits);
-
-                        match core.render(&instance_buffers) {
-                            Ok(_) => {}
-                            // Reconfigure the surface if it is lost or outdated
-                            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
-                                core.resize(core.gfx.size);
-                            }
-                            // The system is out of memory, we should probably quit
-                            Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-                            // All other errors (Timeout) should be resolved by the next frame
-                            Err(e) => eprintln!("{:?}", e),
-                        };
-
-                        rwin.request_redraw();
-                        core.loop_helper.loop_sleep();
-                    }
-                    WindowEvent::Resized(physical_size) => {
-                        core.resize(*physical_size);
-                    }
-                    WindowEvent::ScaleFactorChanged {
-                        inner_size_writer, ..
-                    } => {
-                        // TODO do we still need to check for this?
-                        // inner_size_writer.
-                        // // new_inner_size is &&mut so we have to dereference it twice
-                        // core.resize(**new_inner_size);
-                    }
-                    _ => {}
-                },
-                Event::DeviceEvent { device_id, event } => match event {
-                    DeviceEvent::MouseMotion { delta } => {
-                        core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
-                    }
-
-                    _ => {}
-                },
-                _ => {}
-            }
-        });
     }
-    #[cfg(not(feature = "headed"))]
-    {
-        // loop
-        let mut updated_bundles = FxHashMap::default();
-        loop {
-            core.loop_helper.loop_start();
-            if let Ok(inp) = core.cli_thread_receiver.try_recv() {
-                core_console_command(&mut core, &inp);
-            }
-            if state_change_check(&mut core, &mut (), &mut ()) {
-                return;
-            }
-            core.update(&mut catcher, &mut updated_bundles);
-            core.bundle_manager.call_loop(&mut updated_bundles, bits);
-            core.loop_helper.loop_sleep();
-        }
-    }
+    // #[cfg(not(feature = "headed"))]
+    // {
+    //     // loop
+    //     let mut updated_bundles = FxHashMap::default();
+    //     loop {
+    //         core.loop_helper.loop_start();
+    //         if let Ok(inp) = core.cli_thread_receiver.try_recv() {
+    //             core_console_command(&mut core, &inp);
+    //         }
+    //         if state_change_check(&mut core, &mut (), &mut ()) {
+    //             return;
+    //         }
+    //         core.update(&mut catcher, &mut updated_bundles);
+    //         core.bundle_manager.call_loop(&mut updated_bundles, bits);
+    //         core.loop_helper.loop_sleep();
+    //     }
+    // }
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str) {
@@ -457,17 +592,8 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
     }
 }
 
-#[cfg(feature = "headed")]
-type IB = InstanceBuffer;
-#[cfg(not(feature = "headed"))]
-type IB = ();
-
 impl Core {
-    fn update(
-        &mut self,
-        catcher: &mut Receiver<MainPacket>,
-        completed_bundles: &mut FxHashMap<u8, bool>,
-    ) -> Option<IB> {
+    fn update(&mut self, catcher: &Receiver<MainPacket>) -> Option<InstanceBuffer> {
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
@@ -578,7 +704,7 @@ impl Core {
                     }
                 }
                 MainCommmand::Spawn(lent) => {
-println!("make heard!");
+                    println!("make heard!");
                     self.ent_manager.create_from_lua(
                         #[cfg(feature = "headed")]
                         &self.tex_manager,
@@ -695,7 +821,7 @@ println!("make heard!");
                     self.log_check(tx.send(res));
                 }
                 MainCommmand::BundleDropped(b) => {
-                    completed_bundles.remove(&id);
+                    self.completed_bundles.remove(&id);
                     self.bundle_manager.reclaim_resources(b);
                 }
                 MainCommmand::Subload(file, is_overlay) => {
@@ -749,10 +875,12 @@ println!("make heard!");
                     self.global.is_state_changed = true;
                 }
                 MainCommmand::InitBack(refs) => {
+                    println!("init back");
                     let (main_ref, sky_ref) = *refs;
                     self.bundle_manager.set_img_refs(id, main_ref, sky_ref);
                 }
                 MainCommmand::LoopComplete(mutations) => {
+                    println!("loop back");
                     if mutations.gui {
                         #[cfg(feature = "headed")]
                         self.gui.mark_dirty(ScreenIndex::Primary, id);
@@ -761,7 +889,7 @@ println!("make heard!");
                         #[cfg(feature = "headed")]
                         self.gui.mark_dirty(ScreenIndex::Sky, id);
                     }
-                    completed_bundles.insert(id, true);
+                    self.completed_bundles.insert(id, true);
                     loop_complete = true;
                 }
                 MainCommmand::Copy(s) => {

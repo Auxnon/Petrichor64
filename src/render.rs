@@ -1,18 +1,4 @@
 use glam::{vec3, Mat4, Vec2, Vec3};
-use std::{iter, ops::Add, rc::Rc};
-use wgpu::{
-    Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
-};
-// use tracy::frame;
-
-use crate::{
-    ent::{Ent, EntityUniforms},
-    ent_manager::InstanceBuffer,
-    model::Model,
-    Core,
-};
-
 /** create rotation matrix from camera position and simple rotation */
 pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
@@ -61,11 +47,15 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     (mx_view, mx_projection, model_mat)
 }
 
+pub enum DrawState{
+    Success,
+    Skip,
+    Resize
+}
 pub fn render_loop(
     core: &mut Core,
     iteration: u64,
-    instance_buffers: &InstanceBuffer,
-) -> Result<(), wgpu::SurfaceError> {
+) ->DrawState  {
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
@@ -159,6 +149,7 @@ pub fn render_loop(
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
+                depth_slice: Some(2),
                 view: &gfx.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
@@ -206,7 +197,7 @@ pub fn render_loop(
                 }
             }
 
-            for (model, instance_buffer, size) in instance_buffers.iter() {
+            for (model, instance_buffer, size) in core.instance_buffers.iter() {
                 render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
                 render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
                 render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
@@ -250,7 +241,30 @@ pub fn render_loop(
     //     texture_extent,
     // );
 
-    let output = gfx.surface.get_current_texture()?;
+    let output = match gfx.surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(tex) => tex,
+        wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+            // Texture is usable but the surface should be reconfigured
+            texture
+        }
+        wgpu::CurrentSurfaceTexture::Outdated => {
+            // Reconfigure surface and skip this frame
+            return DrawState::Resize ;
+        }
+        wgpu::CurrentSurfaceTexture::Lost => {
+            // Reconfigure surface and skip this frame
+            return DrawState::Resize ;
+        }
+        wgpu::CurrentSurfaceTexture::Timeout => {
+            return;
+        }
+        wgpu::CurrentSurfaceTexture::Validation => {
+            return;
+        }
+        wgpu::CurrentSurfaceTexture::Occluded => {
+            return;
+        }
+    };
 
     let view = output
         .texture
@@ -260,6 +274,7 @@ pub fn render_loop(
         let mut post_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Post Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
+                depth_slice: Some(2),
                 view: &view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
@@ -284,5 +299,5 @@ pub fn render_loop(
 
     // frame!("END RENDER");
 
-    Ok(())
+    // Ok(())
 }

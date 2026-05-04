@@ -117,7 +117,7 @@ impl BundleManager {
         self.rebuild_call_order();
     }
 
-    pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: ControlState) {
+    pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: &ControlState) {
         for (id, bundle) in &mut self.bundles.iter_mut() {
             if !if let Some(updated) = updated_bundles.get_mut(id) {
                 if *updated {
@@ -126,11 +126,11 @@ impl BundleManager {
                         bundle.skips = 0;
                         match bundle.skipped_control_state {
                             Some(old_bits) => {
-                                bundle.call_loop(combine_states(old_bits, bits));
+                                bundle.call_loop(combine_states(old_bits, *bits));
                                 bundle.skipped_control_state = None;
                             }
                             None => {
-                                bundle.call_loop(bits);
+                                bundle.call_loop(*bits);
                             }
                         }
                         true
@@ -146,7 +146,7 @@ impl BundleManager {
                 //skip
                 match bundle.skipped_control_state {
                     Some(old_bits) => {
-                        bundle.skipped_control_state = Some(combine_states(old_bits, bits));
+                        bundle.skipped_control_state = Some(combine_states(old_bits, *bits));
                     }
                     None => {
                         bundle.skipped_control_state = Some(bits);
