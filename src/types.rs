@@ -22,7 +22,13 @@ pub enum ValueMap {
     Null(),
 }
 
-pub type ControlState = ([bool; 256], [f32; 11]);
+pub struct ControlState(pub [bool; 256], pub [f32; 11]);
+
+impl Default for ControlState {
+    fn default() -> Self {
+        Self([false; 256], [0.; 11])
+    }
+}
 
 pub struct GlobalMap {
     pub os: &'static str,
@@ -72,8 +78,7 @@ impl GlobalMap {
     }
 }
 
-
-pub struct Script{
+pub struct Script {
     pub name: String,
     pub content: String,
 }

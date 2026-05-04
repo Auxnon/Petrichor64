@@ -47,9 +47,10 @@ impl ScreenLayer {
             Some(pool) => {
                 // Get the weak ref for this screen index
                 let weak_ref = match self.index {
-                    ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
-                        pool.gui.as_ref()
-                    }
+                    ScreenIndex::Primary
+                    | ScreenIndex::Secondary
+                    | ScreenIndex::Trinary
+                    | ScreenIndex::System => pool.gui.as_ref(),
                     ScreenIndex::Sky => pool.sky.as_ref(),
                 };
 
@@ -100,11 +101,7 @@ impl ScreenLayer {
                     if let Some(weak) = weak_ref {
                         if let Some(lua_img) = weak.upgrade() {
                             lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
-                                crate::texture::write_tex(
-                                    queue,
-                                    &self.texture.texture,
-                                    &img.image,
-                                );
+                                crate::texture::write_tex(queue, &self.texture.texture, &img.image);
                                 Ok(())
                             });
                             self.dirty = false;
@@ -116,7 +113,7 @@ impl ScreenLayer {
                 // Pool not ready yet — keep dirty for retry
             }
         }
-        Ok(())
+        // Ok(())
     }
 }
 
@@ -525,21 +522,11 @@ impl Gui {
         }
         self.process_notifications(false);
 
-        if let Err(e) = self.system_layer.check_render(bm, queue) {
-            eprintln!("sytem_layer {e}");
-        }
-        if let Err(e) = self.primary_layer.check_render(bm, queue) {
-            eprintln!("primary_layer {e}");
-        }
-        if let Err(e) = self.secondary_layer.check_render(bm, queue) {
-            eprintln!("secondary_layer {e}");
-        }
-        if let Err(e) = self.trinary_layer.check_render(bm, queue) {
-            eprintln!("trinary_layer {e}");
-        }
-        if let Err(e) = self.sky_layer.check_render(bm, queue) {
-            eprintln!("sky_layer {e}");
-        }
+        self.system_layer.check_render(bm, queue);
+        self.primary_layer.check_render(bm, queue);
+        self.secondary_layer.check_render(bm, queue);
+        self.trinary_layer.check_render(bm, queue);
+        self.sky_layer.check_render(bm, queue);
     }
 
     pub fn make_morsel(&self) -> PreGuiMorsel {
