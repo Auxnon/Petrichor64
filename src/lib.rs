@@ -1,17 +1,15 @@
 // #![windows_subsystem = "console"]
 #![windows_subsystem = "windows"]
-#[cfg(feature = "headed")]
 use std::sync::Arc;
 // #![allow(warnings)]
 use std::{
     env,
-    sync::mpsc::{channel, Receiver},
+    sync::mpsc::Receiver,
     time::{Duration, Instant},
 };
 
 use crate::{controls::bit_check, log::LogType};
 use clipboard::{ClipboardContext, ClipboardProvider};
-#[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
@@ -19,24 +17,17 @@ use gui::ScreenIndex;
 use image::GenericImageView;
 use itertools::Itertools;
 use lua_define::{LuaResponse, MainPacket};
-#[cfg(feature = "headed")]
 use root::Core;
-#[cfg(not(feature = "headed"))]
-use root_headless::Core;
-use rustc_hash::FxHashMap;
 use types::{ControlState, GlobalMap};
 
 mod asset;
 mod bundle;
 mod command;
-#[cfg(feature = "headed")]
 mod controls;
-#[cfg(feature = "headed")]
 mod ent;
 mod ent_manager;
 mod error;
 mod file_util;
-#[cfg(feature = "headed")]
 mod gfx;
 mod global;
 mod gui;
@@ -54,20 +45,15 @@ mod packet;
 mod pad;
 mod parse;
 mod pool;
-#[cfg(feature = "headed")]
 mod post;
-#[cfg(feature = "headed")]
 mod ray;
-#[cfg(feature = "headed")]
 mod render;
-#[cfg(feature = "headed")]
 mod root;
 #[cfg(not(feature = "headed"))]
 mod root_headless;
 #[cfg(feature = "audio")]
 mod sound;
 mod template;
-#[cfg(feature = "headed")]
 mod texture;
 mod tile;
 mod types;
@@ -76,20 +62,13 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
-use wgpu::naga::back::spv::MeshReturnInfo;
-#[cfg(feature = "headed")]
-use winit::event_loop::ActiveEventLoop;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalPosition,
-    keyboard::PhysicalKey,
-    window::{Window, WindowAttributes, WindowId},
-};
-#[cfg(feature = "headed")]
-use winit::{
-    event::{DeviceEvent, Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::CursorGrabMode,
+    event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{Key, NamedKey, PhysicalKey},
+    window::{CursorGrabMode, Window, WindowAttributes, WindowId},
 };
 
 #[cfg(target_os = "windows")]
@@ -110,7 +89,10 @@ pub struct App {
     next_frame_time: Instant,
     frame_duration: Duration,
     catcher: Option<Receiver<MainPacket>>,
-    bits: ControlState
+    /// Current key/mouse-button state sent to Lua each frame.
+    bits: ControlState,
+    /// Key state from the previous Lua frame — used for pressed/released detection.
+    bits_prev: [bool; 256],
 }
 
 impl Default for App {
@@ -122,53 +104,40 @@ impl Default for App {
             next_frame_time: Instant::now(),
             frame_duration: Duration::from_secs_f32(1.0 / FPS),
             catcher: None,
-            bits: ControlState::default()
+            bits: ControlState::default(),
+            bits_prev: [false; 256],
         }
     }
 }
 
-#[cfg(not(feature = "headed"))]
-type Param1 = ();
-#[cfg(not(feature = "headed"))]
-type Param2 = ();
-#[cfg(feature = "headed")]
-type Param1<'a> = &'a ActiveEventLoop;
-#[cfg(feature = "headed")]
-type Param2 = Arc<winit::window::Window>;
-#[cfg(feature = "headed")]
-type Param3 = LogicalPosition<f64>;
-#[cfg(not(feature = "headed"))]
-type Param3 = ();
-
 fn state_change_checker(
     c: &mut Core,
-    control_flow: Param1,
-    rwindow: &mut Param2,
-    center: Param3,
+    control_flow: &ActiveEventLoop,
+    rwindow: &Arc<winit::window::Window>,
+    center: LogicalPosition<f64>,
 ) -> bool {
     if c.global.is_state_changed {
         if c.global.state_delay > 0 {
             c.global.state_delay -= 1;
-            // println!("delaying state change {} ", core.global.state_delay);
         } else {
             c.global.is_state_changed = false;
             let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
             for state in states {
                 match state {
-                    // StateChange::Fullscreen => {core.check_fullscreen();
                     #[cfg(feature = "headed")]
                     StateChange::MouseGrabOn => {
                         rwindow.set_cursor_visible(false);
-                        rwindow.set_cursor_position(center).unwrap();
+                        let _ = rwindow.set_cursor_position(center);
                         rwindow
                             .set_cursor_grab(CursorGrabMode::Confined)
-                            .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked));
+                            .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked))
+                            .ok();
                         c.global.mouse_grabbed_state = true;
                     }
                     #[cfg(feature = "headed")]
                     StateChange::MouseGrabOff => {
                         rwindow.set_cursor_visible(true);
-                        rwindow.set_cursor_grab(CursorGrabMode::None);
+                        let _ = rwindow.set_cursor_grab(CursorGrabMode::None);
                         c.global.mouse_grabbed_state = false;
                     }
                     #[cfg(feature = "headed")]
@@ -178,9 +147,7 @@ fn state_change_checker(
                     #[cfg(feature = "headed")]
                     StateChange::Quit => control_flow.exit(),
                     #[cfg(not(feature = "headed"))]
-                    StateChange::Quit => {
-                        return true;
-                    }
+                    StateChange::Quit => return false,
                     StateChange::Config => {
                         let res = crate::asset::parse_config(
                             &mut c.global,
@@ -191,19 +158,18 @@ fn state_change_checker(
                             crate::command::run_con_sys(c, &s);
                         }
 
-                        // as a bonus also check command line arguments here
+                        // Also check command-line arguments here.
                         let args: Vec<String> = std::env::args().collect();
                         if args.len() > 1 {
-                            // println!("cli args: {:?}", args);
                             let mut command = None;
-                            for (i, arg) in args.iter().enumerate() {
-                                if arg.starts_with("-") {
+                            for (_i, arg) in args.iter().enumerate() {
+                                if arg.starts_with('-') {
                                     command = Some(arg.to_lowercase());
                                 } else if command.is_some() {
                                     match command.unwrap().as_str() {
                                         "--init" | "-i" => {
                                             println!("cli-init: {:?}", arg);
-                                            crate::command::run_con_sys(c, &arg);
+                                            crate::command::run_con_sys(c, arg);
                                         }
                                         _ => {}
                                     }
@@ -211,10 +177,6 @@ fn state_change_checker(
                                 }
                             }
                         }
-
-                        // core.config = crate::config::Config::new();
-                        // core.config.load();
-                        // core.config.apply(&mut core);
                     }
                     StateChange::ModelChange(id) => {
                         #[cfg(feature = "headed")]
@@ -230,321 +192,356 @@ fn state_change_checker(
 }
 
 impl ApplicationHandler for App {
+    /// Called when the event loop is ready and (on mobile/web) the app has resumed.
+    /// This is where we create the window and initialise the engine.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        println!("App resumed");
-        if self.window.is_none() {
-            let window_icon = {
-                let icon =
-                    image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
-                        .expect("failed to load icon.png");
-                let rgba = icon.as_rgba8().unwrap();
-                let (width, height) = icon.dimensions();
-                let rgba = rgba
-                    .chunks_exact(4)
-                    .flat_map(|rgba| rgba.iter().cloned())
-                    .collect::<Vec<_>>();
-                winit::window::Icon::from_rgba(rgba, width, height).unwrap()
-            };
-
-            let win_attr = WindowAttributes::default()
-                .with_title("Petrichor64")
-                .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
-                .with_window_icon(Some(window_icon));
-
-            let window = Arc::new(event_loop.create_window(win_attr).unwrap());
-            self.window = Some(window.clone());
-
-            let (pitcher, mut catcher) = channel::<MainPacket>();
-            let core = pollster::block_on(Core::new(window.clone()));
-            self.catcher = Some(catcher);
-            self.core = Some(core);
+        // Only initialise once.
+        if self.window.is_some() {
+            return;
         }
+
+        // --- Build window icon ---
+        let window_icon = {
+            let icon =
+                image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
+                    .expect("failed to load icon.png");
+            let rgba = icon.as_rgba8().unwrap();
+            let (width, height) = icon.dimensions();
+            let bytes = rgba
+                .chunks_exact(4)
+                .flat_map(|p| p.iter().cloned())
+                .collect::<Vec<_>>();
+            winit::window::Icon::from_rgba(bytes, width, height).unwrap()
+        };
+
+        let win_attr = WindowAttributes::default()
+            .with_title("Petrichor64")
+            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+            .with_window_icon(Some(window_icon));
+
+        let window = Arc::new(
+            event_loop
+                .create_window(win_attr)
+                .expect("failed to create window"),
+        );
+        self.window = Some(window.clone());
+
+        // --- Create Core; catcher goes to App, pitcher stays in Core ---
+        let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
+        self.catcher = Some(catcher);
+
+        // --- Boot sequence (mirrors the old post-run_app code in start()) ---
+        crate::command::load_empty(&mut core);
+        {
+            crate::asset::make_directory("test", None, &mut core.loggy);
+            crate::command::hard_reset(&mut core);
+            if let Err(e) = crate::command::load_app(&mut core, Some("test"), None, None, None) {
+                core.loggy.log(LogType::CoreError, &format!("{}", e));
+            }
+        }
+        core.loggy.clear();
+
+        core.global.state_changes.push(StateChange::Config);
+        // Small delay so the console-app's pending requests finish before
+        // the following config state change fires.
+        core.global.state_delay = 8;
+        core.global.is_state_changed = true;
+
+        // --- Auto-load or command-line file ---
+        let maybe_load = if env::args().count() > 1 {
+            let s = env::args().nth(1).unwrap();
+            native_dialog::DialogBuilder::message()
+                .set_level(native_dialog::MessageLevel::Info)
+                .set_title("Petrichor64 Info")
+                .set_text(&s)
+                .alert()
+                .show()
+                .unwrap();
+            Some(s)
+        } else {
+            crate::asset::check_for_auto()
+        };
+
+        if let Some(s) = maybe_load {
+            core.global.console = false;
+            core.gui.disable_console();
+            core.global.pending_load = Some(s.clone());
+            core.bundle_manager.get_lua().call_drop(s);
+        } else {
+            #[cfg(feature = "include_auto")]
+            {
+                core.global.console = false;
+                core.gui.disable_console();
+                let id = core.bundle_manager.console_bundle_target;
+                crate::command::reload(&mut core, id);
+            }
+
+            #[cfg(not(feature = "include_auto"))]
+            {
+                #[cfg(not(feature = "studio"))]
+                core.gui.disable_console();
+            }
+        }
+
+        self.core = Some(core);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let win_ref = match self.window.as_mut() {
-            Some(s) => s,
-            None => return,
-        };
-        if id != win_ref.id() {
+        // Ignore events for unknown windows.
+        if self.window.as_ref().map_or(true, |w| w.id() != id) {
             return;
         }
 
         match event {
+            // ----------------------------------------------------------------
             WindowEvent::CloseRequested => {
                 println!("Close requested");
-                event_loop.exit()
+                event_loop.exit();
             }
+
+            // ----------------------------------------------------------------
+            WindowEvent::Destroyed => {
+                // Window gone — drop Core so GPU resources are freed.
+                self.core = None;
+                self.catcher = None;
+            }
+
+            // ----------------------------------------------------------------
             WindowEvent::Resized(physical_size) => {
                 if let Some(core) = &mut self.core {
                     core.resize(physical_size);
                 }
+                // Keep the mouse-grab re-center position up to date.
+                self.center = LogicalPosition::new(
+                    physical_size.width as f64 / 2.0,
+                    physical_size.height as f64 / 2.0,
+                );
             }
-            WindowEvent::ScaleFactorChanged {
-                inner_size_writer, ..
-            } => {
-                // TODO do we still need to check for this?
-                // inner_size_writer.
-                // // new_inner_size is &&mut so we have to dereference it twice
-                // core.resize(**new_inner_size);
-            }
+
+            // ----------------------------------------------------------------
+            WindowEvent::ScaleFactorChanged { .. } => {}
+
+            // ----------------------------------------------------------------
             WindowEvent::RedrawRequested => {
                 if let Some(core) = &mut self.core {
                     match core.render() {
                         render::DrawState::Success => {}
-                        // Reconfigure the surface if it is lost or outdated
+                        // Surface lost / outdated — reconfigure and try next frame.
                         render::DrawState::Resize => {
-                            core.resize(core.gfx.size);
-                        } // The system is out of memory, we should probably quit
-                        // Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-                        // All other errors (Timeout) should be resolved by the next frame
-                        // Err(e) => eprintln!("{:?}", e),
-                        render::DrawState::Skip => {
-                            return;
+                            let sz = core.gfx.size;
+                            core.resize(sz);
                         }
-                    };
-
-                    win_ref.request_redraw();
-                    core.loop_helper.loop_sleep();
+                        // Timeout / skip — just wait for the next frame.
+                        render::DrawState::Skip => {}
+                    }
                 }
             }
-            WindowEvent::ActivationTokenDone { serial, token } => {}
+
+            // ----------------------------------------------------------------
             WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
-                        physical_key: PhysicalKey::Code(keycode),
+                        physical_key,
+                        logical_key,
                         state,
                         ..
                     },
                 ..
             } => {
-                bit_check(&state, keycode, &mut self.bits);
+                // Update the bool key-state array for Lua.
+                if let PhysicalKey::Code(keycode) = physical_key {
+                    bit_check(&state, keycode, &mut self.bits);
+                }
+
+                // Feed typed characters directly into the console log so they
+                // arrive on every key-repeat, not just once per Lua frame.
+                if state == ElementState::Pressed {
+                    if let Some(core) = &mut self.core {
+                        if core.global.console {
+                            match &logical_key {
+                                Key::Character(c) => {
+                                    // Filter out backtick (console toggle key).
+                                    if c.as_str() != "`" {
+                                        core.loggy.add(c.as_str());
+                                    }
+                                }
+                                Key::Named(NamedKey::Space) => {
+                                    core.loggy.add(" ");
+                                }
+                                Key::Named(NamedKey::Backspace) => {
+                                    core.loggy.back();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ----------------------------------------------------------------
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(core) = &mut self.core {
+                    if core.gfx.size.width > 0 && core.gfx.size.height > 0 {
+                        core.global.mouse_pos.x =
+                            position.x as f32 / core.gfx.size.width as f32;
+                        core.global.mouse_pos.y =
+                            position.y as f32 / core.gfx.size.height as f32;
+                    }
+                }
+            }
+
+            // ----------------------------------------------------------------
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(core) = &mut self.core {
+                    let val = if state == ElementState::Pressed {
+                        1.0f32
+                    } else {
+                        0.0
+                    };
+                    match button {
+                        winit::event::MouseButton::Left => core.global.mouse_buttons[0] = val,
+                        winit::event::MouseButton::Right => core.global.mouse_buttons[1] = val,
+                        winit::event::MouseButton::Middle => core.global.mouse_buttons[2] = val,
+                        winit::event::MouseButton::Forward => core.global.mouse_buttons[3] = val,
+                        _ => {}
+                    }
+                }
+            }
+
+            // ----------------------------------------------------------------
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(core) = &mut self.core {
+                    core.global.scroll_delta = match delta {
+                        MouseScrollDelta::LineDelta(x, y) => (x, y),
+                        MouseScrollDelta::PixelDelta(pos) => {
+                            // Normalise pixel scroll to approximate line units.
+                            (pos.x as f32 / 120.0, pos.y as f32 / 120.0)
+                        }
+                    };
+                }
+            }
+
+            // ----------------------------------------------------------------
+            WindowEvent::DroppedFile(path) => {
+                if let Some(core) = &mut self.core {
+                    let s = path.as_os_str().to_string_lossy().to_string();
+                    if core.global.boot_state {
+                        core.global.pending_load = Some(s.clone());
+                    }
+                    core.bundle_manager.get_main_bundle().lua.call_drop(s);
+                }
             }
 
             _ => {}
         }
     }
 
+    /// Raw device events — used for relative mouse motion (independent of
+    /// cursor position or acceleration).
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            if let Some(core) = &mut self.core {
+                core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
+            }
+        }
+    }
+
+    /// Called once per iteration of the event loop before sleeping.
+    /// This is where the 60 Hz Lua update runs.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
 
         if now >= self.next_frame_time {
-            // 1. Run your core update logic
             let core = match self.core.as_mut() {
-                Some(s) => s,
-                None => return,
-            };
-            let win_ref = match self.window.as_mut() {
-                Some(s) => s,
+                Some(c) => c,
                 None => return,
             };
             let catcher = match self.catcher.as_ref() {
-                Some(s) => s,
+                Some(c) => c,
                 None => return,
             };
 
+            core.loop_helper.loop_start();
 
-            core.loop_helper.loop_start(); //
+            // Grab a clone of the window Arc so we can pass it to
+            // state_change_checker without holding a borrow of self.window
+            // while also mutably borrowing self.core.
+            let win_arc = match self.window.clone() {
+                Some(w) => w,
+                None => return,
+            };
 
-            state_change_checker(core, event_loop, win_ref, self.center);
-            // Run our update and look for a "loop complete" return call from the bundle manager calling the lua loop in a previous step.
-            // The lua context upon completing a loop will send a MainCommmand::LoopComplete to this thread.
+            state_change_checker(core, event_loop, &win_arc, self.center);
 
-            core.update(catcher);
-            core.bundle_manager
-                .call_loop(&mut core.completed_bundles, &self.bits);
-
-            // TODO isnt this meant ot be called once, or is it every iter?
-            event_loop.set_control_flow(ControlFlow::Poll);
-            // core.loop_helper.loop_start();
-            if !core.global.console {
-                controls::bit_check(&event, &mut self.bits);
-                bits.1[0] = core.global.mouse_pos.x;
-                bits.1[1] = core.global.mouse_pos.y;
-                bits.1[2] = core.global.mouse_delta.x;
-                bits.1[3] = core.global.mouse_delta.y;
-                bits.1[4] = core.global.mouse_buttons[0];
-                bits.1[5] = core.global.mouse_buttons[1];
-                bits.1[6] = core.global.mouse_buttons[2];
-                bits.1[7] = core.global.scroll_delta.0;
-                bits.1[8] = core.global.cursor_projected_pos.x;
-                bits.1[9] = core.global.cursor_projected_pos.y;
-                bits.1[10] = core.global.cursor_projected_pos.z;
-            } else if core.global.mouse_grabbed_state {
-                rwin.set_cursor_visible(true);
-                rwin.set_cursor_grab(CursorGrabMode::None);
+            // Release grabbed mouse if the console was just opened.
+            if core.global.console && core.global.mouse_grabbed_state {
+                win_arc.set_cursor_visible(true);
+                let _ = win_arc.set_cursor_grab(CursorGrabMode::None);
                 core.global.mouse_grabbed_state = false;
             }
 
-            if core.input_manager.update(&event) {
-                controls::controls_evaluate(&mut core, elwt);
-                // frame!("START");
+            // Process incoming MainCommands from Lua threads.
+            core.update(catcher);
 
-                core.global.mouse_delta = vec2(0., 0.);
-                // frame!("END");
-                // frame!();
-            }
+            // Copy mouse / analogue state into the float portion of bits
+            // so Lua can read cursor and scroll data.
+            self.bits.1[0] = core.global.mouse_pos.x;
+            self.bits.1[1] = core.global.mouse_pos.y;
+            self.bits.1[2] = core.global.mouse_delta.x;
+            self.bits.1[3] = core.global.mouse_delta.y;
+            self.bits.1[4] = core.global.mouse_buttons[0];
+            self.bits.1[5] = core.global.mouse_buttons[1];
+            self.bits.1[6] = core.global.mouse_buttons[2];
+            self.bits.1[7] = core.global.scroll_delta.0;
+            self.bits.1[8] = core.global.cursor_projected_pos.x;
+            self.bits.1[9] = core.global.cursor_projected_pos.y;
+            self.bits.1[10] = core.global.cursor_projected_pos.z;
 
-            match event {
-                Event::WindowEvent {
-                    ref event,
-                    window_id: _,
-                } => match event {
-                    _ => {}
-                },
-                Event::DeviceEvent { device_id, event } => match event {
-                    DeviceEvent::MouseMotion { delta } => {
-                        core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
-                    }
+            // Evaluate system shortcuts and console key commands.
+            controls::controls_evaluate(core, event_loop, &self.bits, &self.bits_prev);
 
-                    _ => {}
-                },
-                _ => {}
-            }
+            // Reset per-frame deltas after they've been consumed.
+            core.global.mouse_delta = vec2(0., 0.);
+            core.global.scroll_delta = (0., 0.);
 
-            // 2. Request a redraw from the window
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+            // Send the Lua loop message (~60 Hz).
+            core.bundle_manager
+                .call_loop(&mut core.completed_bundles, &self.bits);
 
-            // 3. Set the time for the next frame
-            // We add the duration to the previous target to avoid "drift"
-            self.next_frame_time = now + self.frame_duration;
+            // Save current key state for next frame's pressed/released detection.
+            self.bits_prev = self.bits.0;
+
+            // Request a GPU frame; rendering happens in RedrawRequested.
+            win_arc.request_redraw();
+
+            // Advance to the next target frame time (avoids drift).
+            self.next_frame_time += self.frame_duration;
         }
 
-        // 4. Tell the event loop to sleep until exactly when we need the next frame
+        // Sleep until the next frame is due.
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame_time));
     }
 }
 
 pub fn start() {
-    // crate::parse::test(&"test.lua".to_string());
     env_logger::init();
 
-    // #[cfg(feature = "headed")]
-    let (mut app, event_loop) = {
-        let event_loop = match EventLoop::<()>::new() {
-            Ok(el) => el,
-            Err(e) => {
-                error_window(Box::new(e));
-                return;
-            }
-        };
-        let mut app = App::default();
-        event_loop.run_app(&mut app);
-
-        // let win = match            .build(&event_loop)
-        // {
-        //     Ok(win) => win,
-        //     Err(e) => {
-        //         error_window(Box::new(e));
-        //         // println!("Error: {}", e);
-        //         return;
-        //     }
-        // };
-        //
-
-        // let rwindow = Arc::new(win);
-
-        // State::new uses async code, so we're going to wait for it to finish
-        (app, event_loop)
+    let event_loop = match EventLoop::<()>::new() {
+        Ok(el) => el,
+        Err(e) => {
+            error_window(Box::new(e));
+            return;
+        }
     };
 
-    // #[cfg(not(feature = "headed"))]
-    // let mut core = pollster::block_on(Core::new(pitcher));
-
-    let core = app
-        .core
-        .unwrap_or_else(|| panic!("Somehow failed to create core"));
-
-    crate::command::load_empty(&mut core);
-    {
-        crate::asset::make_directory("test", None, &mut core.loggy);
-        // core.loggy
-        //     .log(LogType::Config, &format!("created directory {}", name));
-        crate::command::hard_reset(&mut core);
-        if let Err(e) = crate::command::load_app(&mut core, Some("test"), None, None, None) {
-            core.loggy.log(LogType::CoreError, &format!("{}", e));
-        }
-    }
-
-    core.loggy.clear();
-
-    core.global.state_changes.push(StateChange::Config);
-    // DEV a little delay trick to ensure any pending requests in our "console" app are completed before the following state change is made
-    core.global.state_delay = 8;
-    core.global.is_state_changed = true;
-    let mut bits: ControlState = ([false; 256], [0.; 11]);
-
-    let mut insta_load = |s: String| {
-        core.global.console = false;
-        #[cfg(feature = "headed")]
-        core.gui.disable_console();
-        // crate::command::hard_reset(&mut core);
-
-        core.global.pending_load = Some(s.clone());
-        // crate::command::load_from_string(&mut core, Some(s));
-        core.bundle_manager.get_lua().call_drop(s);
-    };
-
-    if env::args().count() > 1 {
-        let s = env::args().nth(1).unwrap();
-        native_dialog::DialogBuilder::message()
-            .set_level(native_dialog::MessageLevel::Info)
-            .set_title("Petrichor64 Info")
-            .set_text(&s)
-            .alert()
-            .show()
-            .unwrap();
-        insta_load(s);
-    } else {
-        match crate::asset::check_for_auto() {
-            Some(s) => {
-                insta_load(s);
-            }
-            _ => {
-                #[cfg(feature = "include_auto")]
-                {
-                    core.global.console = false;
-                    core.gui.disable_console();
-                    let id = core.bundle_manager.console_bundle_target;
-                    crate::command::reload(&mut core, id);
-                }
-
-                #[cfg(not(feature = "include_auto"))]
-                {
-                    #[cfg(not(feature = "studio"))]
-                    core.gui.disable_console();
-                    // crate::command::load_empty(&mut core);
-                }
-            }
-        }
-    }
-
-    // let state_change_check = move ;
-
-    #[cfg(feature = "headed")]
-    {
-        // :reload(core);
-        let mut instance_buffers = vec![];
-    }
-    // #[cfg(not(feature = "headed"))]
-    // {
-    //     // loop
-    //     let mut updated_bundles = FxHashMap::default();
-    //     loop {
-    //         core.loop_helper.loop_start();
-    //         if let Ok(inp) = core.cli_thread_receiver.try_recv() {
-    //             core_console_command(&mut core, &inp);
-    //         }
-    //         if state_change_check(&mut core, &mut (), &mut ()) {
-    //             return;
-    //         }
-    //         core.update(&mut catcher, &mut updated_bundles);
-    //         core.bundle_manager.call_loop(&mut updated_bundles, bits);
-    //         core.loop_helper.loop_sleep();
-    //     }
-    // }
+    let mut app = App::default();
+    // run_app drives the event loop; App::resumed() does all the setup.
+    let _ = event_loop.run_app(&mut app);
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str) {
@@ -556,7 +553,6 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
         match crate::command::run_con_sys(core, c) {
             Ok(false) => {
                 let mut ltype = LogType::Lua;
-                // TODO this should use the async sender, otherwise it will block the main thread if lua is lagging
                 let r = match core.bundle_manager.get_lua().func(c) {
                     Ok(v) => match v {
                         LuaResponse::String(s) => Some(s),
@@ -565,20 +561,19 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
                         LuaResponse::Bool(b) => Some(b.to_string()),
                         LuaResponse::Table(t) => {
                             let mut s = String::new();
-                            s.push_str("{");
+                            s.push('{');
                             for (k, v) in t {
                                 s.push_str(&format!("{}: {}, ", k, v));
                             }
-                            s.push_str("}");
+                            s.push('}');
                             Some(s)
                         }
-                        // _ => Some("~".to_string()), // ignore nils
-                        _ => None, // ignore nils
+                        _ => None,
                     },
                     Err(e) => {
                         ltype = LogType::LuaError;
                         Some(e.to_string())
-                    } // LuaResponse::Function(f) => format!("function: {}", f),
+                    }
                 };
                 if let Some(result) = r {
                     core.loggy.log(ltype, &result);
