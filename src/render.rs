@@ -1,4 +1,9 @@
 use glam::{vec3, Mat4, Vec2, Vec3};
+use crate::Core;
+use wgpu::{
+    Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
+};
 /** create rotation matrix from camera position and simple rotation */
 pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
@@ -28,7 +33,7 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     let mx_view = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
         camera_pos,
-        c.add(camera_pos),
+        c + camera_pos,
         // vec3(10. + camera_pos.z, camera_pos.y, camera_pos.x), //+ camera_pos.z
         //vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
@@ -256,13 +261,13 @@ pub fn render_loop(
             return DrawState::Resize ;
         }
         wgpu::CurrentSurfaceTexture::Timeout => {
-            return;
+            return DrawState::Skip;
         }
         wgpu::CurrentSurfaceTexture::Validation => {
-            return;
+            return DrawState::Skip;
         }
         wgpu::CurrentSurfaceTexture::Occluded => {
-            return;
+            return DrawState::Skip;
         }
     };
 
@@ -293,7 +298,7 @@ pub fn render_loop(
         }
     }
 
-    gfx.queue.submit(iter::once(encoder.finish()));
+    gfx.queue.submit(std::iter::once(encoder.finish()));
     // frame!("encoder.finish()");
     output.present();
 

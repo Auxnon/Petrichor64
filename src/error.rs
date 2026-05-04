@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::SendError,
 };
 
-use silt_lua::{LuaError, error::{ErrorOut, ErrorTuple}};
+use silt_lua::error::ErrorTuple;
 
 // use piccolo::{PrototypeError, StaticError};
 
@@ -17,7 +17,7 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
-    LuaRunError(Box<ErrorOut>),
+    LuaRunError(Vec<ErrorTuple>),
     LuaGenericError,
     MissingAssets,
     MissingScripts,
@@ -45,19 +45,8 @@ impl Display for P64Error {
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
             P64Error::LuaRunError(err) => {
-                // writeln!("\n❌ Lua Parse Errors:\n");
-                // for (i, err) in (*error_tuple).iter().enumerate() {
-                //     writeln!(
-                //         "  [{}] {}:{} - {}",
-                //         i + 1,
-                //         err.location.0, err.location.1, err.code
-                //     );
-                // }
-                // writeln!("\nFound {} error(s)\n", errors.len());
-                // Ok(())
-
-                // write!(f, "  {}:{} - {}", err.location.0, err.location.1, err.code)
-                write!(f,"{}",err.to_string())
+                let s = err.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+                write!(f, "{}", s)
             }
         }
     }
@@ -75,12 +64,19 @@ impl<T> From<SendError<T>> for P64Error {
     }
 }
 
-impl From<ErrorOut> for P64Error {
-    fn from(mut value: ErrorOut) -> Self {
-        // let n = value.errors.len();
-        P64Error::LuaRunError(Box::new(value))
+impl From<Vec<ErrorTuple>> for P64Error {
+    fn from(value: Vec<ErrorTuple>) -> Self {
+        P64Error::LuaRunError(value)
     }
 }
+
+impl std::fmt::Debug for P64Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl std::error::Error for P64Error {}
 
 // impl From<ParserError> for P64Error {
 //     fn from(value: ParserError) -> Self {
