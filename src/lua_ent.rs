@@ -142,19 +142,19 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("z", |_, _, this| this.z);
         fields.add_field_method_set("z", |_, _, this, z: f64| this.z = z);
 
-        fields.add_field_method_get("rx", |_, _, this| (this.rot_x));
-        fields.add_field_method_get("ry", |_, _, this| (this.rot_y));
-        fields.add_field_method_get("rz", |_, _, this| (this.rot_z));
+        fields.add_field_method_get("rx", |_, _, this| this.rot_x);
+        fields.add_field_method_get("ry", |_, _, this| this.rot_y);
+        fields.add_field_method_get("rz", |_, _, this| this.rot_z);
 
-        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| (this.rot_z = rot_z));
-        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| (this.rot_y = rot_y));
-        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| (this.rot_x = rot_x));
+        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| this.rot_z = rot_z);
+        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| this.rot_y = rot_y);
+        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| this.rot_x = rot_x);
 
-        fields.add_field_method_get("vx", |_, _, this| (this.vx));
-        fields.add_field_method_set("vx", |_, _, this, vx: f64| (this.vx = vx));
-        fields.add_field_method_get("vy", |_, _, this| (this.vy));
-        fields.add_field_method_set("vy", |_, _, this, vy: f64| (this.vy = vy));
-        fields.add_field_method_get("vz", |_, _, this| (this.vz));
+        fields.add_field_method_get("vx", |_, _, this| this.vx);
+        fields.add_field_method_set("vx", |_, _, this, vx: f64| this.vx = vx);
+        fields.add_field_method_get("vy", |_, _, this| this.vy);
+        fields.add_field_method_set("vy", |_, _, this, vy: f64| this.vy = vy);
+        fields.add_field_method_get("vz", |_, _, this| this.vz);
         fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);

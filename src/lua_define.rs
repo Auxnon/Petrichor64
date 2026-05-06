@@ -464,7 +464,8 @@ impl<'lt> LuaCore {
                                 break;
                             }
                             LuaTalk::AsyncFunc(_func) => {}
-                            LuaTalk::Loop((key_state, mouse_state)) => {
+                            LuaTalk::Loop(control_state) => {
+                                let ControlState(key_state, mouse_state) = control_state;
                                 vm.call_fn(mc, Some("loop"), loop_lua_func, ())?;
 
                                 local_pool.check_lock(&shared);
@@ -991,8 +992,7 @@ type ErrorEnum<'a> = LuaError<'a>;
 //     re.map_err(|e| P64Error::LuaRunError(e))
 // }
 fn unwrap<T>(re: Result<T, ErrorEnum>) -> Result<T, P64Error> {
-    // re.map_err(|e|Box::new(P64Error::from(e)))
-    re.map_err(|e| P64Error::LuaRunError(Box::new(e)))
+    re.map_err(|e| P64Error::from(e))
 }
 fn format_error(e: ErrorEnum) -> String {
     format_error_string(e.to_string())

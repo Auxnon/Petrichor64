@@ -55,8 +55,8 @@ impl Post {
         let (post_pipeline, post_bind_group_layout) = {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&main_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&main_layout)],
+                ..Default::default()
             });
             (
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -105,7 +105,7 @@ impl Post {
                     //     bias: wgpu::DepthBiasState::default(),
                     // }),
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                 }),
                 main_layout,
             )

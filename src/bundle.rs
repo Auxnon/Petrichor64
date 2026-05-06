@@ -65,7 +65,7 @@ impl Bundle {
 
     pub fn call_main(&self) {
         self.lua.call_main();
-        self.lua.call_loop(([false; 256], [0.; 11]));
+        self.lua.call_loop(ControlState::default());
     }
 
     pub fn shutdown(&self) {
@@ -149,7 +149,7 @@ impl BundleManager {
                         bundle.skipped_control_state = Some(combine_states(old_bits, *bits));
                     }
                     None => {
-                        bundle.skipped_control_state = Some(bits);
+                        bundle.skipped_control_state = Some(*bits);
                     }
                 };
                 bundle.skips += 1;
