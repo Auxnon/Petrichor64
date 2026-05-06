@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::SendError,
 };
 
-use silt_lua::error::ErrorTuple;
+use silt_lua::error::{ErrorOut, ErrorTuple};
 
 // use piccolo::{PrototypeError, StaticError};
 
@@ -67,6 +67,12 @@ impl<T> From<SendError<T>> for P64Error {
 impl From<Vec<ErrorTuple>> for P64Error {
     fn from(value: Vec<ErrorTuple>) -> Self {
         P64Error::LuaRunError(value)
+    }
+}
+
+impl From<ErrorOut> for P64Error {
+    fn from(value: ErrorOut) -> Self {
+        P64Error::LuaRunError(value.errors)
     }
 }
 

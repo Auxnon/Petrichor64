@@ -299,10 +299,7 @@ pub fn render_loop(
     }
 
     gfx.queue.submit(std::iter::once(encoder.finish()));
-    // frame!("encoder.finish()");
     output.present();
 
-    // frame!("END RENDER");
-
-    // Ok(())
+    DrawState::Success
 }

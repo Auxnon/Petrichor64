@@ -562,7 +562,7 @@ impl ModelManager {
                 let mut v2 = v.clone();
                 // v2.trans(offset.clone());
                 #[cfg(feature = "headed")]
-                v2.texture(uv[(i / 4 as usize)]);
+                v2.texture(uv[i / 4usize]);
                 v2
             })
             .collect::<Vec<Vertex>>();

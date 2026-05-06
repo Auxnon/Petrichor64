@@ -22,6 +22,7 @@ pub enum ValueMap {
     Null(),
 }
 
+#[derive(Clone, Copy)]
 pub struct ControlState(pub [bool; 256], pub [f32; 11]);
 
 impl Default for ControlState {
