@@ -1654,7 +1654,7 @@ function help() end",
         "
         add=table.insert 
         del=table.remove 
-        print=cout 
+        --print=cout 
         fill = function(...) gui:fill(...) end
         rect = function(...) gui:rect(...) end
         rrect = function(...) gui:rrect(...) end
@@ -1665,6 +1665,7 @@ function help() end",
         pixel = function(...) gui:pixel(...) end
         main = function() end
         loop = function() end
+        print('it works?')
         ",
         &mut compiler,
     )?;
@@ -1821,6 +1822,7 @@ async fn async_load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
+    // println!("LOADED");
     let bundle = match bundle_in {
         Some(b) => {
             let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();

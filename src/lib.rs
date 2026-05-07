@@ -10,6 +10,7 @@ use std::{
 
 use crate::{controls::bit_check, log::LogType};
 use clipboard::{ClipboardContext, ClipboardProvider};
+use colored::Colorize;
 use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
@@ -62,6 +63,7 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+use winit::error::EventLoopError;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalPosition,
@@ -195,7 +197,6 @@ impl ApplicationHandler for App {
     /// Called when the event loop is ready and (on mobile/web) the app has resumed.
     /// This is where we create the window and initialise the engine.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Only initialise once.
         if self.window.is_some() {
             return;
         }
@@ -282,6 +283,7 @@ impl ApplicationHandler for App {
                 core.gui.disable_console();
             }
         }
+        println!("{}", "we built core".on_red());
 
         self.core = Some(core);
     }
@@ -382,10 +384,8 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some(core) = &mut self.core {
                     if core.gfx.size.width > 0 && core.gfx.size.height > 0 {
-                        core.global.mouse_pos.x =
-                            position.x as f32 / core.gfx.size.width as f32;
-                        core.global.mouse_pos.y =
-                            position.y as f32 / core.gfx.size.height as f32;
+                        core.global.mouse_pos.x = position.x as f32 / core.gfx.size.width as f32;
+                        core.global.mouse_pos.y = position.y as f32 / core.gfx.size.height as f32;
                     }
                 }
             }
@@ -541,7 +541,14 @@ pub fn start() {
 
     let mut app = App::default();
     // run_app drives the event loop; App::resumed() does all the setup.
-    let _ = event_loop.run_app(&mut app);
+    if let Err(e) = event_loop.run_app(&mut app) {
+        match e {
+            EventLoopError::ExitFailure(e) => {
+                eprintln!(" exit error code {e}")
+            }
+            _ => eprintln!("unknown window exit error"),
+        }
+    };
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str) {

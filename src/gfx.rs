@@ -109,8 +109,11 @@ impl<'w> Gfx<'w> {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds { for_resource_creation: None, for_device_loss: None },
             backends: wgpu::Backends::all(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
+                for_resource_creation: None,
+                for_device_loss: None,
+            },
             backend_options: BackendOptions::from_env_or_default(),
             flags: wgpu::InstanceFlags::empty(),
             display: None,
@@ -133,22 +136,20 @@ impl<'w> Gfx<'w> {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect("Failed to request adapter");
 
         let (device, queue) = match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    trace: Trace::Off, // TODO make this on, where should it save?
-                    experimental_features: ExperimentalFeatures::disabled(),
-                    label: None,
-                    required_features: Features::empty(),
-                    required_limits: wgpu::Limits {
-                        max_storage_textures_per_shader_stage: 8,
-                        ..wgpu::Limits::default()
-                    },
-                    memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            .request_device(&wgpu::DeviceDescriptor {
+                trace: Trace::Off, // TODO make this on, where should it save?
+                experimental_features: ExperimentalFeatures::disabled(),
+                label: None,
+                required_features: Features::empty(),
+                required_limits: wgpu::Limits {
+                    max_storage_textures_per_shader_stage: 8,
+                    ..wgpu::Limits::default()
                 },
-            )
+                memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            })
             .await
         {
             Ok((device, queue)) => (device, queue),
@@ -391,7 +392,7 @@ impl<'w> Gfx<'w> {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Less), // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -474,7 +475,7 @@ impl<'w> Gfx<'w> {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Less), // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -631,7 +632,7 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        let _=self.win_ref.request_inner_size(LogicalSize::new(
+        let _ = self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))

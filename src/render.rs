@@ -1,5 +1,5 @@
-use glam::{vec3, Mat4, Vec2, Vec3};
 use crate::Core;
+use glam::{vec3, Mat4, Vec2, Vec3};
 use wgpu::{
     Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
@@ -52,15 +52,12 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     (mx_view, mx_projection, model_mat)
 }
 
-pub enum DrawState{
+pub enum DrawState {
     Success,
     Skip,
-    Resize
+    Resize,
 }
-pub fn render_loop(
-    core: &mut Core,
-    iteration: u64,
-) ->DrawState  {
+pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
@@ -154,7 +151,7 @@ pub fn render_loop(
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
-                depth_slice: Some(2),
+                depth_slice: None,
                 view: &gfx.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
@@ -254,11 +251,11 @@ pub fn render_loop(
         }
         wgpu::CurrentSurfaceTexture::Outdated => {
             // Reconfigure surface and skip this frame
-            return DrawState::Resize ;
+            return DrawState::Resize;
         }
         wgpu::CurrentSurfaceTexture::Lost => {
             // Reconfigure surface and skip this frame
-            return DrawState::Resize ;
+            return DrawState::Resize;
         }
         wgpu::CurrentSurfaceTexture::Timeout => {
             return DrawState::Skip;
@@ -279,7 +276,7 @@ pub fn render_loop(
         let mut post_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Post Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
-                depth_slice: Some(2),
+                depth_slice: None,
                 view: &view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
@@ -297,6 +294,7 @@ pub fn render_loop(
             post_pass.draw(0..4, 0..1);
         }
     }
+    encoder.pop_debug_group();
 
     gfx.queue.submit(std::iter::once(encoder.finish()));
     output.present();

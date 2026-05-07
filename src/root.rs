@@ -20,6 +20,7 @@ use std::sync::{
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
+use colored::Colorize;
 use rustc_hash::FxHashMap;
 use winit::window::Window;
 
@@ -62,6 +63,7 @@ impl<'core> Core {
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
+        println!("{}", "we made it here".on_green());
         let model_manager = ModelManager::init(&gfx.device);
         let mut ent_manager = EntManager::new(&gfx.device);
         let global = Global::new();
