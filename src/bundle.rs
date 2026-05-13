@@ -1,9 +1,6 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
-use image::{RgbaImage};
+use image::RgbaImage;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::WeakWrapper;
@@ -11,6 +8,7 @@ use silt_lua::userdata::WeakWrapper;
 // #[cfg(feature = "headed")]
 // use crate::root::Core;
 use crate::{
+    error::P64Error,
     gui::PreGuiMorsel,
     lua_define::{LuaCore, LuaHandle},
     pool::SharedPool,
@@ -59,17 +57,23 @@ impl Bundle {
         self.directory.as_deref()
     }
 
-    pub fn call_loop(&self, bits: ControlState) {
-        self.lua.call_loop(bits);
+    pub fn call_loop(&self, bits: ControlState) -> Result<(), P64Error> {
+        self.lua.call_loop(bits)
     }
 
-    pub fn call_main(&self) {
-        self.lua.call_main();
-        self.lua.call_loop(ControlState::default());
+    pub fn fail_instance(&mut self) {
+        println!("shutdown the instance {} because lua thread ended", self.id);
     }
 
-    pub fn shutdown(&self) {
-        self.lua.die();
+    pub fn call_main(&self) -> Result<(), P64Error> {
+        self.lua.call_main()?;
+        self.lua.call_loop(ControlState::default())
+    }
+
+    pub fn shutdown(&mut self) -> Result<(), P64Error> {
+        let res=self.lua.die();
+        self.lua.close();
+        res
     }
 
     pub fn resize(&self, width: u32, height: u32) {
@@ -124,14 +128,16 @@ impl BundleManager {
                     if bundle.skips >= bundle.frame_split {
                         *updated = false;
                         bundle.skips = 0;
-                        match bundle.skipped_control_state {
+                        if (match bundle.skipped_control_state {
                             Some(old_bits) => {
-                                bundle.call_loop(combine_states(old_bits, *bits));
                                 bundle.skipped_control_state = None;
+                                bundle.call_loop(combine_states(old_bits, *bits))
                             }
-                            None => {
-                                bundle.call_loop(*bits);
-                            }
+                            None => bundle.call_loop(*bits),
+                        })
+                        .is_err()
+                        {
+                            bundle.fail_instance();
                         }
                         true
                     } else {
@@ -152,16 +158,17 @@ impl BundleManager {
                         bundle.skipped_control_state = Some(*bits);
                     }
                 };
+                // TODO overflow if we go over u16!!!
                 bundle.skips += 1;
             }
         }
     }
 
-    pub fn call_main(&mut self, bundle_id: u8) {
-        match self.bundles.get(&bundle_id) {
-            Some(bundle) => bundle.call_main(),
-            None => {}
+    pub fn call_main(&mut self, bundle_id: u8) -> Result<(), P64Error> {
+        if let Some(bundle) = self.bundles.get(&bundle_id) {
+            return bundle.call_main();
         };
+        Ok(())
     }
 
     pub fn make_bundle(
@@ -301,6 +308,7 @@ impl BundleManager {
         &self.get_main_bundle().lua
         // &self.bundles.get(&0).unwrap().lua
     }
+
     pub fn get_main_bundle(&mut self) -> &Bundle {
         match self.bundles.get(&self.console_bundle_target) {
             Some(bundle) => &bundle,
@@ -324,8 +332,9 @@ impl BundleManager {
     }
 
     /** Reset a specific bundle, returns true if it exists, and returns any possible children instances */
-    pub fn soft_reset(&self, id: u8) -> (bool, Vec<u8>) {
-        match self.bundles.get(&id) {
+    pub fn soft_reset(&mut self, id: u8) -> (bool, Vec<u8>) {
+        println!("call soft reset");
+        match self.bundles.get_mut(&id) {
             Some(bundle) => {
                 bundle.shutdown();
                 (true, bundle.children.clone())
@@ -354,8 +363,10 @@ impl BundleManager {
     }
 
     pub fn hard_reset(&mut self) {
-        for (id, bundle) in self.bundles.drain() {
-            bundle.shutdown();
+        for (id, mut bundle) in self.bundles.drain() {
+            if let Err(e)=bundle.shutdown(){
+                eprintln!("failed to shutdown bundle  {} due to: {}",id,e);
+            }
         }
         self.bundle_counter = 0;
         self.console_bundle_target = 0;

@@ -63,7 +63,7 @@ impl<'core> Core {
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
-        println!("{}", "we made it here".on_green());
+        println!("{}", "== begin ==".on_green());
         let model_manager = ModelManager::init(&gfx.device);
         let mut ent_manager = EntManager::new(&gfx.device);
         let global = Global::new();
