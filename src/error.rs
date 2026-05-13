@@ -18,6 +18,10 @@ pub enum P64Error {
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
     LuaRunError(Vec<ErrorTuple>),
+    /// currently a convenience for handling failed lua instance caught from loop
+    LuaLoopFail,
+    /// Lua isntance is destroyed and thus it's channel is closed
+    LuaClosed,
     LuaGenericError,
     MissingAssets,
     MissingScripts,
@@ -39,6 +43,8 @@ impl Display for P64Error {
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
+            P64Error::LuaLoopFail=> write!(f,"Lua loop closed"),
+            P64Error::LuaClosed=> write!(f,"Lua instance currently purged"),
             P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
             P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
             P64Error::ChannelTimeoutError(i) => write!(f, "Lua channel ({i}) timed out"),

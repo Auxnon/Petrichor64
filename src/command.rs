@@ -19,13 +19,14 @@ use crate::{
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
 };
+use colored::Colorize;
 
 #[cfg(feature = "online_capable")]
 use online::Online;
 
 use image::{RgbaImage };
 use itertools::Itertools;
-use pollster::FutureExt;
+use pollster::{FutureExt, block_on};
 use silt_lua::{
     Compiler, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::Variadic
 };
@@ -1694,6 +1695,7 @@ where
 
 /** core game reset, drop all resources including lua */
 pub fn hard_reset(core: &mut Core) {
+    println!("{} {} ", "[ reset ]".on_bright_blue(), "hard reset");
     core.bundle_manager.hard_reset();
 
     #[cfg(feature = "headed")]
@@ -1710,6 +1712,7 @@ pub fn hard_reset(core: &mut Core) {
 
 /** purge resources related to a specific bundle by id, returns true if the bundle existed */
 pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
+    println!("{} {} ", "[ reset ]".on_bright_blue(), "soft reset");
     let (exists, children) = core.bundle_manager.soft_reset(bundle_id);
     if exists {
         #[cfg(feature = "headed")]
@@ -1822,7 +1825,7 @@ async fn async_load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    // println!("LOADED");
+    println!("{} {}", "loading from script".on_green(),game_path_in.unwrap_or("~"));
     let bundle = match bundle_in {
         Some(b) => {
             let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();
@@ -1988,7 +1991,7 @@ async fn async_load_app(
     // core.update();
     core.loggy.log(LogType::Config, "calling main method");
     // core.bundle_manager.call_main(bundle_id);
-    bundle.call_main();
+    bundle.call_main()?;
     Ok(())
 }
 
@@ -1996,7 +1999,7 @@ async fn async_load_app(
 pub fn reload(core: &mut Core, bundle_id: u8) {
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
-        load_app_and_log(core, None, None, Some(bundle_id), None);
+        block_on( load_app_and_log(core, None, None, Some(bundle_id), None));
     } else {
         #[cfg(feature = "include_auto")]
         {
@@ -2004,13 +2007,13 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
             core.loggy.log(LogType::Config,"auto loading included bytes");
             let payload = include_bytes!("../auto.game.png").to_vec();
             println!("auto load bin from reload command");
-           load_app_and_log(
+           block_on(load_app_and_log(
                 core,
                 Some("INCLUDE_AUTO"),
                 Some(payload),
                 None,
                 None,
-            );
+            ));
         }
         #[cfg(not(feature = "include_auto"))]
         {
@@ -2269,6 +2272,7 @@ pub enum MainCommmand {
     Read(String, SyncSender<Option<String>>),
     Write(String, String, SyncSender<bool>),
     Copy(String),
+    LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
     InitBack(Box<(WeakWrapper,WeakWrapper)>),

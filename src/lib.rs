@@ -18,6 +18,7 @@ use gui::ScreenIndex;
 use image::GenericImageView;
 use itertools::Itertools;
 use lua_define::{LuaResponse, MainPacket};
+use pollster::block_on;
 use root::Core;
 use types::{ControlState, GlobalMap};
 
@@ -231,12 +232,12 @@ impl ApplicationHandler for App {
         let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
         self.catcher = Some(catcher);
 
-        // --- Boot sequence (mirrors the old post-run_app code in start()) ---
         crate::command::load_empty(&mut core);
         {
-            crate::asset::make_directory("test", None, &mut core.loggy);
             crate::command::hard_reset(&mut core);
-            if let Err(e) = crate::command::load_app(&mut core, Some("test"), None, None, None) {
+            if let Err(e) =
+                crate::command::load_app(&mut core, Some("test/basic"), None, None, None)
+            {
                 core.loggy.log(LogType::CoreError, &format!("{}", e));
             }
         }
@@ -274,7 +275,8 @@ impl ApplicationHandler for App {
                 core.global.console = false;
                 core.gui.disable_console();
                 let id = core.bundle_manager.console_bundle_target;
-                crate::command::reload(&mut core, id);
+                // TODO is it better to reload here or not?
+                // crate::command::reload(&mut core, id);
             }
 
             #[cfg(not(feature = "include_auto"))]
@@ -283,7 +285,11 @@ impl ApplicationHandler for App {
                 core.gui.disable_console();
             }
         }
-        println!("{}", "we built core".on_red());
+        println!(
+            "{} {}",
+            "[ 1 ]".on_bright_purple(),
+            "we built core".on_red()
+        );
 
         self.core = Some(core);
     }
@@ -599,6 +605,7 @@ impl Core {
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
+            println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
             match p {
                 MainCommmand::Cam(p, r) => {
                     if let Some(pos) = p {
@@ -827,13 +834,15 @@ impl Core {
                     self.bundle_manager.reclaim_resources(b);
                 }
                 MainCommmand::Subload(file, is_overlay) => {
-                    crate::command::load_app(
+                    if let Err(e) = crate::command::load_app(
                         self,
                         Some(file.as_str()),
                         None,
                         None,
                         Some((id, is_overlay)),
-                    );
+                    ) {
+                        self.log(LogType::LuaError, &format!("!!{}", e))
+                    };
                 }
                 MainCommmand::Reload() => crate::command::reload(self, id),
 
@@ -900,6 +909,10 @@ impl Core {
                             self.log(LogType::IoError, &format!("!!Clipboard error"));
                         }
                     }
+                }
+                MainCommmand::LuaClose() => {
+                    // println!("close lua channel {}",id);
+                    // self.bundle_manager.close_lua_channel(id);
                 }
                 MainCommmand::Load(_) => todo!(),
                 MainCommmand::Null() => todo!(),
