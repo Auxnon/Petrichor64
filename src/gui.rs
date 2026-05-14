@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::{borrow::Borrow, fmt::Display, sync::Arc};
 
 use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
@@ -24,6 +24,18 @@ pub enum ScreenIndex {
     Secondary = 2,
     Trinary = 3,
     Sky = 4,
+}
+
+impl Display for ScreenIndex{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+       match self{
+           ScreenIndex::Sky=>write!(f,"SkyIndex"),
+           ScreenIndex::Primary=>write!(f,"PrimaryIndex"),
+           ScreenIndex::Secondary=>write!(f,"SecondaryIndex"),
+           ScreenIndex::Trinary=>write!(f,"TrinaryIndex"),
+           ScreenIndex::System=>write!(f,"SystemIndex"),
+       }
+    }
 }
 
 #[cfg(feature = "headed")]
@@ -100,10 +112,12 @@ impl ScreenLayer {
                     };
                     if let Some(weak) = weak_ref {
                         if let Some(lua_img) = weak.upgrade() {
-                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
+                            if let Err(e) = lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
                                 crate::texture::write_tex(queue, &self.texture.texture, &img.image);
                                 Ok(())
-                            });
+                            }) {
+                                eprintln!("image downcast err: {}", e);
+                            };
                             self.dirty = false;
                         }
                         // LuaImg not yet available — keep dirty for retry next frame
