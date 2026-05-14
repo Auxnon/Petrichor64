@@ -606,7 +606,7 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
     queue.write_texture(
         // Tells wgpu where to copy the pixel data
         wgpu::TexelCopyTextureInfoBase{
-  texture: texture,
+   texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,

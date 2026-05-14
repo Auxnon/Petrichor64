@@ -324,7 +324,7 @@ impl<'lt> LuaCore {
 
                     // let main_ref = Rc::new(RefCell::new(f));
                     for m in &receiver {
-                        println!("{} {}", "[ 4 ]".on_bright_purple(), "lua loop recieve");
+                        // println!("{} {}", "[ 4 ]".on_bright_purple(), "lua loop recieve");
 
                         // let (s1, s2, bit_in, channel) = m;
                         #[cfg(feature = "headed")]
@@ -860,21 +860,18 @@ fn run_in_context<'gc, 'lt, C>(
 where
     C: Read + Send + ?Sized,
 {
-    println!(
-        "{} {} {}",
-        "[ ? ]".on_bright_purple(),
-        "run in",
-        name.unwrap_or("")
-    );
+    // println!(
+    //     "{} {} {}",
+    //     "[ ? ]".on_bright_purple(),
+    //     "run in",
+    //     name.unwrap_or("")
+    // );
 
     // TODO optimize this
     let mut s = String::new();
     code.read_to_string(&mut s);
-
-    match vm.build_and_run(mc, name, &s, compiler) {
-        Ok(v) => Ok(v),
-        Err(er) => Err(er.into()),
-    }
+    vm.build_and_run(mc, name, &s, compiler)
+        .map_err(|e| e.into())
 }
 
 fn run_initial_code<R>(lua: &mut Lua, compiler: &mut Compiler, mut code: R) -> Result<(), ErrorEnum>

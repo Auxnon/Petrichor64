@@ -605,7 +605,7 @@ impl Core {
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
-            println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
+            // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
             match p {
                 MainCommmand::Cam(p, r) => {
                     if let Some(pos) = p {
@@ -886,12 +886,10 @@ impl Core {
                     self.global.is_state_changed = true;
                 }
                 MainCommmand::InitBack(refs) => {
-                    println!("init back");
                     let (main_ref, sky_ref) = *refs;
                     self.bundle_manager.set_img_refs(id, main_ref, sky_ref);
                 }
                 MainCommmand::LoopComplete(mutations) => {
-                    println!("loop back");
                     if mutations.gui {
                         #[cfg(feature = "headed")]
                         self.gui.mark_dirty(ScreenIndex::Primary, id);
