@@ -71,7 +71,7 @@ impl Bundle {
     }
 
     pub fn shutdown(&mut self) -> Result<(), P64Error> {
-        let res=self.lua.die();
+        let res = self.lua.die();
         self.lua.close();
         res
     }
@@ -364,8 +364,8 @@ impl BundleManager {
 
     pub fn hard_reset(&mut self) {
         for (id, mut bundle) in self.bundles.drain() {
-            if let Err(e)=bundle.shutdown(){
-                eprintln!("failed to shutdown bundle  {} due to: {}",id,e);
+            if let Err(e) = bundle.shutdown() {
+                eprintln!("failed to shutdown bundle  {} due to: {}", id, e);
             }
         }
         self.bundle_counter = 0;

@@ -26,15 +26,15 @@ pub enum ScreenIndex {
     Sky = 4,
 }
 
-impl Display for ScreenIndex{
+impl Display for ScreenIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-       match self{
-           ScreenIndex::Sky=>write!(f,"SkyIndex"),
-           ScreenIndex::Primary=>write!(f,"PrimaryIndex"),
-           ScreenIndex::Secondary=>write!(f,"SecondaryIndex"),
-           ScreenIndex::Trinary=>write!(f,"TrinaryIndex"),
-           ScreenIndex::System=>write!(f,"SystemIndex"),
-       }
+        match self {
+            ScreenIndex::Sky => write!(f, "SkyIndex"),
+            ScreenIndex::Primary => write!(f, "PrimaryIndex"),
+            ScreenIndex::Secondary => write!(f, "SecondaryIndex"),
+            ScreenIndex::Trinary => write!(f, "TrinaryIndex"),
+            ScreenIndex::System => write!(f, "SystemIndex"),
+        }
     }
 }
 
@@ -80,6 +80,19 @@ impl ScreenLayer {
                 println!("no pool");
             }
         }
+
+        // The CPU-side image just grew/shrank; the GPU texture is a fixed-size
+        // allocation from make_tex, so it must be recreated to match. Otherwise
+        // check_render's write_tex copies the new (larger) image onto the old
+        // (smaller) texture and wgpu rejects it as an out-of-bounds copy.
+        self.texture = crate::texture::make_tex(device, queue, &RgbaImage::new(size[0], size[1]));
+
+        // Keep the Rust-owned buffer (used directly by the System/console layer)
+        // sized to the texture so its upload can't overrun either.
+        if let Some(mut im) = self.image.try_borrow_mut() {
+            *im = RgbaImage::new(size[0], size[1]);
+        }
+
         self.dirty = true;
     }
     pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {

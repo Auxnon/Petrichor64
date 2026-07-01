@@ -11,10 +11,10 @@ use crate::{
     log::LogType,
     lua_define::{LuaResponse, MainPacket},
     lua_ent::LuaEnt,
-    lua_img::{ dehex, LuaImg},
+    lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
     pad::Pad,
-    pool::{LocalPool},
+    pool::LocalPool,
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
@@ -24,15 +24,18 @@ use colored::Colorize;
 #[cfg(feature = "online_capable")]
 use online::Online;
 
-use image::{RgbaImage };
+use image::RgbaImage;
 use itertools::Itertools;
-use pollster::{FutureExt, block_on};
+use pollster::{block_on, FutureExt};
 use silt_lua::{
-    Compiler, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::Variadic
+    gc_arena::{lock::RefLock, Gc, Mutation},
+    lua::VM,
+    userdata::{UserDataWrapper, WeakWrapper},
+    value::Variadic,
+    Compiler,
 };
 
 use parking_lot::Mutex;
-
 
 #[cfg(feature = "puc_lua")]
 use mlua::{
@@ -110,7 +113,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             core.loggy.log(
                 LogType::Config,
-                &format!("killing lua instance {bundle_id}" ),
+                &format!("killing lua instance {bundle_id}"),
             );
             main_bundle.lua.die();
         }
@@ -155,7 +158,8 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 // },
                 &mut core.loggy,
                 core.global.debug,
-            ).block_on()?;
+            )
+            .block_on()?;
         }
         "superpack" => {
             core.loggy.log(
@@ -233,15 +237,16 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 }
                 Err(er) => {
                     core.loggy
-                        .log(LogType::ConfigError, &format!("read error: {er}" ));
+                        .log(LogType::ConfigError, &format!("read error: {er}"));
                 }
             }
         }
         "ugh" => {
-            if segments.len()>1{
-            core.loggy.log(LogType::Sys, &format!("heh, ya {}",segments[1]));
-            }else{
-            core.loggy.log(LogType::Sys, "heh, ya");
+            if segments.len() > 1 {
+                core.loggy
+                    .log(LogType::Sys, &format!("heh, ya {}", segments[1]));
+            } else {
+                core.loggy.log(LogType::Sys, "heh, ya");
             }
         }
         "clear" => core.loggy.clear(),
@@ -257,46 +262,53 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             }
         }
         "new" => {
-                println!("here");
             if segments.len() > 1 {
                 let name = segments[1];
 
-                println!("new in");
+                eprintln!(
+                    "[ new ] targeting bundle id {} (console_target {}) for help(true)",
+                    main_bundle.id, bundle_id
+                );
                 let tout = main_bundle.lua.func("help(true)");
-                if let Ok(LuaResponse::Table(t)) = tout {
-                println!("ok in");
-                    let mut mapper = HashMap::new();
-                    for (k, c) in t.into_iter() {
-                        let d: String = k.into();
-                        let tup: (String, String) = c.into();
-                        println!("### {}::{}::{}", d, tup.0, tup.1);
-                        mapper.insert(d, tup);
+                match tout {
+                    Ok(LuaResponse::Table(t)) => {
+                        println!("ok in");
+                        let mut mapper = HashMap::new();
+                        for (k, c) in t.into_iter() {
+                            let d: String = k.into();
+                            let tup: (String, String) = c.into();
+                            println!("### {}::{}::{}", d, tup.0, tup.1);
+                            mapper.insert(d, tup);
+                        }
+                        // let mut com = vec![];
+                        // let mut cur_com = "";
+                        // let mut cur_desc = "";
+                        // let mut alt = false;
+                        // for (k, c) in t.iter() {
+                        //     if !alt {
+                        //         cur_com = k;
+                        //         cur_desc = c;
+                        //         alt = true;
+                        //     } else {
+                        //         com.push((cur_com.to_string(), (cur_desc.to_string(), c.to_owned())));
+                        //         alt = false;
+                        //     }
+                        // }
+                        crate::asset::make_directory(name, Some(&mapper), &mut core.loggy);
+                        core.loggy
+                            .log(LogType::Config, &format!("created directory {}", name));
+                        hard_reset(core);
+                        load_app(core, Some(name), None, None, None)?;
                     }
-                    // let mut com = vec![];
-                    // let mut cur_com = "";
-                    // let mut cur_desc = "";
-                    // let mut alt = false;
-                    // for (k, c) in t.iter() {
-                    //     if !alt {
-                    //         cur_com = k;
-                    //         cur_desc = c;
-                    //         alt = true;
-                    //     } else {
-                    //         com.push((cur_com.to_string(), (cur_desc.to_string(), c.to_owned())));
-                    //         alt = false;
-                    //     }
-                    // }
-                    crate::asset::make_directory(name, Some(&mapper), &mut core.loggy);
-                    core.loggy
-                        .log(LogType::Config, &format!("created directory {}", name));
-                    hard_reset(core);
-                    load_app(core, Some(name), None, None, None)?;
-                } else {
-                    core.loggy.log(
+                    Ok(t) => core.loggy.log(
                         LogType::ConfigError,
-                        "Problem making directory ( bad table)",
-                    );
-                }
+                        "Problem making directory (corrupt command table)",
+                    ),
+                    Err(e) => {
+                        let s = format!("Problem making directory due to thrown error:{}", e);
+                        core.loggy.log(LogType::ConfigError, &s);
+                    }
+                };
             } else {
                 core.loggy.log(LogType::Config, "new <name>");
             }
@@ -773,7 +785,7 @@ function abtn(button) end"
             Option<f64>,
             Option<f64>
         )| {
-                  print!("we called make!");
+            print!("we called make!");
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
@@ -1377,7 +1389,7 @@ function rnd(a, b) end"
         move |_, _, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok (fastrand::i64(fa..fb)),
+                    Some(fb) => Ok(fastrand::i64(fa..fb)),
                     _ => Ok(fastrand::i64(0..fa)),
                 },
                 _ => Ok(fastrand::i64(..)),
@@ -1557,6 +1569,7 @@ function quit(u) end"
     lua!(
         "help",
         move |vm, mc, b: bool| {
+            println!("we got inside help command");
             let mut t = vm.raw_table();
             t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
             for (k, (desc, examp)) in command_map_clone.iter() {
@@ -1569,6 +1582,7 @@ function quit(u) end"
                     t.set(k.to_string(), desc.to_string());
                 }
             }
+            println!("we made a help table");
             Ok(vm.wrap_table(mc, t))
         },
         "List all commands",
@@ -1798,7 +1812,8 @@ pub fn load_empty(core: &mut Core) {
  * @param [bundle_in]: optional, if based on an existing bundle, reuse it's resources and game_path. Will ignore the game_path param
  * @param [bundle_relations]: optional, if it's attached to another bundle, either as a a sub or overlay
  */
-pub fn load_app( core: &mut Core,
+pub fn load_app(
+    core: &mut Core,
     game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
@@ -1806,16 +1821,17 @@ pub fn load_app( core: &mut Core,
 ) -> Result<(), P64Error> {
     async_load_app(core, game_path_in, payload, bundle_in, bundle_relations).block_on()
 }
-pub async fn load_app_and_log( core: &mut Core,
+pub async fn load_app_and_log(
+    core: &mut Core,
     game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) {
-   if let Err(e)= load_app(core, game_path_in, payload, bundle_in, bundle_relations){
- let res: String=format!("{}",e);
-                core.loggy.log(LogType::LuaError, &res);
-   }
+    if let Err(e) = load_app(core, game_path_in, payload, bundle_in, bundle_relations) {
+        let res: String = format!("{}", e);
+        core.loggy.log(LogType::LuaError, &res);
+    }
 }
 
 async fn async_load_app(
@@ -1825,7 +1841,11 @@ async fn async_load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    println!("{} {}", "loading from script".on_green(),game_path_in.unwrap_or("~"));
+    println!(
+        "{} {}",
+        "loading from script".on_green(),
+        game_path_in.unwrap_or("~")
+    );
     let bundle = match bundle_in {
         Some(b) => {
             let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();
@@ -1878,7 +1898,8 @@ async fn async_load_app(
                     p,
                     &mut core.loggy,
                     debug,
-                ).await;
+                )
+                .await;
                 // println!("unpacked");
             }
             None => {
@@ -1931,7 +1952,8 @@ async fn async_load_app(
                                     buff,
                                     &mut core.loggy,
                                     debug,
-                                ).await;
+                                )
+                                .await;
                             } else {
                                 return Err(P64Error::IoNotFileOrDir(s.into()));
                             }
@@ -1999,15 +2021,15 @@ async fn async_load_app(
 pub fn reload(core: &mut Core, bundle_id: u8) {
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
-        block_on( load_app_and_log(core, None, None, Some(bundle_id), None));
+        block_on(load_app_and_log(core, None, None, Some(bundle_id), None));
     } else {
         #[cfg(feature = "include_auto")]
         {
-
-            core.loggy.log(LogType::Config,"auto loading included bytes");
+            core.loggy
+                .log(LogType::Config, "auto loading included bytes");
             let payload = include_bytes!("../auto.game.png").to_vec();
             println!("auto load bin from reload command");
-           block_on(load_app_and_log(
+            block_on(load_app_and_log(
                 core,
                 Some("INCLUDE_AUTO"),
                 Some(payload),
@@ -2275,7 +2297,7 @@ pub enum MainCommmand {
     LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
-    InitBack(Box<(WeakWrapper,WeakWrapper)>),
+    InitBack(Box<(WeakWrapper, WeakWrapper)>),
     Quit(u8),
 }
 

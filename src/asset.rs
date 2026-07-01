@@ -364,6 +364,9 @@ pub fn is_valid_type(s: &str) -> bool {
 }
 
 pub fn check_for_auto() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    let mut p;
+    #[cfg(not(target_os = "macos"))]
     let p;
     #[cfg(target_os = "macos")]
     {

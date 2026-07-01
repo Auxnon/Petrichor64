@@ -32,7 +32,7 @@ use std::{
     error::Error,
     io::{BufRead, Read},
     rc::Rc,
-    sync::mpsc::{channel, sync_channel, Sender, SyncSender},
+    sync::mpsc::{channel, sync_channel, RecvTimeoutError, Sender, SyncSender},
     thread,
     time::Duration,
 };
@@ -91,6 +91,37 @@ pub enum LuaTalk {
 //         }
 //     }
 // }
+
+/// Format a P64Error, rendering Lua run errors as source snippets. The erroring
+/// source is looked up in `scripts` by the index silt stamped onto the error
+/// (via ErrorOut.source_index → LuaRunError). A missing/untracked index (e.g.
+/// `usize::MAX`) degrades to the plain error message.
+fn error_string(e: P64Error, scripts: &[Option<String>]) -> String {
+    if let P64Error::LuaRunError(errs, idx) = e {
+        let source = scripts.get(idx).and_then(|s| s.as_deref());
+        errs.iter()
+            .map(|e| match source {
+                Some(s) => e.snippet(s),
+                None => e.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    } else {
+        e.to_string()
+    }
+}
+
+/// Store `source` at `index` in the sparse `scripts` vec, growing it as needed.
+/// One owned copy per distinct compiled source; used to resolve snippets later.
+fn store_script(scripts: &mut Vec<Option<String>>, index: usize, source: &str) {
+    if index == usize::MAX {
+        return;
+    }
+    if index >= scripts.len() {
+        scripts.resize(index + 1, None);
+    }
+    scripts[index] = Some(source.to_owned());
+}
 
 pub struct LuaCore {
     to_lua_tx: Option<Sender<LuaTalk>>,
@@ -192,6 +223,24 @@ impl<'lt> LuaCore {
         if let Err(e) = loggy.send((LogType::LuaSys, format!("init lua core #{}", bundle_id))) {
             println!("lua log failed: {}", e);
         }
+
+        // --- temporary diagnostic: unique per-start instance id + live count, so a
+        // --- duplicate start() for the same bundle_id (leaking a second thread that
+        // --- still reads an old receiver) is visible. ---
+        static LUA_INSTANCE_SEQ: std::sync::atomic::AtomicU32 =
+            std::sync::atomic::AtomicU32::new(0);
+        static LUA_INSTANCE_ALIVE: std::sync::atomic::AtomicU32 =
+            std::sync::atomic::AtomicU32::new(0);
+        let instance_id = LUA_INSTANCE_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let alive_before = LUA_INSTANCE_ALIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        eprintln!(
+            "{} start bundle {} -> instance #{} (now {} live)",
+            "[ START ]".on_yellow(),
+            bundle_id,
+            instance_id,
+            alive_before
+        );
+
         // let tokio_thread = tokio::spawn(future)
         let (sender, receiver) = channel::<LuaTalk>();
         self.to_lua_tx = Some(sender);
@@ -218,6 +267,11 @@ impl<'lt> LuaCore {
                 // let netout = net.clone();
                 // #[cfg(not(feature = "online_capable"))]
                 // let netout: Option<bool> = None;
+
+                // Sparse store of compiled sources, indexed by silt's source_index
+                // (stamped on every ErrorOut). Populated on each compile; read at
+                // error time to render a snippet against the originating source.
+                let mut scripts: Vec<Option<String>> = Vec::new();
 
                 let keys = [false; 256];
                 let mice = [0.; 13];
@@ -323,8 +377,43 @@ impl<'lt> LuaCore {
                     let drop_lua_func = vm.load_fn(mc, &mut compiler, Some("drop_fn"), "drop()")?;
 
                     // let main_ref = Rc::new(RefCell::new(f));
+                    // --- temporary diagnostic: heartbeat so we can tell whether THIS
+                    // --- thread keeps looping (processing Loop) vs wedges after a msg.
+                    let mut _loop_beat: u32 = 0;
                     for m in &receiver {
                         // println!("{} {}", "[ 4 ]".on_bright_purple(), "lua loop recieve");
+
+                        // --- temporary diagnostic: tag every dequeued message, stamped
+                        // --- with bundle_id so we can see if func() is hitting a
+                        // --- different bundle than the one actually looping. `Loop` is
+                        // --- throttled to one line/second to avoid drowning the signal.
+                        let _rx_tag: Option<String> = match &m {
+                            LuaTalk::Loop(_) => {
+                                _loop_beat += 1;
+                                if _loop_beat % 60 == 0 {
+                                    Some(format!("Loop#{}", _loop_beat))
+                                } else {
+                                    None
+                                }
+                            }
+                            LuaTalk::Load(c, _) => Some(format!("Load({})", c.name)),
+                            LuaTalk::AsyncLoad(c) => Some(format!("AsyncLoad({})", c.name)),
+                            LuaTalk::Func(f, _) => Some(format!("Func({})", f)),
+                            LuaTalk::Main => Some("Main".to_string()),
+                            LuaTalk::Resize(_, _) => Some("Resize".to_string()),
+                            LuaTalk::Die(_) => Some("Die".to_string()),
+                            LuaTalk::Drop(s) => Some(format!("Drop({})", s)),
+                            LuaTalk::AsyncFunc(_) => Some("AsyncFunc".to_string()),
+                        };
+                        if let Some(t) = &_rx_tag {
+                            eprintln!(
+                                "{} b{}/i{} recv: {}",
+                                "[ rx> ]".on_bright_cyan(),
+                                bundle_id,
+                                instance_id,
+                                t
+                            );
+                        }
 
                         // let (s1, s2, bit_in, channel) = m;
                         #[cfg(feature = "headed")]
@@ -394,27 +483,38 @@ impl<'lt> LuaCore {
                         // }
                         match m {
                             LuaTalk::Load(code, sync) => {
+                                let Script { name, content } = *code;
                                 println!(
                                     "{} {} {} {}",
                                     "[ 3 ]".on_bright_purple(),
                                     "push first lua code payload id:",
                                     bundle_id,
-                                    code.name
+                                    name
                                 );
-                                match run_in_context(
+                                // run_in_context stores `content` into `scripts` at the
+                                // index silt assigns; nothing here needs to own a copy.
+                                let reply = match run_in_context(
                                     vm,
                                     mc,
-                                    Some(&code.name),
-                                    &mut code.content.as_bytes(),
+                                    Some(&name),
+                                    &content,
                                     &mut compiler,
+                                    &mut scripts,
                                 ) {
                                     Err(er) => {
-                                        loggy.send((LogType::LuaError, er.to_string()))?;
-                                        sync.send(LuaResponse::String(er.to_string()))?;
+                                        let s = error_string(er, &scripts);
+                                        loggy.send((LogType::LuaError, s.clone()))?;
+                                        LuaResponse::String(s)
                                     }
-                                    Ok(v) => {
-                                        sync.send(v)?;
-                                    }
+                                    Ok(v) => v,
+                                };
+                                // A failed reply only means the loader timed out and
+                                // dropped its receiver; that must NOT kill the runtime.
+                                if let Err(e) = sync.send(reply) {
+                                    loggy.send((
+                                        LogType::LuaSysError,
+                                        format!("load reply dropped (caller gone): {}", e),
+                                    ))?;
                                 } // match run_in_context(vm, Some("load ->"), code){
                                   //     Ok(res)=>,
                                   //     Err(er)=>,
@@ -433,25 +533,23 @@ impl<'lt> LuaCore {
                                     vm,
                                     mc,
                                     Some(&code.name),
-                                    &mut code.content.as_bytes(),
+                                    &code.content,
                                     &mut compiler,
+                                    &mut scripts,
                                 ) {
-                                    loggy.send((LogType::LuaError, er.to_string()))?;
+                                    let s = error_string(er, &scripts);
+                                    loggy.send((LogType::LuaError, s))?;
                                 }
                             }
                             LuaTalk::Main => {
                                 if let Err(er) =
                                     vm.call_fn(mc, Some("main_fn_call"), main_lua_func, ())
                                 {
-                                    loggy.send((LogType::LuaError, er.to_string()))?;
+                                    // Runtime error inside main() points into the loaded
+                                    // app source; snippet against it by index.
+                                    let s = error_string(er.into(), &scripts);
+                                    loggy.send((LogType::LuaError, s))?;
                                 };
-
-                                // if let Err(e) = res {
-                                //     async_sender.send((
-                                //         bundle_id,
-                                //         MainCommmand::AsyncError(format_error_string(e.to_string())),
-                                //     ))?;
-                                // }
                             }
                             LuaTalk::Die(sync) => {
                                 // #[cfg(feature = "online_capable")]
@@ -472,7 +570,10 @@ impl<'lt> LuaCore {
                                 if let Err(e) =
                                     vm.call_fn(mc, Some("loop_fn_call"), loop_lua_func, ())
                                 {
-                                    loggy.send((LogType::LuaError, e.to_string()))?;
+                                    // Runtime error inside loop() points into the loaded
+                                    // app source; snippet against it by index.
+                                    let s = error_string(e.into(), &scripts);
+                                    loggy.send((LogType::LuaError, s))?;
                                 };
 
                                 local_pool.check_lock(&shared);
@@ -538,10 +639,26 @@ impl<'lt> LuaCore {
                                 local_pool.drop();
                             }
                             LuaTalk::Func(func, sync) => {
-                                // TODO load's chunk should call set_name to "main" etc, for better error handling
-                                let s: &mut (dyn Read + Send) = &mut func.as_bytes();
-                                let res =
-                                    run_in_context(vm, mc, Some("func ->"), s, &mut compiler)?;
+                                // A Lua error here is the caller's problem, not a reason to
+                                // tear down the whole runtime: report it back and keep looping.
+                                let res = match run_in_context(
+                                    vm,
+                                    mc,
+                                    Some("func ->"),
+                                    &func,
+                                    &mut compiler,
+                                    &mut scripts,
+                                ) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        // run_in_context stored this console input in
+                                        // `scripts` at its index; error_string resolves it
+                                        // (or an app source, if the error points there).
+                                        let s = error_string(e, &scripts);
+                                        loggy.send((LogType::LuaError, s.clone()))?;
+                                        LuaResponse::String(s)
+                                    }
+                                };
                                 // let res = match executor.take_result::<Value>(ctx) {
                                 //     Ok(v1) => match v1 {
                                 //         Ok(v2) => v2,
@@ -612,7 +729,13 @@ impl<'lt> LuaCore {
                                 // gui_handle.borrow_mut().resize(w, h);
                                 // main_rast.borrow_mut().resize(w, h);
                                 // sky_rast.borrow_mut().resize(w, h);
-                                vm.call_fn(mc, Some("redraw_fn"), draw_lua_func, (w, h))?;
+                                // A throwing draw() must not kill the runtime; log and continue.
+                                if let Err(e) =
+                                    vm.call_fn(mc, Some("redraw_fn"), draw_lua_func, (w, h))
+                                {
+                                    let s = error_string(e.into(), &scripts);
+                                    loggy.send((LogType::LuaError, s))?;
+                                }
 
                                 // executor.restart(ctx, draw_lua_func, (w, h));
                                 // lua_instance.execute(draw_lua_func)?;
@@ -624,12 +747,19 @@ impl<'lt> LuaCore {
                                 let res = vm.call_fn(mc, Some("drop"), drop_lua_func, s);
 
                                 if let Err(e) = res {
-                                    async_sender.send((
-                                        bundle_id,
-                                        MainCommmand::AsyncError(e.to_string()),
-                                    ))?;
+                                    let msg = error_string(e.into(), &scripts);
+                                    async_sender
+                                        .send((bundle_id, MainCommmand::AsyncError(msg)))?;
                                 }
                             }
+                        }
+                        // --- temporary diagnostic: pairs with `recv` above. ---
+                        if let Some(t) = &_rx_tag {
+                            eprintln!("{} b{} done: {}", "[ rx< ]".on_bright_green(), bundle_id, t);
+                            // Confirm we return to the receiver: if this prints but the
+                            // next `recv` never does, the message was sent to a DIFFERENT
+                            // channel than this thread reads (targeting mismatch).
+                            eprintln!("{} b{} awaiting next msg", "[ .... ]".dimmed(), bundle_id);
                         }
                     }
                     println!(
@@ -647,11 +777,15 @@ impl<'lt> LuaCore {
                 Ok(_) => Ok(()),
                 Err(e) => Err(format!("lua ctx failure: {}", e)),
             };
+            let alive_after =
+                LUA_INSTANCE_ALIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) - 1;
             println!(
-                "{} {} {}",
+                "{} {} bundle {} instance #{} ({} still live)",
                 "[ 6 ]".on_bright_purple(),
                 "lua thread reached end for",
-                bundle_id
+                bundle_id,
+                instance_id,
+                alive_after
             );
             res
         });
@@ -662,13 +796,20 @@ impl<'lt> LuaCore {
     pub fn func(&self, func: &str) -> Result<LuaResponse, P64Error> {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         if let Some(ltx) = &self.to_lua_tx {
+            // --- temporary diagnostic: func() sent this; compare its arrival (or
+            // --- absence) against the `b<id>` recv/heartbeat markers to spot a
+            // --- targeting mismatch or a wedged receiver. ---
+            eprintln!("{} func send: {:?}", "[ tx! ]".on_bright_magenta(), func);
             ltx.send(LuaTalk::Func(func.to_string(), tx))
                 .map_err(|_| P64Error::ChannelDisconnectedError)?;
             match rx.recv_timeout(Duration::from_millis(4000)) {
                 Ok(lua_out) => Ok(lua_out),
-                Err(_) => Err(P64Error::ChannelTimeoutError(1)), // TODO it could be either Timeout or
-                                                                 // Disconnected, is it worth
-                                                                 // distinguishing?
+                // Timeout: the thread is alive but never replied within the window
+                // (stuck compiling/executing). Disconnected: the thread dropped the
+                // reply sender — it died/panicked mid-call. These are very different
+                // failures, so don't collapse them into one ambiguous timeout.
+                Err(RecvTimeoutError::Timeout) => Err(P64Error::ChannelTimeoutError(1)),
+                Err(RecvTimeoutError::Disconnected) => Err(P64Error::LuaClosed),
             }
         } else {
             Err(P64Error::LuaClosed)
@@ -729,9 +870,11 @@ impl<'lt> LuaCore {
             ltx.send(LuaTalk::Load(Box::new(Script { name, content: buf }), tx))
                 .map_err(|_| P64Error::ChannelDisconnectedError)?;
 
-            Ok(rx
-                .recv_timeout(Duration::from_millis(10000))
-                .map_err(|_| P64Error::ChannelTimeoutError(0))?)
+            rx.recv_timeout(Duration::from_millis(10000))
+                .map_err(|e| match e {
+                    RecvTimeoutError::Timeout => P64Error::ChannelTimeoutError(0),
+                    RecvTimeoutError::Disconnected => P64Error::LuaClosed,
+                })
         } else {
             Err(P64Error::LuaClosed)
         }
@@ -803,7 +946,11 @@ impl<'lt> LuaCore {
             } else {
                 match rx.recv_timeout(Duration::from_millis(5000)) {
                     Ok(_) => Ok(()),
-                    Err(_) => Err(P64Error::LuaClosed),
+                    // Disconnected: the thread is already gone — die() succeeded in
+                    // spirit. Timeout: it's still alive but didn't ack the kill in 5s,
+                    // i.e. wedged mid-call; report that distinctly.
+                    Err(RecvTimeoutError::Disconnected) => Ok(()),
+                    Err(RecvTimeoutError::Timeout) => Err(P64Error::ChannelTimeoutError(2)),
                 }
             }
         } else {
@@ -850,27 +997,34 @@ impl<'lt> LuaCore {
 //
 //     Ok(())
 // }
-fn run_in_context<'gc, 'lt, C>(
+fn run_in_context<'gc>(
     vm: &mut VM<'gc>,
     mc: &Mutation<'gc>,
     name: Option<&str>,
-    code: &'lt mut C,
+    // Borrow the source, never copy it here. It's stored (one owned copy) into
+    // `scripts` at the index silt assigns, so `snippet` can find it at error time.
+    code: &str,
     compiler: &mut Compiler,
-) -> Result<ExVal, P64Error>
-where
-    C: Read + Send + ?Sized,
-{
-    // println!(
-    //     "{} {} {}",
-    //     "[ ? ]".on_bright_purple(),
-    //     "run in",
-    //     name.unwrap_or("")
-    // );
-
-    // TODO optimize this
-    let mut s = String::new();
-    code.read_to_string(&mut s);
-    vm.build_and_run(mc, name, &s, compiler)
+    scripts: &mut Vec<Option<String>>,
+) -> Result<ExVal, P64Error> {
+    // NOTE: use the shared `compiler` passed in (as the original build_and_run
+    // did). A fresh Compiler::new() per call was tried as a workaround but appears
+    // to wedge when compiling a call expression like `help(true)`; the shared one
+    // is the known-good path now that the silt-side bug is fixed.
+    let compiled = match compiler.try_compile(mc, name, code) {
+        Ok(f) => f,
+        Err(e) => {
+            // Record the source at the failed index too, so the compile-error
+            // snippet resolves against it just like a runtime error would.
+            store_script(scripts, e.source_index, code);
+            return Err(e.into());
+        }
+    };
+    // Stamp the compiled source into the store at its assigned index so any later
+    // runtime error carrying this index (including from nested functions defined
+    // here) can be rendered as a snippet.
+    store_script(scripts, compiled.source_index, code);
+    vm.run(mc, silt_lua::gc_arena::Gc::new(mc, compiled))
         .map_err(|e| e.into())
 }
 
