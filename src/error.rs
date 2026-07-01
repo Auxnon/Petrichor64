@@ -17,7 +17,10 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
-    LuaRunError(Vec<ErrorTuple>),
+    /// The error tuples plus the source index they came from (as reported by
+    /// silt's ErrorOut). The index lets the host resolve the originating source
+    /// text for a snippet — see `scripts` in lua_define.
+    LuaRunError(Vec<ErrorTuple>, usize),
     /// currently a convenience for handling failed lua instance caught from loop
     LuaLoopFail,
     /// Lua isntance is destroyed and thus it's channel is closed
@@ -43,15 +46,30 @@ impl Display for P64Error {
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
-            P64Error::LuaLoopFail=> write!(f,"Lua loop closed"),
-            P64Error::LuaClosed=> write!(f,"Lua instance currently purged"),
+            P64Error::LuaLoopFail => write!(f, "Lua loop closed"),
+            P64Error::LuaClosed => write!(f, "Lua instance currently purged"),
             P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
             P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
-            P64Error::ChannelTimeoutError(i) => write!(f, "Lua channel ({i}) timed out"),
+            P64Error::ChannelTimeoutError(i) => {
+                let op = match i {
+                    0 => "load",
+                    1 => "func",
+                    2 => "die",
+                    _ => "?",
+                };
+                write!(
+                    f,
+                    "Lua thread alive but did not reply to '{op}' in time (stuck mid-call)"
+                )
+            }
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
-            P64Error::LuaRunError(err) => {
-                let s = err.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+            P64Error::LuaRunError(err, _) => {
+                let s = err
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
                 write!(f, "{}", s)
             }
         }
@@ -72,13 +90,14 @@ impl<T> From<SendError<T>> for P64Error {
 
 impl From<Vec<ErrorTuple>> for P64Error {
     fn from(value: Vec<ErrorTuple>) -> Self {
-        P64Error::LuaRunError(value)
+        // No source index available on a bare tuple vec.
+        P64Error::LuaRunError(value, usize::MAX)
     }
 }
 
 impl From<ErrorOut> for P64Error {
     fn from(value: ErrorOut) -> Self {
-        P64Error::LuaRunError(value.errors)
+        P64Error::LuaRunError(value.errors, value.source_index)
     }
 }
 

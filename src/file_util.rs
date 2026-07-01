@@ -354,17 +354,23 @@ pub async fn unpack_and_walk<'a>(
         println!("make {}", d); // TODO remove need for this
         map.insert(d, vec![]);
     }
-    let entries: Result<Vec<(usize,String)>,&'static str> =archive.file().entries().iter().enumerate().map(|(id,entry)|{
-let file_name = entry
-            .filename()
-            .as_str()
-            .map_err(|_| "non UTF8 zip asset")?.to_string();
-        Ok((id,file_name))
-    }).collect();
-    let entries=entries?;
+    let entries: Result<Vec<(usize, String)>, &'static str> = archive
+        .file()
+        .entries()
+        .iter()
+        .enumerate()
+        .map(|(id, entry)| {
+            let file_name = entry
+                .filename()
+                .as_str()
+                .map_err(|_| "non UTF8 zip asset")?
+                .to_string();
+            Ok((id, file_name))
+        })
+        .collect();
+    let entries = entries?;
 
     for (id, file_name) in entries {
-        
         let shorter = if file_name.starts_with("./") {
             &file_name[2..file_name.len()]
         } else {
@@ -389,7 +395,7 @@ let file_name = entry
 
             match map.get_mut(dir) {
                 Some(ar) => {
-                    let mut contents:Vec<u8> = Vec::new();
+                    let mut contents: Vec<u8> = Vec::new();
                     // println!("found file");
 
                     let mut data_reader = archive

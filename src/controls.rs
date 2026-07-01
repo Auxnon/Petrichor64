@@ -31,15 +31,12 @@ pub fn controls_evaluate(
     bits_prev: &[bool; 256],
 ) {
     // Helpers — detect edge transitions from the per-frame key snapshot.
-    let key_released =
-        |kc: KeyCode| bits_prev[kc as usize] && !bits.0[kc as usize];
-    let key_pressed =
-        |kc: KeyCode| !bits_prev[kc as usize] && bits.0[kc as usize];
+    let key_released = |kc: KeyCode| bits_prev[kc as usize] && !bits.0[kc as usize];
+    let key_pressed = |kc: KeyCode| !bits_prev[kc as usize] && bits.0[kc as usize];
     let key_held = |kc: KeyCode| bits.0[kc as usize];
     // Index 249 is set by bit_check for both ShiftLeft and ShiftRight.
     let held_shift = bits.0[249];
-    let held_cmd =
-        key_held(COMMAND_KEY_L) || key_held(COMMAND_KEY_R);
+    let held_cmd = key_held(COMMAND_KEY_L) || key_held(COMMAND_KEY_R);
 
     // Backtick toggles the developer console.
     if key_released(KeyCode::Backquote) {

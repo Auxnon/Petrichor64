@@ -174,6 +174,13 @@ fn state_change_checker(
                                             println!("cli-init: {:?}", arg);
                                             crate::command::run_con_sys(c, arg);
                                         }
+                                        "--new" | "-n" => {
+                                            println!("cli-new: {:?}", arg);
+                                            let _ = crate::command::run_con_sys(
+                                                c,
+                                                &format!("new {}", arg),
+                                            );
+                                        }
                                         _ => {}
                                     }
                                     command = None;

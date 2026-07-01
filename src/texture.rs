@@ -540,7 +540,11 @@ pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
     }
 }
 
-pub fn render_sampler(device: &wgpu::Device, size: (u32, u32), format: wgpu::TextureFormat) -> (TextureView, Sampler, Texture) {
+pub fn render_sampler(
+    device: &wgpu::Device,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+) -> (TextureView, Sampler, Texture) {
     let img: RgbaImage = ImageBuffer::new(size.0, size.1);
     make_render_tex(device, &img, format)
 }
@@ -605,12 +609,11 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
 
     queue.write_texture(
         // Tells wgpu where to copy the pixel data
-        wgpu::TexelCopyTextureInfoBase{
-   texture,
+        wgpu::TexelCopyTextureInfoBase {
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
-
         },
         // wgpu::ImageCopyTexture {
         //     texture: texture,
@@ -621,7 +624,7 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
         // The actual pixel data
         img,
         // The layout of the texture
-        wgpu::TexelCopyBufferLayout{
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4 * dimensions.0),
             rows_per_image: Some(dimensions.1),
@@ -663,7 +666,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
 
     queue.write_texture(
         // Tells wgpu where to copy the pixel data
-        wgpu::TexelCopyTextureInfoBase{
+        wgpu::TexelCopyTextureInfoBase {
             texture: &tex,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
@@ -672,7 +675,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
         // The actual pixel data
         rgba,
         // The layout of the texture
-        wgpu::TexelCopyBufferLayout{
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4 * dimensions.0),
             rows_per_image: Some(dimensions.1),
@@ -696,7 +699,11 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
     }
 }
 
-pub fn make_render_tex(device: &wgpu::Device, img: &RgbaImage, format: wgpu::TextureFormat) -> (TextureView, Sampler, Texture) {
+pub fn make_render_tex(
+    device: &wgpu::Device,
+    img: &RgbaImage,
+    format: wgpu::TextureFormat,
+) -> (TextureView, Sampler, Texture) {
     let dimensions = img.dimensions();
     let texture_size = wgpu::Extent3d {
         width: dimensions.0,
