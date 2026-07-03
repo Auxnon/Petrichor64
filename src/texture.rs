@@ -424,6 +424,11 @@ impl TexManager {
         }
     }
 
+    /// temporary diagnostic: list all registered texture names.
+    pub fn dictionary_keys(&self) -> Vec<String> {
+        self.dictionary.keys().cloned().collect()
+    }
+
     /** return the actual image buffer data from a given texture name */
     pub fn get_img(&self, str: &String) -> (u32, u32, RgbaImage) {
         let im = match self.dictionary.get(str) {

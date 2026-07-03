@@ -117,6 +117,13 @@ impl ScreenLayer {
             // dirty and the LuaImg is available. The dirty flag is only cleared
             // after a successful upload so that the attempt is retried if the
             // pool or weak-ref is not yet ready.
+            // Primary is the Lua `gui` raster; Sky is the Lua `sky` raster. Secondary
+            // and Trinary have no data source wired up — they must NOT source from
+            // pool.gui (that froze a stale white snapshot of the gui over the sky).
+            // Leave them at their transparent init so the shader composite skips them.
+            ScreenIndex::Secondary | ScreenIndex::Trinary => {
+                self.dirty = false;
+            }
             _ => {
                 if let Some(pool) = bundle_manager.get_pool(self.bundle_target) {
                     let weak_ref = match self.index {

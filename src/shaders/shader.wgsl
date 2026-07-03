@@ -200,7 +200,7 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 
 @fragment
 fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
-  
+
 	// let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
 	// if (e3.a < 0.5) {
 	//     discard;
