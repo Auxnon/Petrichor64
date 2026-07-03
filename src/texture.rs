@@ -11,6 +11,7 @@ use image::{ImageBuffer, RgbaImage};
 use imageproc::drawing::draw_filled_rect;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
+#[cfg(feature = "headed")]
 use wgpu::{Queue, Sampler, Texture, TextureView};
 
 #[cfg(target_os = "windows")]
@@ -21,11 +22,13 @@ const SLASH: char = '/';
 const MAX_WIDTH: u32 = 2048;
 const MAX_HEIGHT: u32 = 2048;
 
+#[cfg(feature = "headed")]
 pub struct TexTuple {
     pub view: TextureView,
     pub sampler: Sampler,
     pub texture: Texture,
 }
+#[cfg(feature = "headed")]
 impl TexTuple {
     pub fn new(view: TextureView, sampler: Sampler, texture: Texture) -> TexTuple {
         TexTuple {
@@ -120,10 +123,12 @@ impl TexManager {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn finalize(&self, device: &wgpu::Device, queue: &Queue) -> TexTuple {
         make_tex(device, queue, &self.atlas)
     }
 
+    #[cfg(feature = "headed")]
     pub fn refinalize(&self, queue: &Queue, texture: &Texture) {
         // for (k, v) in self.dictionary.iter() {
         //     println!("tex>>{}>>{}", k, v);
@@ -540,6 +545,7 @@ pub fn save_audio_buffer(buffer: &Vec<u8>, loggy: &mut Loggy) {
     }
 }
 
+#[cfg(feature = "headed")]
 pub fn render_sampler(
     device: &wgpu::Device,
     size: (u32, u32),
@@ -598,6 +604,7 @@ pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x as i64, y as i64);
 }
 
+#[cfg(feature = "headed")]
 pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
     let dimensions = img.dimensions();
 
@@ -638,6 +645,7 @@ pub fn write_tex(queue: &Queue, texture: &Texture, img: &RgbaImage) {
     );
 }
 
+#[cfg(feature = "headed")]
 pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTuple {
     // lg!("make master texture");
     let rgba = img; //img.as_rgba8().unwrap();
@@ -699,6 +707,7 @@ pub fn make_tex(device: &wgpu::Device, queue: &Queue, img: &RgbaImage) -> TexTup
     }
 }
 
+#[cfg(feature = "headed")]
 pub fn make_render_tex(
     device: &wgpu::Device,
     img: &RgbaImage,
