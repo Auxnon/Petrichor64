@@ -20,7 +20,6 @@ use glam::{vec3, vec4};
 #[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
-#[cfg(feature = "headed")]
 use silt_lua::userdata::UserDataWrapper;
 #[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Buffer};
@@ -33,8 +32,9 @@ pub struct EntManager {
     // pub create: Vec<LuaEnt>,
     #[cfg(feature = "headed")]
     pub ent_array: Vec<(UserDataWrapper, Ent, Rc<RefCell<EntityUniforms>>)>,
+    // Headless keeps just the Lua-side entity userdata (no GPU Ent/uniforms).
     #[cfg(not(feature = "headed"))]
-    pub ent_array: Vec<Arc<Mutex<LuaEnt>>>,
+    pub ent_array: Vec<UserDataWrapper>,
     pub uniform_alignment: u32,
     #[cfg(feature = "headed")]
     pub instances: Vec<Instance>,
@@ -129,7 +129,7 @@ impl EntManager {
     }
 
     #[cfg(not(feature = "headed"))]
-    pub fn create_from_lua(&mut self, wrapped_lua: Arc<Mutex<LuaEnt>>) {
+    pub fn create_from_lua(&mut self, wrapped_lua: UserDataWrapper) {
         self.ent_array.push(wrapped_lua);
         self.hash_dirty = true
     }
@@ -142,8 +142,13 @@ impl EntManager {
     pub fn group(&mut self, targetId: u64, childId: u64) {
         let mut parentIndex = -1;
         let mut childIndex: i64 = -1;
-        let tt = self.ent_array[childId as usize]
-            .0
+        // The headed array stores (wrapper, Ent, uni); headless stores the wrapper
+        // directly — reach the Lua-side userdata the same way for both.
+        #[cfg(feature = "headed")]
+        let wrapper = &mut self.ent_array[childId as usize].0;
+        #[cfg(not(feature = "headed"))]
+        let wrapper = &mut self.ent_array[childId as usize];
+        let tt = wrapper
             .downcast_mut::<LuaEnt, _, _>(|e| {
                 if e.get_id() == childId {
                     childIndex = childId as i64;
@@ -321,28 +326,21 @@ impl EntManager {
     }
 
     #[cfg(not(feature = "headed"))]
-    pub fn check_ents(&mut self, iteration: u64) {
-        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
+    pub fn check_ents(&mut self, _iteration: u64) {
+        // Headless has no GPU instances to build; just reap dead entities and
+        // clear their dirty flags so per-frame Lua mutations settle.
         self.ent_array.retain_mut(|lent| {
-            match lent.lock() {
-                Ok(mut l) => {
-                    let parent = match l.parent {
-                        Some(u) => mats.get(&u),
-                        None => None,
-                    };
-                    if l.is_dirty() {
-                        let flags = l.get_flags();
-                        if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
-                            return false;
-                        }
-                        l.clear_dirt();
+            let mut alive = true;
+            let _ = lent.downcast_mut::<LuaEnt, _, _>(|l| {
+                if l.is_dirty() {
+                    if l.get_flags() & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
+                        alive = false;
                     }
-                    // let mat = ent.build_meta(&l, parent);
-                    // mats.insert(l.get_id(), mat);
+                    l.clear_dirt();
                 }
-                _ => {}
-            }
-            return true;
+                Ok(())
+            });
+            alive
         });
     }
 

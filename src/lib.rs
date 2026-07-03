@@ -8,9 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{controls::bit_check, log::LogType};
+use crate::log::LogType;
+#[cfg(feature = "headed")]
+use crate::controls::bit_check;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
+#[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
@@ -25,7 +28,9 @@ use types::{ControlState, GlobalMap};
 mod asset;
 mod bundle;
 mod command;
+#[cfg(feature = "headed")]
 mod controls;
+#[cfg(feature = "headed")]
 mod ent;
 mod ent_manager;
 mod error;
@@ -50,12 +55,11 @@ mod parse;
 mod pool;
 #[cfg(feature = "headed")]
 mod post;
+#[cfg(feature = "headed")]
 mod ray;
 #[cfg(feature = "headed")]
 mod render;
 mod root;
-#[cfg(not(feature = "headed"))]
-mod root_headless;
 #[cfg(feature = "audio")]
 mod sound;
 mod template;
@@ -67,7 +71,9 @@ mod userdata_util;
 mod world;
 
 use command::MainCommmand;
+#[cfg(feature = "headed")]
 use winit::error::EventLoopError;
+#[cfg(feature = "headed")]
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalPosition,
@@ -88,6 +94,14 @@ const OS: &str = "mac";
 
 const FPS: f32 = 60.;
 
+/// Per-loop output of `Core::update`: the freshly-built entity instance buffers
+/// under `headed`, nothing headless.
+#[cfg(feature = "headed")]
+type UpdateOut = InstanceBuffer;
+#[cfg(not(feature = "headed"))]
+type UpdateOut = ();
+
+#[cfg(feature = "headed")]
 pub struct App {
     window: Option<Arc<Window>>,
     center: LogicalPosition<f64>,
@@ -101,6 +115,7 @@ pub struct App {
     bits_prev: [bool; 256],
 }
 
+#[cfg(feature = "headed")]
 impl Default for App {
     fn default() -> Self {
         Self {
@@ -116,6 +131,7 @@ impl Default for App {
     }
 }
 
+#[cfg(feature = "headed")]
 fn state_change_checker(
     c: &mut Core,
     control_flow: &ActiveEventLoop,
@@ -204,6 +220,7 @@ fn state_change_checker(
     false
 }
 
+#[cfg(feature = "headed")]
 impl ApplicationHandler for App {
     /// Called when the event loop is ready and (on mobile/web) the app has resumed.
     /// This is where we create the window and initialise the engine.
@@ -549,6 +566,7 @@ impl ApplicationHandler for App {
     }
 }
 
+#[cfg(feature = "headed")]
 pub fn start() {
     env_logger::init();
 
@@ -570,6 +588,40 @@ pub fn start() {
             _ => eprintln!("unknown window exit error"),
         }
     };
+}
+
+/// Headless entry point: no window/GPU. Builds the core, loads the default app,
+/// then drives the 60Hz lua loop while feeding stdin lines in as console
+/// commands.
+#[cfg(not(feature = "headed"))]
+pub fn start() {
+    env_logger::init();
+    let (mut core, catcher) = block_on(Core::new());
+
+    crate::command::load_empty(&mut core);
+    crate::command::hard_reset(&mut core);
+    if let Err(e) = crate::command::load_app(&mut core, Some("test/basic"), None, None, None) {
+        core.loggy.log(LogType::CoreError, &format!("{}", e));
+    }
+
+    let frame = Duration::from_secs_f32(1.0 / FPS);
+    let bits = ControlState::default();
+    loop {
+        let start = Instant::now();
+
+        // Feed any queued stdin lines in as console commands.
+        while let Ok(line) = core.cli_thread_receiver.try_recv() {
+            core_console_command(&mut core, line.trim());
+        }
+
+        core.update(&catcher);
+        core.bundle_manager
+            .call_loop(&mut core.completed_bundles, &bits);
+
+        if let Some(rem) = frame.checked_sub(start.elapsed()) {
+            std::thread::sleep(rem);
+        }
+    }
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str) {
@@ -616,7 +668,7 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
 }
 
 impl Core {
-    fn update(&mut self, catcher: &Receiver<MainPacket>) -> Option<InstanceBuffer> {
+    fn update(&mut self, catcher: &Receiver<MainPacket>) -> Option<UpdateOut> {
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
@@ -800,7 +852,11 @@ impl Core {
                     }
                 }
                 MainCommmand::GetGlobal(tx) => {
-                    let t = GlobalMap::new(OS, 60., self.global.gui_params.resolution);
+                    #[cfg(feature = "headed")]
+                    let resolution = self.global.gui_params.resolution;
+                    #[cfg(not(feature = "headed"))]
+                    let resolution = (256, 256);
+                    let t = GlobalMap::new(OS, 60., resolution);
                     self.log_check(tx.send(t));
                 }
                 MainCommmand::AsyncError(e) => {
@@ -932,17 +988,22 @@ impl Core {
             }
         });
 
+        #[cfg(feature = "headed")]
         let instance_buffers = if loop_complete {
             Some(self.ent_manager.check_ents(
-                #[cfg(feature = "headed")]
                 &self.gfx.device,
-                #[cfg(feature = "headed")]
                 &self.tex_manager,
-                #[cfg(feature = "headed")]
                 &self.model_manager,
                 self.global.iteration,
             ))
         } else {
+            None
+        };
+        #[cfg(not(feature = "headed"))]
+        let instance_buffers = {
+            if loop_complete {
+                self.ent_manager.check_ents(self.global.iteration);
+            }
             None
         };
 

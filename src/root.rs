@@ -2,14 +2,18 @@
 use crate::sound::{sound, SoundCommand};
 use crate::{
     bundle::BundleManager,
-    ent_manager::{EntManager, InstanceBuffer},
-    gfx::Gfx,
+    ent_manager::EntManager,
     global::{Global, StateChange},
     lua_define::MainPacket,
     model::ModelManager,
-    render::{self, DrawState},
     texture::TexManager,
     types::ValueMap,
+};
+#[cfg(feature = "headed")]
+use crate::{
+    ent_manager::InstanceBuffer,
+    gfx::Gfx,
+    render::{self, DrawState},
 };
 
 use std::sync::{
@@ -22,6 +26,7 @@ use crate::world::World;
 use crate::{gui::Gui, log::LogType};
 use colored::Colorize;
 use rustc_hash::FxHashMap;
+#[cfg(feature = "headed")]
 use winit::window::Window;
 
 #[cfg(feature = "headed")]
@@ -42,7 +47,11 @@ pub struct Core {
     pub pitcher: Sender<MainPacket>,
 
     pub gui: Gui,
+    #[cfg(feature = "headed")]
     pub gfx: Gfx<'static>,
+    /// Headless input: a background thread feeds stdin lines here.
+    #[cfg(not(feature = "headed"))]
+    pub cli_thread_receiver: Receiver<String>,
 
     pub loop_helper: spin_sleep::LoopHelper,
     pub tex_manager: TexManager,
@@ -60,6 +69,7 @@ pub struct Core {
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
+    #[cfg(feature = "headed")]
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
@@ -126,6 +136,59 @@ impl<'core> Core {
         };
         (core, catcher)
     }
+
+    /// Headless Core: no GPU/window. Builds the same managers without a Gfx and
+    /// spins a stdin reader thread for CLI input.
+    #[cfg(not(feature = "headed"))]
+    pub async fn new() -> (Self, Receiver<MainPacket>) {
+        let tex_manager = crate::texture::TexManager::new();
+        let model_manager = ModelManager::init();
+        let ent_manager = EntManager::new();
+        let global = Global::new();
+        let mut loggy = crate::log::Loggy::new();
+        let mut gui = Gui::new((256, 256), &mut loggy);
+
+        let (w, h) = gui.get_console_size();
+        loggy.set_dimensions(w, h);
+        gui.add_text("initialized".to_string());
+
+        let world = World::new(loggy.make_sender());
+        let loop_helper = spin_sleep::LoopHelper::builder()
+            .report_interval_s(0.5)
+            .build_with_target_rate(60.0);
+
+        let (cli_thread_sender, cli_thread_receiver) = channel::<String>();
+        std::thread::spawn(move || loop {
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line).is_ok() {
+                let _ = cli_thread_sender.send(line);
+            }
+        });
+
+        let (pitcher, catcher) = channel::<MainPacket>();
+        let core = Self {
+            global,
+            #[cfg(feature = "audio")]
+            _stream: None,
+            #[cfg(feature = "audio")]
+            singer: channel().0,
+            world,
+            pitcher,
+            gui,
+            cli_thread_receiver,
+            loop_helper,
+            tex_manager,
+            model_manager,
+            ent_manager,
+            bundle_manager: BundleManager::new(),
+            loggy,
+            completed_bundles: FxHashMap::default(),
+            instance_buffers: (),
+        };
+        (core, catcher)
+    }
+
+    #[cfg(feature = "headed")]
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.gfx.set_config_size(new_size);
@@ -138,6 +201,7 @@ impl<'core> Core {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn debounced_resize(&mut self) {
         let gui_scaled = self.gfx.resize(&self.global.gui_params);
         self.gui
@@ -199,6 +263,7 @@ impl<'core> Core {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn render(&mut self) -> DrawState {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
@@ -217,9 +282,11 @@ impl<'core> Core {
 
     pub fn toggle_fullscreen(&mut self) {
         self.global.fullscreen = !self.global.fullscreen;
+        #[cfg(feature = "headed")]
         self.check_fullscreen();
     }
 
+    #[cfg(feature = "headed")]
     pub fn check_fullscreen(&self) {
         if self.global.fullscreen != self.global.fullscreen_state {
             self.gfx.set_fullscreen(self.global.fullscreen);

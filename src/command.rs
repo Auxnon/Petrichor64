@@ -1,7 +1,4 @@
-#[cfg(feature = "headed")]
 use crate::root::Core;
-#[cfg(not(feature = "headed"))]
-use crate::root_headless::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Instrument, Note, SoundCommand};
 use crate::{
