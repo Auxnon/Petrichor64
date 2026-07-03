@@ -235,7 +235,7 @@ impl<'lt> LuaCore {
         let alive_before = LUA_INSTANCE_ALIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         eprintln!(
             "{} start bundle {} -> instance #{} (now {} live)",
-            "[ START ]".on_yellow(),
+            "[ START ]".on_yellow().black(),
             bundle_id,
             instance_id,
             alive_before
@@ -408,7 +408,7 @@ impl<'lt> LuaCore {
                         if let Some(t) = &_rx_tag {
                             eprintln!(
                                 "{} b{}/i{} recv: {}",
-                                "[ rx> ]".on_bright_cyan(),
+                                "[ rx> ]".on_bright_cyan().black(),
                                 bundle_id,
                                 instance_id,
                                 t
@@ -755,7 +755,12 @@ impl<'lt> LuaCore {
                         }
                         // --- temporary diagnostic: pairs with `recv` above. ---
                         if let Some(t) = &_rx_tag {
-                            eprintln!("{} b{} done: {}", "[ rx< ]".on_bright_green(), bundle_id, t);
+                            eprintln!(
+                                "{} b{} done: {}",
+                                "[ rx< ]".on_bright_green().black(),
+                                bundle_id,
+                                t
+                            );
                             // Confirm we return to the receiver: if this prints but the
                             // next `recv` never does, the message was sent to a DIFFERENT
                             // channel than this thread reads (targeting mismatch).
@@ -799,7 +804,7 @@ impl<'lt> LuaCore {
             // --- temporary diagnostic: func() sent this; compare its arrival (or
             // --- absence) against the `b<id>` recv/heartbeat markers to spot a
             // --- targeting mismatch or a wedged receiver. ---
-            eprintln!("{} func send: {:?}", "[ tx! ]".on_bright_magenta(), func);
+            eprintln!("{} func send: {:?}", "[ tx! ]".on_bright_magenta().black(), func);
             ltx.send(LuaTalk::Func(func.to_string(), tx))
                 .map_err(|_| P64Error::ChannelDisconnectedError)?;
             match rx.recv_timeout(Duration::from_millis(4000)) {

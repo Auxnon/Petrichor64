@@ -387,7 +387,6 @@ impl EntManager {
                                 m
                             }
                             None => {
-                                // println!("no model found for {}", asset);
                                 if let Some(t) = tm.get_tex_or_not(&asset) {
                                     ent.tex = t;
                                 }

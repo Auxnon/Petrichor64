@@ -5,7 +5,8 @@ function main()
     example = make('example', rnd() * 3. - 1.5, 12, rnd() * 3. - 1.5)
 
     local im = nimg(16, 16)
-    im:fill('00F')
+    im:fill('F0F')
+    im:line(0,0,10,10,'0f0')
     tex('generated', im)
     generated = make('generated', rnd() * 3. - 1.5, 10, rnd() * 3. - 1.5)
     spin = 0
@@ -25,8 +26,8 @@ function main()
 end
 
 function loop()
-    example.x = example.x + rnd(-0.05, 0.05)
-    example.z = example.z + rnd(-0.05, 0.05)
+    -- example.x = example.x + rnd(-0.05, 0.05)
+    -- example.z = example.z + rnd(-0.05, 0.05)
     spin = spin + 0.1
     generated.z = generated.z + cos(spin) * .04
     generated.x = generated.x + sin(spin) * .04
