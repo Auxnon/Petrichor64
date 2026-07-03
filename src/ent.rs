@@ -86,13 +86,6 @@ impl<'lua> Ent {
             ),
         };
 
-        // --- temporary diagnostic: confirm the spawned entity's resolved texture
-        // --- and position (a plane at the camera origin is clipped = invisible). ---
-        eprintln!(
-            "[ ent ] spawn asset '{}' billboard={} tex(uv)={:?} pos={:?}",
-            asset, billboarded, tex, offset
-        );
-
         Ent::new_pure(
             offset,
             angle,

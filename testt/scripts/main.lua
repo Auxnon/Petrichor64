@@ -26,11 +26,10 @@ function main()
 end
 
 function loop()
-    print(tau)
     example.y = example.y + rnd(-0.05, 0.05)
     example.z = example.z + rnd(-0.05, 0.05)
     spin = spin + 0.1
     generated.z = generated.z + cos(spin) * .04
     generated.y = generated.y + sin(spin) * .04
-    cam { pos = { cos(spin), 0, 0 }, rot = { 0, 0 } }
+    cam { pos = { cos(spin), 0, 0 }, rot = { -tau/16, 0 } }
 end

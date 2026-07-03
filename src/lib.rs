@@ -634,23 +634,6 @@ impl Core {
                 MainCommmand::SetImg(s, im, tx) => {
                     #[cfg(feature = "headed")]
                     {
-                        // --- temporary diagnostic: what color actually arrives to be
-                        // --- written into the atlas for this named texture? ---
-                        // sample a corner off the (0,0)->(10,10) diagonal so we read
-                        // the fill color, not the green line.
-                        let px = if im.width() > 14 && im.height() > 1 {
-                            im.get_pixel(14, 1).0
-                        } else {
-                            [0, 0, 0, 0]
-                        };
-                        eprintln!(
-                            "{} SetImg name={:?} {}x{} fill-px(14,1)={:?}",
-                            "[ setimg ]".on_bright_blue().black(),
-                            s,
-                            im.width(),
-                            im.height(),
-                            px
-                        );
                         self.tex_manager.overwrite_texture(
                             &s,
                             im,
@@ -959,26 +942,6 @@ impl Core {
         } else {
             None
         };
-
-        // --- temporary diagnostic: confirm entity planes are built & injected into
-        // --- the 3D scene. Prints one line per loop that produced instances. ---
-        #[cfg(feature = "headed")]
-        if let Some(ib) = &instance_buffers {
-            if !ib.is_empty() {
-                let total: usize = ib.iter().map(|(_, _, n)| *n).sum();
-                let names = ib
-                    .iter()
-                    .map(|(m, _, n)| format!("{}x{}", n, m.name))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                // eprintln!(
-                //     "[ 3d ] injected {} model group(s), {} instance(s): {}",
-                //     ib.len(),
-                //     total,
-                //     names
-                // );
-            }
-        }
 
         self.global.iteration += 1;
         instance_buffers
