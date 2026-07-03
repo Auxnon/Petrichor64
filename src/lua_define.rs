@@ -224,23 +224,6 @@ impl<'lt> LuaCore {
             println!("lua log failed: {}", e);
         }
 
-        // --- temporary diagnostic: unique per-start instance id + live count, so a
-        // --- duplicate start() for the same bundle_id (leaking a second thread that
-        // --- still reads an old receiver) is visible. ---
-        static LUA_INSTANCE_SEQ: std::sync::atomic::AtomicU32 =
-            std::sync::atomic::AtomicU32::new(0);
-        static LUA_INSTANCE_ALIVE: std::sync::atomic::AtomicU32 =
-            std::sync::atomic::AtomicU32::new(0);
-        let instance_id = LUA_INSTANCE_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let alive_before = LUA_INSTANCE_ALIVE.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        eprintln!(
-            "{} start bundle {} -> instance #{} (now {} live)",
-            "[ START ]".on_yellow().black(),
-            bundle_id,
-            instance_id,
-            alive_before
-        );
-
         // let tokio_thread = tokio::spawn(future)
         let (sender, receiver) = channel::<LuaTalk>();
         self.to_lua_tx = Some(sender);
@@ -377,43 +360,8 @@ impl<'lt> LuaCore {
                     let drop_lua_func = vm.load_fn(mc, &mut compiler, Some("drop_fn"), "drop()")?;
 
                     // let main_ref = Rc::new(RefCell::new(f));
-                    // --- temporary diagnostic: heartbeat so we can tell whether THIS
-                    // --- thread keeps looping (processing Loop) vs wedges after a msg.
-                    let mut _loop_beat: u32 = 0;
                     for m in &receiver {
                         // println!("{} {}", "[ 4 ]".on_bright_purple(), "lua loop recieve");
-
-                        // --- temporary diagnostic: tag every dequeued message, stamped
-                        // --- with bundle_id so we can see if func() is hitting a
-                        // --- different bundle than the one actually looping. `Loop` is
-                        // --- throttled to one line/second to avoid drowning the signal.
-                        let _rx_tag: Option<String> = match &m {
-                            LuaTalk::Loop(_) => {
-                                _loop_beat += 1;
-                                if _loop_beat % 60 == 0 {
-                                    Some(format!("Loop#{}", _loop_beat))
-                                } else {
-                                    None
-                                }
-                            }
-                            LuaTalk::Load(c, _) => Some(format!("Load({})", c.name)),
-                            LuaTalk::AsyncLoad(c) => Some(format!("AsyncLoad({})", c.name)),
-                            LuaTalk::Func(f, _) => Some(format!("Func({})", f)),
-                            LuaTalk::Main => Some("Main".to_string()),
-                            LuaTalk::Resize(_, _) => Some("Resize".to_string()),
-                            LuaTalk::Die(_) => Some("Die".to_string()),
-                            LuaTalk::Drop(s) => Some(format!("Drop({})", s)),
-                            LuaTalk::AsyncFunc(_) => Some("AsyncFunc".to_string()),
-                        };
-                        if let Some(t) = &_rx_tag {
-                            eprintln!(
-                                "{} b{}/i{} recv: {}",
-                                "[ rx> ]".on_bright_cyan().black(),
-                                bundle_id,
-                                instance_id,
-                                t
-                            );
-                        }
 
                         // let (s1, s2, bit_in, channel) = m;
                         #[cfg(feature = "headed")]
@@ -753,19 +701,6 @@ impl<'lt> LuaCore {
                                 }
                             }
                         }
-                        // --- temporary diagnostic: pairs with `recv` above. ---
-                        if let Some(t) = &_rx_tag {
-                            eprintln!(
-                                "{} b{} done: {}",
-                                "[ rx< ]".on_bright_green().black(),
-                                bundle_id,
-                                t
-                            );
-                            // Confirm we return to the receiver: if this prints but the
-                            // next `recv` never does, the message was sent to a DIFFERENT
-                            // channel than this thread reads (targeting mismatch).
-                            eprintln!("{} b{} awaiting next msg", "[ .... ]".dimmed(), bundle_id);
-                        }
                     }
                     println!(
                         "{} {} {}",
@@ -782,15 +717,11 @@ impl<'lt> LuaCore {
                 Ok(_) => Ok(()),
                 Err(e) => Err(format!("lua ctx failure: {}", e)),
             };
-            let alive_after =
-                LUA_INSTANCE_ALIVE.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) - 1;
             println!(
-                "{} {} bundle {} instance #{} ({} still live)",
+                "{} {} {}",
                 "[ 6 ]".on_bright_purple(),
                 "lua thread reached end for",
-                bundle_id,
-                instance_id,
-                alive_after
+                bundle_id
             );
             res
         });
@@ -801,10 +732,6 @@ impl<'lt> LuaCore {
     pub fn func(&self, func: &str) -> Result<LuaResponse, P64Error> {
         let (tx, rx) = sync_channel::<LuaResponse>(0);
         if let Some(ltx) = &self.to_lua_tx {
-            // --- temporary diagnostic: func() sent this; compare its arrival (or
-            // --- absence) against the `b<id>` recv/heartbeat markers to spot a
-            // --- targeting mismatch or a wedged receiver. ---
-            eprintln!("{} func send: {:?}", "[ tx! ]".on_bright_magenta().black(), func);
             ltx.send(LuaTalk::Func(func.to_string(), tx))
                 .map_err(|_| P64Error::ChannelDisconnectedError)?;
             match rx.recv_timeout(Duration::from_millis(4000)) {
