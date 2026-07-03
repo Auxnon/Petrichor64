@@ -30,6 +30,7 @@ mod ent;
 mod ent_manager;
 mod error;
 mod file_util;
+#[cfg(feature = "headed")]
 mod gfx;
 mod global;
 mod gui;
@@ -47,8 +48,10 @@ mod packet;
 mod pad;
 mod parse;
 mod pool;
+#[cfg(feature = "headed")]
 mod post;
 mod ray;
+#[cfg(feature = "headed")]
 mod render;
 mod root;
 #[cfg(not(feature = "headed"))]
