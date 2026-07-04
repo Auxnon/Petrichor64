@@ -160,8 +160,15 @@ impl<'core> Core {
         let (cli_thread_sender, cli_thread_receiver) = channel::<String>();
         std::thread::spawn(move || loop {
             let mut line = String::new();
-            if std::io::stdin().read_line(&mut line).is_ok() {
-                let _ = cli_thread_sender.send(line);
+            match std::io::stdin().read_line(&mut line) {
+                // 0 bytes == EOF (stdin closed / piped input exhausted): stop
+                // reading instead of spinning on empty lines forever.
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if cli_thread_sender.send(line).is_err() {
+                        break;
+                    }
+                }
             }
         });
 
