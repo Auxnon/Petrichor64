@@ -2,15 +2,18 @@
 #![windows_subsystem = "windows"]
 use std::sync::Arc;
 // #![allow(warnings)]
-use std::{
-    env,
-    sync::mpsc::Receiver,
-    time::{Duration, Instant},
-};
+use std::{env, sync::mpsc::Receiver, time::Duration};
+// winit's event loop uses web-time's Instant on wasm (WaitUntil, timers), so
+// alias Instant to the matching type per target to keep frame-pacing types aligned.
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use crate::log::LogType;
 #[cfg(feature = "headed")]
 use crate::controls::bit_check;
+#[cfg(not(target_arch = "wasm32"))]
 use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
 #[cfg(feature = "headed")]
@@ -91,6 +94,9 @@ const OS: &str = "nix";
 
 #[cfg(target_os = "macos")]
 const OS: &str = "mac";
+
+#[cfg(target_arch = "wasm32")]
+const OS: &str = "web";
 
 const FPS: f32 = 60.;
 
@@ -973,11 +979,14 @@ impl Core {
                     loop_complete = true;
                 }
                 MainCommmand::Copy(s) => {
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Ok(mut ctx) = ClipboardContext::new() {
                         if let Err(_) = ctx.set_contents(s) {
                             self.log(LogType::IoError, &format!("!!Clipboard error"));
                         }
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = s;
                 }
                 MainCommmand::LuaClose() => {
                     // println!("close lua channel {}",id);
@@ -1031,6 +1040,7 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
     //         );
     //     }
     // }
+    #[cfg(not(target_arch = "wasm32"))]
     native_dialog::DialogBuilder::message()
         .set_level(native_dialog::MessageLevel::Error)
         .set_title("Petrichor64 Error")
@@ -1039,4 +1049,7 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
         .confirm()
         .show()
         .unwrap();
+    // No native dialog on the web; surface the error to the JS console instead.
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::error_1(&format!("Petrichor64 Error: {}", e).into());
 }

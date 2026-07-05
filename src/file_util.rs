@@ -232,6 +232,23 @@ fn handle_zip_error(err: ZipError) -> P64Error {
 // }
 
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
+// Packing a game bundle writes a zip to disk via tokio::fs — there is no
+// filesystem on the web, so the wasm build gets a stub that reports the
+// operation as unsupported instead.
+#[cfg(target_arch = "wasm32")]
+pub async fn pack_zip(
+    _sources: Vec<&str>,
+    _thumb: PathBuf,
+    _out: &str,
+    _loggy: &mut Loggy,
+) -> Result<(), P64Error> {
+    Err(P64Error::IoError(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "bundle packing is not supported on the web",
+    )))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn pack_zip(
     sources: Vec<&str>,
     thumb: PathBuf,
