@@ -115,6 +115,7 @@ tokio = { version = "1.43.0", features = ["full"], optional = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
+console_log = "1.0"
 js-sys = "0.3"
 # winit uses web-time's Instant on wasm; match it for our frame pacing.
 web-time = "1.1"

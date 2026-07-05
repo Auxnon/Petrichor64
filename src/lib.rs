@@ -572,7 +572,7 @@ impl ApplicationHandler for App {
     }
 }
 
-#[cfg(feature = "headed")]
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn start() {
     env_logger::init();
 
@@ -594,6 +594,32 @@ pub fn start() {
             _ => eprintln!("unknown window exit error"),
         }
     };
+}
+
+/// Web entry point, invoked from `main()` (wasm-bindgen wraps the bin's `main`
+/// as the module entry). Unlike native `start()`, the browser event loop must
+/// not block: winit's `spawn_app` hands control back to JS and drives frames
+/// via requestAnimationFrame. App::resumed then initialises the engine
+/// asynchronously (wgpu adapter/device requests can't be blocked on the web).
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+pub fn start() {
+    use winit::platform::web::EventLoopExtWebSys;
+
+    console_error_panic_hook::set_once();
+    // Route `log` output to the browser console.
+    let _ = console_log::init_with_level(::log::Level::Info);
+
+    let event_loop = match EventLoop::<()>::new() {
+        Ok(el) => el,
+        Err(e) => {
+            web_sys::console::error_1(&format!("event loop error: {e}").into());
+            return;
+        }
+    };
+
+    // spawn_app returns immediately; the closure-owned App lives on inside the
+    // browser's event loop.
+    event_loop.spawn_app(App::default());
 }
 
 /// Headless entry point: no window/GPU. Builds the core, loads the default app,
