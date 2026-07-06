@@ -634,6 +634,31 @@ impl ApplicationHandler for App {
     }
 }
 
+/// CLI dispatch, run before launching the engine. Currently handles the
+/// bundler: `Petrichor64 pack <dir> [out]` (alias `bundle`) packs a folder into
+/// a `.game.png` without opening a window. Returns true if a CLI command was
+/// handled, so `main()` should exit instead of starting the engine.
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+pub fn run_cli() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 2 && (args[1] == "pack" || args[1] == "bundle") {
+        let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
+        let out = args.get(3).map(|s| s.as_str());
+        let mut loggy = crate::log::Loggy::new();
+        // pack_zip uses tokio::fs, so it needs a Tokio runtime (not pollster).
+        let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
+        match rt.block_on(crate::asset::pack_folder(dir, out, &mut loggy)) {
+            Ok(()) => println!("packed '{}' -> {}", dir, out.unwrap_or("<dir>.game.png")),
+            Err(e) => {
+                eprintln!("pack failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return true;
+    }
+    false
+}
+
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn start() {
     env_logger::init();
@@ -752,6 +777,17 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
     for c in com.split("&&") {
         match crate::command::run_con_sys(core, c) {
             Ok(false) => {
+                // A non-system command routes to the running game's Lua VM. With
+                // no game loaded, get_lua() would panic ("No bundles loaded!") —
+                // on the web that surfaces as a raw devtools error. Fail softly
+                // into the engine console instead.
+                if !core.bundle_manager.has_bundles() {
+                    core.loggy.log(
+                        LogType::LuaError,
+                        &format!("no game loaded — '{}' has nowhere to run", c),
+                    );
+                    continue;
+                }
                 let mut ltype = LogType::Lua;
                 let r = match core.bundle_manager.get_lua().func(c) {
                     Ok(v) => match v {
