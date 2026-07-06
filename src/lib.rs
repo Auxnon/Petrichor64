@@ -83,7 +83,7 @@ use winit::{
     dpi::LogicalPosition,
     event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
-    keyboard::{Key, NamedKey, PhysicalKey},
+    keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
     window::{CursorGrabMode, Window, WindowAttributes, WindowId},
 };
 
@@ -479,6 +479,37 @@ impl ApplicationHandler for App {
                         }
                     };
                 }
+            }
+
+            // ----------------------------------------------------------------
+            // Authoritative modifier state. Tracking press/release by hand
+            // leaves modifiers stuck when a keyup is lost — common on the web
+            // when a Cmd/Ctrl combo triggers a browser action. The browser
+            // reports the true modifier state here, so syncing from it self-heals
+            // (a stuck Cmd would otherwise turn every Enter into Cmd+Enter →
+            // fullscreen, etc.).
+            WindowEvent::ModifiersChanged(mods) => {
+                let s = mods.state();
+                let b = &mut self.bits.0;
+                b[KeyCode::ShiftLeft as usize] = s.shift_key();
+                b[KeyCode::ShiftRight as usize] = s.shift_key();
+                b[249] = s.shift_key();
+                b[KeyCode::ControlLeft as usize] = s.control_key();
+                b[KeyCode::ControlRight as usize] = s.control_key();
+                b[248] = s.control_key();
+                b[KeyCode::SuperLeft as usize] = s.super_key();
+                b[KeyCode::SuperRight as usize] = s.super_key();
+                b[250] = s.super_key();
+                b[KeyCode::AltLeft as usize] = s.alt_key();
+                b[KeyCode::AltRight as usize] = s.alt_key();
+                b[247] = s.alt_key();
+            }
+
+            // ----------------------------------------------------------------
+            // Losing focus (tab-away, or a browser/OS shortcut stealing the
+            // keyup) would otherwise leave keys stuck down. Clear all key state.
+            WindowEvent::Focused(false) => {
+                self.bits.0 = [false; 256];
             }
 
             // ----------------------------------------------------------------
