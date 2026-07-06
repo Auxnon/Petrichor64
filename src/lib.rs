@@ -535,6 +535,7 @@ impl ApplicationHandler for App {
                 None => return,
             };
 
+            #[cfg(not(target_arch = "wasm32"))]
             core.loop_helper.loop_start();
 
             // Grab a clone of the window Arc so we can pass it to
