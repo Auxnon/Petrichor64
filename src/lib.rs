@@ -663,6 +663,14 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
         Some(d) => d,
         None => return,
     };
+    // Give the canvas real pixels up front so it's visible and the first
+    // Resized event reports a nonzero size (winit will keep it in sync after).
+    if canvas.width() == 0 {
+        canvas.set_width(640);
+    }
+    if canvas.height() == 0 {
+        canvas.set_height(548);
+    }
     let parent = document
         .get_element_by_id("petrichor64-root")
         .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));

@@ -104,7 +104,18 @@ impl<'w> Gfx<'w> {
         // let b=Box::new(*rwindow);
         // let window = &*rwindow;
         // let ww= SurfaceTarget::Window(Box::new(*rwindow));
-        let size = rwindow.inner_size();
+        // On the web the canvas often isn't laid out yet at init, so
+        // inner_size() reports 0x0 — which makes the surface config and every
+        // texture derived from it 0x0 and Dawn/WebGPU rejects them. Start from a
+        // sane default; the first Resized event reconfigures to the real size.
+        let size = {
+            let s = rwindow.inner_size();
+            if s.width == 0 || s.height == 0 {
+                winit::dpi::PhysicalSize::new(640, 548)
+            } else {
+                s
+            }
+        };
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
