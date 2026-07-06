@@ -22,6 +22,12 @@
         margin: 0 auto;
         image-rendering: pixelated; /* keep the low-res console look crisp */
       }
+      /* winit makes the canvas focusable (tabindex) to receive keyboard input;
+         hide the browser's focus ring so it doesn't draw an accessibility box. */
+      canvas:focus,
+      canvas:focus-visible {
+        outline: none;
+      }
     </style>
   </head>
   <body></body>
