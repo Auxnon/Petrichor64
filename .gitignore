@@ -35,3 +35,6 @@ atlas.png
 
 # trunk/wasm web build output
 web/dist/
+
+# generated game bundles (regenerate with: Petrichor64 pack <dir>)
+/*.game.png

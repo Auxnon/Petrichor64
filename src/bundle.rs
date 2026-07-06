@@ -309,6 +309,12 @@ impl BundleManager {
         // &self.bundles.get(&0).unwrap().lua
     }
 
+    /// True if any bundle (game) is loaded. Callers should check this before
+    /// routing input to `get_lua()`/`get_main_bundle()`, which panic when empty.
+    pub fn has_bundles(&self) -> bool {
+        !self.bundles.is_empty()
+    }
+
     pub fn get_main_bundle(&mut self) -> &Bundle {
         match self.bundles.get(&self.console_bundle_target) {
             Some(bundle) => &bundle,

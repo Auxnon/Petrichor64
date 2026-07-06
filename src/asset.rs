@@ -106,6 +106,72 @@ pub async fn pack(
     });
     crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
 }
+
+/// Lightweight, engine-free CLI bundler. Zips a folder's `assets/` and
+/// `scripts/` files with `icon.png` as the PNG header into `<name>.game.png`,
+/// producing the same entry layout the runtime unpacker expects (entries keyed
+/// by their parent dir, e.g. `<dir>/assets/foo.png`, `<dir>/scripts/main.lua`).
+/// Unlike [`pack`], it needs no running Core/GPU — it enumerates files and calls
+/// `pack_zip` directly, so it can run from a plain CLI invocation.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Result<(), P64Error> {
+    let path = PathBuf::from(dir);
+    let asset_items = get_asset_items(&path, loggy)?;
+    let script_items = get_script_items(&path, loggy)?;
+
+    let mut sources: Vec<&str> = Vec::new();
+    // Assets: keep recognised asset types (skips .DS_Store and the like).
+    for p in asset_items.iter() {
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_valid_type(ext) {
+            if let Some(s) = p.to_str() {
+                sources.push(s);
+            }
+        }
+    }
+    // Scripts: .lua only, skipping *ignore.lua (matches walk_files).
+    for p in script_items.iter() {
+        let is_lua = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("lua"))
+            .unwrap_or(false);
+        if let Some(s) = p.to_str() {
+            if is_lua && !s.ends_with("ignore.lua") {
+                sources.push(s);
+            }
+        }
+    }
+    if sources.is_empty() {
+        loggy.log(
+            LogType::ConfigError,
+            "no packable assets/scripts found (expected assets/ and scripts/ subfolders)",
+        );
+        return Err(P64Error::MissingAssets);
+    }
+
+    let pack_name = match out {
+        Some(o) => {
+            if o.contains('.') {
+                o.to_string()
+            } else {
+                format!("{}.game.png", o)
+            }
+        }
+        None => {
+            let stem = path.file_name().and_then(|s| s.to_str()).unwrap_or("game");
+            format!("{}.game.png", stem)
+        }
+    };
+
+    let icon = path.join("icon.png");
+    loggy.log(
+        LogType::Config,
+        &format!("packing {} files -> {}", sources.len(), pack_name),
+    );
+    crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
+}
+
 pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     // let sources = walk_files(None);
     // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
