@@ -69,6 +69,7 @@ mod template;
 mod texture;
 mod tile;
 mod types;
+mod worker_protocol;
 #[cfg(feature = "picc")]
 mod userdata_util;
 mod world;
