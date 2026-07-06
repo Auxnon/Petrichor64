@@ -53,6 +53,10 @@ pub struct Core {
     #[cfg(not(feature = "headed"))]
     pub cli_thread_receiver: Receiver<String>,
 
+    // spin_sleep uses std::time internally, which panics on wasm. On the web,
+    // frame pacing comes from requestAnimationFrame + ControlFlow::WaitUntil, so
+    // the LoopHelper is simply absent there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub loop_helper: spin_sleep::LoopHelper,
     pub tex_manager: TexManager,
     pub model_manager: ModelManager,
@@ -92,6 +96,7 @@ impl<'core> Core {
         }
 
         let world = World::new(loggy.make_sender());
+        #[cfg(not(target_arch = "wasm32"))]
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
@@ -121,6 +126,7 @@ impl<'core> Core {
             world,
             pitcher,
             gui,
+            #[cfg(not(target_arch = "wasm32"))]
             loop_helper,
             tex_manager,
             model_manager,
@@ -280,6 +286,7 @@ impl<'core> Core {
         // self.loop_helper.loop_start();
 
         let res = render::render_loop(self, self.global.iteration);
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(fps) = self.loop_helper.report_rate() {
             self.global.fps = fps;
         }
