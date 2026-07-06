@@ -1,3 +1,3 @@
 fn main() {
-    Petrichor64::start();
+    petrichor64::start();
 }

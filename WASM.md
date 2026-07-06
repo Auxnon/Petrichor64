@@ -70,26 +70,45 @@ Plan:
   since the future can't hold `&mut App`).
 - Keep the native path on `block_on`.
 
-### 2. Inline Lua VM (no threads)
+### 2. Lua VM on a web worker
 
 `LuaCore::start` (`lua_define.rs:240`) and `World` (`world.rs:225`) run on
 spawned OS threads and communicate over blocking mpsc, with a `sync_channel(0)`
 rendezvous for `func`/`load`/`die`. `std::thread::spawn` *compiles* on wasm but
-**panics at runtime**, and silt's VM is gc-arena based (`Rc`, `!Send`), so web
-workers are not an option.
+**panics at runtime**.
 
-The VM must run **inline on the main thread**:
-- Under `cfg(target_arch = "wasm32")`, don't spawn a thread. Hold the
-  `silt` arena in the bundle and drive it by re-entering `lua_instance.enter(|vm,
-  mc| …)` once per dispatched `LuaTalk` message instead of looping forever inside
-  a single `enter`.
-- Loaded function handles (`main_fn`, `loop_fn`, …) are `Gc` pointers valid only
-  within an `enter` scope, so they must live in the arena root / globals and be
-  re-resolved each frame rather than stored across frames. **This touches
-  silt-stable's API** (a way to store/reinvoke named callbacks across `enter`
-  calls) and is the larger half of the work.
-- Replace the blocking `func`/`call_loop`/`load` channel calls with direct
-  synchronous calls on wasm; keep the channel path on native.
+The VM runs on a **web worker**, not inline. This preserves the engine's
+existing multi-threaded, message-passing shape:
+
+- Each web worker is a *separate wasm instance* with its own linear memory and
+  thread, so the silt VM is created and lives entirely inside the worker — it
+  never crosses a thread boundary and `!Send`/gc-arena is a non-issue. (This is
+  why the inline-VM approach was rejected.)
+- Main↔worker communicate via `postMessage`, which maps directly onto today's
+  `LuaTalk` (in) / `MainPacket` + `MainCommand` (out) channels. wgpu stays on the
+  main thread; the worker only runs Lua and posts back entity / image / draw
+  state.
+- The seam is exactly `bundle.lua.start(...)` (`bundle.rs`, → `lua_define.rs`)
+  and `world.make(...)`. On wasm, `start` spawns a worker instead of a thread;
+  the rest of `Core` is unchanged.
+
+Work required:
+- Make `LuaTalk` / `MainCommand` (de)serializable across `postMessage` (serde;
+  the crate already has serde + optional rmp-serde). Payloads that carry channels
+  or GPU handles need message-shaped equivalents.
+- The blocking `sync_channel(0)` rendezvous (`func`/`load`/`die`) must become
+  async request/response — `postMessage` can't block the main thread.
+- A worker entry point (wasm export invoked from the worker's `onmessage`) that
+  instantiates a silt VM and runs the dispatch loop one message at a time.
+- Chose separate-instance workers over SharedArrayBuffer / wasm-atomics to avoid
+  the COOP/COEP header requirements.
+
+### The web component
+
+Ship the main thread as a `<petrichor-64>` custom element (`web/petrichor64-element.js`)
+that, on connect, creates the render host (`#petrichor64-root`, which
+`attach_canvas_to_dom` targets), loads the wasm module, and — once ready —
+auto-spawns the VM worker(s). Drop-in embeddable, no page-level wiring.
 
 ### 3. Assets over the network
 
@@ -100,7 +119,10 @@ the engine has something to run without a round-trip.
 
 ## Suggested order
 
-1. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
-2. Async init (#1) → wgpu clears the canvas in-browser. First visible milestone.
-3. Inline VM (#2, incl. the silt-stable arch change) → the Lua loop runs.
-4. `fetch`-based asset loading (#3) → arbitrary games load.
+1. ~~Async init (#1)~~ **done** — `App` builds `Core` via `spawn_local`, the frame
+   loop installs it, `attach_canvas_to_dom` mounts winit's canvas. wgpu
+   initialises in-browser (verify: `trunk serve`).
+2. Web component shell (`web/petrichor64-element.js`) → drop-in `<petrichor-64>`.
+3. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
+4. VM worker (#2) → the Lua loop runs on a web worker.
+5. `fetch`-based asset loading (#3) → arbitrary games load.

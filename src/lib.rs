@@ -119,6 +119,12 @@ pub struct App {
     bits: ControlState,
     /// Key state from the previous Lua frame — used for pressed/released detection.
     bits_prev: [bool; 256],
+    /// wasm builds init the engine asynchronously (wgpu adapter/device requests
+    /// can't block the browser main thread). `resumed` kicks off the build via
+    /// spawn_local and drops the finished Core here; the frame loop installs it
+    /// once ready. Rc<RefCell<…>> is fine — wasm is single-threaded.
+    #[cfg(target_arch = "wasm32")]
+    pending_core: std::rc::Rc<std::cell::RefCell<Option<(Core, Receiver<MainPacket>)>>>,
 }
 
 #[cfg(feature = "headed")]
@@ -133,6 +139,8 @@ impl Default for App {
             catcher: None,
             bits: ControlState::default(),
             bits_prev: [false; 256],
+            #[cfg(target_arch = "wasm32")]
+            pending_core: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 }
@@ -235,24 +243,29 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // --- Build window icon ---
-        let window_icon = {
-            let icon =
-                image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
-                    .expect("failed to load icon.png");
+        // --- Window attributes (icon is native-only; winit ignores it on web) ---
+        #[cfg(not(target_arch = "wasm32"))]
+        let win_attr = {
+            let icon = image::load_from_memory(include_bytes!(
+                "../assets/petrichor-small-icon.png"
+            ))
+            .expect("failed to load icon.png");
             let rgba = icon.as_rgba8().unwrap();
             let (width, height) = icon.dimensions();
             let bytes = rgba
                 .chunks_exact(4)
                 .flat_map(|p| p.iter().cloned())
                 .collect::<Vec<_>>();
-            winit::window::Icon::from_rgba(bytes, width, height).unwrap()
+            let window_icon = winit::window::Icon::from_rgba(bytes, width, height).unwrap();
+            WindowAttributes::default()
+                .with_title("Petrichor64")
+                .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+                .with_window_icon(Some(window_icon))
         };
-
+        #[cfg(target_arch = "wasm32")]
         let win_attr = WindowAttributes::default()
             .with_title("Petrichor64")
-            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
-            .with_window_icon(Some(window_icon));
+            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32));
 
         let window = Arc::new(
             event_loop
@@ -261,70 +274,77 @@ impl ApplicationHandler for App {
         );
         self.window = Some(window.clone());
 
-        // --- Create Core; catcher goes to App, pitcher stays in Core ---
-        let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
-        self.catcher = Some(catcher);
-
-        crate::command::load_empty(&mut core);
+        // --- Native: build Core synchronously and load the default app. ---
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            crate::command::hard_reset(&mut core);
-            if let Err(e) =
-                crate::command::load_app(&mut core, Some("test/basic"), None, None, None)
+            let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
+            self.catcher = Some(catcher);
+
+            crate::command::load_empty(&mut core);
             {
-                core.loggy.log(LogType::CoreError, &format!("{}", e));
+                crate::command::hard_reset(&mut core);
+                if let Err(e) =
+                    crate::command::load_app(&mut core, Some("test/basic"), None, None, None)
+                {
+                    core.loggy.log(LogType::CoreError, &format!("{}", e));
+                }
             }
-        }
-        core.loggy.clear();
+            core.loggy.clear();
 
-        core.global.state_changes.push(StateChange::Config);
-        // Small delay so the console-app's pending requests finish before
-        // the following config state change fires.
-        core.global.state_delay = 8;
-        core.global.is_state_changed = true;
+            core.global.state_changes.push(StateChange::Config);
+            // Small delay so the console-app's pending requests finish before
+            // the following config state change fires.
+            core.global.state_delay = 8;
+            core.global.is_state_changed = true;
 
-        // --- Auto-load or command-line file ---
-        let maybe_load = if env::args().count() > 1 {
-            let s = env::args().nth(1).unwrap();
-            // native_dialog::DialogBuilder::message()
-            //     .set_level(native_dialog::MessageLevel::Info)
-            //     .set_title("Petrichor64 Info")
-            //     .set_text(&s)
-            //     .alert()
-            //     .show()
-            //     .unwrap();
-            Some(s)
-        } else {
-            crate::asset::check_for_auto()
-        };
+            // --- Auto-load or command-line file ---
+            let maybe_load = if env::args().count() > 1 {
+                Some(env::args().nth(1).unwrap())
+            } else {
+                crate::asset::check_for_auto()
+            };
 
-        if let Some(s) = maybe_load {
-            core.global.console = false;
-            core.gui.disable_console();
-            core.global.pending_load = Some(s.clone());
-            core.bundle_manager.get_lua().call_drop(s);
-        } else {
-            #[cfg(feature = "include_auto")]
-            {
+            if let Some(s) = maybe_load {
                 core.global.console = false;
                 core.gui.disable_console();
-                let id = core.bundle_manager.console_bundle_target;
-                // TODO is it better to reload here or not?
-                // crate::command::reload(&mut core, id);
-            }
+                core.global.pending_load = Some(s.clone());
+                core.bundle_manager.get_lua().call_drop(s);
+            } else {
+                #[cfg(feature = "include_auto")]
+                {
+                    core.global.console = false;
+                    core.gui.disable_console();
+                    let _id = core.bundle_manager.console_bundle_target;
+                }
 
-            #[cfg(not(feature = "include_auto"))]
-            {
-                #[cfg(not(feature = "studio"))]
-                core.gui.disable_console();
+                #[cfg(not(feature = "include_auto"))]
+                {
+                    #[cfg(not(feature = "studio"))]
+                    core.gui.disable_console();
+                }
             }
+            println!("{} {}", "[ 1 ]".on_bright_purple(), "we built core".on_red());
+            self.core = Some(core);
         }
-        println!(
-            "{} {}",
-            "[ 1 ]".on_bright_purple(),
-            "we built core".on_red()
-        );
 
-        self.core = Some(core);
+        // --- Web: attach the canvas to the DOM, then build Core asynchronously.
+        // wgpu adapter/device requests can't block the browser main thread, so
+        // Core::new is awaited in a spawned task and installed by the frame loop
+        // once ready. The Lua VM is NOT loaded here — it runs in a web worker
+        // (wired separately); wgpu still initialises and clears the canvas. ---
+        #[cfg(target_arch = "wasm32")]
+        {
+            use winit::platform::web::WindowExtWebSys;
+            if let Some(canvas) = window.canvas() {
+                attach_canvas_to_dom(&canvas);
+            }
+            let pending = self.pending_core.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let (core, catcher) = Core::new(window).await;
+                ::log::info!("petrichor64: core ready — wgpu initialised");
+                *pending.borrow_mut() = Some((core, catcher));
+            });
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -493,6 +513,15 @@ impl ApplicationHandler for App {
     /// Called once per iteration of the event loop before sleeping.
     /// This is where the 60 Hz Lua update runs.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Install the asynchronously-built Core once it's ready (web only).
+        #[cfg(target_arch = "wasm32")]
+        if self.core.is_none() {
+            if let Some((core, catcher)) = self.pending_core.borrow_mut().take() {
+                self.core = Some(core);
+                self.catcher = Some(catcher);
+            }
+        }
+
         let now = Instant::now();
 
         if now >= self.next_frame_time {
@@ -620,6 +649,24 @@ pub fn start() {
     // spawn_app returns immediately; the closure-owned App lives on inside the
     // browser's event loop.
     event_loop.spawn_app(App::default());
+}
+
+/// Append winit's canvas to the page. Prefers an element with id
+/// `petrichor64-root` (provided by the `<petrichor-64>` web component) so the
+/// engine renders inside the component; falls back to <body>.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
+    use wasm_bindgen::JsCast;
+    let document = match web_sys::window().and_then(|w| w.document()) {
+        Some(d) => d,
+        None => return,
+    };
+    let parent = document
+        .get_element_by_id("petrichor64-root")
+        .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
+    if let Some(parent) = parent {
+        let _ = parent.append_child(canvas);
+    }
 }
 
 /// Headless entry point: no window/GPU. Builds the core, loads the default app,

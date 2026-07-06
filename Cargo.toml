@@ -7,6 +7,9 @@ resolver = "2"
 description = "Cross platform lua interpreting game engine"
 
 [lib]
+# Distinct from the "Petrichor64" bin so wasm tooling (trunk/wasm-bindgen) can
+# tell the two build artifacts apart.
+name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
 
 [profile.release]
@@ -124,6 +127,8 @@ web-sys = { version = "0.3", features = [
     "Document",
     "Window",
     "Element",
+    "Node",
+    "HtmlElement",
     "HtmlCanvasElement",
     "Location",
     "Request",
