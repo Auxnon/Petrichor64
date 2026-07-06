@@ -62,23 +62,7 @@ pub async fn pack(
     };
     let path = determine_path(dir);
 
-    let name = match com_hash.get("n") {
-        Some(name) => name,
-        None => {
-            let p = path.file_stem();
-            // println!("p: {:?}", p);
-            match p {
-                Some(pp) => pp.to_str().unwrap_or("unknown"),
-                None => "unknown",
-            }
-        }
-    };
-    println!("name: {}", name);
-    let pack_name = if name.contains(".") {
-        name.to_owned()
-    } else {
-        format!("{}.game.png", name)
-    };
+    let pack_name = bundle_output_name(com_hash.get("n").map(|s| s.as_str()), &path);
     println!("pack name: {}", pack_name);
 
     let asset_items = get_asset_items(&path, loggy)?;
@@ -119,29 +103,8 @@ pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Res
     let asset_items = get_asset_items(&path, loggy)?;
     let script_items = get_script_items(&path, loggy)?;
 
-    let mut sources: Vec<&str> = Vec::new();
-    // Assets: keep recognised asset types (skips .DS_Store and the like).
-    for p in asset_items.iter() {
-        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if is_valid_type(ext) {
-            if let Some(s) = p.to_str() {
-                sources.push(s);
-            }
-        }
-    }
-    // Scripts: .lua only, skipping *ignore.lua (matches walk_files).
-    for p in script_items.iter() {
-        let is_lua = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("lua"))
-            .unwrap_or(false);
-        if let Some(s) = p.to_str() {
-            if is_lua && !s.ends_with("ignore.lua") {
-                sources.push(s);
-            }
-        }
-    }
+    // Same file set the engine's walk_files bundles, via the shared collector.
+    let sources = collect_packable_sources(&asset_items, &script_items);
     if sources.is_empty() {
         loggy.log(
             LogType::ConfigError,
@@ -150,20 +113,7 @@ pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Res
         return Err(P64Error::MissingAssets);
     }
 
-    let pack_name = match out {
-        Some(o) => {
-            if o.contains('.') {
-                o.to_string()
-            } else {
-                format!("{}.game.png", o)
-            }
-        }
-        None => {
-            let stem = path.file_name().and_then(|s| s.to_str()).unwrap_or("game");
-            format!("{}.game.png", stem)
-        }
-    };
-
+    let pack_name = bundle_output_name(out, &path);
     let icon = path.join("icon.png");
     loggy.log(
         LogType::Config,
@@ -429,6 +379,56 @@ pub fn is_valid_type(s: &str) -> bool {
     s == "gltf" || s == "glb" || s == "png" || s == "ron" || s == "json"
 }
 
+/// Derive a bundle output filename: an explicit name is used verbatim if it
+/// already carries an extension, otherwise `.game.png` is appended; with no
+/// name the source directory's own name is used. Shared by `pack` (console) and
+/// `pack_folder` (CLI) so both name bundles identically.
+pub fn bundle_output_name(name: Option<&str>, path: &Path) -> String {
+    match name {
+        Some(n) if n.contains('.') => n.to_string(),
+        Some(n) => format!("{}.game.png", n),
+        None => {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            format!("{}.game.png", stem)
+        }
+    }
+}
+
+/// The set of files that go into a bundle zip: every recognised asset
+/// (`is_valid_type`) plus every `.lua` script except `*ignore.lua`. Shared by
+/// the engine's `walk_files` and the CLI `pack_folder` so both bundle exactly
+/// the same files. Paths are returned verbatim — the parent dir stays
+/// `assets`/`scripts`, which the unpacker keys on.
+pub fn collect_packable_sources<'a>(
+    asset_items: &'a [PathBuf],
+    script_items: &'a [PathBuf],
+) -> Vec<&'a str> {
+    let mut sources: Vec<&str> = Vec::new();
+    for entry in asset_items {
+        let ext = entry.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_valid_type(ext) {
+            if let Some(p) = entry.to_str() {
+                sources.push(p);
+            }
+        }
+    }
+    for entry in script_items {
+        let is_lua = entry
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("lua"))
+            .unwrap_or(false);
+        if is_lua {
+            if let Some(p) = entry.to_str() {
+                if !p.ends_with("ignore.lua") {
+                    sources.push(p);
+                }
+            }
+        }
+    }
+    sources
+}
+
 pub fn check_for_auto() -> Option<String> {
     #[cfg(target_os = "macos")]
     let mut p;
@@ -638,7 +638,6 @@ pub fn walk_files<'a>(
 
     let mut sources: SourceMap = HashMap::new();
     let mut configs = vec![];
-    let mut paths = vec![];
     let mut version = [0; 3];
 
     for entry in asset_items.iter() {
@@ -664,7 +663,6 @@ pub fn walk_files<'a>(
                             } else {
                                 sources.insert(file_name, chonk);
                             }
-                            paths.push(path);
                         }
                     }
                     _ => {}
@@ -724,7 +722,6 @@ pub fn walk_files<'a>(
                                 version = ver;
                             }
                         }
-                        paths.push(file_name);
                     }
                 } else {
                     loggy.log(
@@ -741,7 +738,9 @@ pub fn walk_files<'a>(
 
     loggy.log(LogType::Config, &format!("app version is {:?}", version));
     //.expect("Scripts directory failed to load")
-    paths
+    // The zip source list is exactly the shared collector's output — the loops
+    // above only bake assets/scripts into the live instance (when activate).
+    collect_packable_sources(asset_items, script_items)
 }
 
 #[cfg(feature = "headed")]
