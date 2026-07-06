@@ -117,12 +117,40 @@ Asset loading (`test/basic`, textures, models) must move to `fetch` (async) or
 be embedded with `include_bytes!`. The default boot app should be embedded so
 the engine has something to run without a round-trip.
 
-## Suggested order
+## Progress / order
 
 1. ~~Async init (#1)~~ **done** — `App` builds `Core` via `spawn_local`, the frame
    loop installs it, `attach_canvas_to_dom` mounts winit's canvas. wgpu
    initialises in-browser (verify: `trunk serve`).
-2. Web component shell (`web/petrichor64-element.js`) → drop-in `<petrichor-64>`.
-3. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
-4. VM worker (#2) → the Lua loop runs on a web worker.
-5. `fetch`-based asset loading (#3) → arbitrary games load.
+2. ~~Web component shell~~ **done** — `web/petrichor64-element.js`, `<petrichor-64>`.
+3. ~~Serializable protocol~~ **done** — `src/worker_protocol.rs` (`HostToVm` /
+   `VmToHost` / `ValueWire`), `LuaEnt: Serialize`. Confirmed silt persists loaded
+   fns across `enter()` via `load_fn -> usize` + `call_fn(idx)` (no silt change).
+
+### VM worker (#2) — the core, sequenced
+
+4a. **Split `lua_define.rs::start()`** into one-time setup (create the `Lua`
+    arena, register natives, `load_fn` → store `main/loop/draw/drop` indices) and
+    a per-message `dispatch(msg)` that does `lua_instance.enter(|vm,mc|
+    call_fn(idx, …))`. Native keeps ONE `enter` + the `for m in &receiver` loop;
+    wasm re-enters per message. Persistent state (compiler, pool, mutexes,
+    indices, scripts, output sink) lives outside `enter`.
+4b. **Abstract the VM→host sink.** Native native-fns capture
+    `pitcher: Sender<MainPacket>` and `.send()`. Introduce a sink that on native
+    is the mpsc sender and on wasm enqueues a `VmToHost` for `postMessage`.
+4c. **wasm worker glue.** `web/worker.js` loads the wasm and calls a
+    `#[wasm_bindgen]` worker entry that holds the persistent VM in a thread-local
+    and dispatches `HostToVm` messages, posting `VmToHost` back.
+4d. **Host side.** On wasm, `bundle.lua.start` spawns the worker instead of a
+    thread; the `<petrichor-64>` element spawns it on load. Feed `VmToHost` into
+    the existing `Core::update` path; send `Loop`/input as `HostToVm`.
+   - NOTE divergence: drop `InitBack` on wasm (it shares `Gc` refs to the gui/sky
+     `LuaImg` with the main thread — impossible across a worker). Instead the
+     worker owns those pixels and posts `SetImg` when dirty.
+
+5. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
+6. `fetch`-based asset loading (#3) → arbitrary games load.
+
+Read-back calls (func/get_img/get_global/read/write/group/die) come after 4:
+they become poll/mirror (network-style, `try_recv` idiom) or request/response by
+correlation id — none block the worker.
