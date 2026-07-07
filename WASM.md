@@ -136,18 +136,31 @@ the engine has something to run without a round-trip.
     `ctx` once inside its `enter` and the loop just calls the handler; wasm will
     build the same `ctx` and re-`enter` per message. Behaviour-preserving
     (headless VM loop verified).
-4b. **Abstract the VM→host sink.** Native native-fns capture
-    `pitcher: Sender<MainPacket>` and `.send()`. Introduce a sink that on native
-    is the mpsc sender and on wasm enqueues a `VmToHost` for `postMessage`.
-4c. **wasm worker glue.** `web/worker.js` loads the wasm and calls a
-    `#[wasm_bindgen]` worker entry that holds the persistent VM in a thread-local
-    and dispatches `HostToVm` messages, posting `VmToHost` back.
-4d. **Host side.** On wasm, `bundle.lua.start` spawns the worker instead of a
-    thread; the `<petrichor-64>` element spawns it on load. Feed `VmToHost` into
-    the existing `Core::update` path; send `Loop`/input as `HostToVm`.
+4b. ~~**Abstract the VM→host sink.**~~ **done** — no sink abstraction needed: the
+    worker keeps its own local `MainPacket` channel, so native fns send
+    `MainCommand` unchanged and the worker drains + translates after each message.
+    `command::main_command_to_host(cmd) -> Option<VmToHost>` maps the
+    fire-and-forget subset (Cam/Globals/LoopComplete/AsyncError/Spawn; Spawn
+    clones its `LuaEnt` out of the `UserDataWrapper`). Blocking + host-internal
+    commands return None (read-back phase). `VmToHost` gained `Error(String)`.
+4c. **wasm worker glue** (browser-iterated — needs `trunk serve` to validate).
+   - First extract `start()`'s one-time VM setup (rasters → globals, `init_lua_sys`,
+     `load_fn` ×4 → `LuaContext`) into a shared helper both `start()` and the
+     worker call. Native-verifiable via the headless run.
+   - `web/worker.js` loads the wasm and relays messages to/from a
+     `#[wasm_bindgen]` worker entry that holds the VM (`Lua` arena + `LuaContext`
+     + `LocalPool` + local `catcher`) in a thread-local: build once on an `init`
+     message, then per message `enter(|vm,mc| handle_lua_talk(…))`, drain the
+     local `catcher`, `main_command_to_host` each, and `postMessage` the
+     `VmToHost`s back.
    - NOTE divergence: drop `InitBack` on wasm (it shares `Gc` refs to the gui/sky
      `LuaImg` with the main thread — impossible across a worker). Instead the
      worker owns those pixels and posts `SetImg` when dirty.
+4d. **Host side.** On wasm, `bundle.lua.start` spawns the worker instead of a
+    thread; the `<petrichor-64>` element spawns it on load. Feed `VmToHost` into
+    the existing `Core::update` path; send `Loop`/input as `HostToVm`. The worker
+    must also receive the bundle's `BundleResources` (letters/rasters/size) over
+    postMessage to build its VM.
 
 5. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
 6. `fetch`-based asset loading (#3) → arbitrary games load.
