@@ -251,17 +251,6 @@ impl<'lt> LuaCore {
                 // #[cfg(not(feature = "online_capable"))]
                 // let netout: Option<bool> = None;
 
-                // Sparse store of compiled sources, indexed by silt's source_index
-                // (stamped on every ErrorOut). Populated on each compile; read at
-                // error time to render a snippet against the originating source.
-                let mut scripts: Vec<Option<String>> = Vec::new();
-
-                let keys = [false; 256];
-                let mice = [0.; 13];
-
-                let keys_mutex = Rc::new(RefCell::new(keys));
-                let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
-                let mice_mutex = Rc::new(RefCell::new(mice));
                 let ent_counter = Rc::new(Mutex::new(2u64));
                 let (letters, main_im, sky_im, size) = resources;
                 let morsel = crate::gui::GuiMorsel::new(letters, size);
@@ -275,6 +264,15 @@ impl<'lt> LuaCore {
                     let mut local_pool = LocalPool::new();
 
                     let mut compiler = Compiler::new();
+
+                    // Declared inside enter so they're closure-locals (movable
+                    // into ctx below), not captures of this FnMut closure.
+                    // `scripts`: sparse store of compiled sources indexed by
+                    // silt's source_index, read at error time for snippets.
+                    let mut scripts: Vec<Option<String>> = Vec::new();
+                    let keys_mutex = Rc::new(RefCell::new([false; 256]));
+                    let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
+                    let mice_mutex = Rc::new(RefCell::new([0f32; 13]));
 
                     if debug {
                         loggy.send((
@@ -293,8 +291,6 @@ impl<'lt> LuaCore {
                     let pads = Rc::new(RefCell::new(Pad::new()));
 
                     let async_sender = pitcher.clone();
-                    // let mut debounce_error_string = "".to_string();
-                    let mut debounce_error_counter = 60;
 
                     let main_rast = LuaImg::new(
                         bundle_id,
@@ -353,13 +349,30 @@ impl<'lt> LuaCore {
                     if debug {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
-                    let main_lua_func =
+                    let main_fn =
                         vm.load_fn(mc, &mut compiler, Some("main_fn"), "main() loop()")?;
-                    let loop_lua_func = vm.load_fn(mc, &mut compiler, Some("loop_fn"), "loop()")?;
-                    let draw_lua_func = vm.load_fn(mc, &mut compiler, Some("draw_fn"), "draw()")?;
-                    let drop_lua_func = vm.load_fn(mc, &mut compiler, Some("drop_fn"), "drop()")?;
+                    let loop_fn = vm.load_fn(mc, &mut compiler, Some("loop_fn"), "loop()")?;
+                    let draw_fn = vm.load_fn(mc, &mut compiler, Some("draw_fn"), "draw()")?;
+                    let drop_fn = vm.load_fn(mc, &mut compiler, Some("drop_fn"), "drop()")?;
 
-                    // let main_ref = Rc::new(RefCell::new(f));
+                    // Persistent, non-'gc state the message handler needs. Built
+                    // once here inside the single native enter; the wasm worker
+                    // will build the same and re-enter per message (WASM.md §4a).
+                    let mut ctx = LuaContext {
+                        bundle_id,
+                        compiler,
+                        scripts,
+                        loggy: loggy.clone(),
+                        main_fn,
+                        loop_fn,
+                        draw_fn,
+                        drop_fn,
+                        keys_mutex,
+                        diff_keys_mutex,
+                        mice_mutex,
+                        async_sender,
+                    };
+
                     for m in &receiver {
                         // println!("{} {}", "[ 4 ]".on_bright_purple(), "lua loop recieve");
 
@@ -429,277 +442,10 @@ impl<'lt> LuaCore {
                         //     counter = 0;
                         //     println!("loop");
                         // }
-                        match m {
-                            LuaTalk::Load(code, sync) => {
-                                let Script { name, content } = *code;
-                                println!(
-                                    "{} {} {} {}",
-                                    "[ 3 ]".on_bright_purple(),
-                                    "push first lua code payload id:",
-                                    bundle_id,
-                                    name
-                                );
-                                // run_in_context stores `content` into `scripts` at the
-                                // index silt assigns; nothing here needs to own a copy.
-                                let reply = match run_in_context(
-                                    vm,
-                                    mc,
-                                    Some(&name),
-                                    &content,
-                                    &mut compiler,
-                                    &mut scripts,
-                                ) {
-                                    Err(er) => {
-                                        let s = error_string(er, &scripts);
-                                        loggy.send((LogType::LuaError, s.clone()))?;
-                                        LuaResponse::String(s)
-                                    }
-                                    Ok(v) => v,
-                                };
-                                // A failed reply only means the loader timed out and
-                                // dropped its receiver; that must NOT kill the runtime.
-                                if let Err(e) = sync.send(reply) {
-                                    loggy.send((
-                                        LogType::LuaSysError,
-                                        format!("load reply dropped (caller gone): {}", e),
-                                    ))?;
-                                } // match run_in_context(vm, Some("load ->"), code){
-                                  //     Ok(res)=>,
-                                  //     Err(er)=>,
-                                  // }
-                            }
-                            LuaTalk::AsyncLoad(code) => {
-                                println!(
-                                    "{} {} {} {}",
-                                    "[ 3.5 ]".on_bright_purple(),
-                                    "async push first lua code payload id:",
-                                    bundle_id,
-                                    code.name
-                                );
-
-                                if let Err(er) = run_in_context(
-                                    vm,
-                                    mc,
-                                    Some(&code.name),
-                                    &code.content,
-                                    &mut compiler,
-                                    &mut scripts,
-                                ) {
-                                    let s = error_string(er, &scripts);
-                                    loggy.send((LogType::LuaError, s))?;
-                                }
-                            }
-                            LuaTalk::Main => {
-                                if let Err(er) =
-                                    vm.call_fn(mc, Some("main_fn_call"), main_lua_func, ())
-                                {
-                                    // Runtime error inside main() points into the loaded
-                                    // app source; snippet against it by index.
-                                    let s = error_string(er.into(), &scripts);
-                                    loggy.send((LogType::LuaError, s))?;
-                                };
-                            }
-                            LuaTalk::Die(sync) => {
-                                // #[cfg(feature = "online_capable")]
-                                // net.borrow_mut().shutdown();
-                                println!(
-                                    "{} {}",
-                                    "[ 5 ]".on_bright_purple(),
-                                    "we got permission to die :)"
-                                );
-
-                                sync.send(())?;
-
-                                break;
-                            }
-                            LuaTalk::AsyncFunc(_func) => {}
-                            LuaTalk::Loop(control_state) => {
-                                let ControlState(key_state, mouse_state) = control_state;
-                                if let Err(e) =
-                                    vm.call_fn(mc, Some("loop_fn_call"), loop_lua_func, ())
-                                {
-                                    // Runtime error inside loop() points into the loaded
-                                    // app source; snippet against it by index.
-                                    let s = error_string(e.into(), &scripts);
-                                    loggy.send((LogType::LuaError, s))?;
-                                };
-
-                                local_pool.check_lock(&shared);
-                                // &lua_instance.execute(&executor)?; // TODO
-                                //=== async functions error handler will debounce since we deal with rapid event looping ===
-                                // match res {
-                                //     Err(e) => {
-                                //         // debounce_error_string = formatError(e);
-                                //         debounce_error_counter += 1;
-                                //         if debounce_error_counter >= 60 {
-                                //             debounce_error_counter = 0;
-                                //             async_sender.send((
-                                //                 bundle_id,
-                                //                 MainCommmand::AsyncError(format_error_string(
-                                //                     e.to_string(),
-                                //                 )),
-                                //             ))?;
-                                //         }
-                                //     }
-                                //     _ => {}
-                                // }
-
-                                // updated with our input information, as this is only provided within the game loop, also send out a gui update
-
-                                let mut h = diff_keys_mutex.borrow_mut();
-
-                                keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
-                                    h[i] = !k && key_state[i];
-                                });
-                                drop(h);
-
-                                *keys_mutex.borrow_mut() = key_state;
-                                // we COULD just copy it but we want to move our current x,y to px,py to track movement deltas
-                                let mut mm = mice_mutex.borrow_mut();
-                                *mm = [
-                                    mouse_state[0],
-                                    mouse_state[1],
-                                    mouse_state[2],
-                                    mouse_state[3],
-                                    mm[4],
-                                    mm[5],
-                                    mouse_state[4],
-                                    mouse_state[5],
-                                    mouse_state[6],
-                                    mouse_state[7],
-                                    mouse_state[8],
-                                    mouse_state[9],
-                                    mouse_state[10],
-                                ];
-                                drop(mm);
-
-                                // Check if the gui or sky raster has been modified.
-                                // BundleMutations defaults gui/sky to true so that mark_dirty
-                                // is always called after a loop, uploading the latest LuaImg
-                                // content to the GPU textures every frame. A more fine-grained
-                                // dirty optimisation can be restored later via pool.gui_dirty /
-                                // pool.sky_dirty once the silt-lua apply_userdata_mut path is
-                                // re-implemented (see PLAN.md §5).
-                                let mutations = BundleMutations::new();
-
-                                async_sender
-                                    .send((bundle_id, MainCommmand::LoopComplete(mutations)))?;
-                                local_pool.drop();
-                            }
-                            LuaTalk::Func(func, sync) => {
-                                // A Lua error here is the caller's problem, not a reason to
-                                // tear down the whole runtime: report it back and keep looping.
-                                let res = match run_in_context(
-                                    vm,
-                                    mc,
-                                    Some("func ->"),
-                                    &func,
-                                    &mut compiler,
-                                    &mut scripts,
-                                ) {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        // run_in_context stored this console input in
-                                        // `scripts` at its index; error_string resolves it
-                                        // (or an app source, if the error points there).
-                                        let s = error_string(e, &scripts);
-                                        loggy.send((LogType::LuaError, s.clone()))?;
-                                        LuaResponse::String(s)
-                                    }
-                                };
-                                // let res = match executor.take_result::<Value>(ctx) {
-                                //     Ok(v1) => match v1 {
-                                //         Ok(v2) => v2,
-                                //         Err(_) => Value::Nil,
-                                //     },
-                                //     Err(_) => Value::Nil,
-                                // };
-                                // let output = match o {
-                                //     Value::Table(t) => {
-                                //         let mut hash: HashMap<String, String> =
-                                //             HashMap::new();
-                                //         let mut hash2: HashMap<String, (String, String)> =
-                                //             HashMap::new();
-                                //         // t.0.borrow().entries.
-                                //         for (i, (k, v)) in t.iter().enumerate() {
-                                //             if let Value::String(key) = k {
-                                //                 match v {
-                                //                     Value::String(val) => {
-                                //                         hash.insert(key, val);
-                                //                     }
-                                //                     Value::Table(tt) => {
-                                //                         let t = tt.borrow();
-                                //                         if t.len() == 2 {
-                                //                             hash2.insert(
-                                //                                 key.to_str()
-                                //                                     .unwrap_or(
-                                //                                         &i.to_string(),
-                                //                                     )
-                                //                                     .to_string(),
-                                //                                 (
-                                //                                     t.get(1).to_string(),
-                                //                                     t.get(2).to_string(),
-                                //                                 ),
-                                //                             );
-                                //                         }
-                                //                     }
-                                //                     _ => {}
-                                //                 }
-                                //             }
-                                //         }
-                                //         if hash2.len() > 0 {
-                                //             LuaResponse::TableOfTuple(hash2)
-                                //         } else {
-                                //             LuaResponse::Table(hash)
-                                //         }
-                                //     }
-                                //     Value::Function(_) => {
-                                //         LuaResponse::Meta("[function]".to_string())
-                                //     }
-                                //     // Value::LightUserData(_) => {
-                                //     //     LuaResponse::String("[lightuserdata]".to_string())
-                                //     // }
-                                //     v => v.into(),
-                                // };
-                                sync.send(res)?
-
-                                //     Err(e) => {
-                                //         loggy.send((
-                                //             LogType::LuaSysError,
-                                //             format!("com callback err -> {}", e),
-                                //         ))?;
-                                //     }
-                                //     _ => {}
-                                // };
-                            }
-                            LuaTalk::Resize(w, h) => {
-                                println!("resize {} {}", w, h);
-                                // gui_handle.borrow_mut().resize(w, h);
-                                // main_rast.borrow_mut().resize(w, h);
-                                // sky_rast.borrow_mut().resize(w, h);
-                                // A throwing draw() must not kill the runtime; log and continue.
-                                if let Err(e) =
-                                    vm.call_fn(mc, Some("redraw_fn"), draw_lua_func, (w, h))
-                                {
-                                    let s = error_string(e.into(), &scripts);
-                                    loggy.send((LogType::LuaError, s))?;
-                                }
-
-                                // executor.restart(ctx, draw_lua_func, (w, h));
-                                // lua_instance.execute(draw_lua_func)?;
-                                // let _ = lua_instance
-                                //     .load(&format!("draw({},{})", w, h))
-                                //     .eval::<Value>();
-                            }
-                            LuaTalk::Drop(s) => {
-                                let res = vm.call_fn(mc, Some("drop"), drop_lua_func, s);
-
-                                if let Err(e) = res {
-                                    let msg = error_string(e.into(), &scripts);
-                                    async_sender
-                                        .send((bundle_id, MainCommmand::AsyncError(msg)))?;
-                                }
-                            }
+                        // Dispatch the message via the shared handler (also
+                        // used by the wasm worker); Ok(true) means shut down.
+                        if handle_lua_talk(m, vm, mc, &mut ctx, &mut local_pool, &shared)? {
+                            break;
                         }
                     }
                     println!(
@@ -708,7 +454,8 @@ impl<'lt> LuaCore {
                         "fire the close signal",
                         bundle_id
                     );
-                    async_sender.send((bundle_id, MainCommmand::LuaClose()))?;
+                    ctx.async_sender
+                        .send((ctx.bundle_id, MainCommmand::LuaClose()))?;
                     Ok(())
                 })
             };
@@ -929,6 +676,203 @@ impl<'lt> LuaCore {
 //
 //     Ok(())
 // }
+/// The Lua VM's persistent, non-`'gc` state — everything the message handler
+/// needs that survives between `enter()` calls. On native it's built once inside
+/// the single long-lived `enter` and borrowed by the message loop; on wasm it
+/// lives outside the arena so each `postMessage` can re-`enter` and dispatch one
+/// message (loaded fns persist in the VM via their `usize` indices, so nothing
+/// here borrows `'gc`). See WASM.md §4a.
+struct LuaContext {
+    bundle_id: u8,
+    compiler: Compiler,
+    /// Sparse store of compiled sources, indexed by silt's source_index, read at
+    /// error time to render a snippet against the originating source.
+    scripts: Vec<Option<String>>,
+    loggy: Sender<(LogType, String)>,
+    /// External-function indices from load_fn; persist in the VM across enters.
+    main_fn: usize,
+    loop_fn: usize,
+    draw_fn: usize,
+    drop_fn: usize,
+    keys_mutex: Rc<RefCell<[bool; 256]>>,
+    diff_keys_mutex: Rc<RefCell<[bool; 256]>>,
+    mice_mutex: Rc<RefCell<[f32; 13]>>,
+    /// VM→host sink (the pitcher). On wasm this becomes a postMessage sink (§4b).
+    async_sender: Sender<MainPacket>,
+}
+
+/// Dispatch a single `LuaTalk` message against the VM. Shared by the native
+/// message loop and (next) the wasm worker. Returns `Ok(true)` when the runtime
+/// should stop (a `Die` message). `local_pool`/`shared` are passed separately
+/// because `LocalPool<'a>` borrows the `SharedPool` and so can't live inside the
+/// non-borrowing `LuaContext`.
+fn handle_lua_talk<'gc, 'a>(
+    m: LuaTalk,
+    vm: &mut VM<'gc>,
+    mc: &Mutation<'gc>,
+    ctx: &mut LuaContext,
+    local_pool: &mut LocalPool<'a>,
+    shared: &'a SharedPool,
+) -> Result<bool, P64Error> {
+    match m {
+        LuaTalk::Load(code, sync) => {
+            let Script { name, content } = *code;
+            println!(
+                "{} {} {} {}",
+                "[ 3 ]".on_bright_purple(),
+                "push first lua code payload id:",
+                ctx.bundle_id,
+                name
+            );
+            // run_in_context stores `content` into `scripts` at the index silt
+            // assigns; nothing here needs to own a copy.
+            let reply = match run_in_context(
+                vm,
+                mc,
+                Some(&name),
+                &content,
+                &mut ctx.compiler,
+                &mut ctx.scripts,
+            ) {
+                Err(er) => {
+                    let s = error_string(er, &ctx.scripts);
+                    ctx.loggy.send((LogType::LuaError, s.clone()))?;
+                    LuaResponse::String(s)
+                }
+                Ok(v) => v,
+            };
+            // A failed reply only means the loader timed out and dropped its
+            // receiver; that must NOT kill the runtime.
+            if let Err(e) = sync.send(reply) {
+                ctx.loggy.send((
+                    LogType::LuaSysError,
+                    format!("load reply dropped (caller gone): {}", e),
+                ))?;
+            }
+        }
+        LuaTalk::AsyncLoad(code) => {
+            println!(
+                "{} {} {} {}",
+                "[ 3.5 ]".on_bright_purple(),
+                "async push first lua code payload id:",
+                ctx.bundle_id,
+                code.name
+            );
+            if let Err(er) = run_in_context(
+                vm,
+                mc,
+                Some(&code.name),
+                &code.content,
+                &mut ctx.compiler,
+                &mut ctx.scripts,
+            ) {
+                let s = error_string(er, &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
+            }
+        }
+        LuaTalk::Main => {
+            if let Err(er) = vm.call_fn(mc, Some("main_fn_call"), ctx.main_fn, ()) {
+                // Runtime error inside main() points into the loaded app source.
+                let s = error_string(er.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
+            };
+        }
+        LuaTalk::Die(sync) => {
+            println!(
+                "{} {}",
+                "[ 5 ]".on_bright_purple(),
+                "we got permission to die :)"
+            );
+            sync.send(())?;
+            return Ok(true);
+        }
+        LuaTalk::AsyncFunc(_func) => {}
+        LuaTalk::Loop(control_state) => {
+            let ControlState(key_state, mouse_state) = control_state;
+            if let Err(e) = vm.call_fn(mc, Some("loop_fn_call"), ctx.loop_fn, ()) {
+                // Runtime error inside loop() points into the loaded app source.
+                let s = error_string(e.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
+            };
+
+            local_pool.check_lock(shared);
+
+            // updated with our input information, as this is only provided within
+            // the game loop, also send out a gui update
+            let mut h = ctx.diff_keys_mutex.borrow_mut();
+            ctx.keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
+                h[i] = !k && key_state[i];
+            });
+            drop(h);
+
+            *ctx.keys_mutex.borrow_mut() = key_state;
+            // we COULD just copy it but we want to move our current x,y to px,py
+            // to track movement deltas
+            let mut mm = ctx.mice_mutex.borrow_mut();
+            *mm = [
+                mouse_state[0],
+                mouse_state[1],
+                mouse_state[2],
+                mouse_state[3],
+                mm[4],
+                mm[5],
+                mouse_state[4],
+                mouse_state[5],
+                mouse_state[6],
+                mouse_state[7],
+                mouse_state[8],
+                mouse_state[9],
+                mouse_state[10],
+            ];
+            drop(mm);
+
+            // BundleMutations defaults gui/sky to true so mark_dirty runs after
+            // every loop, uploading the latest LuaImg content to the GPU textures.
+            let mutations = BundleMutations::new();
+            ctx.async_sender
+                .send((ctx.bundle_id, MainCommmand::LoopComplete(mutations)))?;
+            local_pool.drop();
+        }
+        LuaTalk::Func(func, sync) => {
+            // A Lua error here is the caller's problem, not a reason to tear down
+            // the whole runtime: report it back and keep looping.
+            let res = match run_in_context(
+                vm,
+                mc,
+                Some("func ->"),
+                &func,
+                &mut ctx.compiler,
+                &mut ctx.scripts,
+            ) {
+                Ok(v) => v,
+                Err(e) => {
+                    let s = error_string(e, &ctx.scripts);
+                    ctx.loggy.send((LogType::LuaError, s.clone()))?;
+                    LuaResponse::String(s)
+                }
+            };
+            sync.send(res)?
+        }
+        LuaTalk::Resize(w, h) => {
+            println!("resize {} {}", w, h);
+            // A throwing draw() must not kill the runtime; log and continue.
+            if let Err(e) = vm.call_fn(mc, Some("redraw_fn"), ctx.draw_fn, (w, h)) {
+                let s = error_string(e.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
+            }
+        }
+        LuaTalk::Drop(s) => {
+            let res = vm.call_fn(mc, Some("drop"), ctx.drop_fn, s);
+            if let Err(e) = res {
+                let msg = error_string(e.into(), &ctx.scripts);
+                ctx.async_sender
+                    .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn run_in_context<'gc>(
     vm: &mut VM<'gc>,
     mc: &Mutation<'gc>,
