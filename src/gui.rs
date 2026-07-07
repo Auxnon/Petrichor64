@@ -315,7 +315,7 @@ impl Gui {
         }
     }
 
-    fn letter_init(loggy: &mut Loggy) -> RgbaImage {
+    pub(crate) fn letter_init(loggy: &mut Loggy) -> RgbaImage {
         match crate::asset::load_img(&"6x6-8unicode.png".to_string(), loggy) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {

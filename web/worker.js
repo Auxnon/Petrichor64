@@ -24,9 +24,9 @@ async function boot() {
 }
 
 function dispatch(msg) {
-  const reply = worker_receive(msg);
-  if (reply !== null && reply !== undefined) {
-    self.postMessage({ kind: "vm", payload: reply });
+  const replies = worker_receive(msg);
+  if (Array.isArray(replies)) {
+    for (const r of replies) self.postMessage({ kind: "vm", payload: r });
   }
 }
 

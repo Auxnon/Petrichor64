@@ -23,6 +23,16 @@ use crate::types::{ControlState, ValueMap};
 /// Main thread → VM worker.
 #[derive(Serialize, Deserialize)]
 pub enum HostToVm {
+    /// Build the VM (once, before any other message): create the arena, register
+    /// natives, load the main/loop/draw/drop entry points. `width`/`height` size
+    /// the gui/sky rasters.
+    Init {
+        bundle_id: u8,
+        width: u32,
+        height: u32,
+    },
+    /// Compile + run a script into the VM (e.g. a bundle's main.lua).
+    Load { name: String, content: String },
     /// Run one game loop with this input snapshot. `keys` is one byte per key
     /// (0/1) — a Vec, not `[u8; 256]`, because serde's derive only covers arrays
     /// up to 32 elements. `analog` is the mouse/scroll/cursor floats.
