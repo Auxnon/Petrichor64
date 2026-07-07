@@ -22,10 +22,18 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed","wasm"] # "online_capable" ,  "headed" , "include_auto"
+default=[ "silt","headed"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
-online_capable=["tokio/full", "tokio-util", "rmp-serde", "bytes"]
-wasm=["tokio", "tokio-util/compat"]
+online_capable=["rmp-serde", "bytes"]
+# `wasm` marks a wasm build (drop-in, CDN-friendly, no shared memory). NOT in
+# default — native builds must never enable it. tokio/tokio-util are non-optional
+# now (needed by async_zip on both targets), so this pulls no deps itself.
+wasm=[]
+# `wasm-ultra` is the high-performance wasm build: SharedArrayBuffer + wasm
+# atomics for a shared entity buffer (requires COOP/COEP isolation headers on the
+# host page). Additive over `wasm`; ultra-only code gates on feature="wasm-ultra",
+# shared wasm code stays on cfg(target_arch="wasm32").
+wasm-ultra=["wasm"]
 headed=["wgpu", "winit", "winit_input_helper"]
 audio=["cpal"]
 puc_lua=["mlua"]
@@ -86,10 +94,12 @@ rustc-hash = "2.1.1"
 ron="0.8.1"
 gilrs ="0.10.10"
 serde_json ="1.0.139"
-# tokio base carries only the wasm-safe pieces async_zip needs; "full" (which
-# pulls mio/net and won't build on wasm) is added for native targets below.
-tokio = { version = "1.43.0", features = ["sync", "macros", "io-util", "rt"], optional=true }
-tokio-util= { version = "0.7.13", features = ["codec"],optional=true }
+# tokio/tokio-util are needed on BOTH targets (async_zip, file_util's compat
+# readers, native pack_zip/run_cli), so they're non-optional. The base carries
+# only the wasm-safe pieces; "full" (which pulls mio/net and won't build on wasm)
+# is added for native targets below.
+tokio = { version = "1.43.0", features = ["sync", "macros", "io-util", "rt"] }
+tokio-util = { version = "0.7.13", features = ["codec", "compat"] }
 dirs="6.0.0"
 
 regex="1.11.1"
@@ -108,8 +118,8 @@ atomicell = "0.2.0"
 clipboard = "0.5.0"
 native-dialog = "0.9.0"
 # native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
-# feature set declared in [dependencies].
-tokio = { version = "1.43.0", features = ["full"], optional = true }
+# feature set declared in [dependencies]. Features union across target tables.
+tokio = { version = "1.43.0", features = ["full"] }
 
 # ---------------------------------------------------------------------------
 # wasm-only dependencies: browser glue for the web build.

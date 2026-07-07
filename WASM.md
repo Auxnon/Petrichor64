@@ -4,13 +4,28 @@ Status of the browser port and the work remaining.
 
 ## Done — it compiles
 
-Both Petrichor and the embedded `silt-lua` now build for
-`wasm32-unknown-unknown` alongside the native targets:
+Both Petrichor and the embedded `silt-lua` build for `wasm32-unknown-unknown`
+alongside native. There are **two wasm build tiers** (feature-gated):
 
 ```sh
-cargo build --target wasm32-unknown-unknown          # bin + lib
-cargo build --target wasm32-unknown-unknown --lib
+# native desktop (default = silt, headed) — never enables `wasm`
+cargo build
+
+# drop-in wasm (CDN-friendly, no shared memory, no isolation headers)
+cargo build --target wasm32-unknown-unknown --features wasm
+trunk build          # index.html passes data-cargo-features="wasm"
+
+# ultra wasm (SharedArrayBuffer + atomics; requires COOP/COEP on the host page)
+cargo build --target wasm32-unknown-unknown --features wasm-ultra
 ```
+
+Feature gating:
+- shared wasm code → `#[cfg(target_arch = "wasm32")]` (both tiers)
+- drop-in-specific → `#[cfg(all(target_arch = "wasm32", not(feature = "wasm-ultra")))]`
+- ultra-specific → `#[cfg(feature = "wasm-ultra")]`  (`wasm-ultra` implies `wasm`)
+
+`wasm` is off by default so native never enables it; `tokio`/`tokio-util` are
+non-optional (both targets need them via async_zip/file_util).
 
 What that took:
 
