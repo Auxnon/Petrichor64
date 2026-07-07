@@ -602,7 +602,7 @@ impl ApplicationHandler for App {
                         // needs the transform channel).
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 0, 12, 0, 3) end end".to_string(),
+                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 6, 0, 0, 5) end end".to_string(),
                         });
                         self.worker_inited = true;
                     }
@@ -908,28 +908,9 @@ impl Core {
         use crate::worker_protocol::VmToHost;
         match msg {
             VmToHost::Spawn(lent) => {
-                web_sys::console::log_1(
-                    &format!(
-                        "[main] Spawn applied: asset='{}' pos=({},{},{})",
-                        lent.get_asset(),
-                        lent.x,
-                        lent.y,
-                        lent.z
-                    )
-                    .into(),
-                );
                 #[cfg(feature = "headed")]
-                {
-                    self.ent_manager
-                        .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
-                    web_sys::console::log_1(
-                        &format!(
-                            "[main] ent_array len = {}",
-                            self.ent_manager.ent_array.len()
-                        )
-                        .into(),
-                    );
-                }
+                self.ent_manager
+                    .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
             }
             VmToHost::Cam { pos, rot } => {
                 if let Some(p) = pos {
