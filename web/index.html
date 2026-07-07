@@ -48,9 +48,9 @@
             Load: {
               name: "main",
               content:
-                "local n=0\n" +
+                "count=0\n" +
                 "function main() cout('worker main ran') end\n" +
-                "function loop() n=n+1 if n%30==0 then cout('worker loop '..n) end end",
+                "function loop() count=count+1 if count%30==0 then cout('worker loop '..count) end end",
             },
           });
           // 3) run a few frames

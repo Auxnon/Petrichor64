@@ -132,14 +132,17 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
         ..
     } = worker;
 
+    // Kept alive through the enter below so Load's reply send doesn't hit a
+    // closed channel (the reply itself is unused on wasm — it returns via
+    // postMessage). Must outlive `talk`, hence a fn-scope binding.
+    let mut _load_rx = None;
     let talk: Option<LuaTalk> = match msg {
         HostToVm::Loop { keys, analog } => {
             Some(LuaTalk::Loop(control_state_from_wire(&keys, &analog)))
         }
         HostToVm::Load { name, content } => {
-            // The reply goes back over postMessage, not this SyncSender; a
-            // buffered channel lets handle_lua_talk's send succeed and be ignored.
-            let (tx, _rx) = sync_channel::<LuaResponse>(1);
+            let (tx, rx) = sync_channel::<LuaResponse>(1);
+            _load_rx = Some(rx);
             Some(LuaTalk::Load(Box::new(Script { name, content }), tx))
         }
         HostToVm::Resize(w, h) => Some(LuaTalk::Resize(w, h)),
