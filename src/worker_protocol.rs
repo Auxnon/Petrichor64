@@ -21,7 +21,7 @@ use crate::lua_ent::LuaEnt;
 use crate::types::{ControlState, ValueMap};
 
 /// Main thread → VM worker.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum HostToVm {
     /// Build the VM (once, before any other message): create the arena, register
     /// natives, load the main/loop/draw/drop entry points. `width`/`height` size
@@ -44,7 +44,7 @@ pub enum HostToVm {
 }
 
 /// VM worker → main thread.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum VmToHost {
     /// Create a render entity from this VM-owned entity (the VM already minted
     /// the id and owns the handle; this just tells the GPU side to build it).
@@ -71,7 +71,7 @@ pub enum VmToHost {
 }
 
 /// Serializable mirror of [`ValueMap`] (which isn't itself `Serialize`).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum ValueWire {
     Str(String),
     Int(i32),
