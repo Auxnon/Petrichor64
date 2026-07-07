@@ -129,12 +129,13 @@ the engine has something to run without a round-trip.
 
 ### VM worker (#2) — the core, sequenced
 
-4a. **Split `lua_define.rs::start()`** into one-time setup (create the `Lua`
-    arena, register natives, `load_fn` → store `main/loop/draw/drop` indices) and
-    a per-message `dispatch(msg)` that does `lua_instance.enter(|vm,mc|
-    call_fn(idx, …))`. Native keeps ONE `enter` + the `for m in &receiver` loop;
-    wasm re-enters per message. Persistent state (compiler, pool, mutexes,
-    indices, scripts, output sink) lives outside `enter`.
+4a. ~~**Split `lua_define.rs::start()`**~~ **done** — `LuaContext` holds the
+    persistent non-`'gc` state (compiler, scripts, loggy, main/loop/draw/drop fn
+    indices, key/mouse mutexes, VM→host sender) and `handle_lua_talk(m, vm, mc,
+    ctx, local_pool, shared)` is the shared per-message dispatcher. Native builds
+    `ctx` once inside its `enter` and the loop just calls the handler; wasm will
+    build the same `ctx` and re-`enter` per message. Behaviour-preserving
+    (headless VM loop verified).
 4b. **Abstract the VM→host sink.** Native native-fns capture
     `pitcher: Sender<MainPacket>` and `.send()`. Introduce a sink that on native
     is the mpsc sender and on wasm enqueues a `VmToHost` for `postMessage`.
