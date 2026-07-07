@@ -682,23 +682,23 @@ impl<'lt> LuaCore {
 /// lives outside the arena so each `postMessage` can re-`enter` and dispatch one
 /// message (loaded fns persist in the VM via their `usize` indices, so nothing
 /// here borrows `'gc`). See WASM.md §4a.
-struct LuaContext {
-    bundle_id: u8,
-    compiler: Compiler,
+pub(crate) struct LuaContext {
+    pub(crate) bundle_id: u8,
+    pub(crate) compiler: Compiler,
     /// Sparse store of compiled sources, indexed by silt's source_index, read at
     /// error time to render a snippet against the originating source.
-    scripts: Vec<Option<String>>,
-    loggy: Sender<(LogType, String)>,
+    pub(crate) scripts: Vec<Option<String>>,
+    pub(crate) loggy: Sender<(LogType, String)>,
     /// External-function indices from load_fn; persist in the VM across enters.
-    main_fn: usize,
-    loop_fn: usize,
-    draw_fn: usize,
-    drop_fn: usize,
-    keys_mutex: Rc<RefCell<[bool; 256]>>,
-    diff_keys_mutex: Rc<RefCell<[bool; 256]>>,
-    mice_mutex: Rc<RefCell<[f32; 13]>>,
+    pub(crate) main_fn: usize,
+    pub(crate) loop_fn: usize,
+    pub(crate) draw_fn: usize,
+    pub(crate) drop_fn: usize,
+    pub(crate) keys_mutex: Rc<RefCell<[bool; 256]>>,
+    pub(crate) diff_keys_mutex: Rc<RefCell<[bool; 256]>>,
+    pub(crate) mice_mutex: Rc<RefCell<[f32; 13]>>,
     /// VM→host sink (the pitcher). On wasm this becomes a postMessage sink (§4b).
-    async_sender: Sender<MainPacket>,
+    pub(crate) async_sender: Sender<MainPacket>,
 }
 
 /// Dispatch a single `LuaTalk` message against the VM. Shared by the native
@@ -706,7 +706,7 @@ struct LuaContext {
 /// should stop (a `Die` message). `local_pool`/`shared` are passed separately
 /// because `LocalPool<'a>` borrows the `SharedPool` and so can't live inside the
 /// non-borrowing `LuaContext`.
-fn handle_lua_talk<'gc, 'a>(
+pub(crate) fn handle_lua_talk<'gc, 'a>(
     m: LuaTalk,
     vm: &mut VM<'gc>,
     mc: &Mutation<'gc>,

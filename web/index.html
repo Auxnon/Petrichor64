@@ -41,10 +41,24 @@
       worker.onmessage = (e) => {
         console.log("[main] from worker:", e.data);
         if (e.data && e.data.kind === "worker-ready") {
-          // send a test Loop frame (256 zero keys, 11 zero analog values)
+          // 1) build the VM
+          worker.postMessage({ Init: { bundle_id: 0, width: 256, height: 256 } });
+          // 2) load a tiny app: main() logs once, loop() logs every 30 frames
           worker.postMessage({
-            Loop: { keys: new Array(256).fill(0), analog: new Array(11).fill(0) },
+            Load: {
+              name: "main",
+              content:
+                "local n=0\n" +
+                "function main() cout('worker main ran') end\n" +
+                "function loop() n=n+1 if n%30==0 then cout('worker loop '..n) end end",
+            },
           });
+          // 3) run a few frames
+          for (let i = 0; i < 65; i++) {
+            worker.postMessage({
+              Loop: { keys: new Array(256).fill(0), analog: new Array(11).fill(0) },
+            });
+          }
         }
       };
       worker.onerror = (e) => console.error("[main] worker error:", e.message, e);
