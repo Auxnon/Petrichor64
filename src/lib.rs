@@ -586,6 +586,7 @@ impl ApplicationHandler for App {
                     ),
                 }
             }
+            let mut drained: Vec<crate::worker_protocol::VmToHost> = Vec::new();
             if let Some(w) = &self.worker {
                 if w.is_ready() {
                     if !self.worker_inited {
@@ -594,9 +595,13 @@ impl ApplicationHandler for App {
                             width: 256,
                             height: 256,
                         });
+                        // Test app: spawn one billboard once. It renders at its
+                        // spawn position (static — per-frame movement needs the
+                        // transform update channel, not built yet). 'example' has
+                        // no loaded texture so it shows the default fallback quad.
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "count=0\nfunction loop() count=count+1 if count%60==0 then cout('engine-driven worker loop '..count) end end".to_string(),
+                            content: "thing=nil\nfunction loop() if thing==nil then thing=make('example', 0, 12, 0) end end".to_string(),
                         });
                         self.worker_inited = true;
                     }
@@ -604,9 +609,12 @@ impl ApplicationHandler for App {
                         keys: vec![0u8; 256],
                         analog: vec![0f32; 11],
                     });
-                    for m in w.drain() {
-                        web_sys::console::log_1(&format!("[main] VmToHost: {:?}", m).into());
-                    }
+                    drained = w.drain();
+                }
+            }
+            for m in drained {
+                if let Some(core) = self.core.as_mut() {
+                    core.apply_vm_message(m);
                 }
             }
         }
@@ -890,6 +898,37 @@ pub fn core_console_command(core: &mut Core, com_in: &str) {
 }
 
 impl Core {
+    /// Apply one `VmToHost` message from the web worker to the main-thread engine
+    /// (wasm). The worker owns the VM; these messages are how its effects reach
+    /// wgpu. Spawn builds a render entity from the delivered `LuaEnt` mirror; Cam
+    /// moves the camera. SetImg/Globals are wired next.
+    #[cfg(target_arch = "wasm32")]
+    fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
+        use crate::worker_protocol::VmToHost;
+        match msg {
+            VmToHost::Spawn(lent) => {
+                #[cfg(feature = "headed")]
+                self.ent_manager
+                    .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
+            }
+            VmToHost::Cam { pos, rot } => {
+                if let Some(p) = pos {
+                    self.global.cam_pos = glam::vec3(p[0], p[1], p[2]);
+                }
+                if let Some(r) = rot {
+                    self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
+                }
+            }
+            VmToHost::SetImg { .. } | VmToHost::Globals(_) => {
+                // TODO: SetImg → texture upload; Globals → screen effects.
+            }
+            VmToHost::LoopComplete { .. } => {}
+            VmToHost::Error(s) => {
+                web_sys::console::error_1(&format!("[vm error] {}", s).into());
+            }
+        }
+    }
+
     fn update(&mut self, catcher: &Receiver<MainPacket>) -> Option<UpdateOut> {
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
@@ -1003,6 +1042,11 @@ impl Core {
                 }
                 MainCommmand::Spawn(lent) => {
                     println!("make heard!");
+                    // Native/headless: the in-process VM sends the shared wrapper.
+                    // On wasm the VM is in a worker and spawns arrive as
+                    // VmToHost::Spawn(LuaEnt) applied elsewhere, so this
+                    // wrapper-based path is native-only.
+                    #[cfg(not(target_arch = "wasm32"))]
                     self.ent_manager.create_from_lua(
                         #[cfg(feature = "headed")]
                         &self.tex_manager,
@@ -1010,6 +1054,8 @@ impl Core {
                         &self.model_manager,
                         lent,
                     );
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = lent;
                 }
                 MainCommmand::Group(parent, child, tx) => {
                     self.ent_manager.group(parent, child);
