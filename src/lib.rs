@@ -69,6 +69,8 @@ mod template;
 mod texture;
 mod tile;
 mod types;
+#[cfg(target_arch = "wasm32")]
+mod worker;
 mod worker_protocol;
 #[cfg(feature = "picc")]
 mod userdata_util;
