@@ -602,7 +602,7 @@ impl ApplicationHandler for App {
                         // needs the transform channel).
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('f0f') tex('gen', im) thing=make('gen', 0, 12, 0) end end".to_string(),
+                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 0, 12, 0, 3) end end".to_string(),
                         });
                         self.worker_inited = true;
                     }
@@ -953,7 +953,20 @@ impl Core {
             VmToHost::Globals(_) => {
                 // TODO: Globals → screen effects.
             }
-            VmToHost::LoopComplete { .. } => {}
+            VmToHost::LoopComplete { .. } => {
+                // Native rebuilds entity instance buffers when a LoopComplete
+                // arrives via the mpsc catcher; on wasm that signal comes through
+                // here instead, so rebuild them now or nothing 3D ever draws.
+                #[cfg(feature = "headed")]
+                {
+                    self.instance_buffers = self.ent_manager.check_ents(
+                        &self.gfx.device,
+                        &self.tex_manager,
+                        &self.model_manager,
+                        self.global.iteration,
+                    );
+                }
+            }
             VmToHost::Error(s) => {
                 web_sys::console::error_1(&format!("[vm error] {}", s).into());
             }

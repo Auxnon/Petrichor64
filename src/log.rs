@@ -153,6 +153,10 @@ impl Loggy {
         #[cfg(feature = "headed")]
         self._print(str, false);
         println!("~{}", str);
+        // println! is a no-op on wasm; mirror engine logs to the browser console
+        // so they're visible (and copy-pasteable) during development.
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("~{}", str).into());
     }
 
     /** SYS: Well this looks dumb, just take my word for it*/
