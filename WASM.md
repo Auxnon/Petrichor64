@@ -156,11 +156,27 @@ the engine has something to run without a round-trip.
     re-enters (count hit 30/60), `cout`→loggy→console, `LoopComplete` streams to
     main. Fixes along the way: `start()` no-ops with no `Window`; Load's reply
     receiver must outlive the `enter`.
-4d. **Host side.** On wasm, `bundle.lua.start` spawns the worker instead of a
-    thread; the `<petrichor-64>` element spawns it on load. Feed `VmToHost` into
-    the existing `Core::update` path; send `Loop`/input as `HostToVm`. The worker
-    must also receive the bundle's `BundleResources` (letters/rasters/size) over
-    postMessage to build its VM.
+4d. **Host side.** Step 1 **done + browser-validated**: the engine (main-thread
+    wasm) spawns the worker itself in `about_to_wait` (`web_worker::WorkerHandle`),
+    posts Init + Load + a Loop per iteration, and drains the `VmToHost` stream in
+    Rust (`LoopComplete` confirmed flowing back; worker `loop()` count climbs).
+    The full engine↔worker loop is closed on the main side.
+
+    Remaining §4d (apply `VmToHost` to the renderer + real payload):
+    - **Design fork — main-side entity storage.** Headed `ent_array` stores
+      `UserDataWrapper` (a shared ref into the VM's entity userdata). On wasm the
+      main thread has NO local silt VM, so it can't build a `UserDataWrapper`
+      (needs `vm`/`mc`). It only has a deserialized `LuaEnt`. So `Spawn(LuaEnt)`
+      rendering needs `ent_array` to hold `LuaEnt` directly on wasm (cfg
+      divergence: `Vec<(LuaEnt, Ent, uni)>` vs `Vec<(UserDataWrapper, Ent, uni)>`),
+      touching every `.0` wrapper access.
+    - **gui/sky rasters:** the worker owns those pixels now (no InitBack); it must
+      post `SetImg` with the raster bytes when dirty so the main thread uploads
+      them to the GPU (main_command_to_host currently only flags LoopComplete).
+    - Cam/Globals apply directly to `Core` (no VM needed) — easiest first.
+    - Feed real per-frame input into `Loop` (from App's key/mouse state).
+    - Load the real `payload` (unpack `payload.game.png`) instead of the inline
+      test app; the worker needs the bundle scripts (and assets → atlas on main).
 
 5. Embed the default boot app (`include_bytes!`) so no fetch is needed to start.
 6. `fetch`-based asset loading (#3) → arbitrary games load.
