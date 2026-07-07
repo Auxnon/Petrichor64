@@ -595,13 +595,14 @@ impl ApplicationHandler for App {
                             width: 256,
                             height: 256,
                         });
-                        // Test app: spawn one billboard once. It renders at its
-                        // spawn position (static — per-frame movement needs the
-                        // transform update channel, not built yet). 'example' has
-                        // no loaded texture so it shows the default fallback quad.
+                        // Test app: generate a magenta texture in the worker,
+                        // register it (tex → SetImg → main atlas), and spawn a
+                        // billboard using it. Exercises the full worker→main
+                        // texture + entity path. Static for now (per-frame motion
+                        // needs the transform channel).
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "thing=nil\nfunction loop() if thing==nil then thing=make('example', 0, 12, 0) end end".to_string(),
+                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('f0f') tex('gen', im) thing=make('gen', 0, 12, 0) end end".to_string(),
                         });
                         self.worker_inited = true;
                     }
@@ -907,9 +908,28 @@ impl Core {
         use crate::worker_protocol::VmToHost;
         match msg {
             VmToHost::Spawn(lent) => {
+                web_sys::console::log_1(
+                    &format!(
+                        "[main] Spawn applied: asset='{}' pos=({},{},{})",
+                        lent.get_asset(),
+                        lent.x,
+                        lent.y,
+                        lent.z
+                    )
+                    .into(),
+                );
                 #[cfg(feature = "headed")]
-                self.ent_manager
-                    .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
+                {
+                    self.ent_manager
+                        .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
+                    web_sys::console::log_1(
+                        &format!(
+                            "[main] ent_array len = {}",
+                            self.ent_manager.ent_array.len()
+                        )
+                        .into(),
+                    );
+                }
             }
             VmToHost::Cam { pos, rot } => {
                 if let Some(p) = pos {
@@ -919,8 +939,19 @@ impl Core {
                     self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
                 }
             }
-            VmToHost::SetImg { .. } | VmToHost::Globals(_) => {
-                // TODO: SetImg → texture upload; Globals → screen effects.
+            VmToHost::SetImg { name, w, h, px } => {
+                #[cfg(feature = "headed")]
+                if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
+                    // Registers a new texture (or overlays an existing one) in the
+                    // atlas, then re-uploads it to the GPU.
+                    self.tex_manager
+                        .overwrite_texture(&name, img, &mut self.world, 0, &mut self.loggy);
+                    self.tex_manager
+                        .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+                }
+            }
+            VmToHost::Globals(_) => {
+                // TODO: Globals → screen effects.
             }
             VmToHost::LoopComplete { .. } => {}
             VmToHost::Error(s) => {
