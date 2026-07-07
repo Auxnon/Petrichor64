@@ -26,12 +26,53 @@ use wgpu::{util::DeviceExt, Buffer};
 
 #[cfg(feature = "headed")]
 pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize)>;
+
+/// The Lua-side entity a render slot points at. On native it's the VM's
+/// `UserDataWrapper` (shared with the Lua thread, so edits propagate for free).
+/// On wasm the VM lives in a web worker, so the main thread can't hold a wrapper
+/// — it keeps a `LuaEnt` mirror, refreshed by worker messages. `with_ref`/
+/// `with_mut` give both a uniform accessor so the render code is target-agnostic.
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+pub struct EntRef(pub UserDataWrapper);
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+pub struct EntRef(pub LuaEnt);
+
+#[cfg(feature = "headed")]
+impl EntRef {
+    pub fn with_ref<R>(
+        &self,
+        f: impl FnOnce(&LuaEnt) -> Result<R, silt_lua::LuaError>,
+    ) -> Result<R, silt_lua::LuaError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.0.downcast_ref::<LuaEnt, _, _>(f)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            f(&self.0)
+        }
+    }
+    pub fn with_mut<R>(
+        &mut self,
+        f: impl FnOnce(&mut LuaEnt) -> Result<R, silt_lua::LuaError>,
+    ) -> Result<R, silt_lua::LuaError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.0.downcast_mut::<LuaEnt, _, _>(f)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            f(&mut self.0)
+        }
+    }
+}
+
 pub struct EntManager {
     #[cfg(feature = "headed")]
     pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
     #[cfg(feature = "headed")]
-    pub ent_array: Vec<(UserDataWrapper, Ent, Rc<RefCell<EntityUniforms>>)>,
+    pub ent_array: Vec<(EntRef, Ent, Rc<RefCell<EntityUniforms>>)>,
     // Headless keeps just the Lua-side entity userdata (no GPU Ent/uniforms).
     #[cfg(not(feature = "headed"))]
     pub ent_array: Vec<UserDataWrapper>,
@@ -94,7 +135,8 @@ impl EntManager {
         })
     }
 
-    #[cfg(feature = "headed")]
+    // Native: the VM lives in-process, so we get the shared UserDataWrapper.
+    #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
     pub fn create_from_lua(
         &mut self,
         tex_manager: &TexManager,
@@ -103,29 +145,55 @@ impl EntManager {
     ) {
         let (ent, uni) = wrapped_lua
             .downcast_ref::<LuaEnt, _, _>(|lent| {
-                let id = lent.get_id();
-                let mut asset = lent.get_asset();
-                if asset.is_empty() {
-                    asset = "example".to_string();
-                }
-                // MARK should change plane to a model if the texture doesn't exist as one
-                let ent = Ent::new_dynamic(
-                    tex_manager,
-                    model_manager,
-                    vec3(lent.x as f32, lent.y as f32, lent.z as f32),
-                    0.,
-                    lent.scale as f32,
-                    0.,
-                    asset,
-                    self.uniform_alignment * (id + 1) as u32,
-                );
-                let uni = Rc::new(RefCell::new(ent.get_uniform(&lent, 0, None)));
-                Ok((ent, uni))
+                Ok(Self::build_ent(tex_manager, model_manager, lent, self.uniform_alignment))
             })
             .unwrap(); // should be safe since no errors within our closure
 
-        self.ent_array.push((wrapped_lua, ent, uni));
+        self.ent_array.push((EntRef(wrapped_lua), ent, uni));
         self.hash_dirty = true
+    }
+
+    // wasm: the VM is in a web worker; a Spawn message delivers a LuaEnt mirror
+    // directly (no wrapper to downcast). Build the render Ent from it.
+    #[cfg(all(feature = "headed", target_arch = "wasm32"))]
+    pub fn create_from_lua_ent(
+        &mut self,
+        tex_manager: &TexManager,
+        model_manager: &ModelManager,
+        lent: LuaEnt,
+    ) {
+        let (ent, uni) = Self::build_ent(tex_manager, model_manager, &lent, self.uniform_alignment);
+        self.ent_array.push((EntRef(lent), ent, uni));
+        self.hash_dirty = true
+    }
+
+    /// Build the render `Ent` + its uniform cell from a `LuaEnt`. Shared by the
+    /// native (wrapper) and wasm (mirror) spawn paths.
+    #[cfg(feature = "headed")]
+    fn build_ent(
+        tex_manager: &TexManager,
+        model_manager: &ModelManager,
+        lent: &LuaEnt,
+        uniform_alignment: u32,
+    ) -> (Ent, Rc<RefCell<EntityUniforms>>) {
+        let id = lent.get_id();
+        let mut asset = lent.get_asset();
+        if asset.is_empty() {
+            asset = "example".to_string();
+        }
+        // MARK should change plane to a model if the texture doesn't exist as one
+        let ent = Ent::new_dynamic(
+            tex_manager,
+            model_manager,
+            vec3(lent.x as f32, lent.y as f32, lent.z as f32),
+            0.,
+            lent.scale as f32,
+            0.,
+            asset,
+            uniform_alignment * (id + 1) as u32,
+        );
+        let uni = Rc::new(RefCell::new(ent.get_uniform(lent, 0, None)));
+        (ent, uni)
     }
 
     #[cfg(not(feature = "headed"))]
@@ -145,18 +213,23 @@ impl EntManager {
         // The headed array stores (wrapper, Ent, uni); headless stores the wrapper
         // directly — reach the Lua-side userdata the same way for both.
         #[cfg(feature = "headed")]
-        let wrapper = &mut self.ent_array[childId as usize].0;
+        let tt = self.ent_array[childId as usize].0.with_mut(|e| {
+            if e.get_id() == childId {
+                childIndex = childId as i64;
+                parentIndex = targetId as i64;
+                e.parent = Some(targetId)
+            }
+            Ok(())
+        });
         #[cfg(not(feature = "headed"))]
-        let wrapper = &mut self.ent_array[childId as usize];
-        let tt = wrapper
-            .downcast_mut::<LuaEnt, _, _>(|e| {
-                if e.get_id() == childId {
-                    childIndex = childId as i64;
-                    parentIndex = targetId as i64;
-                    e.parent = Some(targetId)
-                }
-                Ok(())
-            });
+        let tt = self.ent_array[childId as usize].downcast_mut::<LuaEnt, _, _>(|e| {
+            if e.get_id() == childId {
+                childIndex = childId as i64;
+                parentIndex = targetId as i64;
+                e.parent = Some(targetId)
+            }
+            Ok(())
+        });
         // TODO headed?
         //
         // for (i, lent) in self.ent_array.iter().enumerate() {
@@ -232,7 +305,7 @@ impl EntManager {
     ) -> Vec<(Rc<Model>, Buffer, usize)> {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
         for (alent, ent, uni_ref) in self.ent_array.iter() {
-            alent.downcast_ref(|lent: &LuaEnt| {
+            alent.with_ref(|lent: &LuaEnt| {
                 let parent = match lent.parent {
                     Some(u) => mats.get(&u),
                     None => None,
@@ -301,7 +374,7 @@ impl EntManager {
         );
         #[cfg(feature = "headed")]
         self.ent_array.retain(|(le, _, _)| {
-            le.downcast_ref(|lent: &LuaEnt| {
+            le.with_ref(|lent: &LuaEnt| {
                 Ok(if lent.bundle_id == bundle_id {
                     false
                 } else {
@@ -356,7 +429,7 @@ impl EntManager {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
         self.ent_array.retain_mut(|(lent, ent, uni_ref)| {
-            if let Err(_) = lent.downcast_mut(|l: &mut LuaEnt| {
+            if let Err(_) = lent.with_mut(|l: &mut LuaEnt| {
                 let parent = match l.parent {
                     Some(u) => mats.get(&u),
                     None => None,
