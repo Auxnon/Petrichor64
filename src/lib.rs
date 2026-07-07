@@ -694,6 +694,15 @@ pub fn start() {
 pub fn start() {
     use winit::platform::web::EventLoopExtWebSys;
 
+    // The bin's main() runs on module init in EVERY wasm instance, including the
+    // VM web worker's. A worker has no `Window` (only WorkerGlobalScope), so
+    // winit's event loop would panic there ("only callable from inside the
+    // Window"). The worker drives itself via worker_init/worker_receive, so
+    // start() must no-op when there's no Window.
+    if web_sys::window().is_none() {
+        return;
+    }
+
     console_error_panic_hook::set_once();
     // Route `log` output to the browser console.
     let _ = console_log::init_with_level(::log::Level::Info);
