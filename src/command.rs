@@ -1101,7 +1101,13 @@ function instr(freqs, half) end"
                         bundle_id,
                         MainCommmand::SetImg(name, limg.image.clone(), tx),
                     )));
+                    // Native waits for the upload ack; the wasm VM runs in a
+                    // worker that can't block on the main thread — it fires the
+                    // SetImg and moves on (uploaded a frame later).
+                    #[cfg(not(target_arch = "wasm32"))]
                     lua_err!(rx.recv());
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = rx;
                     Ok(())
                 })?;
             };
@@ -2327,6 +2333,15 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             sky: m.sky,
         }),
         MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
+        MainCommmand::SetImg(name, img, _tx) => {
+            let (w, h) = img.dimensions();
+            Some(VmToHost::SetImg {
+                name,
+                w,
+                h,
+                px: img.into_raw(),
+            })
+        }
         MainCommmand::Spawn(wrapper) => wrapper
             .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|lent| Ok(lent.clone()))
             .ok()
