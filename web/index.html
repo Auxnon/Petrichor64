@@ -6,7 +6,7 @@
     <title>Petrichor64 (web)</title>
     <!-- Build the crate to wasm. Trunk runs `cargo build` for the wasm target,
          then wasm-bindgen, and injects the loader. The bin's main() is the entry. -->
-    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="Petrichor64" data-type="main" />
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="Petrichor64" data-type="main" data-cargo-features="wasm" />
     <!-- copy the VM worker script into dist so it's served at /worker.js -->
     <link data-trunk rel="copy-file" href="worker.js" />
     <style>
