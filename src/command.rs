@@ -2298,6 +2298,43 @@ pub enum MainCommmand {
     Quit(u8),
 }
 
+/// Translate a VM→host command into the serializable worker message for the
+/// wasm postMessage bridge (§4b). The worker drains its local MainPacket channel
+/// after each dispatched message and posts the results to the main thread.
+///
+/// Only the fire-and-forget subset is mapped: `Cam`, `Globals`, `LoopComplete`,
+/// `AsyncError`, `Spawn`. Blocking request/response commands (GetImg/SetImg/Make/
+/// Group/GetGlobal/Read/Write/Die — they carry a SyncSender) and host-internal
+/// ones return `None` and are handled in the read-back phase. Compiled on all
+/// targets so a new `MainCommmand` variant or `VmToHost` change is type-checked
+/// everywhere, not just on wasm.
+#[allow(dead_code)]
+pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol::VmToHost> {
+    use crate::worker_protocol::{ValueWire, VmToHost};
+    match cmd {
+        MainCommmand::Cam(pos, rot) => Some(VmToHost::Cam {
+            pos: pos.map(|v| [v.x, v.y, v.z]),
+            rot: rot.map(|v| [v.x, v.y]),
+        }),
+        MainCommmand::Globals(table) => Some(VmToHost::Globals(
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), ValueWire::from(v)))
+                .collect(),
+        )),
+        MainCommmand::LoopComplete(m) => Some(VmToHost::LoopComplete {
+            gui: m.gui,
+            sky: m.sky,
+        }),
+        MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
+        MainCommmand::Spawn(wrapper) => wrapper
+            .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|lent| Ok(lent.clone()))
+            .ok()
+            .map(VmToHost::Spawn),
+        _ => None,
+    }
+}
+
 pub fn num(x: Value) -> LuaResponse {
     match x {
         Value::Integer(i) => LuaResponse::Integer(i),

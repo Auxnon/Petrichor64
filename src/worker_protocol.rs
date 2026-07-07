@@ -56,6 +56,8 @@ pub enum VmToHost {
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the
     /// host re-uploads them.
     LoopComplete { gui: bool, sky: bool },
+    /// A runtime/async error to surface in the engine console.
+    Error(String),
 }
 
 /// Serializable mirror of [`ValueMap`] (which isn't itself `Serialize`).
