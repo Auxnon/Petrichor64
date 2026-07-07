@@ -12,7 +12,7 @@ use silt_lua::LuaError;
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
 // Serialize/Deserialize let a LuaEnt cross the wasm web-worker postMessage
 // boundary (the Spawn message) — see worker_protocol.rs.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LuaEnt {
     pub x: f64,
     pub y: f64,

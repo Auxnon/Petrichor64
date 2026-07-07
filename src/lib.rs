@@ -69,6 +69,8 @@ mod template;
 mod texture;
 mod tile;
 mod types;
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+mod web_worker;
 #[cfg(target_arch = "wasm32")]
 mod worker;
 mod worker_protocol;
@@ -128,6 +130,12 @@ pub struct App {
     /// once ready. Rc<RefCell<…>> is fine — wasm is single-threaded.
     #[cfg(target_arch = "wasm32")]
     pending_core: std::rc::Rc<std::cell::RefCell<Option<(Core, Receiver<MainPacket>)>>>,
+    /// The VM web worker (wasm only). Spawned once; drives the Lua VM off-thread.
+    #[cfg(target_arch = "wasm32")]
+    worker: Option<crate::web_worker::WorkerHandle>,
+    /// Whether the worker has been sent its Init + initial Load.
+    #[cfg(target_arch = "wasm32")]
+    worker_inited: bool,
 }
 
 #[cfg(feature = "headed")]
@@ -144,6 +152,10 @@ impl Default for App {
             bits_prev: [false; 256],
             #[cfg(target_arch = "wasm32")]
             pending_core: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            worker: None,
+            #[cfg(target_arch = "wasm32")]
+            worker_inited: false,
         }
     }
 }
@@ -553,6 +565,49 @@ impl ApplicationHandler for App {
             if let Some((core, catcher)) = self.pending_core.borrow_mut().take() {
                 self.core = Some(core);
                 self.catcher = Some(catcher);
+            }
+        }
+
+        // Drive the VM web worker (§4d). Spawn it once; once its wasm is ready,
+        // send Init + an initial Load; then post a Loop each iteration and drain
+        // whatever VmToHost it produced. For now the drained messages are just
+        // logged — applying them to the renderer is the next step.
+        #[cfg(target_arch = "wasm32")]
+        {
+            use crate::worker_protocol::HostToVm;
+            if self.worker.is_none() {
+                match crate::web_worker::WorkerHandle::spawn("/worker.js") {
+                    Ok(w) => {
+                        ::log::info!("petrichor64: VM worker spawned");
+                        self.worker = Some(w);
+                    }
+                    Err(e) => web_sys::console::error_1(
+                        &format!("VM worker spawn failed: {:?}", e).into(),
+                    ),
+                }
+            }
+            if let Some(w) = &self.worker {
+                if w.is_ready() {
+                    if !self.worker_inited {
+                        w.post(&HostToVm::Init {
+                            bundle_id: 0,
+                            width: 256,
+                            height: 256,
+                        });
+                        w.post(&HostToVm::Load {
+                            name: "main".to_string(),
+                            content: "count=0\nfunction loop() count=count+1 if count%60==0 then cout('engine-driven worker loop '..count) end end".to_string(),
+                        });
+                        self.worker_inited = true;
+                    }
+                    w.post(&HostToVm::Loop {
+                        keys: vec![0u8; 256],
+                        analog: vec![0f32; 11],
+                    });
+                    for m in w.drain() {
+                        web_sys::console::log_1(&format!("[main] VmToHost: {:?}", m).into());
+                    }
+                }
             }
         }
 

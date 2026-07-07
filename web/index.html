@@ -33,35 +33,7 @@
     </style>
   </head>
   <body>
-    <!-- §4c transport spike: spawn the VM worker and round-trip a test message
-         through wasm-in-worker + postMessage. Watch the console for
-         "[petrichor worker] …" logs and the "vm" reply. -->
-    <script type="module">
-      const worker = new Worker("/worker.js", { type: "module" });
-      worker.onmessage = (e) => {
-        console.log("[main] from worker:", e.data);
-        if (e.data && e.data.kind === "worker-ready") {
-          // 1) build the VM
-          worker.postMessage({ Init: { bundle_id: 0, width: 256, height: 256 } });
-          // 2) load a tiny app: main() logs once, loop() logs every 30 frames
-          worker.postMessage({
-            Load: {
-              name: "main",
-              content:
-                "count=0\n" +
-                "function main() cout('worker main ran') end\n" +
-                "function loop() count=count+1 if count%30==0 then cout('worker loop '..count) end end",
-            },
-          });
-          // 3) run a few frames
-          for (let i = 0; i < 65; i++) {
-            worker.postMessage({
-              Loop: { keys: new Array(256).fill(0), analog: new Array(11).fill(0) },
-            });
-          }
-        }
-      };
-      worker.onerror = (e) => console.error("[main] worker error:", e.message, e);
-    </script>
+    <!-- The engine (main-thread wasm) now spawns and drives the VM worker
+         itself (§4d) — see about_to_wait in lib.rs. No JS spawner needed. -->
   </body>
 </html>
