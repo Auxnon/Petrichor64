@@ -25,12 +25,13 @@ use crate::error::P64Error;
 use crate::gui::{Gui, GuiMorsel};
 use crate::log::{LogType, Loggy};
 use crate::lua_define::{handle_lua_talk, LuaContext, LuaResponse, LuaTalk, MainPacket};
+use crate::lua_ent::LuaEnt;
 use crate::lua_img::LuaImg;
 use crate::pad::Pad;
 use crate::pool::{LocalPool, SharedPool};
 use crate::types::Script;
 use crate::world::{TileCommand, TileResponse};
-use crate::worker_protocol::{control_state_from_wire, HostToVm, VmToHost};
+use crate::worker_protocol::{control_state_from_wire, EntXform, HostToVm, VmToHost};
 
 /// Everything the worker's VM needs, held for its lifetime. Non-`'gc` state
 /// (`ctx`, `shared`, the channels) lives here; the `'gc` VM state lives in the
@@ -46,6 +47,10 @@ struct WorkerVm {
     /// Held so the world_sender the natives hold doesn't disconnect (world runs
     /// on the host later; unused here for now).
     _world_rx: Receiver<(TileCommand, SyncSender<TileResponse>)>,
+    /// Live handles to spawned entities (Weak refs into the VM's userdata). Read
+    /// each frame to stream transforms to the main thread; dropped entries are
+    /// reaped when their upgrade fails.
+    entities: Vec<silt_lua::userdata::UserDataWrapper>,
 }
 
 thread_local! {
@@ -129,6 +134,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
         shared,
         catcher,
         loggy_rx,
+        entities,
         ..
     } = worker;
 
@@ -172,9 +178,48 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
     // VM→host commands → serializable messages for the main thread.
     let mut out = Vec::new();
     while let Ok((_bundle, cmd)) = catcher.try_recv() {
-        if let Some(v) = main_command_to_host(cmd) {
-            out.push(v);
+        match cmd {
+            // Keep the live entity handle (Weak into the VM's userdata) so we can
+            // stream its transform each frame, and forward the initial Spawn.
+            crate::command::MainCommmand::Spawn(wrapper) => {
+                if let Ok(lent) = wrapper.downcast_ref::<LuaEnt, _, _>(|l| Ok(l.clone())) {
+                    out.push(VmToHost::Spawn(lent));
+                }
+                entities.push(wrapper);
+            }
+            other => {
+                if let Some(v) = main_command_to_host(other) {
+                    out.push(v);
+                }
+            }
         }
+    }
+
+    // Stream live transforms of surviving entities; reap dropped ones (their
+    // Weak fails to upgrade). This is the no-SAB movement channel.
+    let mut xforms = Vec::new();
+    entities.retain(|w| {
+        match w.downcast_ref::<LuaEnt, _, _>(|l| {
+            Ok(EntXform {
+                id: l.get_id(),
+                x: l.x as f32,
+                y: l.y as f32,
+                z: l.z as f32,
+                rx: l.rot_x as f32,
+                ry: l.rot_y as f32,
+                rz: l.rot_z as f32,
+                scale: l.scale as f32,
+            })
+        }) {
+            Ok(xf) => {
+                xforms.push(xf);
+                true
+            }
+            Err(_) => false,
+        }
+    });
+    if !xforms.is_empty() {
+        out.push(VmToHost::EntUpdate(xforms));
     }
     out
 }
@@ -270,5 +315,6 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         catcher,
         loggy_rx,
         _world_rx: world_rx,
+        entities: Vec::new(),
     })
 }

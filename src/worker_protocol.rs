@@ -66,8 +66,27 @@ pub enum VmToHost {
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the
     /// host re-uploads them.
     LoopComplete { gui: bool, sky: bool },
+    /// Per-frame live transforms of the worker's entities (the VM mutates them;
+    /// this mirrors the changes to the main-thread render copies). Since the VM
+    /// lives in a separate wasm instance there's no shared memory — this is the
+    /// no-SAB movement channel. (Ultra tier will replace it with a
+    /// SharedArrayBuffer; a transferable Float32Array is the drop-in optimisation.)
+    EntUpdate(Vec<EntXform>),
     /// A runtime/async error to surface in the engine console.
     Error(String),
+}
+
+/// One entity's transform, streamed each frame (see [`VmToHost::EntUpdate`]).
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EntXform {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub rx: f32,
+    pub ry: f32,
+    pub rz: f32,
+    pub scale: f32,
 }
 
 /// Serializable mirror of [`ValueMap`] (which isn't itself `Serialize`).
