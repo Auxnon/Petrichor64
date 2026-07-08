@@ -617,10 +617,25 @@ impl ApplicationHandler for App {
                         w.post(&HostToVm::Main);
                         self.worker_inited = true;
                     }
-                    w.post(&HostToVm::Loop {
-                        keys: vec![0u8; 256],
-                        analog: vec![0f32; 11],
-                    });
+                    // Keys are already in self.bits.0 (window_event's bit_check);
+                    // copy the mouse/analog state from core.global into bits.1,
+                    // mirroring the native about_to_wait input copy, then send the
+                    // real input snapshot to the VM.
+                    if let Some(core) = self.core.as_ref() {
+                        let g = &core.global;
+                        self.bits.1[0] = g.mouse_pos.x;
+                        self.bits.1[1] = g.mouse_pos.y;
+                        self.bits.1[2] = g.mouse_delta.x;
+                        self.bits.1[3] = g.mouse_delta.y;
+                        self.bits.1[4] = g.mouse_buttons[0];
+                        self.bits.1[5] = g.mouse_buttons[1];
+                        self.bits.1[6] = g.mouse_buttons[2];
+                        self.bits.1[7] = g.scroll_delta.0;
+                        self.bits.1[8] = g.cursor_projected_pos.x;
+                        self.bits.1[9] = g.cursor_projected_pos.y;
+                        self.bits.1[10] = g.cursor_projected_pos.z;
+                    }
+                    w.post(&HostToVm::loop_from(&self.bits));
                     drained = w.drain();
                 }
             }
@@ -629,6 +644,12 @@ impl ApplicationHandler for App {
                     core.apply_vm_message(m);
                 }
             }
+            // Consume per-frame input deltas so they don't persist to next frame.
+            if let Some(core) = self.core.as_mut() {
+                core.global.mouse_delta = vec2(0., 0.);
+                core.global.scroll_delta = (0., 0.);
+            }
+            self.bits_prev = self.bits.0;
         }
 
         let now = Instant::now();
