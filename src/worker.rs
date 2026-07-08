@@ -151,6 +151,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
             _load_rx = Some(rx);
             Some(LuaTalk::Load(Box::new(Script { name, content }), tx))
         }
+        HostToVm::Main => Some(LuaTalk::Main),
         HostToVm::Resize(w, h) => Some(LuaTalk::Resize(w, h)),
         HostToVm::Drop(s) => Some(LuaTalk::Drop(s)),
         HostToVm::Init { .. } => None, // handled by the caller

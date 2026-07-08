@@ -33,6 +33,8 @@ pub enum HostToVm {
     },
     /// Compile + run a script into the VM (e.g. a bundle's main.lua).
     Load { name: String, content: String },
+    /// Call the app's `main()` once (after scripts are loaded).
+    Main,
     /// Run one game loop with this input snapshot. `keys` is one byte per key
     /// (0/1) — a Vec, not `[u8; 256]`, because serde's derive only covers arrays
     /// up to 32 elements. `analog` is the mouse/scroll/cursor floats.
