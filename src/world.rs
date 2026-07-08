@@ -684,7 +684,12 @@ impl World {
                 }
             }
             _ => {
-                self.loggy.send((
+                // On wasm the world (and its tile-texture mapping) lives in the
+                // VM worker; main has no world sender here, which is expected —
+                // the worker supplies the mapping via MapTex. Only a real error
+                // on native.
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = self.loggy.send((
                     LogType::WorldError,
                     format!("err::no world tex mapper for bundle {}", bundle_id),
                 ));
