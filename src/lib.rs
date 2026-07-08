@@ -600,6 +600,10 @@ impl ApplicationHandler for App {
                             include_bytes!("../payload/assets/example.png");
                         if let Some(core) = self.core.as_mut() {
                             core.load_wasm_texture("example", PAYLOAD_EXAMPLE);
+                            // Set up bundle 0's main-side world (GPU meshing +
+                            // mapper) without a world thread; the worker owns the
+                            // tile data and syncs chunks here.
+                            core.world.init_local(0);
                         }
                         w.post(&HostToVm::Init {
                             bundle_id: 0,
@@ -986,6 +990,30 @@ impl Core {
                             break;
                         }
                     }
+                }
+            }
+            VmToHost::WorldSync { chunks, dropped } => {
+                // Worker sent dirty tile chunks; mesh them into GPU chunk models.
+                #[cfg(feature = "headed")]
+                {
+                    let chunks: Vec<crate::tile::Chunk> =
+                        chunks.into_iter().map(|c| c.into_chunk()).collect();
+                    self.world.process_sync(
+                        &self.gfx.device,
+                        0,
+                        chunks,
+                        dropped,
+                        &self.model_manager,
+                    );
+                }
+            }
+            VmToHost::MapTex { name, index } => {
+                // Resolve the tile-texture name to its atlas uv and record it so
+                // process_sync can look up chunk cells by their int index.
+                #[cfg(feature = "headed")]
+                {
+                    let uv = self.tex_manager.get_tex(&name);
+                    self.world.set_local_tex(0, index, uv);
                 }
             }
             VmToHost::Globals(_) => {

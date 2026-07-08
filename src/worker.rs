@@ -30,8 +30,8 @@ use crate::lua_img::LuaImg;
 use crate::pad::Pad;
 use crate::pool::{LocalPool, SharedPool};
 use crate::types::Script;
-use crate::world::{TileCommand, TileResponse};
-use crate::worker_protocol::{control_state_from_wire, EntXform, HostToVm, VmToHost};
+use crate::world::{TileCommand, TileResponse, WorldInstance};
+use crate::worker_protocol::{control_state_from_wire, ChunkWire, EntXform, HostToVm, VmToHost};
 
 /// Everything the worker's VM needs, held for its lifetime. Non-`'gc` state
 /// (`ctx`, `shared`, the channels) lives here; the `'gc` VM state lives in the
@@ -44,9 +44,13 @@ struct WorkerVm {
     catcher: Receiver<MainPacket>,
     /// Log lines from the VM; drained to the console per msg.
     loggy_rx: Receiver<(LogType, String)>,
-    /// Held so the world_sender the natives hold doesn't disconnect (world runs
-    /// on the host later; unused here for now).
-    _world_rx: Receiver<(TileCommand, SyncSender<TileResponse>)>,
+    /// Tile commands from the VM's `tile()` calls land here; drained + applied
+    /// to the worker's own world data each frame (Option A: the VM owns the world
+    /// so bulk terrain edits stay local and sync as whole chunks).
+    world_rx: Receiver<(TileCommand, SyncSender<TileResponse>)>,
+    /// The worker's world tile data (replaces the per-bundle world thread).
+    world_layer: crate::tile::Layer,
+    world_instance: WorldInstance,
     /// Live handles to spawned entities (Weak refs into the VM's userdata). Read
     /// each frame to stream transforms to the main thread; dropped entries are
     /// reaped when their upgrade fails.
@@ -134,8 +138,10 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
         shared,
         catcher,
         loggy_rx,
+        world_rx,
+        world_layer,
+        world_instance,
         entities,
-        ..
     } = worker;
 
     // Kept alive through the enter below so Load's reply send doesn't hit a
@@ -194,6 +200,41 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
                 }
             }
         }
+    }
+
+    // Apply this frame's tile() calls to the worker's own world data, then sync
+    // any dirty chunks to main for GPU meshing (Option A — bulk edits stayed
+    // local; we ship whole chunks, not per-tile messages).
+    while let Ok((cmd, _reply)) = world_rx.try_recv() {
+        match cmd {
+            TileCommand::Set(tiles) => {
+                if let Some((name, v)) = tiles.into_iter().next() {
+                    let name = name.to_lowercase();
+                    // Map the tile texture if new, and tell main so its local
+                    // mapper can resolve the cell's int back to an atlas uv.
+                    if let Some(index) = world_instance.ensure_tex(&name) {
+                        out.push(VmToHost::MapTex {
+                            name: name.clone(),
+                            index,
+                        });
+                    }
+                    // v = ivec4(meta/rot, x, y, z) — see set_tile in command.rs.
+                    world_layer
+                        .set_tile(world_instance, &name, v.x as u8, v.y, v.z, v.w);
+                }
+            }
+            TileCommand::Clear() | TileCommand::Destroy() => {
+                world_layer.destroy_it_all();
+            }
+            _ => {}
+        }
+    }
+    let dirty = world_layer.get_dirty();
+    if !dirty.is_empty() {
+        out.push(VmToHost::WorldSync {
+            chunks: dirty.iter().map(ChunkWire::from_chunk).collect(),
+            dropped: false,
+        });
     }
 
     // Stream live transforms of surviving entities; reap dropped ones (their
@@ -315,7 +356,9 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         shared,
         catcher,
         loggy_rx,
-        _world_rx: world_rx,
+        world_rx,
+        world_layer: crate::tile::Layer::new(),
+        world_instance: WorldInstance::new(bundle_id),
         entities: Vec::new(),
     })
 }
