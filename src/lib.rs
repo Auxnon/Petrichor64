@@ -590,20 +590,27 @@ impl ApplicationHandler for App {
             if let Some(w) = &self.worker {
                 if w.is_ready() {
                     if !self.worker_inited {
+                        // Load the payload bundle's loaded assets into the atlas
+                        // (disjoint field from self.worker), then send the app's
+                        // main.lua and call main(). Bundle scripts/assets are
+                        // embedded for now; proper .game.png unpack on wasm is a
+                        // follow-up.
+                        const PAYLOAD_MAIN: &str = include_str!("../payload/scripts/main.lua");
+                        const PAYLOAD_EXAMPLE: &[u8] =
+                            include_bytes!("../payload/assets/example.png");
+                        if let Some(core) = self.core.as_mut() {
+                            core.load_wasm_texture("example", PAYLOAD_EXAMPLE);
+                        }
                         w.post(&HostToVm::Init {
                             bundle_id: 0,
                             width: 256,
                             height: 256,
                         });
-                        // Test app: generate a magenta texture in the worker,
-                        // register it (tex → SetImg → main atlas), and spawn a
-                        // billboard using it. Exercises the full worker→main
-                        // texture + entity path. Static for now (per-frame motion
-                        // needs the transform channel).
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "thing=nil count=0\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 6, 0, 0, 5) else count=count+1 thing.y=(count%200)*0.06-6 end end".to_string(),
+                            content: PAYLOAD_MAIN.to_string(),
                         });
+                        w.post(&HostToVm::Main);
                         self.worker_inited = true;
                     }
                     w.post(&HostToVm::Loop {
@@ -903,6 +910,29 @@ impl Core {
     /// (wasm). The worker owns the VM; these messages are how its effects reach
     /// wgpu. Spawn builds a render entity from the delivered `LuaEnt` mirror; Cam
     /// moves the camera. SetImg/Globals are wired next.
+    /// Decode a PNG asset and register it in the texture atlas (wasm). Used to
+    /// load a bundle's loaded assets (e.g. example.png) so the worker's
+    /// make('example') resolves a real texture.
+    #[cfg(all(feature = "headed", target_arch = "wasm32"))]
+    fn load_wasm_texture(&mut self, name: &str, png: &[u8]) {
+        match image::load_from_memory(png) {
+            Ok(dyn_img) => {
+                self.tex_manager.overwrite_texture(
+                    name,
+                    dyn_img.to_rgba8(),
+                    &mut self.world,
+                    0,
+                    &mut self.loggy,
+                );
+                self.tex_manager
+                    .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+            }
+            Err(e) => web_sys::console::error_1(
+                &format!("failed to decode asset '{}': {}", name, e).into(),
+            ),
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;

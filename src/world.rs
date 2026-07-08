@@ -406,10 +406,17 @@ impl World {
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
         match sender.send((TileCommand::Set(vec![(t, ivec4(r as i32, x, y, z))]), tx)) {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Success(true)) => {}
-                _ => {}
-            },
+            Ok(_) => {
+                // Native waits for the world thread's ack; the wasm VM runs in a
+                // worker with no world thread yet, so it can't block here.
+                #[cfg(not(target_arch = "wasm32"))]
+                match rx.recv() {
+                    Ok(TileResponse::Success(true)) => {}
+                    _ => {}
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = rx;
+            }
             _ => {}
         }
     }
