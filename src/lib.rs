@@ -602,7 +602,7 @@ impl ApplicationHandler for App {
                         // needs the transform channel).
                         w.post(&HostToVm::Load {
                             name: "main".to_string(),
-                            content: "thing=nil\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 6, 0, 0, 5) end end".to_string(),
+                            content: "thing=nil count=0\nfunction loop() if thing==nil then local im=nimg(16,16) im:fill('0f0') tex('gen', im) thing=make('gen', 6, 0, 0, 5) else count=count+1 thing.y=(count%200)*0.06-6 end end".to_string(),
                         });
                         self.worker_inited = true;
                     }
@@ -929,6 +929,33 @@ impl Core {
                         .overwrite_texture(&name, img, &mut self.world, 0, &mut self.loggy);
                     self.tex_manager
                         .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+                }
+            }
+            VmToHost::EntUpdate(xforms) => {
+                // Refresh the main-thread entity mirrors with the worker's live
+                // transforms. check_ents reads these each frame (via build_meta),
+                // so updating them here moves the rendered entity.
+                #[cfg(feature = "headed")]
+                for xf in xforms {
+                    for (eref, _ent, _uni) in self.ent_manager.ent_array.iter_mut() {
+                        let mut matched = false;
+                        let _ = eref.with_mut(|l| {
+                            if l.get_id() == xf.id {
+                                l.x = xf.x as f64;
+                                l.y = xf.y as f64;
+                                l.z = xf.z as f64;
+                                l.rot_x = xf.rx as f64;
+                                l.rot_y = xf.ry as f64;
+                                l.rot_z = xf.rz as f64;
+                                l.scale = xf.scale as f64;
+                                matched = true;
+                            }
+                            Ok(())
+                        });
+                        if matched {
+                            break;
+                        }
+                    }
                 }
             }
             VmToHost::Globals(_) => {
