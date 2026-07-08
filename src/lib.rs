@@ -617,10 +617,19 @@ impl ApplicationHandler for App {
                         w.post(&HostToVm::Main);
                         self.worker_inited = true;
                     }
+                    // Console toggle (backtick), submit/history, and system
+                    // shortcuts run on the main thread, same as native.
+                    if let Some(core) = self.core.as_mut() {
+                        controls::controls_evaluate(
+                            core,
+                            event_loop,
+                            &self.bits,
+                            &self.bits_prev,
+                        );
+                    }
                     // Keys are already in self.bits.0 (window_event's bit_check);
                     // copy the mouse/analog state from core.global into bits.1,
-                    // mirroring the native about_to_wait input copy, then send the
-                    // real input snapshot to the VM.
+                    // mirroring the native about_to_wait input copy.
                     if let Some(core) = self.core.as_ref() {
                         let g = &core.global;
                         self.bits.1[0] = g.mouse_pos.x;
@@ -635,7 +644,17 @@ impl ApplicationHandler for App {
                         self.bits.1[9] = g.cursor_projected_pos.y;
                         self.bits.1[10] = g.cursor_projected_pos.z;
                     }
-                    w.post(&HostToVm::loop_from(&self.bits));
+                    // With the console open, the app must not receive input — the
+                    // keys are going to the console. Send a neutral snapshot.
+                    let console_open = self.core.as_ref().map_or(false, |c| c.global.console);
+                    if console_open {
+                        w.post(&HostToVm::Loop {
+                            keys: vec![0u8; 256],
+                            analog: vec![0f32; 11],
+                        });
+                    } else {
+                        w.post(&HostToVm::loop_from(&self.bits));
+                    }
                     drained = w.drain();
                 }
             }
