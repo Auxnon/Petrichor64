@@ -456,10 +456,15 @@ impl ApplicationHandler for App {
 
             // ----------------------------------------------------------------
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(core) = &mut self.core {
-                    if core.gfx.size.width > 0 && core.gfx.size.height > 0 {
-                        core.global.mouse_pos.x = position.x as f32 / core.gfx.size.width as f32;
-                        core.global.mouse_pos.y = position.y as f32 / core.gfx.size.height as f32;
+                // Normalise against winit's window size — the same coordinate
+                // space the cursor position is reported in. (gfx.size can lag on
+                // the web, where it's clamped at init and only corrected on a
+                // Resized event, giving mouse.x > 1.)
+                let size = self.window.as_ref().map(|w| w.inner_size());
+                if let (Some(core), Some(size)) = (&mut self.core, size) {
+                    if size.width > 0 && size.height > 0 {
+                        core.global.mouse_pos.x = position.x as f32 / size.width as f32;
+                        core.global.mouse_pos.y = position.y as f32 / size.height as f32;
                     }
                 }
             }
