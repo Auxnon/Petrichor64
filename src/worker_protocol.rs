@@ -74,8 +74,48 @@ pub enum VmToHost {
     /// no-SAB movement channel. (Ultra tier will replace it with a
     /// SharedArrayBuffer; a transferable Float32Array is the drop-in optimisation.)
     EntUpdate(Vec<EntXform>),
+    /// Dirty world chunks the worker's VM built (bulk terrain edits stay local
+    /// to the VM and sync as whole chunks — the "phantom chunk" batching). Main
+    /// rebuilds the GPU chunk models via World::process_sync.
+    WorldSync { chunks: Vec<ChunkWire>, dropped: bool },
+    /// Sync a tile-texture name→index mapping so main's local mapper can resolve
+    /// a chunk cell's int back to an atlas uv.
+    MapTex { name: String, index: u32 },
     /// A runtime/async error to surface in the engine console.
     Error(String),
+}
+
+/// Serializable form of a world [`Chunk`] (its `cells` are a fixed 32³ array,
+/// which serde can't derive; split into parallel Vecs on the wire). This is the
+/// correct-but-heavy version — a transferable ArrayBuffer / sparse encoding is
+/// the optimisation for frequent multi-chunk edits.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChunkWire {
+    pub key: String,
+    pub pos: [i32; 3],
+    pub types: Vec<u32>,
+    pub meta: Vec<u8>,
+}
+
+impl ChunkWire {
+    pub fn from_chunk(c: &crate::tile::Chunk) -> Self {
+        ChunkWire {
+            key: c.key.clone(),
+            pos: [c.pos.x, c.pos.y, c.pos.z],
+            types: c.cells.iter().map(|(t, _)| *t).collect(),
+            meta: c.cells.iter().map(|(_, m)| *m).collect(),
+        }
+    }
+    pub fn into_chunk(self) -> crate::tile::Chunk {
+        let mut chunk = crate::tile::Chunk::new(self.key, self.pos[0], self.pos[1], self.pos[2]);
+        for (i, (t, m)) in self.types.iter().zip(self.meta.iter()).enumerate() {
+            if i < chunk.cells.len() {
+                chunk.cells[i] = (*t, *m);
+            }
+        }
+        chunk.dirty = true;
+        chunk
+    }
 }
 
 /// One entity's transform, streamed each frame (see [`VmToHost::EntUpdate`]).
