@@ -85,32 +85,42 @@ pub enum VmToHost {
     Error(String),
 }
 
-/// Serializable form of a world [`Chunk`] (its `cells` are a fixed 32³ array,
-/// which serde can't derive; split into parallel Vecs on the wire). This is the
-/// correct-but-heavy version — a transferable ArrayBuffer / sparse encoding is
-/// the optimisation for frequent multi-chunk edits.
+/// Serializable form of a world [`Chunk`]. Its `cells` are a fixed 32³ array of
+/// `(u32 type, u8 meta)`; we pack them into one flat byte buffer (5 bytes/cell,
+/// little-endian type + meta) carried as `#[serde(with = "serde_bytes")]` so
+/// serde-wasm-bindgen ships it as a `Uint8Array` (byte-level structured clone),
+/// not a JS array of 65k boxed numbers. A transferable ArrayBuffer would make
+/// this zero-copy — the next optimisation (needs a postMessage transfer list).
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChunkWire {
     pub key: String,
     pub pos: [i32; 3],
-    pub types: Vec<u32>,
-    pub meta: Vec<u8>,
+    #[serde(with = "serde_bytes")]
+    pub cells: Vec<u8>,
 }
+
+/// Bytes per packed cell: u32 type (LE) + u8 meta.
+const CELL_BYTES: usize = 5;
 
 impl ChunkWire {
     pub fn from_chunk(c: &crate::tile::Chunk) -> Self {
+        let mut cells = Vec::with_capacity(c.cells.len() * CELL_BYTES);
+        for (t, m) in c.cells.iter() {
+            cells.extend_from_slice(&t.to_le_bytes());
+            cells.push(*m);
+        }
         ChunkWire {
             key: c.key.clone(),
             pos: [c.pos.x, c.pos.y, c.pos.z],
-            types: c.cells.iter().map(|(t, _)| *t).collect(),
-            meta: c.cells.iter().map(|(_, m)| *m).collect(),
+            cells,
         }
     }
     pub fn into_chunk(self) -> crate::tile::Chunk {
         let mut chunk = crate::tile::Chunk::new(self.key, self.pos[0], self.pos[1], self.pos[2]);
-        for (i, (t, m)) in self.types.iter().zip(self.meta.iter()).enumerate() {
+        for (i, cell) in self.cells.chunks_exact(CELL_BYTES).enumerate() {
             if i < chunk.cells.len() {
-                chunk.cells[i] = (*t, *m);
+                let t = u32::from_le_bytes([cell[0], cell[1], cell[2], cell[3]]);
+                chunk.cells[i] = (t, cell[4]);
             }
         }
         chunk.dirty = true;
