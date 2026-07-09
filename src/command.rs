@@ -992,6 +992,22 @@ function attr(attributes) end"
 function cam(params) end"
     );
 
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "mgrab",
+        move |_, _, on: Option<bool>| {
+            // Ask the host to capture the mouse (native: cursor grab; web:
+            // pointer-lock on the next canvas click). While grabbed, mus() dx/dy
+            // report raw movement for FPS-style look. Defaults to true.
+            lua_err!(pitcher.send((bundle_id, MainCommmand::MouseGrab(on.unwrap_or(true)))));
+            Ok(())
+        },
+        "Grab (capture) the mouse for relative look, or release it with mgrab(false)",
+        "
+---@param on boolean?
+function mgrab(on) end"
+    );
+
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
@@ -2275,6 +2291,7 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
+    MouseGrab(bool),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
     // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
@@ -2321,6 +2338,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             pos: pos.map(|v| [v.x, v.y, v.z]),
             rot: rot.map(|v| [v.x, v.y]),
         }),
+        MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
         MainCommmand::Globals(table) => Some(VmToHost::Globals(
             table
                 .iter()
