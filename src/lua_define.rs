@@ -789,16 +789,10 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
         LuaTalk::AsyncFunc(_func) => {}
         LuaTalk::Loop(control_state) => {
             let ControlState(key_state, mouse_state) = control_state;
-            if let Err(e) = vm.call_fn(mc, Some("loop_fn_call"), ctx.loop_fn, ()) {
-                // Runtime error inside loop() points into the loaded app source.
-                let s = error_string(e.into(), &ctx.scripts);
-                ctx.loggy.send((LogType::LuaError, s))?;
-            };
 
-            local_pool.check_lock(shared);
-
-            // updated with our input information, as this is only provided within
-            // the game loop, also send out a gui update
+            // Refresh input state BEFORE loop() runs so keys()/mus() inside the
+            // app read THIS frame's input. Updating it after the call (as it was)
+            // meant every frame saw the previous frame's input — a one-frame lag.
             let mut h = ctx.diff_keys_mutex.borrow_mut();
             ctx.keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
                 h[i] = !k && key_state[i];
@@ -806,16 +800,17 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             drop(h);
 
             *ctx.keys_mutex.borrow_mut() = key_state;
-            // we COULD just copy it but we want to move our current x,y to px,py
-            // to track movement deltas
+            // Carry the prior frame's x,y into px,py before overwriting them.
+            // The `[...]` is fully evaluated before the assignment lands, so
+            // `mm[0]`/`mm[1]` on the right still read last frame's position.
             let mut mm = ctx.mice_mutex.borrow_mut();
             *mm = [
                 mouse_state[0],
                 mouse_state[1],
                 mouse_state[2],
                 mouse_state[3],
-                mm[4],
-                mm[5],
+                mm[0],
+                mm[1],
                 mouse_state[4],
                 mouse_state[5],
                 mouse_state[6],
@@ -825,6 +820,14 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                 mouse_state[10],
             ];
             drop(mm);
+
+            if let Err(e) = vm.call_fn(mc, Some("loop_fn_call"), ctx.loop_fn, ()) {
+                // Runtime error inside loop() points into the loaded app source.
+                let s = error_string(e.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
+            };
+
+            local_pool.check_lock(shared);
 
             // BundleMutations defaults gui/sky to true so mark_dirty runs after
             // every loop, uploading the latest LuaImg content to the GPU textures.
