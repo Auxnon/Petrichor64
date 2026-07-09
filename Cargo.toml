@@ -153,6 +153,9 @@ web-sys = { version = "0.3", features = [
     "WorkerType",
     "WorkerOptions",
     "MessageEvent",
+    "EventTarget",
+    "MouseEvent",
+    "KeyboardEvent",
 ] }
 
 # [dependencies.tracy]

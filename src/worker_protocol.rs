@@ -63,6 +63,9 @@ pub enum VmToHost {
         pos: Option<[f32; 3]>,
         rot: Option<[f32; 2]>,
     },
+    /// Capture/release the mouse (FPS look). Web defers the actual pointer-lock
+    /// to the next canvas click; native grabs the cursor immediately.
+    MouseGrab(bool),
     /// Set engine globals (screen effects, window props, …).
     Globals(Vec<(String, ValueWire)>),
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the

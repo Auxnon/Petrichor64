@@ -136,6 +136,11 @@ pub struct App {
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
+    /// Shared "app wants the mouse grabbed" flag (mirrors global.mouse_grab).
+    /// The canvas mousedown handler reads it to decide whether to request
+    /// pointer-lock (which browsers only grant from a user gesture).
+    #[cfg(target_arch = "wasm32")]
+    pointer_lock_wanted: std::rc::Rc<std::cell::RefCell<bool>>,
 }
 
 #[cfg(feature = "headed")]
@@ -156,6 +161,8 @@ impl Default for App {
             worker: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
+            #[cfg(target_arch = "wasm32")]
+            pointer_lock_wanted: std::rc::Rc::new(std::cell::RefCell::new(false)),
         }
     }
 }
@@ -244,6 +251,28 @@ fn state_change_checker(
             }
             #[cfg(feature = "headed")]
             c.check_fullscreen();
+        }
+    }
+    // Reconcile the app's desired mouse grab (mouse_grab, set via `mgrab`) with
+    // the actual cursor state each frame. Native grabs the cursor directly; the
+    // web build defers to a canvas click (via pointer_lock_wanted), so this path
+    // is gated off wasm. Released while the console is open.
+    #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+    {
+        let want = c.global.mouse_grab && !c.global.console;
+        if want != c.global.mouse_grabbed_state {
+            if want {
+                rwindow.set_cursor_visible(false);
+                let _ = rwindow.set_cursor_position(center);
+                rwindow
+                    .set_cursor_grab(CursorGrabMode::Confined)
+                    .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked))
+                    .ok();
+            } else {
+                rwindow.set_cursor_visible(true);
+                let _ = rwindow.set_cursor_grab(CursorGrabMode::None);
+            }
+            c.global.mouse_grabbed_state = want;
         }
     }
     false
@@ -352,6 +381,7 @@ impl ApplicationHandler for App {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas) = window.canvas() {
                 attach_canvas_to_dom(&canvas);
+                install_web_input_handlers(&canvas, self.pointer_lock_wanted.clone());
             }
             let pending = self.pending_core.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -648,6 +678,21 @@ impl ApplicationHandler for App {
                         self.bits.1[8] = g.cursor_projected_pos.x;
                         self.bits.1[9] = g.cursor_projected_pos.y;
                         self.bits.1[10] = g.cursor_projected_pos.z;
+
+                        // Mirror the app's grab intent into the pointer-lock
+                        // flag the canvas click handler reads. Release the lock
+                        // immediately when the app drops grab or the console opens.
+                        let want = g.mouse_grab && !g.console;
+                        *self.pointer_lock_wanted.borrow_mut() = want;
+                        if !want {
+                            if let Some(doc) =
+                                web_sys::window().and_then(|w| w.document())
+                            {
+                                if doc.pointer_lock_element().is_some() {
+                                    doc.exit_pointer_lock();
+                                }
+                            }
+                        }
                     }
                     // With the console open, the app must not receive input — the
                     // keys are going to the console. Send a neutral snapshot.
@@ -866,6 +911,85 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     }
 }
 
+/// Wire the web-only input niceties onto the canvas:
+/// - click captures the mouse (pointer-lock) when the app has asked for grab
+///   (`pointer_lock_wanted`); browsers only grant lock from a user gesture, so
+///   it can't be done from the frame loop.
+/// - while locked, reload shortcuts (Cmd/Ctrl+R, F5) are swallowed so the
+///   embedded game doesn't lose the tab. Cmd/Ctrl+W/T/Q are OS-reserved and
+///   cannot be intercepted by a page.
+///
+/// Both closures are `forget()`-leaked deliberately: they must live for the
+/// whole page session, which matches the canvas lifetime.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn install_web_input_handlers(
+    canvas: &web_sys::HtmlCanvasElement,
+    pointer_lock_wanted: std::rc::Rc<std::cell::RefCell<bool>>,
+) {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let lock_canvas = canvas.clone();
+    let pointerdown =
+        Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |_e: web_sys::MouseEvent| {
+            if *pointer_lock_wanted.borrow() {
+                lock_canvas.request_pointer_lock();
+            }
+        });
+    // Use `pointerdown` + capture phase (true): winit drives input through the
+    // Pointer Events API and preventDefault's it, which SUPPRESSES the legacy
+    // `mousedown`/`click` compatibility events — so a `mousedown` listener never
+    // fires. `pointermove` still fires (that's why the camera pans). Capturing
+    // runs before winit's handler and still counts as the pointer-lock gesture.
+    let _ = canvas.add_event_listener_with_callback_and_bool(
+        "pointerdown",
+        pointerdown.as_ref().unchecked_ref(),
+        true,
+    );
+    pointerdown.forget();
+
+    // Surface a rejected lock — the usual causes are an embedding iframe missing
+    // allow="pointer-lock" or the browser's brief post-Esc cooldown.
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        let err = Closure::<dyn FnMut()>::new(|| {
+            web_sys::console::warn_1(
+                &"petrichor64: pointer-lock request was rejected (iframe allow=\"pointer-lock\"?)"
+                    .into(),
+            );
+        });
+        let _ = doc
+            .add_event_listener_with_callback("pointerlockerror", err.as_ref().unchecked_ref());
+        err.forget();
+    }
+
+    if let Some(win) = web_sys::window() {
+        let keydown = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+            move |e: web_sys::KeyboardEvent| {
+                let locked = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.pointer_lock_element())
+                    .is_some();
+                if !locked {
+                    return;
+                }
+                let k = e.key();
+                let mod_key = e.meta_key() || e.ctrl_key();
+                if k == "F5" || (mod_key && (k == "r" || k == "R")) {
+                    e.prevent_default();
+                }
+            },
+        );
+        // Capture phase so we run before winit's key handler (which stops
+        // propagation on the canvas) and can preventDefault the reload.
+        let _ = win.add_event_listener_with_callback_and_bool(
+            "keydown",
+            keydown.as_ref().unchecked_ref(),
+            true,
+        );
+        keydown.forget();
+    }
+}
+
 /// Headless entry point: no window/GPU. Builds the core, loads the default app,
 /// then drives the 60Hz lua loop while feeding stdin lines in as console
 /// commands.
@@ -999,6 +1123,11 @@ impl Core {
                     self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
                 }
             }
+            VmToHost::MouseGrab(on) => {
+                // Desired grab state; the frame loop mirrors it into the
+                // pointer-lock intent (actual lock waits for a canvas click).
+                self.global.mouse_grab = on;
+            }
             VmToHost::SetImg { name, w, h, px } => {
                 #[cfg(feature = "headed")]
                 if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
@@ -1097,6 +1226,11 @@ impl Core {
                     if let Some(rot) = r {
                         self.global.simple_cam_rot = rot;
                     }
+                }
+                MainCommmand::MouseGrab(on) => {
+                    // Desired state; the frame loop reconciles it against the
+                    // actual grab (and defers to a click on web).
+                    self.global.mouse_grab = on;
                 }
                 MainCommmand::GetImg(s, tx) => {
                     #[cfg(feature = "headed")]
