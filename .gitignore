@@ -38,3 +38,6 @@ web/dist/
 
 # generated game bundles (regenerate with: Petrichor64 pack <dir>)
 /*.game.png
+
+# locally-built native binary
+/p64
