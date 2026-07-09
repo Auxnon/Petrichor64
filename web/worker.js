@@ -24,10 +24,13 @@ async function boot() {
 }
 
 function dispatch(msg) {
-  const replies = worker_receive(msg);
-  if (Array.isArray(replies)) {
-    for (const r of replies) self.postMessage({ kind: "vm", payload: r });
-  }
+  // worker_receive returns an envelope { msgs: VmToHost[], ents?: Uint8Array }.
+  // Post it as ONE message per frame; transfer the entity buffer zero-copy so
+  // its backing ArrayBuffer moves instead of being structured-clone copied.
+  const env = worker_receive(msg);
+  const ents = env.ents;
+  const transfer = ents ? [ents.buffer] : [];
+  self.postMessage({ kind: "vm-batch", msgs: env.msgs, ents }, transfer);
 }
 
 self.onmessage = (e) => {

@@ -80,11 +80,11 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
             web_sys::console::error_1(
                 &format!("[petrichor worker] undecodable message: {:?}", e).into(),
             );
-            return empty_array();
+            return empty_envelope();
         }
     };
 
-    let out: Vec<VmToHost> = WORKER_VM.with(|cell| {
+    let (out, ent_bytes): (Vec<VmToHost>, Vec<u8>) = WORKER_VM.with(|cell| {
         let mut slot = cell.borrow_mut();
         match parsed {
             HostToVm::Init {
@@ -98,13 +98,13 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
                         web_sys::console::log_1(
                             &format!("[petrichor worker] VM built (bundle {})", bundle_id).into(),
                         );
-                        vec![]
+                        (vec![], Vec::new())
                     }
                     Err(e) => {
                         web_sys::console::error_1(
                             &format!("[petrichor worker] VM build failed: {}", e).into(),
                         );
-                        vec![]
+                        (vec![], Vec::new())
                     }
                 }
             }
@@ -114,22 +114,42 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
                     web_sys::console::error_1(
                         &"[petrichor worker] message before Init — VM not built".into(),
                     );
-                    vec![]
+                    (vec![], Vec::new())
                 }
             },
         }
     });
 
-    serde_wasm_bindgen::to_value(&out).unwrap_or_else(|_| empty_array())
+    // Envelope: `{ msgs, ents? }`. Structured messages go via serde; the
+    // per-frame entity buffer rides as a Uint8Array the JS glue transfers
+    // zero-copy (no SharedArrayBuffer / isolation headers required).
+    let obj = js_sys::Object::new();
+    let msgs = serde_wasm_bindgen::to_value(&out).unwrap_or_else(|_| js_sys::Array::new().into());
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("msgs"), &msgs);
+    if !ent_bytes.is_empty() {
+        let arr = js_sys::Uint8Array::from(ent_bytes.as_slice());
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("ents"), &arr);
+    }
+    obj.into()
 }
 
-fn empty_array() -> JsValue {
-    js_sys::Array::new().into()
+/// An envelope with no messages and no entity buffer — the shape main expects
+/// even on the error/no-op paths.
+fn empty_envelope() -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("msgs"),
+        &js_sys::Array::new().into(),
+    );
+    obj.into()
 }
 
 /// Translate one non-Init `HostToVm` into a `LuaTalk`, dispatch it through the
-/// shared handler, then drain the local channels and return the `VmToHost`s.
-fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
+/// shared handler, then drain the local channels. Returns the structured
+/// `VmToHost` messages plus the packed per-frame entity buffer (transferred
+/// zero-copy by the caller).
+fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // Split the borrow so `lua.enter` (which needs &mut lua) can coexist with
     // the closure's &mut ctx / &shared.
     let WorkerVm {
@@ -238,8 +258,10 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
     }
 
     // Stream live transforms of surviving entities; reap dropped ones (their
-    // Weak fails to upgrade). This is the no-SAB movement channel.
-    let mut xforms = Vec::new();
+    // Weak fails to upgrade). This is the no-SAB movement channel: pack straight
+    // into a flat LE buffer that the caller transfers zero-copy, rather than a
+    // serde array of N objects (see worker_protocol::ENT_STRIDE).
+    let mut ent_bytes = Vec::with_capacity(entities.len() * crate::worker_protocol::ENT_STRIDE);
     entities.retain(|w| {
         match w.downcast_ref::<LuaEnt, _, _>(|l| {
             Ok(EntXform {
@@ -254,16 +276,13 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> Vec<VmToHost> {
             })
         }) {
             Ok(xf) => {
-                xforms.push(xf);
+                xf.write_le(&mut ent_bytes);
                 true
             }
             Err(_) => false,
         }
     });
-    if !xforms.is_empty() {
-        out.push(VmToHost::EntUpdate(xforms));
-    }
-    out
+    (out, ent_bytes)
 }
 
 /// Build the VM the way `LuaCore::start` does, but with worker-local plumbing
