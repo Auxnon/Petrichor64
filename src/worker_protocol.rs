@@ -37,8 +37,14 @@ pub enum HostToVm {
     Main,
     /// Run one game loop with this input snapshot. `keys` is one byte per key
     /// (0/1) — a Vec, not `[u8; 256]`, because serde's derive only covers arrays
-    /// up to 32 elements. `analog` is the mouse/scroll/cursor floats.
-    Loop { keys: Vec<u8>, analog: Vec<f32> },
+    /// up to 32 elements. `serde_bytes` sends it as a single `Uint8Array` rather
+    /// than a 256-element JS number array (this is a per-frame message). `analog`
+    /// is the mouse/scroll/cursor floats (only 11, left as a small array).
+    Loop {
+        #[serde(with = "serde_bytes")]
+        keys: Vec<u8>,
+        analog: Vec<f32>,
+    },
     /// Viewport resized.
     Resize(u32, u32),
     /// A file/app was dropped or requested for load-in-place.
@@ -132,7 +138,7 @@ impl ChunkWire {
 }
 
 /// One entity's transform, streamed each frame (see [`VmToHost::EntUpdate`]).
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EntXform {
     pub id: u64,
     pub x: f32,
