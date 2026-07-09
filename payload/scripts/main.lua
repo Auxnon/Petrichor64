@@ -20,7 +20,11 @@ function main()
 		end
 	end
 
-	-- cam { pos = { 0, 0, 0 }, rot = { tau / 4, 0 } }
+	-- Capture the mouse for FPS-style look. On web the pointer locks on the
+	-- next canvas click; Esc frees it (re-locks on the next click).
+	mgrab(true)
+	yaw = 0
+	pitch = -tau / 16
 	cout("main runs once everything has loaded")
 end
 
@@ -30,17 +34,12 @@ function loop()
 	spin = spin + 0.1
 	generated.z = generated.z + cos(spin) * 0.04
 	generated.y = generated.y + sin(spin) * 0.04
-	cam({ pos = { cos(spin), 0, 0 }, rot = { -tau / 16, 0 } })
+
+	-- Mouse-look: accumulate yaw/pitch from relative movement (dx/dy).
 	local m = mus()
-	-- cout("mtype", type(m), m.x, m.y)
-	-- local result = ""
-	--
-	-- for key, value in pairs(m) do
-	-- 	if result ~= "" then
-	-- 		result = result .. ", "
-	-- 	end
-	-- 	result = result .. key .. "=" .. tostring(value)
-	-- end
-	--
-	cout("mousey", m.x,m.y)
+	yaw = yaw - m.dx * 0.005
+	pitch = pitch - m.dy * 0.005
+	if pitch > 1.5 then pitch = 1.5 end
+	if pitch < -1.5 then pitch = -1.5 end
+	cam({ pos = { 0, 0, 0 }, rot = { yaw, pitch } })
 end
