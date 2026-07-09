@@ -144,6 +144,48 @@ pub struct EntXform {
     pub scale: f32,
 }
 
+/// Bytes per entity in the packed `EntUpdate` buffer: u64 id + 7×f32, LE.
+/// This is the per-frame hot path — a flat buffer transferred zero-copy beats a
+/// serde array of N eight-field objects (no per-entity JS object churn/GC).
+pub const ENT_STRIDE: usize = 8 + 7 * 4;
+
+impl EntXform {
+    /// Append this transform to a packed little-endian buffer (`ENT_STRIDE` bytes).
+    pub fn write_le(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&self.id.to_le_bytes());
+        buf.extend_from_slice(&self.x.to_le_bytes());
+        buf.extend_from_slice(&self.y.to_le_bytes());
+        buf.extend_from_slice(&self.z.to_le_bytes());
+        buf.extend_from_slice(&self.rx.to_le_bytes());
+        buf.extend_from_slice(&self.ry.to_le_bytes());
+        buf.extend_from_slice(&self.rz.to_le_bytes());
+        buf.extend_from_slice(&self.scale.to_le_bytes());
+    }
+}
+
+/// Unpack a packed `EntUpdate` buffer (see [`EntXform::write_le`]) back into
+/// transforms. A trailing partial record (shouldn't happen) is ignored.
+pub fn unpack_ent_xforms(bytes: &[u8]) -> Vec<EntXform> {
+    let n = bytes.len() / ENT_STRIDE;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let b = &bytes[i * ENT_STRIDE..];
+        let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
+        let f32_at = |o: usize| f32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        out.push(EntXform {
+            id: u64_at(0),
+            x: f32_at(8),
+            y: f32_at(12),
+            z: f32_at(16),
+            rx: f32_at(20),
+            ry: f32_at(24),
+            rz: f32_at(28),
+            scale: f32_at(32),
+        });
+    }
+    out
+}
+
 /// Serializable mirror of [`ValueMap`] (which isn't itself `Serialize`).
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ValueWire {

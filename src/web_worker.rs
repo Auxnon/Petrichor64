@@ -43,13 +43,27 @@ impl WorkerHandle {
                 .and_then(|k| k.as_string());
             match kind.as_deref() {
                 Some("worker-ready") => *ready_cb.borrow_mut() = true,
-                Some("vm") => {
-                    if let Ok(payload) = js_sys::Reflect::get(&data, &JsValue::from_str("payload")) {
-                        match serde_wasm_bindgen::from_value::<VmToHost>(payload) {
-                            Ok(v) => inbox_cb.borrow_mut().push_back(v),
+                Some("vm-batch") => {
+                    let mut inbox = inbox_cb.borrow_mut();
+                    // Structured messages: one serde array for the whole frame.
+                    if let Ok(msgs) = js_sys::Reflect::get(&data, &JsValue::from_str("msgs")) {
+                        match serde_wasm_bindgen::from_value::<Vec<VmToHost>>(msgs) {
+                            Ok(vs) => inbox.extend(vs),
                             Err(e) => web_sys::console::error_1(
-                                &format!("[main] undecodable VmToHost: {:?}", e).into(),
+                                &format!("[main] undecodable VmToHost batch: {:?}", e).into(),
                             ),
+                        }
+                    }
+                    // Per-frame entity transforms: a transferred Uint8Array we
+                    // unpack back into an EntUpdate (copied once into wasm; no
+                    // per-entity JS objects crossed the boundary).
+                    if let Ok(ents) = js_sys::Reflect::get(&data, &JsValue::from_str("ents")) {
+                        if let Ok(arr) = ents.dyn_into::<js_sys::Uint8Array>() {
+                            let xforms =
+                                crate::worker_protocol::unpack_ent_xforms(&arr.to_vec());
+                            if !xforms.is_empty() {
+                                inbox.push_back(VmToHost::EntUpdate(xforms));
+                            }
                         }
                     }
                 }
