@@ -55,6 +55,10 @@ struct WorkerVm {
     /// each frame to stream transforms to the main thread; dropped entries are
     /// reaped when their upgrade fails.
     entities: Vec<silt_lua::userdata::UserDataWrapper>,
+    /// Last transform streamed per entity id, so we only send the ones that
+    /// actually changed (dirty-only streaming). A static entity costs nothing
+    /// after its first frame; main keeps the last value it received.
+    last_xforms: std::collections::HashMap<u64, EntXform>,
 }
 
 thread_local! {
@@ -162,6 +166,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         world_layer,
         world_instance,
         entities,
+        last_xforms,
     } = worker;
 
     // Kept alive through the enter below so Load's reply send doesn't hit a
@@ -261,7 +266,12 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // Weak fails to upgrade). This is the no-SAB movement channel: pack straight
     // into a flat LE buffer that the caller transfers zero-copy, rather than a
     // serde array of N objects (see worker_protocol::ENT_STRIDE).
-    let mut ent_bytes = Vec::with_capacity(entities.len() * crate::worker_protocol::ENT_STRIDE);
+    //
+    // Dirty-only: an entity is packed only if new or its transform changed since
+    // last frame (exact compare — same Lua value → identical bytes). A scene of
+    // mostly-static entities streams almost nothing; main keeps the last value.
+    let mut ent_bytes = Vec::new();
+    let mut alive: std::collections::HashSet<u64> = std::collections::HashSet::new();
     entities.retain(|w| {
         match w.downcast_ref::<LuaEnt, _, _>(|l| {
             Ok(EntXform {
@@ -276,12 +286,18 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
             })
         }) {
             Ok(xf) => {
-                xf.write_le(&mut ent_bytes);
+                alive.insert(xf.id);
+                if last_xforms.get(&xf.id) != Some(&xf) {
+                    xf.write_le(&mut ent_bytes);
+                    last_xforms.insert(xf.id, xf);
+                }
                 true
             }
             Err(_) => false,
         }
     });
+    // Forget cached transforms of reaped entities so ids can't leak the map.
+    last_xforms.retain(|id, _| alive.contains(id));
     (out, ent_bytes)
 }
 
@@ -379,5 +395,6 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         world_layer: crate::tile::Layer::new(),
         world_instance: WorldInstance::new(bundle_id),
         entities: Vec::new(),
+        last_xforms: std::collections::HashMap::new(),
     })
 }
