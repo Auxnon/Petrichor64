@@ -643,15 +643,11 @@ function gtile(x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "ftile",
-        move |l, _, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
+        move |l, mc, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
             let tt = if t.len() == 0 { None } else { Some(t) };
             match World::first_tile(&sender, tt, x, y, z, dx, dy, dz, 100) {
-                Some(v) => vec![(0, v[0]), (1, v[1]), (2, v[2])],
-                None => {
-                    let f: Vec<(u8, i32)> = vec![];
-                    // l.create_table_from(f.into_iter())
-                    f
-                }
+                Some(v) => Ok(l.table_from_array(mc, vec![v[0], v[1], v[2]])),
+                None => Ok(l.new_table(mc)),
             }
         },
         "Find first occurence of a tile in a given direction",
@@ -720,7 +716,7 @@ function cin() end"
 
     lua!(
         "mus",
-        move |vm, _, (): ()| {
+        move |vm, mc, (): ()| {
             let mut t = vm.raw_table();
             let m = mice.borrow();
             t.set("x", m[0]);
@@ -740,7 +736,10 @@ function cin() end"
             t.set("vy", m[11]);
             t.set("vz", m[12]);
 
-            Ok(t)
+            drop(m);
+            // Return an explicit `Value::Table` rather than leaning on the
+            // implicit `ToLua for Table` boundary conversion.
+            Ok(vm.wrap_table(mc, t))
         },
         " Get mouse position, delta, button states, and unprojected vector",
         "
