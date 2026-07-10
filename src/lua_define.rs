@@ -322,7 +322,7 @@ impl<'lt> LuaCore {
                         world_sender.clone(),
                         Rc::clone(&gui_handle),
                         #[cfg(feature = "audio")]
-                        singer,
+                        singer.clone(),
                         Rc::clone(&keys_mutex),
                         Rc::clone(&diff_keys_mutex),
                         Rc::clone(&mice_mutex),

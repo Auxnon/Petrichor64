@@ -1,6 +1,8 @@
 use crate::root::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Instrument, Note, SoundCommand};
+#[cfg(feature = "audio")]
+use crate::lua_define::SoundSender;
 use crate::{
     bundle::{BundleMutations, BundleResources},
     error::P64Error,
@@ -1019,7 +1021,7 @@ function mgrab(on) end"
                     Some(l) => l,
                     None => 1.,
                 };
-                sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
+                let _ = sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
             }
             Ok(())
         },
@@ -1040,15 +1042,17 @@ function sound(freq, length) end"
                     .iter()
                     .filter_map(|v| match v {
                         Value::Table(t) => {
-                            if t.raw_len() > 0 {
-                                Some(Note::new(
-                                    0,
-                                    t.get::<usize, f32>(1).unwrap_or(440.),
-                                    t.get::<usize, f32>(2).unwrap_or(1.),
-                                    1.,
-                                ))
-                            } else {
-                                None
+                            let tb = t.borrow();
+                            // {freq, len} — 1-indexed, matching the `cam` native's
+                            // table reads. An empty table (no [1]) is skipped.
+                            match tb.getn(1) {
+                                Some(f) => {
+                                    let freq: f32 = f.into();
+                                    let len: f32 =
+                                        tb.getn(2).map(|v| v.into()).unwrap_or(1.);
+                                    Some(Note::new(0, freq, len, 1.))
+                                }
+                                None => None,
                             }
                         }
                         Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),

@@ -3,12 +3,8 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-//use byte_slice_cast::AsByteSlice;
-
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rustc_hash::FxHashMap;
-
-pub type SoundPacket = (f32, f32, Vec<f32>, Vec<f32>);
 
 #[derive(Debug)]
 struct Opt {
@@ -23,12 +19,10 @@ struct Opt {
 
 impl Opt {
     fn from_args() -> Self {
-        //let app = clap::App::new("beep").arg_from_usage("[DEVICE] 'The audio device to use'");
         #[cfg(all(
             any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),
             feature = "jack"
         ))]
-        //let app = app.arg_from_usage("-j, --jack 'Use the JACK host");
         let matches = app.get_matches();
         let device = ("default").to_string();
 
@@ -62,8 +56,6 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
         any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),
         feature = "jack"
     ))]
-    // Manually check for flags. Can be passed through cargo with -- e.g.
-    // cargo run --release --example beep --features jack -- --jack
     let host = if opt.jack {
         cpal::host_from_id(cpal::available_hosts()
             .into_iter()
@@ -97,8 +89,18 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
         cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), audience),
         cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), audience),
         cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), audience),
+        // cpal 0.16 added many more sample formats; render f32 into whatever the
+        // device wants where we can, else bail with a clear error.
+        cpal::SampleFormat::I32 => run::<i32>(&device, &config.into(), audience),
+        cpal::SampleFormat::U32 => run::<u32>(&device, &config.into(), audience),
+        cpal::SampleFormat::F64 => run::<f64>(&device, &config.into(), audience),
+        other => Err(anyhow::anyhow!("unsupported sample format {:?}", other)),
     }
 }
+
+/// Number of independent playback channels.
+const NUM_CH: usize = 16;
+const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 
 pub fn run<T>(
     device: &cpal::Device,
@@ -106,493 +108,155 @@ pub fn run<T>(
     audience: Receiver<SoundCommand>,
 ) -> Result<cpal::Stream, anyhow::Error>
 where
-    T: cpal::Sample,
+    T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let sample_rate = config.sample_rate.0 as f32;
-    println!("Sample rate: {}", sample_rate);
-    let channels = config.channels as usize;
-    println!("Channels: {}", channels);
+    let out_channels = config.channels as usize;
+    println!("Sample rate: {}  out channels: {}", sample_rate, out_channels);
 
-    // Produce a sinusoid of maximum amplitude.
-    let mut sample_clock = 0f64;
-    // let mut next_value = move || {
-    //     sample_clock = (sample_clock + 1.0) % sample_rate;
-    //     //println!("sample {}", sample_clock);
-    //     (sample_clock * 440.0 * 2.0 * std::f32::consts::PI / sample_rate).sin()
-    // };
+    // Envelope ramp rates (per sample): ~4ms attack, ~12ms release. A real
+    // envelope removes the clicks and the "notes fall off / merge poorly"
+    // artifacts the old crude one-deep crossfade produced.
+    let attack_rate = 1.0 / (0.004 * sample_rate);
+    let release_rate = 1.0 / (0.012 * sample_rate);
+    let master_volume = 0.2;
 
-    // for b in buffer.as_byte_slice() {
-    //     println!("buffer {}", b);
-    // }
-    let volume_speed = 0.001;
-    let fade_speed = 0.00005;
-    // if duration is less than this then start lowering volume by volume_speed
-    let volume_fade_threshold = 0.; //(1.0/volume_speed)*fade_speed;
-                                    // let mut vol = 1.;
-                                    // let mut occupied = [false; 16];
-    let mut sound_channels: [VecDeque<Note>; 16] = Default::default();
-    let mut current_notes: [Option<Note>; 16] = [None; 16];
-    let mut last_notes: [Option<Note>; 16] = [None; 16];
-    let mut buffer = vec![];
-    let mut once = false;
-    let mut record = false;
-    let mut buffer_count = 1;
-    let mut buffer_sum = 0.;
-    let mut echo = 0.;
-    let mut echo_buffer = [0.; 1000];
-    let echo_delay = 4400;
-    let mut echo_counter = 0;
-
-    // |x| if x.sin()>0. {1.} else {-1.};
-    let sqr_wave = Vec::from_iter((1..63 as usize).map(|x| if x % 2 == 0 { 440. } else { 0. }));
-    let square_wave = Instrument::new(99, sqr_wave, true);
-
-    // let mut notes = vec![];
-
-    //DEV we divide our harmonic count by log(n) to bring the volume down to base amplitude, hopefully.
-    let flat = |a: f32| a.sin();
-    let lowsquare = |a: f32| {
-        let mut total = 0.;
-        for i in (1..17).step_by(2) {
-            total += (i as f32 * a).sin() / (i as f32)
-        }
-        //log 17
-        total / 2.83
-    };
-    // BLUE square
-    let square = |a: f32| {
-        let mut total = 0.;
-        for i in (1..63).step_by(2) {
-            total += (i as f32 * a).sin() / (i as f32)
-        }
-        //log 63 = 4.143134726391533
-        total / 4.143134726391533
-    };
-    let triangle = |a: f32| {
-        let mut total = 0.;
-        for i in 1..17 {
-            total += (i as f32 * a).sin() / (i as f32)
-        }
-        total
-    };
-    let wave = |a: f32| {
-        let mut total = 0.;
-        for i in (1..64).step_by(16) {
-            total += (i as f32 * a).sin() / (i as f32)
-        }
-        total
-    };
-
-    let noise = |a: f32| {
-        let mut total = 0.;
-        for i in 1..17 {
-            total += rand::random::<f32>() * 2. - 1.
-        }
-        total
-    };
-
-    let saw = |a: f32| {
-        a.sin() - (2. * a).sin() / 2. + (3. * a).sin() / 3. - (4. * a).sin() / 4.
-            + (5. * a).sin() / 5.
-    };
-
-    let triangle = |a: f32| {
-        let mut total = 0.;
-        for i in 1..17 {
-            total += (i as f32 * a).sin() / (i as f32)
-        }
-        total
-    };
-
-    let flute1 = |a: f32| {
-        let mut total = 0.;
-        for (i, n) in [1., 0.65, 0.61, 0.15, 0.09, 0.02, 0.02, 0.01, 0.01, 0.01, 0.]
-            .iter()
-            .enumerate()
-        {
-            total += ((i + 1) as f32 * a).sin() * n;
-        }
-        total / 2.397
-    };
-    let flute = |a: f32| {
-        let mut total = 0.;
-        for (i, n) in [1., 0.61, 0.1, 0.24, 0.11, 0.09, 0.0, 0.02, 0.0, 0.0, 0.1]
-            .iter()
-            .enumerate()
-        {
-            total += ((i + 1) as f32 * a).sin() * n;
-        }
-        total / 2.397
-    };
-
-    let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
-    instruments.insert(
-        0,
-        Instrument::new(0, vec![0.8, 0., 0.8, 0., 0.8, 0., 0.8, 0.], true),
+    // Default instrument: odd-harmonic (square-ish) additive tone. Harmonics are
+    // small integers now (index i => harmonic i+1) so a per-voice phase wrapped
+    // to [0, 2π) keeps full f32 precision — the old model multiplied phase by
+    // frequencies like 440, which only worked via an ever-growing global clock
+    // whose f32 precision decayed into the "scrambled after a while" bug.
+    let default_instr = Instrument::new(
+        usize::MAX,
+        (1..=15)
+            .map(|k| if k % 2 == 1 { 1.0 / k as f32 } else { 0.0 })
+            .collect(),
+        false,
     );
-    let mut amps: Vec<f32> = vec![];
-    let mut instrument_diviser = 1.;
+    let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
 
-    let mut checker = 0;
-    let mut last_amp = 0.;
+    // Per-channel state: `current` is the sounding voice, `fading` is a
+    // just-released voice still ramping down so consecutive notes cross-fade
+    // instead of clicking.
+    let mut queues: [VecDeque<Note>; NUM_CH] = Default::default();
+    let mut current: [Option<Voice>; NUM_CH] = Default::default();
+    let mut fading: [Option<Voice>; NUM_CH] = Default::default();
 
-    //DEV whether to mult by ii in iteration and then div, or just div.
-
-    //BLUE instrument
-    let musician = |a: f32, instr: &Instrument| {
-        //amp: &Vec<f32>,
-        let mut total = 0.;
-        for (i, n) in instr.freqs.iter().enumerate() {
-            let ii = (i + 1) as f32;
-            total += (a * n * ii).sin() / ii; // * amp[i];
+    let mut next_value = move || -> f32 {
+        // Drain every pending command each sample so triggers are effectively
+        // sample-accurate (the old code polled once per ~2000 samples, which
+        // quantised note timing and could drop/merge fast notes).
+        while let Ok(cmd) = audience.try_recv() {
+            match cmd {
+                SoundCommand::PlayNote(note, ch) => {
+                    queues[ch.unwrap_or(0).min(NUM_CH - 1)].push_back(note);
+                }
+                SoundCommand::Chain(notes, ch) => {
+                    queues[ch.unwrap_or(0).min(NUM_CH - 1)].extend(notes);
+                }
+                SoundCommand::MakeInstrument(inst) => {
+                    instruments.insert(inst.name, inst.normalized());
+                }
+                SoundCommand::Stop(ch) => {
+                    let c = ch.min(NUM_CH - 1);
+                    queues[c].clear();
+                    // Release rather than hard-cut, so stopping doesn't click.
+                    if let Some(v) = current[c].take() {
+                        fading[c] = Some(v);
+                    }
+                }
+                SoundCommand::FadeChannel(ch, _dur) => {
+                    let c = ch.min(NUM_CH - 1);
+                    if let Some(v) = current[c].take() {
+                        fading[c] = Some(v);
+                    }
+                }
+            }
         }
-        total / instr.divisor
+
+        let mut mix = 0.0f32;
+        for c in 0..NUM_CH {
+            // Start the next queued note when the channel is idle.
+            if current[c].is_none() {
+                if let Some(note) = queues[c].pop_front() {
+                    let inc = TWO_PI * note.frequency / sample_rate;
+                    current[c] = Some(Voice::from_note(&note, inc));
+                }
+            }
+
+            // Sounding voice: advance phase, attack toward full, sustain, then
+            // hand off to `fading` for release when its duration elapses.
+            if let Some(v) = current[c].as_mut() {
+                let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
+                v.advance();
+                if v.env < 1.0 {
+                    v.env = (v.env + attack_rate).min(1.0);
+                }
+                mix += synth(v.phase, instr) * v.volume * v.env;
+                v.remaining -= 1.0 / sample_rate;
+                if v.remaining <= 0.0 {
+                    fading[c] = current[c].take();
+                }
+            }
+
+            // Fading voice: release ramp to silence.
+            if let Some(v) = fading[c].as_mut() {
+                let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
+                v.advance();
+                v.env -= release_rate;
+                if v.env <= 0.0 {
+                    fading[c] = None;
+                } else {
+                    mix += synth(v.phase, instr) * v.volume * v.env;
+                }
+            }
+        }
+
+        (mix * master_volume).clamp(-1.0, 1.0)
     };
 
-    // let musician_cumulative = |a: f32, inst: &Vec<f32>, amp: &Vec<f32>, divisor: f32| {
-    //     let mut total = 0.;
-    //     for (i, n) in inst.iter().enumerate() {
-    //         let ii = (i + 1) as f32;
-    //         total += (a * n * ii).sin() / ii; // * amp[i];
-    //     }
-    //     total / divisor
-    // };
-
-    let mut func = musician;
-    let mut audience_countdown = 0;
-    let mut next_value = move || {
-        sample_clock = (sample_clock + 1.0); // % sample_rate as f64;
-
-        // println!("clock {}", sample_clock);
-        //let b = buffer.as_chunks()
-        // println!("byte {}", b.len());
-        //let f = [(sample_clock) as usize] as f32
-
-        if audience_countdown > 2000 {
-            audience_countdown = 0;
-
-            match audience.try_recv() {
-                Ok(packet) => {
-                    match packet {
-                        SoundCommand::PlayNote(note, ichannel) => {
-                            // occupied[note as usize] = true;
-
-                            // let channel = match ichannel {
-                            //     Some(u)=>u,
-                            //     None=> match occupied.iter().position(|x| *x == false) {
-                            //     Some(i) => i,
-                            //     None => 0,
-                            // }};
-                            let channel = 0;
-
-                            // note, timer, current_level aka volume, channel
-                            sound_channels[channel].push_back(note);
-                            // notes.push((packet.0, packet.1, 0., channel));
-                        }
-                        SoundCommand::Chain(notes, ichannel) => {
-                            println!("chain {}", notes.len());
-                            let channel = 0;
-                            sound_channels[channel].extend(notes);
-                            // for note in notes {
-                            //     sound_channels[channel].push(note);
-                            // }
-                        }
-                        SoundCommand::MakeInstrument(mut inst) => {
-                            // println!("instrument {}", inst);
-                            // instrument = inst;
-                            // instrument_diviser = 0.;
-                            // for (i, n) in instrument.iter().enumerate() {
-                            //     let ii = (i + 1) as f32;
-                            //     instrument_diviser += n * ii;
-                            // }
-                            // instrument_diviser = 1. / instrument_diviser;
-
-                            inst.divisor = (inst.freqs.len() as f32).ln();
-
-                            let div = *inst.freqs.get(0).unwrap_or(&1.);
-
-                            inst.base_freq = if div != 0. { 1. / div } else { 1. };
-                            // println!(
-                            //     "channel {} and volume divisor {} from length {}",
-                            //     channel,
-                            //     instrument_diviser,
-                            //     instrument.len()
-                            // );
-
-                            last_amp = *inst.freqs.get(0).unwrap_or(&0.);
-
-                            instruments.insert(inst.name, inst);
-                            // notes.push((1., packet.1, 0., channel));
-                        }
-
-                        SoundCommand::FadeChannel(ichannel, duration) => {}
-                        SoundCommand::Stop(ichannel) => {
-                            sound_channels[ichannel].clear();
-                            current_notes[ichannel] = None;
-                        } // Packet::Wave(wave) => {
-                          //     println!("wave {}", wave);
-                          //     match wave {
-                          //         Wave::Flat => func = musician,
-                          //         Wave::Square => func = square,
-                          //         Wave::Triangle => func = triangle,
-                          //         Wave::Saw => func = saw,
-                          //         Wave::Noise => func = noise,
-                          //         Wave::Flute => func = flute,
-                          //         Wave::Flute1 => func = flute1,
-                          //         Wave::LowSquare => func = lowsquare,
-                          //         Wave::Wave => func = wave,
-                          //     }
-                          // },
-
-                          // Packet::Fade(fade) => {
-                          //     println!("fade {}", fade);
-                          // },
-                          // Packet::VolumeSpeed(speed) => {
-                          //     println!("volume speed {}", speed);
-                          //     //volume_speed = speed;
-                          // },
-                    }
-
-                    // if !once && !record {
-                    //     // record = true;
-                    // } else if !once {
-                    //     // DEV sound save
-                    //     println!("save sound");
-                    //     crate::texture::save_audio_buffer(&buffer);
-                    //     buffer.clear();
-                    //     // once = true;
-                    // }
-                }
-                _ => {
-                    // println!("no packet");
-                }
-            };
-        }
-        audience_countdown += 1;
-
-        let mut all_waves = 0.;
-        let mut master_volume = 0.1;
-
-        // sample rate is 44100
-
-        let float_clock = ((sample_clock) / sample_rate as f64) as f32;
-        // we divide by 440. as our notes will mukltiply by a factor of this base frequency, note A is 440. and our frequency would be equal to base
-        let cycler = (float_clock) * 2.0 * std::f32::consts::PI; //+ note.3 as f32
-
-        // checker += 1;
-        // if checker > 9000 {
-        //     checker = 0;
-        //     println!(
-        //         "cycler {} clock {} last amp {}",
-        //         cycler, sample_clock, last_amp
-        //     );
-        // }
-
-        match &mut current_notes[0] {
-            Some(note) => {
-                // note, timer, current_level aka volume, channel
-                note.duration -= fade_speed;
-                // note.volume
-                let instr = instruments.get(&note.instrument).unwrap_or(&square_wave);
-
-                let totes = cycler * note.frequency * instr.base_freq;
-
-                match &mut last_notes[0] {
-                    Some(last_note) => {
-                        let last_instr = instruments.get(&note.instrument).unwrap_or(&square_wave);
-                        if last_note.instrument != note.instrument {
-                            last_amp = 0.;
-                        }
-                        let last_totes = cycler * last_note.frequency * last_instr.base_freq;
-                        let v1 = last_note.volume;
-                        let v2 = 1. - v1;
-                        all_waves += func(totes, instr) * note.volume * master_volume * v2
-                            + func(last_totes, last_instr) * master_volume * v1;
-                        last_note.volume -= volume_speed;
-                        if last_note.volume <= 0. {
-                            last_notes[0] = None;
-                        }
-                    }
-                    None => {
-                        all_waves +=
-                        // choose
-                        // square(cycler * last_amp) * volume * master_volume;
-                        func(totes, instr) * note.volume * master_volume;
-                    }
-                }
-
-                //   square(totes)* volume * master_volume;
-
-                // if note.1 > 0. {
-                //     if note.2 < 1. {
-                //         note.2 += volume_speed;
-                //     }
-                //     true
-                // } else {
-                //     if note.2 > 0. {
-                //         note.2 -= volume_speed;
-                //         true
-                //     } else {
-                //         occupied[note.3] = false;
-                //         false
-                //     }
-                // }
-
-                if note.duration <= 0. {
-                    last_notes[0] = current_notes[0];
-                    current_notes[0] = sound_channels[0].pop_front();
-                    if let Some(n) = current_notes[0] {
-                        print!("freq {} dur{} ", n.frequency, n.duration);
-                    }
-                } else if note.duration <= volume_fade_threshold {
-                    note.volume -= volume_speed;
-                }
-            }
-            None => {
-                current_notes[0] = sound_channels[0].pop_front();
-                if let Some(n) = current_notes[0] {
-                    print!("freq {} dur{} ", n.frequency, n.duration);
-                }
-            }
-        }
-
-        let abs = all_waves.abs();
-        if abs > 1. {
-            master_volume = 0.1 / abs;
-            all_waves /= abs;
-        }
-        // all_waves = all_waves.clamp(-1., 1.);
-
-        // ((bufferIn[(2 * sample_clock as usize)]) as f32) / 128.
-        // let cycler = sample_clock * 2.0 * std::f32::consts::PI / sample_rate;
-
-        //*440.//println!("t {}", t);
-
-        // switch_board.write().h = t;
-
-        //sine
-        //(t).sin()
-
-        // let a = 2.;
-        // let p = 4.;
-
-        //triangle
-        /*
-
-        (4. * a / p) * (((t - p / 4.) % p) - p / 2.).abs() - a
-        */
-        //square
-
-        // if (t * 1.8) % std::f32::consts::PI > 1. {
-        //     1.
-        // } else {
-        //     0.
-        // }
-
-        //cool small fourier series
-        //t.sin() - (2. * t).sin() / 2.
-
-        //sawtooth
-        // t.sin() - (2. * t).sin() / 2. + (3. * t).sin() / 3. - (4. * t).sin() / 4.
-        //     + (5. * t).sin() / 5.;
-
-        // const pi: f32 = std::f32::consts::PI;
-        // -0.25 * (3. * t * pi).sin() + 0.25 * (pi * t).sin() + (t * pi).cos() * 3f32.sqrt() / 2.
-
-        // let s = pia(freq, t, 1., 1.)
-        //     + pia(freq, t, 2., 2.)
-        //     + pia(freq, t, 3., 4.)
-        //     + pia(freq, t, 4., 8.)
-        //     + pia(freq, t, 5., 16.)
-        //     + pia(freq, t, 6., 32.);
-        // s * s * s
-
-        // let hertz = value;
-
-        // let totes = cycler * hertz;
-
-        // square(totes)
-        // make echo
-
-        // YELLOW muffle effect
-        // all_waves += echo;
-        // echo = all_waves / 1.001;
-
-        //echo
-
-        // if echo_counter >= echo_delay {
-        // for i in 0..echo_buffer.len() - 1 {
-        //     echo_buffer[i] = echo_buffer[i + 1] / 1.001;
-        // }
-        // echo_buffer[echo_buffer.len() - 1] = all_waves;
-        // all_waves += echo_buffer[0] / 1.001;
-        // } else {
-        //     echo_counter += 1;
-        // }
-
-        if record {
-            buffer_sum += all_waves * 256.;
-
-            if buffer_count >= 64 {
-                println!("buffer sum {}", all_waves);
-                buffer.push((buffer_sum + 256.) as u8);
-                buffer_sum = 0.;
-                buffer_count = 1;
-            }
-            buffer_count += 1;
-        }
-
-        all_waves
-    };
-
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-
+    let err_fn = |err| eprintln!("audio stream error: {}", err);
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            write_data(data, channels, &mut next_value)
+            write_data(data, out_channels, &mut next_value)
         },
         err_fn,
+        None,
     )?;
-
-    // DEV ????
-    // std::thread::spawn(move || {
-    //     stream.play()?;
-    // });
     stream.play()?;
-    // write the buffer to a file
-    // let mut file = File::create("test.wav")?;
-    // file.write_all(&buffer)?;
-
-    // Ok(stream)
-
-    //std::thread::sleep(std::time::Duration::from_millis(3000));
-
     Ok(stream)
 }
 
-fn pia(freq: f32, t: f32, a: f32, b: f32) -> f32 {
-    let frequency = freq;
-    (a * 2. * std::f32::consts::PI * frequency * t).sin()
-        * (-0.0004 * 2. * std::f32::consts::PI * frequency * t).exp()
-        / b
+/// Additive synthesis: sum harmonics (index i => harmonic i+1) at the voice's
+/// current phase, normalised by the amplitude sum so output stays in ~[-1, 1].
+fn synth(phase: f32, instr: &Instrument) -> f32 {
+    let mut total = 0.0;
+    for (i, amp) in instr.freqs.iter().enumerate() {
+        if *amp != 0.0 {
+            total += (phase * (i + 1) as f32).sin() * amp;
+        }
+    }
+    total / instr.divisor
 }
-fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> f32)
+
+fn write_data<T>(output: &mut [T], out_channels: usize, next_sample: &mut dyn FnMut() -> f32)
 where
-    T: cpal::Sample,
+    T: cpal::Sample + cpal::FromSample<f32>,
 {
-    for frame in output.chunks_mut(channels) {
-        let value: T = cpal::Sample::from::<f32>(&next_sample());
+    for frame in output.chunks_mut(out_channels) {
+        let value: T = T::from_sample(next_sample());
         for sample in frame.iter_mut() {
             *sample = value;
         }
     }
 }
-// note, timer, current_level aka volume, channel
+
 #[derive(Clone, Copy)]
 pub struct Note {
     instrument: usize,
     pub frequency: f32,
+    /// Sustain length in seconds (before the release ramp).
     pub duration: f32,
     pub volume: f32,
 }
@@ -606,23 +270,65 @@ impl Note {
         }
     }
 }
+
+/// Runtime state for one sounding note: a wrapped phase accumulator plus a
+/// linear envelope. Kept separate from `Note` (the queued spec).
+struct Voice {
+    phase: f32,
+    phase_inc: f32,
+    instrument: usize,
+    remaining: f32,
+    volume: f32,
+    env: f32,
+}
+impl Voice {
+    fn from_note(note: &Note, phase_inc: f32) -> Self {
+        Self {
+            phase: 0.0,
+            phase_inc,
+            instrument: note.instrument,
+            remaining: note.duration.max(0.0),
+            volume: note.volume,
+            env: 0.0,
+        }
+    }
+    /// Advance and wrap the phase to keep f32 precision indefinitely.
+    fn advance(&mut self) {
+        self.phase += self.phase_inc;
+        if self.phase >= TWO_PI {
+            self.phase -= TWO_PI;
+        }
+    }
+}
+
 pub struct Instrument {
     name: usize,
+    /// Harmonic amplitudes; index i is harmonic (i+1) of the fundamental.
     freqs: Vec<f32>,
-    half: bool,
     divisor: f32,
-    base_freq: f32,
 }
 
 impl Instrument {
-    pub fn new(name: usize, freqs: Vec<f32>, half: bool) -> Self {
+    pub fn new(name: usize, freqs: Vec<f32>, _half: bool) -> Self {
+        let divisor = Self::compute_divisor(&freqs);
         Self {
             name,
             freqs,
-            half,
-            divisor: 1.,
-            base_freq: 1.,
+            divisor,
         }
+    }
+    fn compute_divisor(freqs: &[f32]) -> f32 {
+        let sum: f32 = freqs.iter().map(|a| a.abs()).sum();
+        if sum > 0.0 {
+            sum
+        } else {
+            1.0
+        }
+    }
+    /// Recompute the normalisation divisor (after freqs are set by the caller).
+    fn normalized(mut self) -> Self {
+        self.divisor = Self::compute_divisor(&self.freqs);
+        self
     }
 }
 
@@ -631,6 +337,5 @@ pub enum SoundCommand {
     PlayNote(Note, Option<usize>),
     Chain(Vec<Note>, Option<usize>),
     Stop(usize),
-    // StopChannel(usize),
     FadeChannel(usize, f32),
 }
