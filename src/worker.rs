@@ -272,20 +272,29 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // mostly-static entities streams almost nothing; main keeps the last value.
     let mut ent_bytes = Vec::new();
     let mut alive: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut removed: std::collections::HashSet<u64> = std::collections::HashSet::new();
     entities.retain(|w| {
         match w.downcast_ref::<LuaEnt, _, _>(|l| {
-            Ok(EntXform {
-                id: l.get_id(),
-                x: l.x as f32,
-                y: l.y as f32,
-                z: l.z as f32,
-                rx: l.rot_x as f32,
-                ry: l.rot_y as f32,
-                rz: l.rot_z as f32,
-                scale: l.scale as f32,
-            })
+            Ok((
+                l.is_dead(),
+                EntXform {
+                    id: l.get_id(),
+                    x: l.x as f32,
+                    y: l.y as f32,
+                    z: l.z as f32,
+                    rx: l.rot_x as f32,
+                    ry: l.rot_y as f32,
+                    rz: l.rot_z as f32,
+                    scale: l.scale as f32,
+                },
+            ))
         }) {
-            Ok(xf) => {
+            Ok((true, xf)) => {
+                // Killed this frame (DEAD flag): report removal, stop tracking.
+                removed.insert(xf.id);
+                false
+            }
+            Ok((false, xf)) => {
                 alive.insert(xf.id);
                 if last_xforms.get(&xf.id) != Some(&xf) {
                     xf.write_le(&mut ent_bytes);
@@ -293,11 +302,21 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                 }
                 true
             }
+            // Weak upgrade failed → the VM GC'd it; caught by the diff below.
             Err(_) => false,
         }
     });
-    // Forget cached transforms of reaped entities so ids can't leak the map.
+    // Any id we streamed before but didn't see alive this frame is gone (killed
+    // or GC-reaped). Report it and drop its cache entry so ids can't leak.
+    for id in last_xforms.keys() {
+        if !alive.contains(id) {
+            removed.insert(*id);
+        }
+    }
     last_xforms.retain(|id, _| alive.contains(id));
+    if !removed.is_empty() {
+        out.push(VmToHost::EntRemove(removed.into_iter().collect()));
+    }
     (out, ent_bytes)
 }
 
