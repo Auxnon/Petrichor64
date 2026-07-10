@@ -1,5 +1,5 @@
 #[cfg(feature = "audio")]
-use crate::sound::{sound, SoundCommand};
+use crate::sound::{self, SoundCommand};
 use crate::{
     bundle::BundleManager,
     ent_manager::EntManager,
