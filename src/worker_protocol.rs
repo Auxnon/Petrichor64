@@ -83,6 +83,10 @@ pub enum VmToHost {
     /// no-SAB movement channel. (Ultra tier will replace it with a
     /// SharedArrayBuffer; a transferable Float32Array is the drop-in optimisation.)
     EntUpdate(Vec<EntXform>),
+    /// Entity ids that died (killed or GC'd in the VM). Main drops their render
+    /// mirrors — without this a dirty-only stream just stops updating a dead
+    /// entity, leaving it frozen on screen.
+    EntRemove(Vec<u64>),
     /// Dirty world chunks the worker's VM built (bulk terrain edits stay local
     /// to the VM and sync as whole chunks — the "phantom chunk" batching). Main
     /// rebuilds the GPU chunk models via World::process_sync.

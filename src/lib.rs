@@ -903,6 +903,14 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     if canvas.height() == 0 {
         canvas.set_height(548);
     }
+    // Pin the CSS display size. Without it the canvas displays at its backing
+    // buffer's pixel size, so winit's DPR-scaled buffer grows the client rect,
+    // which grows the buffer again — a runaway that eventually exceeds the GPU's
+    // max texture size and aborts the module. A fixed CSS size decouples display
+    // from buffer; a host page can still override via CSS on #petrichor64-root.
+    let style = canvas.style();
+    let _ = style.set_property("width", "640px");
+    let _ = style.set_property("height", "548px");
     let parent = document
         .get_element_by_id("petrichor64-root")
         .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
@@ -1163,6 +1171,29 @@ impl Core {
                         if matched {
                             break;
                         }
+                    }
+                }
+            }
+            VmToHost::EntRemove(ids) => {
+                // Drop the render mirrors of entities that died in the VM.
+                #[cfg(feature = "headed")]
+                {
+                    let before = self.ent_manager.ent_array.len();
+                    self.ent_manager.ent_array.retain(|(eref, _ent, _uni)| {
+                        let mut keep = true;
+                        let _ = eref.with_ref(|l| {
+                            if ids.contains(&l.get_id()) {
+                                keep = false;
+                            }
+                            Ok(())
+                        });
+                        keep
+                    });
+                    // The drawn instances come from render_hash, not ent_array
+                    // directly — mark it dirty so check_ents rebuilds it without
+                    // the removed entities on the next loop.
+                    if self.ent_manager.ent_array.len() != before {
+                        self.ent_manager.hash_dirty = true;
                     }
                 }
             }

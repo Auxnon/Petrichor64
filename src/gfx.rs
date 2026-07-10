@@ -617,9 +617,17 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_config_size(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
+        // Clamp to the device's max 2D texture dimension. On the web a canvas can
+        // enter a client-size <-> backing-buffer×DPR feedback loop and request a
+        // surface larger than the GPU allows, which aborts the wasm module
+        // ("Texture size exceeded maximum"). Clamping keeps it alive; the canvas
+        // CSS pin (attach_canvas_to_dom) is what actually stops the growth.
+        let max = self.device.limits().max_texture_dimension_2d;
+        let w = new_size.width.clamp(1, max);
+        let h = new_size.height.clamp(1, max);
+        self.size = winit::dpi::PhysicalSize::new(w, h);
+        self.config.width = w;
+        self.config.height = h;
     }
 
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {

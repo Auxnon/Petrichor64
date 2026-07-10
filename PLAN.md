@@ -137,6 +137,32 @@ path is expected to work once the Lua loop correctly signals `LoopComplete`.
 
 ---
 
+### 8 — Web canvas resize feedback loop → texture-size crash **(Mitigated; responsive sizing still TODO)**
+
+**Symptom**: On some page loads the canvas grows every frame until it fills the
+page, then the module aborts with `Texture size ... exceeded maximum texture
+size` (e.g. requesting 10240×8768 against an 8192 device limit).
+
+**Cause**: The canvas had no CSS size, so it *displayed* at its backing-buffer
+pixel size. winit sizes the backing buffer from the client rect × devicePixelRatio,
+so on a HiDPI display: buffer = client × DPR → (no CSS) display grows to buffer
+px → client rect grows → buffer grows again. A runaway that multiplies by DPR
+each observation until it passes the GPU's `max_texture_dimension_2d`.
+
+**Mitigation (committed)**:
+- `attach_canvas_to_dom` pins the canvas CSS display size (640×548), decoupling
+  display from the backing buffer so the loop can't start.
+- `Gfx::set_config_size` clamps width/height to `device.limits().max_texture_dimension_2d`
+  as a safety net, so any future resize path can't crash the module.
+
+**Still TODO**: The canvas now renders at a *fixed* CSS size. Making it responsive
+to the `<petrichor-64>` host container needs a ResizeObserver-driven path that
+reads the container's size (not the canvas's own) and sets the buffer from that,
+so display never feeds back into buffer. Until then, hosts resize via CSS on
+`#petrichor64-root` at their own risk.
+
+---
+
 ## Patches Applied
 
 | File | Change |

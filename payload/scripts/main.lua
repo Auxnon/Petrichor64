@@ -25,6 +25,7 @@ function main()
 	mgrab(true)
 	yaw = 0
 	pitch = -tau / 16
+	killtimer = 180 -- kill `generated` after ~3s to show entity removal
 	cout("main runs once everything has loaded")
 end
 
@@ -32,8 +33,19 @@ function loop()
 	example.y = example.y + rnd(-0.05, 0.05)
 	example.z = example.z + rnd(-0.05, 0.05)
 	spin = spin + 0.1
-	generated.z = generated.z + cos(spin) * 0.04
-	generated.y = generated.y + sin(spin) * 0.04
+
+	-- Demonstrate removal: animate `generated` for a few seconds, then kill it.
+	-- It should vanish from the scene while `example` keeps moving.
+	if generated then
+		generated.z = generated.z + cos(spin) * 0.04
+		generated.y = generated.y + sin(spin) * 0.04
+		killtimer = killtimer - 1
+		if killtimer <= 0 then
+			generated:kill()
+			generated = nil
+			cout("killed generated — it should vanish now")
+		end
+	end
 
 	-- Mouse-look: accumulate yaw/pitch from relative movement (dx/dy).
 	local m = mus()

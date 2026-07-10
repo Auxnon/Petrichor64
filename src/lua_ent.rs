@@ -290,6 +290,9 @@ impl LuaEnt {
     pub fn get_flags(&self) -> u8 {
         self.flags
     }
+    pub fn is_dead(&self) -> bool {
+        self.flags & lua_ent_flags::DEAD != 0
+    }
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
