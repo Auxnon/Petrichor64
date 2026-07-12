@@ -1014,22 +1014,31 @@ function mgrab(on) end"
     let sing = singer.clone();
     lua!(
         "note",
-        move |_, _, (freq, length): (f32, Option<f32>)| {
+        move |_,
+              _,
+              (freq, length, channel, instrument): (
+            f32,
+            Option<f32>,
+            Option<usize>,
+            Option<usize>
+        )| {
             #[cfg(feature = "audio")]
             {
-                let len = match length {
-                    Some(l) => l,
-                    None => 1.,
-                };
-                let _ = sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
+                let len = length.unwrap_or(1.);
+                let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
+                // `channel` None auto-allocates a free voice, so repeated note()
+                // calls in a frame stack into a chord.
+                let _ = sing.send(SoundCommand::PlayNote(note, channel));
             }
             Ok(())
         },
-        "Make a sound or note",
+        "Play a note; optional channel + instrument. Overlapping notes voice separately.",
         "
 ---@param freq number
 ---@param length number?
-function sound(freq, length) end"
+---@param channel integer?
+---@param instrument integer?
+function note(freq, length, channel, instrument) end"
     );
     #[cfg(feature = "audio")]
     let sing = singer.clone();
@@ -1043,14 +1052,15 @@ function sound(freq, length) end"
                     .filter_map(|v| match v {
                         Value::Table(t) => {
                             let tb = t.borrow();
-                            // {freq, len} — 1-indexed, matching the `cam` native's
-                            // table reads. An empty table (no [1]) is skipped.
+                            // {freq, len?, instrument?} — 1-indexed, matching the
+                            // `cam` native's table reads. Empty table ([1] absent)
+                            // is skipped.
                             match tb.getn(1) {
                                 Some(f) => {
                                     let freq: f32 = f.into();
-                                    let len: f32 =
-                                        tb.getn(2).map(|v| v.into()).unwrap_or(1.);
-                                    Some(Note::new(0, freq, len, 1.))
+                                    let len: f32 = tb.getn(2).map(|v| v.into()).unwrap_or(1.);
+                                    let instr: f32 = tb.getn(3).map(|v| v.into()).unwrap_or(0.);
+                                    Some(Note::new(instr as usize, freq, len, 1.))
                                 }
                                 None => None,
                             }
@@ -1061,6 +1071,7 @@ function sound(freq, length) end"
                     })
                     .collect::<Vec<Note>>();
 
+                // A song is one sequential voice — auto-allocate a single channel.
                 lua_err!(sing.send(SoundCommand::Chain(converted, None)));
             }
             Ok(())
@@ -1074,39 +1085,59 @@ function song(notes) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "chord",
+        move |_, _, (freqs, length, instrument): (Vec<f32>, Option<f32>, Option<usize>)| {
+            #[cfg(feature = "audio")]
+            {
+                let len = length.unwrap_or(1.);
+                let instr = instrument.unwrap_or(0);
+                // Each freq auto-allocates its own free voice → they sound together.
+                for f in freqs {
+                    let _ = sing.send(SoundCommand::PlayNote(Note::new(instr, f, len, 1.), None));
+                }
+            }
+            Ok(())
+        },
+        "Play several frequencies at once as a chord",
+        "
+---@param freqs number[]
+---@param length number?
+---@param instrument integer?
+function chord(freqs, length, instrument) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "mute",
         move |_, _, channel: Option<usize>| {
             #[cfg(feature = "audio")]
-            sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
+            // No channel = silence everything.
+            let _ = sing.send(SoundCommand::Stop(channel));
 
             Ok(())
         },
-        "Stop sounds on channel",
+        "Stop sounds on a channel, or all channels if omitted",
         "
----@param channel number
+---@param channel integer?
 function mute(channel) end"
     );
 
     lua!(
         "instr",
-        move |_, _, (freqs, half): (Vec<f32>, Option<bool>)| {
+        move |_, _, (id, freqs): (usize, Vec<f32>)| {
             #[cfg(feature = "audio")]
             lua_err!(singer.send(SoundCommand::MakeInstrument(Instrument::new(
-                0,
-                freqs,
-                match half {
-                    Some(h) => h,
-                    None => false,
-                },
+                id, freqs, false,
             ))));
 
             Ok(())
         },
-        "Make an instrument",
+        "Define instrument `id` from a table of harmonic amplitudes",
         "
----@param freqs number[]
----@param half boolean? subsequent freqs are half the previous  
-function instr(freqs, half) end"
+---@param id integer
+---@param freqs number[] harmonic amplitudes (index i => harmonic i+1)
+function instr(id, freqs) end"
     );
 
     let pitcher = main_pitcher.clone();

@@ -142,6 +142,7 @@ where
     let mut current: [Option<Voice>; NUM_CH] = Default::default();
     let mut fading: [Option<Voice>; NUM_CH] = Default::default();
 
+    let mut steal_ch = 0usize;
     let mut next_value = move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
         // sample-accurate (the old code polled once per ~2000 samples, which
@@ -149,27 +150,28 @@ where
         while let Ok(cmd) = audience.try_recv() {
             match cmd {
                 SoundCommand::PlayNote(note, ch) => {
-                    queues[ch.unwrap_or(0).min(NUM_CH - 1)].push_back(note);
+                    let c = pick_channel(ch, &current, &fading, &queues, &mut steal_ch);
+                    queues[c].push_back(note);
                 }
                 SoundCommand::Chain(notes, ch) => {
-                    queues[ch.unwrap_or(0).min(NUM_CH - 1)].extend(notes);
+                    let c = pick_channel(ch, &current, &fading, &queues, &mut steal_ch);
+                    queues[c].extend(notes);
                 }
                 SoundCommand::MakeInstrument(inst) => {
                     instruments.insert(inst.name, inst.normalized());
                 }
-                SoundCommand::Stop(ch) => {
-                    let c = ch.min(NUM_CH - 1);
-                    queues[c].clear();
-                    // Release rather than hard-cut, so stopping doesn't click.
-                    if let Some(v) = current[c].take() {
-                        fading[c] = Some(v);
+                SoundCommand::Stop(ch) => match ch {
+                    Some(c) => {
+                        release_channel(c.min(NUM_CH - 1), &mut current, &mut fading, &mut queues)
                     }
-                }
+                    None => {
+                        for c in 0..NUM_CH {
+                            release_channel(c, &mut current, &mut fading, &mut queues);
+                        }
+                    }
+                },
                 SoundCommand::FadeChannel(ch, _dur) => {
-                    let c = ch.min(NUM_CH - 1);
-                    if let Some(v) = current[c].take() {
-                        fading[c] = Some(v);
-                    }
+                    release_channel(ch.min(NUM_CH - 1), &mut current, &mut fading, &mut queues);
                 }
             }
         }
@@ -334,8 +336,47 @@ impl Instrument {
 
 pub enum SoundCommand {
     MakeInstrument(Instrument),
+    /// Play one note. `Some(ch)` targets a channel; `None` auto-allocates a free
+    /// one (so overlapping `note()` calls form chords).
     PlayNote(Note, Option<usize>),
+    /// Queue a sequence on a single channel (`None` auto-allocates one).
     Chain(Vec<Note>, Option<usize>),
-    Stop(usize),
+    /// Release a channel (`None` = all channels).
+    Stop(Option<usize>),
     FadeChannel(usize, f32),
+}
+
+/// Pick the channel for a note: an explicit one, or the first fully-idle channel
+/// so simultaneous notes voice separately. Falls back to round-robin stealing
+/// when all 16 are busy (a 16-voice cap).
+fn pick_channel(
+    ch: Option<usize>,
+    current: &[Option<Voice>],
+    fading: &[Option<Voice>],
+    queues: &[VecDeque<Note>],
+    steal: &mut usize,
+) -> usize {
+    match ch {
+        Some(c) => c.min(NUM_CH - 1),
+        None => (0..NUM_CH)
+            .find(|&c| current[c].is_none() && fading[c].is_none() && queues[c].is_empty())
+            .unwrap_or_else(|| {
+                let c = *steal;
+                *steal = (*steal + 1) % NUM_CH;
+                c
+            }),
+    }
+}
+
+/// Clear a channel's queue and release its sounding voice (ramp down, no click).
+fn release_channel(
+    c: usize,
+    current: &mut [Option<Voice>],
+    fading: &mut [Option<Voice>],
+    queues: &mut [VecDeque<Note>],
+) {
+    queues[c].clear();
+    if let Some(v) = current[c].take() {
+        fading[c] = Some(v);
+    }
 }

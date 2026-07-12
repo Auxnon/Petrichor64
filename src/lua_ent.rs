@@ -34,6 +34,9 @@ pub struct LuaEnt {
     pub flipped: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
+    /// Per-axis size multiplier on top of `scale`, so entities can be
+    /// rectangular prisms (a piano key, a wall) not just uniform cubes.
+    pub size: [f64; 3],
     pub offset: [f64; 3], // pub meta: mlua::Table,
                           // pub sender: Option<Sender<(u8, MainCommmand)>>,
                           // pub cloned: bool,
@@ -170,6 +173,10 @@ impl UserData for LuaEnt {
             Ok(this.offset = offset)
         });
 
+        // Per-axis size (x, y, z) for rectangular-prism entities.
+        fields.add_field_method_get("size", |_, _, this| Ok(this.size));
+        fields.add_field_method_set("size", |_, _, this, size: [f64; 3]| Ok(this.size = size));
+
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, _, this| Ok(this.id));
@@ -269,6 +276,7 @@ impl LuaEnt {
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
+            size: [1., 1., 1.],
             offset: [0., 0., 0.], // meta: mlua::Table::new(),
             flags: 0,
             // cloned: false,
@@ -335,6 +343,7 @@ impl Clone for LuaEnt {
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
+            size: self.size,
             offset: self.offset,
             flags: self.flags,
             // meta: self.meta.clone(),
