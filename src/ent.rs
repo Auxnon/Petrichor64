@@ -191,11 +191,16 @@ impl<'lua> Ent {
             lua.rot_z as f32,
         );
         // println!("build {} {:?}",self.model.name,parent);
-        let s: f32 = (lua.scale as f32);
-        // println!("scale {}",s);
+        let s: f32 = lua.scale as f32;
+        // Per-axis size lets entities be rectangular prisms, not just cubes.
+        let sz = vec3(
+            s * lua.size[0] as f32,
+            s * lua.size[1] as f32,
+            s * lua.size[2] as f32,
+        );
         let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
         let m = Mat4::from_translation(pos)
-            * Mat4::from_scale(vec3(s, s, s))
+            * Mat4::from_scale(sz)
             * Mat4::from_quat(quat)
             * Mat4::from_translation(offset);
         match parent {

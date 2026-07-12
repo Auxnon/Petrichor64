@@ -32,9 +32,15 @@ pub fn controls_evaluate(
     bits_prev: &[bool; 256],
 ) {
     // Helpers — detect edge transitions from the per-frame key snapshot.
-    let key_released = |kc: KeyCode| bits_prev[kc as usize] && !bits.0[kc as usize];
-    let key_pressed = |kc: KeyCode| !bits_prev[kc as usize] && bits.0[kc as usize];
-    let key_held = |kc: KeyCode| bits.0[kc as usize];
+    // Read through the same KeyCode->legacy-index map bit_check writes with, so
+    // internal checks and Lua's key()/key_match agree (else e.g. Backquote's
+    // discriminant 0 collides with Digit1's legacy slot 0 — pressing "1" would
+    // toggle the console).
+    let key_released =
+        |kc: KeyCode| keycode_to_index(kc).map_or(false, |i| bits_prev[i] && !bits.0[i]);
+    let key_pressed =
+        |kc: KeyCode| keycode_to_index(kc).map_or(false, |i| !bits_prev[i] && bits.0[i]);
+    let key_held = |kc: KeyCode| keycode_to_index(kc).map_or(false, |i| bits.0[i]);
     // Index 249 is set by bit_check for both ShiftLeft and ShiftRight.
     let held_shift = bits.0[249];
     let held_cmd = key_held(COMMAND_KEY_L) || key_held(COMMAND_KEY_R);
@@ -157,10 +163,50 @@ pub fn controls_evaluate(
 }
 
 /// Update the boolean key-state array from a single `KeyboardInput` event.
+/// Translate a winit `KeyCode` into the engine's legacy key index (the scheme
+/// `command::key_match` / `key_unmatch` use, which mirrors the old winit
+/// `VirtualKeyCode` order). winit 0.29 replaced `VirtualKeyCode` with physical
+/// `KeyCode`, whose discriminants are ordered completely differently, so writing
+/// `keycode as usize` landed keys in the wrong slots — `key()`/`cin()` only
+/// worked where the two happened to coincide. Returns `None` for keys outside
+/// the mapped set.
+fn keycode_to_index(kc: KeyCode) -> Option<usize> {
+    use KeyCode::*;
+    Some(match kc {
+        Digit1 => 0, Digit2 => 1, Digit3 => 2, Digit4 => 3, Digit5 => 4,
+        Digit6 => 5, Digit7 => 6, Digit8 => 7, Digit9 => 8, Digit0 => 9,
+        KeyA => 10, KeyB => 11, KeyC => 12, KeyD => 13, KeyE => 14, KeyF => 15,
+        KeyG => 16, KeyH => 17, KeyI => 18, KeyJ => 19, KeyK => 20, KeyL => 21,
+        KeyM => 22, KeyN => 23, KeyO => 24, KeyP => 25, KeyQ => 26, KeyR => 27,
+        KeyS => 28, KeyT => 29, KeyU => 30, KeyV => 31, KeyW => 32, KeyX => 33,
+        KeyY => 34, KeyZ => 35,
+        Escape => 36,
+        F1 => 37, F2 => 38, F3 => 39, F4 => 40, F5 => 41, F6 => 42, F7 => 43,
+        F8 => 44, F9 => 45, F10 => 46, F11 => 47, F12 => 48, F13 => 49, F14 => 50,
+        F15 => 51, F16 => 52, F17 => 53, F18 => 54, F19 => 55, F20 => 56, F21 => 57,
+        F22 => 58, F23 => 59, F24 => 60,
+        PrintScreen => 61,
+        Delete => 66, End => 67, PageDown => 68, PageUp => 69,
+        ArrowLeft => 70, ArrowUp => 71, ArrowRight => 72, ArrowDown => 73,
+        Backspace => 74, Enter => 75, Space => 76,
+        // Engine-internal keys (not exposed by name via key_match): the console
+        // toggle and modifiers. 62 is free in the legacy scheme; the modifiers
+        // share the same slots bit_check's explicit match uses (247..=250).
+        Backquote => 62,
+        AltLeft | AltRight => 247,
+        ControlLeft | ControlRight => 248,
+        ShiftLeft | ShiftRight => 249,
+        SuperLeft | SuperRight => 250,
+        _ => return None,
+    })
+}
+
 pub fn bit_check(state: &ElementState, keycode: KeyCode, bits: &mut ControlState) {
     match state {
         ElementState::Pressed => {
-            bits.0[keycode as usize] = true;
+            if let Some(i) = keycode_to_index(keycode) {
+                bits.0[i] = true;
+            }
             match keycode {
                 KeyCode::AltLeft | KeyCode::AltRight => {
                     bits.0[247] = true;
@@ -178,7 +224,9 @@ pub fn bit_check(state: &ElementState, keycode: KeyCode, bits: &mut ControlState
             }
         }
         ElementState::Released => {
-            bits.0[keycode as usize] = false;
+            if let Some(i) = keycode_to_index(keycode) {
+                bits.0[i] = false;
+            }
             match keycode {
                 KeyCode::AltLeft | KeyCode::AltRight => {
                     bits.0[247] = false;
