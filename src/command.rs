@@ -999,7 +999,8 @@ function cam(params) end"
         move |_, _, table_val: Value| {
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
-                let vec3_of = |key: &str| match table.get(key) {
+                // `dir` is a raw xyz vector (not a colour).
+                let dir = match table.get("dir") {
                     Some(Value::Table(tbl)) => {
                         let t = tbl.borrow();
                         Some(glam::vec3(
@@ -1010,13 +1011,25 @@ function cam(params) end"
                     }
                     _ => None,
                 };
-                let dir = vec3_of("dir");
-                let color = vec3_of("color");
+                // Colours accept the usual forms: hex string ('ff0'), rgb table
+                // (0..1 or 0..255) — via the shared get_color helper.
+                let color_of = |key: &str| {
+                    table.get(key).map(|v| {
+                        let c = crate::lua_img::get_color(v.clone());
+                        glam::vec3(c.x, c.y, c.z)
+                    })
+                };
+                let color = color_of("color");
+                let sky = color_of("sky");
+                let ground = color_of("ground");
                 let ambient = match table.get("ambient") {
                     Some(v) => Some(v.into()),
                     _ => None,
                 };
-                lua_err!(pitcher.send((bundle_id, MainCommmand::Light(dir, color, ambient))));
+                lua_err!(pitcher.send((
+                    bundle_id,
+                    MainCommmand::Light(dir, color, ambient, sky, ground)
+                )));
             }
             Ok(())
         },
@@ -1032,14 +1045,11 @@ function lamp(params) end"
         move |_, _, table_val: Value| {
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
+                // Colour accepts hex string ('9bd') or rgb table via get_color.
                 let (r, g, b) = match table.get("color") {
-                    Some(Value::Table(tbl)) => {
-                        let c = tbl.borrow();
-                        (
-                            c.getn(1).unwrap_or(&Value::Nil).into(),
-                            c.getn(2).unwrap_or(&Value::Nil).into(),
-                            c.getn(3).unwrap_or(&Value::Nil).into(),
-                        )
+                    Some(v) => {
+                        let c = crate::lua_img::get_color(v.clone());
+                        (c.x, c.y, c.z)
                     }
                     _ => (0., 0., 0.),
                 };
@@ -2390,9 +2400,16 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
-    /// Directional sun: (dir, rgb color, ambient) — each optional so `light{}`
-    /// can set just one aspect.
-    Light(Option<glam::Vec3>, Option<glam::Vec3>, Option<f32>),
+    /// Directional sun + hemisphere ambient: (dir, sun rgb, flat ambient, sky
+    /// rgb, ground rgb) — each optional so `lamp{}` can set just one aspect.
+    /// sky+ground present => hemisphere ambient; else the flat scalar is used.
+    Light(
+        Option<glam::Vec3>,
+        Option<glam::Vec3>,
+        Option<f32>,
+        Option<glam::Vec3>,
+        Option<glam::Vec3>,
+    ),
     /// Distance fog: rgb + w = far distance (w=0 disables).
     Fog(glam::Vec4),
     MouseGrab(bool),
@@ -2442,10 +2459,12 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             pos: pos.map(|v| [v.x, v.y, v.z]),
             rot: rot.map(|v| [v.x, v.y]),
         }),
-        MainCommmand::Light(dir, color, ambient) => Some(VmToHost::Light {
+        MainCommmand::Light(dir, color, ambient, sky, ground) => Some(VmToHost::Light {
             dir: dir.map(|v| [v.x, v.y, v.z]),
             color: color.map(|v| [v.x, v.y, v.z]),
             ambient,
+            sky: sky.map(|v| [v.x, v.y, v.z]),
+            ground: ground.map(|v| [v.x, v.y, v.z]),
         }),
         MainCommmand::Fog(v) => Some(VmToHost::Fog([v.x, v.y, v.z, v.w])),
         MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),

@@ -30,6 +30,11 @@ pub struct Global {
     pub light_dir: Vec3,
     pub light_color: Vec3,
     pub light_ambient: f32,
+    /// Hemisphere ambient (L2). amb_sky.w > 0 switches ambient from the flat
+    /// `light_ambient` scalar to `mix(ground, sky, up)`: sky rgb from above,
+    /// ground rgb from below, by surface normal.z.
+    pub amb_sky: Vec4,
+    pub amb_ground: Vec4,
     /// Distance fog (L2). xyz = fog rgb, w = far distance in world units where
     /// geometry is fully fogged. w = 0 disables it (default).
     pub fog_color: Vec4,
@@ -72,6 +77,8 @@ impl Global {
             light_dir: vec3(-0.3, -0.5, -0.8),
             light_color: vec3(0., 0., 0.),
             light_ambient: 1.,
+            amb_sky: glam::vec4(0., 0., 0., 0.), // w=0 => flat ambient
+            amb_ground: glam::vec4(0., 0., 0., 0.),
             fog_color: glam::vec4(0., 0., 0., 0.), // w=0 => fog off
 
             smooth_cam_pos: vec3(0., 0., 0.),
@@ -119,6 +126,14 @@ impl Global {
         self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
+        // Reset lighting/fog to defaults so state doesn't leak between apps
+        // (fog off, fullbright): an app that never calls lamp/fog looks unlit.
+        self.light_dir = vec3(-0.3, -0.5, -0.8);
+        self.light_color = vec3(0., 0., 0.);
+        self.light_ambient = 1.;
+        self.amb_sky = glam::vec4(0., 0., 0., 0.);
+        self.amb_ground = glam::vec4(0., 0., 0., 0.);
+        self.fog_color = glam::vec4(0., 0., 0., 0.);
         #[cfg(feature = "headed")]
         {
             self.screen_effects = ScreenBinds::new();

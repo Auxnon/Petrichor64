@@ -137,6 +137,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     let light_color: [f32; 4] = [lc.x, lc.y, lc.z, core.global.light_ambient];
     let fc = core.global.fog_color;
     let fog_color: [f32; 4] = [fc.x, fc.y, fc.z, fc.w]; // rgb + far dist (w=0 off)
+    let ask = core.global.amb_sky;
+    let agr = core.global.amb_ground;
+    let amb_sky: [f32; 4] = [ask.x, ask.y, ask.z, ask.w]; // rgb + w=hemisphere enable
+    let amb_ground: [f32; 4] = [agr.x, agr.y, agr.z, agr.w];
 
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
@@ -153,6 +157,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         .write_buffer(&gfx.uniform_buf, 224, bytemuck::cast_slice(&light_color));
     gfx.queue
         .write_buffer(&gfx.uniform_buf, 240, bytemuck::cast_slice(&fog_color));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 256, bytemuck::cast_slice(&amb_sky));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 272, bytemuck::cast_slice(&amb_ground));
 
     let mut encoder = gfx
         .device

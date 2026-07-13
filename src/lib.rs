@@ -1145,7 +1145,13 @@ impl Core {
                     self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
                 }
             }
-            VmToHost::Light { dir, color, ambient } => {
+            VmToHost::Light {
+                dir,
+                color,
+                ambient,
+                sky,
+                ground,
+            } => {
                 if let Some(d) = dir {
                     self.global.light_dir = glam::vec3(d[0], d[1], d[2]);
                 }
@@ -1154,6 +1160,12 @@ impl Core {
                 }
                 if let Some(a) = ambient {
                     self.global.light_ambient = a;
+                }
+                if sky.is_some() || ground.is_some() {
+                    let s = sky.or(ground).unwrap_or([0., 0., 0.]);
+                    let g = ground.or(sky).unwrap_or([0., 0., 0.]);
+                    self.global.amb_sky = glam::vec4(s[0], s[1], s[2], 1.);
+                    self.global.amb_ground = glam::vec4(g[0], g[1], g[2], 0.);
                 }
             }
             VmToHost::Fog(a) => {
@@ -1286,7 +1298,7 @@ impl Core {
                         self.global.simple_cam_rot = rot;
                     }
                 }
-                MainCommmand::Light(dir, color, ambient) => {
+                MainCommmand::Light(dir, color, ambient, sky, ground) => {
                     if let Some(d) = dir {
                         self.global.light_dir = d;
                     }
@@ -1295,6 +1307,14 @@ impl Core {
                     }
                     if let Some(a) = ambient {
                         self.global.light_ambient = a;
+                    }
+                    // Any hemisphere colour switches ambient to hemisphere mode
+                    // (amb_sky.w = 1); both default to the given/zero colour.
+                    if sky.is_some() || ground.is_some() {
+                        let s = sky.or(ground).unwrap_or(glam::Vec3::ZERO);
+                        let g = ground.or(sky).unwrap_or(glam::Vec3::ZERO);
+                        self.global.amb_sky = glam::vec4(s.x, s.y, s.z, 1.);
+                        self.global.amb_ground = glam::vec4(g.x, g.y, g.z, 0.);
                     }
                 }
                 MainCommmand::Fog(v) => {

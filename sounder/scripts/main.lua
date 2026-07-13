@@ -63,10 +63,16 @@ function main()
 
 	-- Raised, angled look down onto the keyboard.
 	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(-1 / 5) } }
-	-- Overhead sun so the key tops catch light and the sides fall into shade.
-	lamp { dir = { -0.35, 0.25, -0.9 }, color = { 0.95, 0.93, 0.85 }, ambient = 0.4 }
+	-- Overhead sun + hemisphere ambient (cool sky above, dark bounce below) so
+	-- key tops read cooler/brighter than their shaded sides and undersides.
+	lamp {
+		dir = { -0.35, 0.25, -0.9 },
+		color = 'fe8', -- warm sun
+		sky = '8ad', -- cool sky ambient on the tops
+		ground = '210', -- dark bounce underneath
+	}
 	-- A touch of distance fog fading toward the sky colour.
-	fog { color = { 0.07, 0.07, 0.27 }, dist = 220 }
+	fog { color = '113', dist = 220 }
 	cout('piano: press number keys 1-0 (chords work); keys dip while held')
 end
 
@@ -79,7 +85,7 @@ function loop()
 		if key(kname) then
 			target = -0.14
 		end
-		e.z = e.z + (target - e.z) * 0.4
+		e.z += (target - e.z) * .4
 		-- Trigger the note once, on the first frame of the press.
 		if key(kname, true) then
 			note(scale[i][2], 0.5)
