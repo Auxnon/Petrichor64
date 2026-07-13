@@ -50,6 +50,8 @@ struct GlobalUniforms {
     // L0 retro lighting: directional sun. `light_color.w` carries ambient.
     light_dir: [f32; 4],
     light_color: [f32; 4],
+    // L2 distance fog: rgb + w = far distance (w=0 disables).
+    fog_color: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -334,6 +336,7 @@ impl<'w> Gfx<'w> {
             specs: [0.0, 0.0, 0.0, 0.0],
             light_dir: [0.0, 0.0, -1.0, 0.0],
             light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
+            fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

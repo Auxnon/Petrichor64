@@ -1156,6 +1156,9 @@ impl Core {
                     self.global.light_ambient = a;
                 }
             }
+            VmToHost::Fog(a) => {
+                self.global.fog_color = glam::vec4(a[0], a[1], a[2], a[3]);
+            }
             VmToHost::MouseGrab(on) => {
                 // Desired grab state; the frame loop mirrors it into the
                 // pointer-lock intent (actual lock waits for a canvas click).
@@ -1293,6 +1296,9 @@ impl Core {
                     if let Some(a) = ambient {
                         self.global.light_ambient = a;
                     }
+                }
+                MainCommmand::Fog(v) => {
+                    self.global.fog_color = v;
                 }
                 MainCommmand::MouseGrab(on) => {
                     // Desired state; the frame loop reconciles it against the
