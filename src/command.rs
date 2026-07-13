@@ -71,7 +71,7 @@ macro_rules! lua_err {
     };
 }
 
-static com_list: [&str; 20] = [
+static COM_LIST: [&str; 20] = [
     "new - creates a new game directory",
     "load - loads an app file",
     "pack - packs a directory into an app file",
@@ -299,7 +299,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                         hard_reset(core);
                         load_app(core, Some(name), None, None, None)?;
                     }
-                    Ok(t) => core.loggy.log(
+                    Ok(_t) => core.loggy.log(
                         LogType::ConfigError,
                         "Problem making directory (corrupt command table)",
                     ),
@@ -391,7 +391,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         }
         "stats" => core.world.stats(),
         "help" => {
-            for c in com_list {
+            for c in COM_LIST {
                 core.loggy.log(LogType::Config, c);
             }
         }
@@ -866,7 +866,7 @@ function make(asset, x, y, z, scale) end"
                     let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
                     match pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id, tx))) {
                         Ok(_) => {}
-                        Err(er) => {
+                        Err(_er) => {
                             return Err(static_err("Unable to group entity"));
                         }
                     };
@@ -910,7 +910,7 @@ function kill(ent) end"
             // println!("hit reset");
             match pitcher.send((bundle_id, MainCommmand::Reload())) {
                 Ok(_) => {}
-                Err(er) => {}
+                Err(_er) => {}
             }
             Ok(())
         },
@@ -1178,7 +1178,7 @@ function tex(asset, im) end"
         move |vm, mc, name: String| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, RgbaImage)>(0);
             let limg = match pitcher.send((bundle_id, MainCommmand::GetImg(name, tx))) {
-                Ok(o) => match rx.recv() {
+                Ok(_o) => match rx.recv() {
                     Ok((w, h, im)) => {
                         let lua_img =
                             LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
@@ -1830,7 +1830,7 @@ pub fn load_empty(core: &mut Core) {
     #[cfg(feature = "headed")]
     {
         let payload = crate::asset::get_logo();
-        crate::asset::unpack(
+        block_on(crate::asset::unpack(
             #[cfg(feature = "headed")]
             &core.gfx.device,
             #[cfg(feature = "headed")]
@@ -1843,7 +1843,7 @@ pub fn load_empty(core: &mut Core) {
             payload,
             &mut core.loggy,
             core.global.debug,
-        );
+        ));
     }
 
     #[cfg(feature = "headed")]
@@ -2093,7 +2093,7 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
         #[cfg(not(feature = "include_auto"))]
         {
             println!("reload into empty bundle");
-            load_app_and_log(core, None, None, None, None);
+            block_on(load_app_and_log(core, None, None, None, None));
         }
     }
 }
