@@ -47,6 +47,9 @@ struct GlobalUniforms {
     persp: [[f32; 4]; 4],
     adjustments: [[f32; 4]; 4],
     specs: [f32; 4],
+    // L0 retro lighting: directional sun. `light_color.w` carries ambient.
+    light_dir: [f32; 4],
+    light_color: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -329,7 +332,8 @@ impl<'w> Gfx<'w> {
             persp: mx_persp.to_cols_array_2d(),
             adjustments: Mat4::ZERO.to_cols_array_2d(),
             specs: [0.0, 0.0, 0.0, 0.0],
-            //num_lights: [lights.len() as u32, 0, 0, 0],
+            light_dir: [0.0, 0.0, -1.0, 0.0],
+            light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

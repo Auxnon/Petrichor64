@@ -783,7 +783,6 @@ function abtn(button) end"
             Option<f64>,
             Option<f64>
         )| {
-            print!("we called make!");
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
@@ -992,6 +991,39 @@ function attr(attributes) end"
         "
 ---@param params cam_params
 function cam(params) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "light",
+        move |_, _, table_val: Value| {
+            if let Value::Table(t) = table_val {
+                let table = t.borrow();
+                let vec3_of = |key: &str| match table.get(key) {
+                    Some(Value::Table(tbl)) => {
+                        let t = tbl.borrow();
+                        Some(glam::vec3(
+                            t.getn(1).unwrap_or(&Value::Nil).into(),
+                            t.getn(2).unwrap_or(&Value::Nil).into(),
+                            t.getn(3).unwrap_or(&Value::Nil).into(),
+                        ))
+                    }
+                    _ => None,
+                };
+                let dir = vec3_of("dir");
+                let color = vec3_of("color");
+                let ambient = match table.get("ambient") {
+                    Some(v) => Some(v.into()),
+                    _ => None,
+                };
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Light(dir, color, ambient))));
+            }
+            Ok(())
+        },
+        "Set the directional sun: dir (xyz), color (rgb 0..1), ambient (0..1)",
+        "
+---@param params light_params
+function light(params) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -2326,6 +2358,9 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
+    /// Directional sun: (dir, rgb color, ambient) — each optional so `light{}`
+    /// can set just one aspect.
+    Light(Option<glam::Vec3>, Option<glam::Vec3>, Option<f32>),
     MouseGrab(bool),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
@@ -2372,6 +2407,11 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
         MainCommmand::Cam(pos, rot) => Some(VmToHost::Cam {
             pos: pos.map(|v| [v.x, v.y, v.z]),
             rot: rot.map(|v| [v.x, v.y]),
+        }),
+        MainCommmand::Light(dir, color, ambient) => Some(VmToHost::Light {
+            dir: dir.map(|v| [v.x, v.y, v.z]),
+            color: color.map(|v| [v.x, v.y, v.z]),
+            ambient,
         }),
         MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
         MainCommmand::Globals(table) => Some(VmToHost::Globals(

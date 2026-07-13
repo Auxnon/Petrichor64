@@ -69,6 +69,13 @@ pub enum VmToHost {
         pos: Option<[f32; 3]>,
         rot: Option<[f32; 2]>,
     },
+    /// Directional sun (L0 lighting). Each field optional so a `light{}` call
+    /// can set just one aspect; `ambient` is flat fill.
+    Light {
+        dir: Option<[f32; 3]>,
+        color: Option<[f32; 3]>,
+        ambient: Option<f32>,
+    },
     /// Capture/release the mouse (FPS look). Web defers the actual pointer-lock
     /// to the next canvas click; native grabs the cursor immediately.
     MouseGrab(bool),

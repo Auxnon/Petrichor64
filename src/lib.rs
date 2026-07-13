@@ -1145,6 +1145,17 @@ impl Core {
                     self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
                 }
             }
+            VmToHost::Light { dir, color, ambient } => {
+                if let Some(d) = dir {
+                    self.global.light_dir = glam::vec3(d[0], d[1], d[2]);
+                }
+                if let Some(c) = color {
+                    self.global.light_color = glam::vec3(c[0], c[1], c[2]);
+                }
+                if let Some(a) = ambient {
+                    self.global.light_ambient = a;
+                }
+            }
             VmToHost::MouseGrab(on) => {
                 // Desired grab state; the frame loop mirrors it into the
                 // pointer-lock intent (actual lock waits for a canvas click).
@@ -1272,6 +1283,17 @@ impl Core {
                         self.global.simple_cam_rot = rot;
                     }
                 }
+                MainCommmand::Light(dir, color, ambient) => {
+                    if let Some(d) = dir {
+                        self.global.light_dir = d;
+                    }
+                    if let Some(c) = color {
+                        self.global.light_color = c;
+                    }
+                    if let Some(a) = ambient {
+                        self.global.light_ambient = a;
+                    }
+                }
                 MainCommmand::MouseGrab(on) => {
                     // Desired state; the frame loop reconciles it against the
                     // actual grab (and defers to a click on web).
@@ -1375,7 +1397,6 @@ impl Core {
                     }
                 }
                 MainCommmand::Spawn(lent) => {
-                    println!("make heard!");
                     // Native/headless: the in-process VM sends the shared wrapper.
                     // On wasm the VM is in a worker and spawns arrive as
                     // VmToHost::Spawn(LuaEnt) applied elsewhere, so this
