@@ -268,7 +268,7 @@ impl BundleManager {
         if raster_id == 0 {
             // println!("1main raster {}", self.main_rasters.len());
             if self.main_rasters.len() > 0 {
-                let mut im = self.main_rasters[0].borrow().clone();
+                let im = self.main_rasters[0].borrow().clone();
                 // TODO  raster overlay?
                 println!("build up main raster {:?}", im.dimensions());
                 // for r in self.main_rasters.iter().skip(1) {
@@ -281,7 +281,7 @@ impl BundleManager {
             }
         } else {
             if self.sky_rasters.len() > 0 {
-                let mut im = self.sky_rasters[0].borrow().clone();
+                let im = self.sky_rasters[0].borrow().clone();
                 // for r in self.sky_rasters.iter().skip(1) {
                 //     image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
                 // }
