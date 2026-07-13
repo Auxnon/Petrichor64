@@ -1,24 +1,21 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
 
-use crate::{
-    lua_ent::{lua_ent_flags, LuaEnt},
-    model::{Model, ModelManager},
-};
+use crate::lua_ent::{lua_ent_flags, LuaEnt};
+
+#[cfg(feature = "headed")]
+use std::{cell::RefCell, rc::Rc};
 
 #[cfg(feature = "headed")]
 use crate::{
     ent::{Ent, EntityUniforms},
-    model::Instance,
+    model::{Instance, Model, ModelManager},
     texture::TexManager,
 };
 
+#[cfg(feature = "headed")]
 use glam::{vec3, vec4};
 #[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
+#[cfg(feature = "headed")]
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::UserDataWrapper;
 #[cfg(feature = "headed")]
@@ -55,7 +52,13 @@ impl EntRef {
     pub fn with_mut<R>(
         &mut self,
         f: impl FnOnce(&mut LuaEnt) -> Result<R, silt_lua::LuaError>,
-    ) -> Result<R, silt_lua::LuaError> {
+    ) -> Result<R, silt_lua::LuaError>
+    where
+        // downcast_mut requires the closure's return type to be convertible
+        // back into a Lua value; downcast_ref has no such bound, which is why
+        // with_ref (above) doesn't need this.
+        R: for<'a> silt_lua::value::ToLua<'a>,
+    {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.0.downcast_mut::<LuaEnt, _, _>(f)

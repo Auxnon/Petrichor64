@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "headed")]
 use crate::post::ScreenBinds;

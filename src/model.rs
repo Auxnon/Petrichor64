@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{ivec3, vec4, IVec3, Mat4, Quat, Vec3, Vec4};
+use glam::{ivec3, vec4, IVec3, Vec4};
+#[cfg(feature = "headed")]
+use glam::{Mat4, Quat, Vec3};
 use itertools::izip;
 use std::{collections::HashMap, rc::Rc};
 #[cfg(feature = "headed")]
@@ -381,7 +383,7 @@ impl ModelManager {
                         .iter()
                         .enumerate()
                         .map(|(i, pos)| {
-                            let mut vv = vertexx(*pos, norms[i], [0., 0.]);
+                            let vv = vertexx(*pos, norms[i], [0., 0.]);
                             // vv.texture(uv_adjust);
                             vv
                         })
@@ -618,6 +620,18 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    /// Block-local integer position (raw packed form used by the wgpu vertex
+    /// buffer). Exposed read-only for backends that rasterize `vert_data`
+    /// directly (e.g. the TUI software renderer) instead of uploading it.
+    pub fn pos(&self) -> [i16; 4] {
+        self._pos
+    }
+    pub fn normal(&self) -> [i8; 4] {
+        self._normal
+    }
+    pub fn tex(&self) -> [f32; 2] {
+        self._tex
+    }
     pub fn trans(&mut self, pos: IVec3) {
         self._pos[0] += pos.x as i16;
         self._pos[1] += pos.y as i16;

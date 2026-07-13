@@ -1,7 +1,7 @@
 #[cfg(feature = "silt")]
 use silt_lua::{
     gc_arena::Mutation,
-    prelude::{LuaError, Table},
+    prelude::Table,
     VM,
 };
 

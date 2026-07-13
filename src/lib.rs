@@ -68,7 +68,14 @@ mod sound;
 mod template;
 mod texture;
 mod tile;
+#[cfg(all(feature = "render-tui", not(target_arch = "wasm32")))]
+mod tui;
 mod types;
+
+#[cfg(all(feature = "headed", feature = "render-tui"))]
+compile_error!(
+    "features `headed` and `render-tui` are mutually exclusive — pick one renderer backend"
+);
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 mod web_worker;
 #[cfg(target_arch = "wasm32")]
@@ -213,7 +220,7 @@ fn state_change_checker(
                             &mut c.loggy,
                         );
                         if let Some(s) = res {
-                            crate::command::run_con_sys(c, &s);
+                            let _ = crate::command::run_con_sys(c, &s);
                         }
 
                         // Also check command-line arguments here.
@@ -998,10 +1005,17 @@ fn install_web_input_handlers(
     }
 }
 
-/// Headless entry point: no window/GPU. Builds the core, loads the default app,
-/// then drives the 60Hz lua loop while feeding stdin lines in as console
-/// commands.
-#[cfg(not(feature = "headed"))]
+/// Terminal entry point: no window/GPU, but draws via the software rasterizer
+/// in `crate::tui` instead of running fully blind. See tui/mod.rs.
+#[cfg(all(not(feature = "headed"), feature = "render-tui"))]
+pub fn start() {
+    crate::tui::start();
+}
+
+/// Headless entry point: no window/GPU/render at all. Builds the core, loads
+/// the default app, then drives the 60Hz lua loop while feeding stdin lines in
+/// as console commands.
+#[cfg(all(not(feature = "headed"), not(feature = "render-tui")))]
 pub fn start() {
     env_logger::init();
     let (mut core, catcher) = block_on(Core::new());

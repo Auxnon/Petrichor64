@@ -107,7 +107,7 @@ impl Loggy {
         if it > self.history_buffer.len() {
             it = self.history_buffer.len();
         }
-        let s = self.history_buffer[(self.history_buffer.len() - it)].clone();
+        let s = self.history_buffer[self.history_buffer.len() - it].clone();
         println!("up com {} len {} it {}", s, self.history_buffer.len(), it);
         self.history_it = it;
         self.current_line = s.clone();
@@ -122,7 +122,7 @@ impl Loggy {
         }
 
         if it > 0 {
-            let s = self.history_buffer[(self.history_buffer.len() - it)].clone();
+            let s = self.history_buffer[self.history_buffer.len() - it].clone();
             self.current_line = s.clone();
             self.log_dirty = true;
         } else {

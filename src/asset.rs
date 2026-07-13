@@ -8,7 +8,6 @@ use std::{
 
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::draw_filled_rect_mut;
-use itertools::Itertools;
 use regex::Regex;
 #[cfg(feature = "headed")]
 use wgpu::Device;
