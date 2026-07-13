@@ -64,7 +64,9 @@ function main()
 	-- Raised, angled look down onto the keyboard.
 	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(-1 / 5) } }
 	-- Overhead sun so the key tops catch light and the sides fall into shade.
-	light { dir = { -0.35, 0.25, -0.9 }, color = { 0.95, 0.93, 0.85 }, ambient = 0.4 }
+	lamp { dir = { -0.35, 0.25, -0.9 }, color = { 0.95, 0.93, 0.85 }, ambient = 0.4 }
+	-- A touch of distance fog fading toward the sky colour.
+	fog { color = { 0.07, 0.07, 0.27 }, dist = 220 }
 	cout('piano: press number keys 1-0 (chords work); keys dip while held')
 end
 

@@ -26,6 +26,8 @@ struct Globals {
 	// L0 retro lighting: directional sun. light_color.w = ambient.
 	light_dir: vec4<f32>,
 	light_color: vec4<f32>,
+	// L2 distance fog: rgb + w = far distance (w=0 disables).
+	fog_color: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -176,7 +178,15 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		discard;
 	}
 
-	return FragmentOutput(vec4<f32>(e3.rgb * shade, e3.a));
+	var rgb = e3.rgb * shade;
+	// L2 distance fog: blend toward fog rgb as the fragment approaches the fog
+	// far distance (fog_color.w). specs.xyz is the camera's world position.
+	if (globals.fog_color.w > 0.) {
+		let fog_t = clamp(length(in.world_position.xyz - in.specs.xyz) / globals.fog_color.w, 0., 1.);
+		rgb = mix(rgb, globals.fog_color.rgb, fog_t);
+	}
+
+	return FragmentOutput(vec4<f32>(rgb, e3.a));
 }
 
 @vertex

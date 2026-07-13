@@ -1,10 +1,10 @@
-## light
+## lamp
 
 _set the directional sun (L0 retro lighting)_
 
 ```lua
 ---@type fun({dir?: number[], color?: number[], ambient?: number})
-function light(params)
+function lamp(params)
 ```
 
 Sets a single directional light for the 3D pass. Pass any subset:
@@ -16,7 +16,7 @@ Sets a single directional light for the 3D pass. Pass any subset:
 
 The final shade is `ambient + max(dot(normal, -dir), 0) * color`. The engine
 defaults to fullbright (`color = {0,0,0}`, `ambient = 1`), so a scene is
-unlit/unchanged until you call `light`.
+unlit/unchanged until you call `lamp`.
 
 ```lua
 -- soft overhead sun with gentle fill

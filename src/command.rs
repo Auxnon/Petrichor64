@@ -995,7 +995,7 @@ function cam(params) end"
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "light",
+        "lamp",
         move |_, _, table_val: Value| {
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
@@ -1022,8 +1022,40 @@ function cam(params) end"
         },
         "Set the directional sun: dir (xyz), color (rgb 0..1), ambient (0..1)",
         "
----@param params light_params
-function light(params) end"
+---@param params lamp_params
+function lamp(params) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "fog",
+        move |_, _, table_val: Value| {
+            if let Value::Table(t) = table_val {
+                let table = t.borrow();
+                let (r, g, b) = match table.get("color") {
+                    Some(Value::Table(tbl)) => {
+                        let c = tbl.borrow();
+                        (
+                            c.getn(1).unwrap_or(&Value::Nil).into(),
+                            c.getn(2).unwrap_or(&Value::Nil).into(),
+                            c.getn(3).unwrap_or(&Value::Nil).into(),
+                        )
+                    }
+                    _ => (0., 0., 0.),
+                };
+                // `dist` is the far distance where geometry is fully fogged; 0 = off.
+                let dist: f32 = match table.get("dist") {
+                    Some(v) => v.into(),
+                    _ => 0.,
+                };
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Fog(glam::vec4(r, g, b, dist)))));
+            }
+            Ok(())
+        },
+        "Set distance fog: color (rgb 0..1) blended in by dist (far, world units; 0 = off)",
+        "
+---@param params fog_params
+function fog(params) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -2361,6 +2393,8 @@ pub enum MainCommmand {
     /// Directional sun: (dir, rgb color, ambient) — each optional so `light{}`
     /// can set just one aspect.
     Light(Option<glam::Vec3>, Option<glam::Vec3>, Option<f32>),
+    /// Distance fog: rgb + w = far distance (w=0 disables).
+    Fog(glam::Vec4),
     MouseGrab(bool),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
@@ -2413,6 +2447,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             color: color.map(|v| [v.x, v.y, v.z]),
             ambient,
         }),
+        MainCommmand::Fog(v) => Some(VmToHost::Fog([v.x, v.y, v.z, v.w])),
         MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
         MainCommmand::Globals(table) => Some(VmToHost::Globals(
             table

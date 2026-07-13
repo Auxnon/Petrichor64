@@ -76,6 +76,8 @@ pub enum VmToHost {
         color: Option<[f32; 3]>,
         ambient: Option<f32>,
     },
+    /// Distance fog: rgb + w = far distance (w=0 disables).
+    Fog([f32; 4]),
     /// Capture/release the mouse (FPS look). Web defers the actual pointer-lock
     /// to the next canvas click; native grabs the cursor immediately.
     MouseGrab(bool),

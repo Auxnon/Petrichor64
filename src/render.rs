@@ -135,6 +135,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     let light_dir: [f32; 4] = [ld.x, ld.y, ld.z, 0.];
     // rgb = sun colour, w = ambient (fullbright when color 0 + ambient 1).
     let light_color: [f32; 4] = [lc.x, lc.y, lc.z, core.global.light_ambient];
+    let fc = core.global.fog_color;
+    let fog_color: [f32; 4] = [fc.x, fc.y, fc.z, fc.w]; // rgb + far dist (w=0 off)
 
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
@@ -149,6 +151,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         .write_buffer(&gfx.uniform_buf, 208, bytemuck::cast_slice(&light_dir));
     gfx.queue
         .write_buffer(&gfx.uniform_buf, 224, bytemuck::cast_slice(&light_color));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 240, bytemuck::cast_slice(&fog_color));
 
     let mut encoder = gfx
         .device

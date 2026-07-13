@@ -30,6 +30,9 @@ pub struct Global {
     pub light_dir: Vec3,
     pub light_color: Vec3,
     pub light_ambient: f32,
+    /// Distance fog (L2). xyz = fog rgb, w = far distance in world units where
+    /// geometry is fully fogged. w = 0 disables it (default).
+    pub fog_color: Vec4,
     pub debug_camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
@@ -69,6 +72,8 @@ impl Global {
             light_dir: vec3(-0.3, -0.5, -0.8),
             light_color: vec3(0., 0., 0.),
             light_ambient: 1.,
+            fog_color: glam::vec4(0., 0., 0., 0.), // w=0 => fog off
+
             smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
