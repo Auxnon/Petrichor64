@@ -130,6 +130,12 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     ];
     // println!("specs: {:?}", specs);
 
+    let ld = core.global.light_dir;
+    let lc = core.global.light_color;
+    let light_dir: [f32; 4] = [ld.x, ld.y, ld.z, 0.];
+    // rgb = sun colour, w = ambient (fullbright when color 0 + ambient 1).
+    let light_color: [f32; 4] = [lc.x, lc.y, lc.z, core.global.light_ambient];
+
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
     let size3 = bytemuck::cast_slice(&time_ref);
@@ -139,6 +145,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     gfx.queue.write_buffer(&gfx.uniform_buf, 64, size2);
     gfx.queue.write_buffer(&gfx.uniform_buf, 128, size3);
     gfx.queue.write_buffer(&gfx.uniform_buf, 192, size_specs);
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 208, bytemuck::cast_slice(&light_dir));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 224, bytemuck::cast_slice(&light_color));
 
     let mut encoder = gfx
         .device

@@ -23,7 +23,9 @@ struct Globals {
 	proj_mat: mat4x4<f32>,
 	adjustments: mat4x4<f32>,
 	specs: vec4<f32>,
-	//num_lights: vec4<u32>,
+	// L0 retro lighting: directional sun. light_color.w = ambient.
+	light_dir: vec4<f32>,
+	light_color: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -148,16 +150,14 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	// in.world_position.xyz
 
 	let mutator=1.;//in.proj_position.w;
-	let t=in.time/2.;
-	let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
-	let light_color=vec3<f32>(1.,1.,1.);
+	// L0 retro lighting: one directional sun + ambient, applied per-fragment.
+	// shade = ambient(light_color.w) + max(dot(N, -L), 0) * sun_rgb.
+	// Defaults (sun_rgb = 0, ambient = 1) leave the scene fullbright/unchanged.
 	let norm = normalize(in.world_normal);
-	let light_dir = normalize(light_pos - in.world_position.xyz); 
-	let diff = max(dot(norm, light_dir), .1);
-	let diffuse = light_color;//diff *  
-	// vec3 result = (ambient + diffuse) * objectColor;
-// FragColor = vec4(result, 1.0);
-   
+	let ldir = normalize(globals.light_dir.xyz);
+	let ndl = max(dot(norm, -ldir), 0.0);
+	let shade = vec3<f32>(globals.light_color.w) + ndl * globals.light_color.rgb;
+
 	f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
    
 	if( in.specs.w>0.){
@@ -176,7 +176,7 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		discard;
 	}
 
-	return FragmentOutput(e3*vec4<f32>(diffuse,1.));
+	return FragmentOutput(vec4<f32>(e3.rgb * shade, e3.a));
 }
 
 @vertex

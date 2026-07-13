@@ -24,6 +24,12 @@ pub struct Global {
     pub game_controller: bool,
     pub console: bool,
     pub cam_pos: Vec3,
+    /// Directional "sun" for the 3D pass (L0 retro lighting). Defaults leave the
+    /// scene fullbright (color 0 + ambient 1 => unchanged) so apps opt in via
+    /// the `light` native.
+    pub light_dir: Vec3,
+    pub light_color: Vec3,
+    pub light_ambient: f32,
     pub debug_camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
@@ -59,6 +65,10 @@ impl Global {
             mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
             cam_pos: vec3(0., 0., 0.),
+            // Fullbright by default: color 0 + ambient 1 => shade stays 1.
+            light_dir: vec3(-0.3, -0.5, -0.8),
+            light_color: vec3(0., 0., 0.),
+            light_ambient: 1.,
             smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),

@@ -163,6 +163,55 @@ so display never feeds back into buffer. Until then, hosts resize via CSS on
 
 ---
 
+## Retro Lighting (planned)
+
+Goal: give the 3D pass simple, cheap, era-appropriate lighting (think N64 / PS1 /
+Quake-lite) — **no shadow maps, no light decals, no per-pixel light loops**. A
+single "sun" plus ambient, and a couple of stylised extras.
+
+**Most of the scaffolding already exists** and is just switched off:
+- `Vertex` carries a normal (`_normal: [i8; 4]`, `model.rs`), and `shader.wgsl`
+  already passes `world_normal` + `world_position` to `fs_main`.
+- `fs_main` even computes `let diff = max(dot(norm, light_dir), .1)` — but line
+  ~157 sets `diffuse = light_color` with the `diff *` **commented out**, so
+  nothing is actually shaded. The light is also a hardcoded point light orbiting
+  on `in.time`.
+
+### Phase L0 — directional sun + ambient (the "turn it on" step)
+- Add a light to `GlobalUniforms` (`gfx.rs`): `light_dir: [f32;4]`,
+  `light_color: [f32;4]`, `ambient: [f32;4]` (there's a spare slot; the old
+  `num_lights` field is already stubbed). Feed it into the `Globals` block in
+  `shader.wgsl`.
+- Replace the orbiting point light with a fixed directional light and actually
+  apply it: `let shade = ambient + max(dot(norm, -light_dir), 0.0) * light_color;`
+  then `f_color.rgb *= shade`.
+- Expose it to Lua: a `light{ dir = {..}, color = {..}, ambient = {..} }` native
+  (mirrors the `cam` native → a `MainCommmand`/`VmToHost` like `Cam`).
+
+### Phase L1 — pick the retro shading model
+- **Gouraud (per-vertex)**: move the diffuse term into `vs_main` and interpolate
+  it — the authentic PS1/N64 look (cheap, slightly wobbly). Recommended default.
+- **Flat**: one normal per face → faceted Quake-lite look (needs face normals or
+  `@interpolate(flat)`).
+- Keep the current per-fragment path available as the "smooth" option.
+
+### Phase L2 — stylised extras (still no shadow maps)
+- **Distance fog**: blend `f_color.rgb` toward a fog colour by depth. The alpha
+  fade on `specs.w` (`fs_main` ~163) is the same idea — extend it to colour.
+  Very PS1/N64, and hides the far clip.
+- **Hemisphere ambient**: tint ambient by `normal.z` (sky colour above, ground
+  colour below) for free directionality without a second light.
+- **Banded/quantised diffuse**: `floor(diff * n) / n` for a stepped, cel/retro
+  ramp — pairs well with the palette look.
+- **Vertex-colour tint / baked AO**: the instance already carries a `color`
+  attribute; multiply it in so tiles/entities can bake in cheap occlusion.
+
+Constraints to hold the retro line: exactly one directional light (no loops),
+lighting stays in the existing single forward pass, and it degrades to
+"fullbright" (ambient = 1) so unlit apps look unchanged.
+
+---
+
 ## Patches Applied
 
 | File | Change |

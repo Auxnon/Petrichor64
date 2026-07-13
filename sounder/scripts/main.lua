@@ -3,6 +3,7 @@
 -- Press several at once for a chord (each note takes its own voice).
 -- The white keys are 3D boxes that dip while their key is held.
 sky:fill('114')
+r=0
 
 -- Globals (scale/whites/white_x) are shared across main() and loop(); constants
 -- are inlined so nothing relies on chunk-level upvalue capture.
@@ -12,26 +13,40 @@ scale = {
 }
 whites = {}
 
-function white_x(i) -- i = 1..10, centred around 0
-	return (i - 5.5) * 0.62
+function white_x(i) -- i = 1..10, centred around 0 (0.75 leaves a gap between keys)
+	return (i - 5.5) * 0.75
+end
+
+-- A flat colour with a faint darker speckle, so adjacent keys read as distinct
+-- surfaces instead of one solid slab.
+function noisy(size, base, speck, chance)
+	local im = nimg(size, size)
+	im:fill(base)
+	for y = 0, size - 1 do
+		for x = 0, size - 1 do
+			if rnd() < chance then
+				im:pixel(x, y, speck)
+			end
+		end
+	end
+	return im
 end
 
 function main()
 	mute()
 
-	-- Solid-colour textures. An asset name that isn't a model falls back to the
-	-- cube mesh with that texture, so these become white / black key boxes.
-	local w = nimg(4, 4)
-	w:fill('FFF')
-	tex('kw', w)
-	local b = nimg(4, 4)
-	b:fill('111')
-	tex('kb', b)
+	-- Solid-ish key surfaces. `make('cube')` resolves to the cube *mesh* (a real
+	-- rectangular prism once scaled); a bare texture name would instead resolve
+	-- to a flat camera-facing sprite. `e.tex` overlays the colour onto the mesh.
+	tex('kw', noisy(16, 'EEE', 'CCC', 0.30)) -- ivory-white with light speckle
+	tex('kb', noisy(16, '111', '000', 0.35)) -- near-black with darker speckle
 
 	-- White keys: one per playable note, laid out left-to-right at depth y=4.
 	for i = 1, #scale do
-		local e = make('kw', white_x(i), 4.0, 0.0)
-		e.size = { 0.5, 2.0, 0.4 } -- width (x), depth (y), height (z)
+		local e = make('cube', white_x(i), 4.0, 0.0)
+		e.tex = 'kw'
+		e.size = { 0.42, 2.0, 0.4 } -- width (x), depth (y), height (z); < spacing => gap
+		e.offset = { -0.5, -0.5, -0.5 } -- the cube mesh is corner-anchored; centre it
 		whites[i] = e
 	end
 
@@ -40,12 +55,16 @@ function main()
 	local black_after = { 1, 2, 4, 5, 6, 8, 9 }
 	for _, p in ipairs(black_after) do
 		local bx = (white_x(p) + white_x(p + 1)) / 2
-		local e = make('kb', bx, 3.65, 0.45)
-		e.size = { 0.32, 1.2, 0.5 }
+		local e = make('cube', bx, 3.65, 0.45)
+		e.tex = 'kb'
+		e.size = { 0.26, 1.2, 0.5 }
+		e.offset = { -0.5, -0.5, -0.5 }
 	end
 
-	-- Level look along +Y so the row of keys sits centred in view.
-	cam { pos = { 0, -10, 10 }, rot = { tau / 4, -tau/9} }
+	-- Raised, angled look down onto the keyboard.
+	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(-1 / 5) } }
+	-- Overhead sun so the key tops catch light and the sides fall into shade.
+	light { dir = { -0.35, 0.25, -0.9 }, color = { 0.95, 0.93, 0.85 }, ambient = 0.4 }
 	cout('piano: press number keys 1-0 (chords work); keys dip while held')
 end
 
@@ -64,6 +83,8 @@ function loop()
 			note(scale[i][2], 0.5)
 		end
 	end
+	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(r -1 / 5) } }
+    r=0.01
 end
 
 function draw() end
