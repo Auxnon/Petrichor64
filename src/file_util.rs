@@ -6,18 +6,15 @@ use std::{fs::File, path::Path};
 // use zip::result::ZipError;
 // use zip::write::FileOptions;
 
-use async_zip::base::read::WithoutEntry;
 // use async_zip::base::read::mem::ZipFileReader;
 // use async_zip::base::read::seek::ZipFileReader;
 use async_zip::base::write::ZipFileWriter;
 use async_zip::error::ZipError;
-use async_zip::tokio::read::ZipEntryReader;
 // use async_zip::tokio::read::ZipEntryReader;
 use async_zip::tokio::read::seek::ZipFileReader;
-use async_zip::{Compression, ZipEntryBuilder};
+use async_zip::ZipEntryBuilder;
 // use futures::TryFutureExt;
 // use futures_lite::io::Cursor;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use crate::error::P64Error;
 use crate::log::{LogType, Loggy};
@@ -78,7 +75,7 @@ pub fn get_file_buffer(path_str: &str) -> Result<Vec<u8>, P64Error> {
 
 /** write a string to a file */
 pub fn write_file_string(path: PathBuf, contents: &str) -> Result<(), P64Error> {
-    let mut file = match File::create(&path) {
+    let file = match File::create(&path) {
         Ok(f) => f,
         Err(e) => return Err(P64Error::IoError(e)),
     };
@@ -116,7 +113,7 @@ pub fn get_file_string_from_path(path: PathBuf) -> Result<String, P64Error> {
     let v = get_file_buffer_from_path(path)?;
     match String::from_utf8(v) {
         Ok(s) => Ok(s),
-        Err(e) => Err(P64Error::IoUtf8Error),
+        Err(_e) => Err(P64Error::IoUtf8Error),
     }
 }
 
@@ -257,7 +254,7 @@ pub async fn pack_zip(
 ) -> Result<(), P64Error> {
     // use tokio::io::AsyncWriteExt;
 
-    let mut bin = get_file_buffer_from_path(thumb)?;
+    let bin = get_file_buffer_from_path(thumb)?;
     if bin.is_empty() {
         loggy.log(
             LogType::ConfigError,
@@ -423,7 +420,10 @@ pub async fn unpack_and_walk<'a>(
                     //     Ok(_) => {}
                     //     _ => {}
                     // }
-                    data_reader.read_to_end_checked(&mut contents);
+                    data_reader
+                        .read_to_end_checked(&mut contents)
+                        .await
+                        .map_err(|_| "problem reading zip entry contents")?;
                     ar.push((shorter.to_owned(), contents));
                 }
                 _ => {}

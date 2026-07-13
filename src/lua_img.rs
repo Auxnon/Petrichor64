@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     command::{num, numop},
@@ -100,7 +100,7 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "line",
-            |vm, mc, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
+            |_vm, _mc, this, (x, y, x2, y2, rgb): (Value, Value, Value, Value, Value)| {
                 let im = safe_unwrap!(this);
                 im.dirty = true;
                 let c = get_color(rgb);
@@ -120,7 +120,7 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "rect",
-            |_, mc, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
+            |_, _mc, this, (x, y, w, h, rgb): (Value, Value, Value, Value, Value)| {
                 let im = safe_unwrap!(this);
                 im.dirty = true;
                 let c = get_color(rgb);
@@ -207,7 +207,7 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "pixel",
-            |_, mc, this_res, (x, y, rgb): (u32, u32, Option<Value>)| {
+            |_, _mc, this_res, (x, y, rgb): (u32, u32, Option<Value>)| {
                 let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
@@ -220,7 +220,7 @@ impl UserData for LuaImg {
             },
         );
 
-        methods.add_method_mut("clr", |_, mc, this_res, (): ()| {
+        methods.add_method_mut("clr", |_, _mc, this_res, (): ()| {
             let this = safe_unwrap!(this_res);
             this.dirty = true;
             this.image = RgbaImage::new(this.width, this.height);

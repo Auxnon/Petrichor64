@@ -1,6 +1,5 @@
-use std::ops::Mul;
 
-use glam::{vec3, vec4, Mat4, Vec4Swizzles};
+use glam::{vec3, vec4, Mat4};
 
 use crate::Core;
 

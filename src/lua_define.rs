@@ -11,7 +11,9 @@ use crate::{
     types::{ControlState, Script},
     world::{TileCommand, TileResponse},
 };
-use gilrs::{Axis, Button, Event, EventType, Gilrs};
+use gilrs::Gilrs;
+#[cfg(feature = "headed")]
+use gilrs::{Axis, Button, Event, EventType};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
@@ -25,12 +27,10 @@ use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal};
 // };
 use colored::Colorize;
 #[cfg(feature = "silt")]
-use silt_lua::{error::ErrorOut, Lua, Value};
+use silt_lua::{error::ErrorOut, Lua};
 use std::{
     cell::RefCell,
-    collections::HashMap,
-    error::Error,
-    io::{BufRead, Read},
+    io::Read,
     rc::Rc,
     sync::mpsc::{channel, sync_channel, RecvTimeoutError, Sender, SyncSender},
     thread,
@@ -269,7 +269,7 @@ impl<'lt> LuaCore {
                     // into ctx below), not captures of this FnMut closure.
                     // `scripts`: sparse store of compiled sources indexed by
                     // silt's source_index, read at error time for snippets.
-                    let mut scripts: Vec<Option<String>> = Vec::new();
+                    let scripts: Vec<Option<String>> = Vec::new();
                     let keys_mutex = Rc::new(RefCell::new([false; 256]));
                     let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
                     let mice_mutex = Rc::new(RefCell::new([0f32; 13]));

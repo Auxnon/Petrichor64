@@ -1,27 +1,21 @@
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager, error_window, global::GuiParams, gui::ScreenIndex,
-    lua_define::MainPacket, render, texture::TexManager,
+    error_window, global::GuiParams, render, texture::TexManager,
 };
-use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
-use crate::{gui::Gui, log::LogType};
+use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
-use itertools::Itertools;
-use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
 use std::sync::mpsc::channel;
 use std::sync::Arc;
-use std::{mem, rc::Rc};
+use std::mem;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
-use wgpu::{BackendOptions, ExperimentalFeatures, Features, SurfaceTarget, Trace};
+use wgpu::{BackendOptions, ExperimentalFeatures, Features, Trace};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
-    window::{CursorGrabMode, Window},
+    window::Window,
 };
 
 const MAX_ENTS: u64 = 10000;

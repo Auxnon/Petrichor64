@@ -3,7 +3,7 @@ use crate::sound::{self, SoundCommand};
 use crate::{
     bundle::BundleManager,
     ent_manager::EntManager,
-    global::{Global, StateChange},
+    global::Global,
     lua_define::MainPacket,
     model::ModelManager,
     texture::TexManager,
@@ -13,17 +13,18 @@ use crate::{
 use crate::{
     ent_manager::InstanceBuffer,
     gfx::Gfx,
+    global::StateChange,
     render::{self, DrawState},
 };
 
-use std::sync::{
-    mpsc::{channel, Receiver, Sender},
-    Arc,
-};
+use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(feature = "headed")]
+use std::sync::Arc;
 
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
+#[cfg(feature = "headed")]
 use colored::Colorize;
 use rustc_hash::FxHashMap;
 #[cfg(feature = "headed")]
@@ -163,7 +164,12 @@ impl<'core> Core {
             .report_interval_s(0.5)
             .build_with_target_rate(60.0);
 
-        let (cli_thread_sender, cli_thread_receiver) = channel::<String>();
+        let (_cli_thread_sender, cli_thread_receiver) = channel::<String>();
+        // The TUI backend puts the terminal in raw mode and reads stdin itself
+        // via crossterm; a second blocking line-reader thread on the same fd
+        // would race it for bytes. Just leave the sender unused there so
+        // `cli_thread_receiver.try_recv()` harmlessly never yields anything.
+        #[cfg(not(feature = "render-tui"))]
         std::thread::spawn(move || loop {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {

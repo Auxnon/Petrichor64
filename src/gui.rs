@@ -4,7 +4,8 @@ use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
 
 use crate::{
-    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse, pool::SharedPool,
+    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse,
+    pool::SharedPool,
 };
 
 #[cfg(feature = "headed")]
@@ -132,7 +133,7 @@ impl ScreenLayer {
                     };
                     if let Some(weak) = weak_ref {
                         if let Some(lua_img) = weak.upgrade() {
-                            if let Err(e) = lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
+                            if let Err(e) = lua_img.downcast_ref::<crate::lua_img::LuaImg, _, _>(|img| {
                                 crate::texture::write_tex(queue, &self.texture.texture, &img.image);
                                 Ok(())
                             }) {
@@ -985,7 +986,7 @@ fn adeval(st: &str, l: u32) -> i32 {
 #[cfg(feature = "headed")]
 pub fn init_image(device: &Device, queue: &Queue, size: (u32, u32)) -> (TexTuple, RgbaImage) {
     // println!("aspect {}", h);
-    let mut img: RgbaImage = ImageBuffer::new(size.0, size.1);
+    let img: RgbaImage = ImageBuffer::new(size.0, size.1);
     // img.put_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
     let out = crate::texture::make_tex(device, queue, &img);
     (out, img)

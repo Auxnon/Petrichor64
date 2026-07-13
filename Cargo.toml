@@ -35,6 +35,12 @@ wasm=[]
 # shared wasm code stays on cfg(target_arch="wasm32").
 wasm-ultra=["wasm"]
 headed=["wgpu", "winit", "winit_input_helper"]
+# Software-rasterized renderer for terminals: no GPU/windowing deps at all, so
+# it builds and runs on devices with no modern graphics API (e.g. a Raspberry
+# Pi Zero 2 W over SSH). Independent of `headed` — reads raw tile/entity data
+# directly rather than the wgpu-cooked chunk/entity buffers, so it doesn't
+# depend on (or conflict with) the wgpu renderer.
+render-tui=["crossterm"]
 audio=["cpal"]
 puc_lua=["mlua"]
 silt=["silt-lua"]
@@ -107,7 +113,7 @@ dirs="6.0.0"
 
 regex="1.11.1"
 # silt-lua = {version="0.3.0", optional=true, git="https://github.com/auxnon/silt-lua", branch="copilot/sub-pr-10-again"}
-silt-lua = {version="0.3.0", optional=true, path="../silt-stable"}
+silt-lua = {version="0.3.0", optional=true, path="../silt-lua"}
 piccolo = { git="https://github.com/kyren/piccolo", optional=true } # version="0.2.0",
 # gc-arena = {git="https://github.com/kyren/gc-arena"}
 crossbeam = "0.8.4"
@@ -120,6 +126,9 @@ atomicell = "0.2.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clipboard = "0.5.0"
 native-dialog = "0.9.0"
+# TUI backend: terminal control has no wasm32 target, so it lives here rather
+# than in the shared [dependencies] table.
+crossterm = { version = "0.28.1", optional = true }
 # native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
 # feature set declared in [dependencies]. Features union across target tables.
 tokio = { version = "1.43.0", features = ["full"] }
