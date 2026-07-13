@@ -75,6 +75,8 @@ pub enum VmToHost {
         dir: Option<[f32; 3]>,
         color: Option<[f32; 3]>,
         ambient: Option<f32>,
+        sky: Option<[f32; 3]>,
+        ground: Option<[f32; 3]>,
     },
     /// Distance fog: rgb + w = far distance (w=0 disables).
     Fog([f32; 4]),

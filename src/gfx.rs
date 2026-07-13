@@ -52,6 +52,9 @@ struct GlobalUniforms {
     light_color: [f32; 4],
     // L2 distance fog: rgb + w = far distance (w=0 disables).
     fog_color: [f32; 4],
+    // L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb.
+    amb_sky: [f32; 4],
+    amb_ground: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -337,6 +340,8 @@ impl<'w> Gfx<'w> {
             light_dir: [0.0, 0.0, -1.0, 0.0],
             light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
             fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
+            amb_sky: [0.0, 0.0, 0.0, 0.0],   // w=0 => flat ambient
+            amb_ground: [0.0, 0.0, 0.0, 0.0],
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

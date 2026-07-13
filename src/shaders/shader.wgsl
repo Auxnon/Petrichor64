@@ -28,6 +28,9 @@ struct Globals {
 	light_color: vec4<f32>,
 	// L2 distance fog: rgb + w = far distance (w=0 disables).
 	fog_color: vec4<f32>,
+	// L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb.
+	amb_sky: vec4<f32>,
+	amb_ground: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -158,7 +161,12 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	let norm = normalize(in.world_normal);
 	let ldir = normalize(globals.light_dir.xyz);
 	let ndl = max(dot(norm, -ldir), 0.0);
-	let shade = vec3<f32>(globals.light_color.w) + ndl * globals.light_color.rgb;
+	// Ambient: flat scalar, or L2 hemisphere (sky above, ground below by N.z).
+	var ambient = vec3<f32>(globals.light_color.w);
+	if (globals.amb_sky.w > 0.) {
+		ambient = mix(globals.amb_ground.rgb, globals.amb_sky.rgb, norm.z * 0.5 + 0.5);
+	}
+	let shade = ambient + ndl * globals.light_color.rgb;
 
 	f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
    
