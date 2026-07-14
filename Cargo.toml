@@ -3,7 +3,6 @@
 name = "Petrichor64"
 version = "0.4.3"
 edition = "2021"
-resolver = "2"
 description = "Cross platform lua interpreting game engine"
 
 [lib]
@@ -11,6 +10,17 @@ description = "Cross platform lua interpreting game engine"
 # tell the two build artifacts apart.
 name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
+
+# The repo is a workspace so dev tools live beside the engine without linking
+# into its binary. `oggify` converts audio -> ogg (carries a Vorbis *encoder*
+# with a C dep we deliberately keep out of the size-optimized engine build).
+# Build it explicitly: `cargo build -p oggify`.
+[workspace]
+members = ["tools/oggify"]
+# Engine-only by default so `cargo build` never drags in oggify's C encoder.
+# Build the tool explicitly: `cargo build -p oggify`.
+default-members = ["."]
+resolver = "2"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.

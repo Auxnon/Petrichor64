@@ -246,8 +246,8 @@ samples, the loaded-file bank, and all voices.
 | 1 | ✅ done | polyphony: 16 channels, voice allocation (`pick_channel`), `chord`/`song` |
 | 2a | ✅ done | waveforms beyond square/tri: `sine`/`saw`/`pulse`/`noise`/additive (`WaveType`, `osc`) |
 | 2b | ✅ done | retro PCM sampling: `smpl` + `voice_out` pitch-resample, `normalize_pcm` loudness-match |
-| A (loading) | ✅ code done, ⚠ untested E2E | load `sounds/*.ogg` (pure-Rust `lewton`) → name bank → `smpl(id,'name')` bind; `Reset` clears bank; `Arc`-shared buffers |
-| B (oggify) | ⏳ next | separate CLI crate: `symphonia` decode (mp3+wav) → `vorbis_rs` encode → `.ogg`; walk a dir, confirm-before-delete originals (default no). Workspace-ify the repo; keep the Vorbis-encoder C dep out of the engine binary |
+| A (loading) | ✅ done (E2E verified) | load `sounds/*.ogg` (pure-Rust `lewton`) → name bank → `smpl(id,'name')` bind; `Reset` clears bank; `Arc`-shared buffers. Verified: oggify output round-trips through lewton |
+| B (oggify) | ✅ done | `tools/oggify` workspace crate: `symphonia` decode (mp3+wav) → `vorbis_rs` encode → `.ogg`; walk a dir, confirm-before-delete originals (default no). Repo is now a workspace (`default-members=["."]` keeps the engine build tool-free); the Vorbis-encoder C dep stays out of the engine + wasm builds |
 | 3 | deferred | shared sound VM |
 | 4 | deferred | MIDI input (feature-gated) |
 

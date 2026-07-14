@@ -1,0 +1,19 @@
+[package]
+name = "oggify"
+version = "0.1.0"
+edition = "2021"
+description = "Convert audio files (wav/mp3) to OGG Vorbis for Petrichor64 sounds/"
+
+[[bin]]
+name = "oggify"
+path = "src/main.rs"
+
+[dependencies]
+# Pure-Rust decode of the input formats. default-features off so we pull only
+# the wav + mp3 readers/codecs, nothing else.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "wav", "pcm", "adpcm"] }
+# OGG Vorbis encoder. Vendors libvorbis/libogg C source and builds it via `cc`
+# (needs a C compiler at build time, no system libs). This C dep is the reason
+# oggify is a separate crate and not part of the engine binary.
+vorbis_rs = "0.5"
+walkdir = "2"
