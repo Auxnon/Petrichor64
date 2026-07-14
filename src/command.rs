@@ -1,6 +1,6 @@
 use crate::root::Core;
 #[cfg(feature = "audio")]
-use crate::sound::{Instrument, Note, SoundCommand};
+use crate::sound::{Instrument, Note, SoundCommand, WaveType};
 #[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
 use crate::{
@@ -1199,19 +1199,45 @@ function mute(channel) end"
 
     lua!(
         "instr",
-        move |_, _, (id, freqs): (usize, Vec<f32>)| {
+        move |_, _, (id, spec, width): (usize, Value, Option<f32>)| {
             #[cfg(feature = "audio")]
-            lua_err!(singer.send(SoundCommand::MakeInstrument(Instrument::new(
-                id, freqs, false,
-            ))));
-
+            {
+                // spec is either a waveform name ('square', 'saw', 'tri', 'pulse',
+                // 'noise', 'sine') or a table of harmonic amplitudes (additive).
+                let inst = match spec {
+                    Value::String(s) => {
+                        let wave = match s.to_lowercase().as_str() {
+                            "sine" | "sin" => WaveType::Sine,
+                            "saw" => WaveType::Saw,
+                            "tri" | "triangle" => WaveType::Triangle,
+                            "pulse" => WaveType::Pulse(width.unwrap_or(0.5)),
+                            "noise" => WaveType::Noise,
+                            _ => WaveType::Square, // 'square'/'sqr' and fallback
+                        };
+                        Instrument::oscillator(id, wave)
+                    }
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut amps = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            amps.push(v.into());
+                            i += 1;
+                        }
+                        Instrument::additive(id, amps)
+                    }
+                    _ => Instrument::oscillator(id, WaveType::Square),
+                };
+                lua_err!(singer.send(SoundCommand::MakeInstrument(inst)));
+            }
             Ok(())
         },
-        "Define instrument `id` from a table of harmonic amplitudes",
+        "Define instrument `id`: a waveform name (square/saw/tri/pulse/noise/sine) or a harmonic-amplitude table",
         "
 ---@param id integer
----@param freqs number[] harmonic amplitudes (index i => harmonic i+1)
-function instr(id, freqs) end"
+---@param spec string|number[] waveform name, or harmonic amplitudes (additive)
+---@param width number? pulse duty 0..1 (for 'pulse')
+function instr(id, spec, width) end"
     );
 
     let pitcher = main_pitcher.clone();

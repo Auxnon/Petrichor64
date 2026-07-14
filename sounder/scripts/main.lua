@@ -34,6 +34,7 @@ end
 
 function main()
 	mute()
+	instr(1, { 1, 0, .5, 0, .3 }) -- additive organ-ish tone for the keys
 
 	-- Solid-ish key surfaces. `make('cube')` resolves to the cube *mesh* (a real
 	-- rectangular prism once scaled); a bare texture name would instead resolve
@@ -86,9 +87,9 @@ function loop()
 			target = -0.14
 		end
 		e.z += (target - e.z) * .4
-		-- Trigger the note once, on the first frame of the press.
+		-- Trigger the note once, on the first frame of the press (instrument 1).
 		if key(kname, true) then
-			note(scale[i][2], 0.5)
+			note(scale[i][2], 0.5, nil, 1)
 		end
 	end
 	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(r -1 / 5) } }
