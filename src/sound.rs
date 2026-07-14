@@ -1,6 +1,9 @@
 use std::{
     collections::VecDeque,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc,
+    },
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -125,6 +128,10 @@ where
     let default_instr = Instrument::oscillator(usize::MAX, WaveType::Square);
     let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
     let mut samples: FxHashMap<usize, Sample> = FxHashMap::default();
+    // Name->PCM bank for sounds loaded from disk (sounds/*.ogg). Consulted only
+    // when a `smpl(id, 'name')` binds a file into an integer slot — never in the
+    // mixer, which stays purely index-keyed. Buffers are Arc-shared.
+    let mut loaded: FxHashMap<String, (Arc<[f32]>, f32)> = FxHashMap::default();
 
     // Per-channel state: `current` is the sounding voice, `fading` is a
     // just-released voice still ramping down so consecutive notes cross-fade
@@ -158,14 +165,45 @@ where
                     // consistent level (see normalize_pcm) — otherwise one sample
                     // is inaudible and the next is deafening.
                     normalize_pcm(&mut pcm);
-                    samples.insert(id, Sample { pcm, base_freq });
+                    samples.insert(
+                        id,
+                        Sample {
+                            pcm: pcm.into(),
+                            base_freq,
+                        },
+                    );
                     instruments.insert(id, Instrument::sample(id));
                 }
+                SoundCommand::LoadSample(name, mut pcm, base_freq) => {
+                    // Boot: a sounds/*.ogg was decoded on the host. Stash it in
+                    // the name bank (normalised, Arc-shared); a later
+                    // `smpl(id, name)` binds it into an integer slot.
+                    let base_freq = if base_freq > 0.0 { base_freq } else { 440.0 };
+                    normalize_pcm(&mut pcm);
+                    loaded.insert(name, (pcm.into(), base_freq));
+                }
+                SoundCommand::BindSample(id, name, base) => {
+                    // `smpl(id, 'name')`: resolve the loaded file once and copy
+                    // its (Arc) buffer into integer slot `id`. Missing name =>
+                    // leave the slot as-is (the note falls back to a default).
+                    if let Some((pcm, bank_base)) = loaded.get(&name) {
+                        samples.insert(
+                            id,
+                            Sample {
+                                pcm: Arc::clone(pcm),
+                                base_freq: base.filter(|b| *b > 0.0).unwrap_or(*bank_base),
+                            },
+                        );
+                        instruments.insert(id, Instrument::sample(id));
+                    }
+                }
                 SoundCommand::Reset => {
-                    // App (re)load: wipe user-defined instruments/samples and
-                    // silence every voice so a removed `smpl`/`instr` can't linger.
+                    // App (re)load: wipe user-defined instruments/samples, the
+                    // loaded-file bank, and silence every voice so a removed
+                    // `smpl`/`instr` (or a since-deleted sound file) can't linger.
                     instruments.clear();
                     samples.clear();
+                    loaded.clear();
                     for c in 0..NUM_CH {
                         queues[c].clear();
                         current[c] = None;
@@ -259,9 +297,10 @@ pub enum WaveType {
 }
 
 /// A loaded PCM sample (mono, -1..1). `base_freq` is the pitch at which it plays
-/// back 1:1 — a note above/below it resamples faster/slower.
+/// back 1:1 — a note above/below it resamples faster/slower. The buffer is an
+/// `Arc` so binding one loaded file into several instrument slots shares it.
 pub struct Sample {
-    pcm: Vec<f32>,
+    pcm: Arc<[f32]>,
     base_freq: f32,
 }
 
@@ -466,6 +505,12 @@ pub enum SoundCommand {
     /// Store a PCM sample (id, mono samples -1..1, base pitch) and register a
     /// same-id instrument that plays it.
     MakeSample(usize, Vec<f32>, f32),
+    /// Stash a disk-loaded sound in the name bank (name, mono PCM, base pitch).
+    /// Sent by the asset loader at boot; bound into a slot later by BindSample.
+    LoadSample(String, Vec<f32>, f32),
+    /// Bind a name-banked sound into integer instrument slot `id`, optionally
+    /// overriding its base pitch. Backs `smpl(id, 'name', base?)`.
+    BindSample(usize, String, Option<f32>),
     /// Play one note. `Some(ch)` targets a channel; `None` auto-allocates a free
     /// one (so overlapping `note()` calls form chords).
     PlayNote(Note, Option<usize>),

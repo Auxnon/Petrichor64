@@ -1,17 +1,36 @@
 ## smpl
 
-_define an instrument from raw PCM samples_
+_define an instrument from a loaded sound file, or from raw PCM samples_
 
 ```lua
----@type fun(id: integer, data: number[], base?: number)
+---@type fun(id: integer, data: string|number[], base?: number)
 function smpl(id, data, base)
 ```
 
 Registers instrument `id` as a **sampler**: instead of an oscillator, notes play
-back the raw waveform in `data` (samples in `-1..1`), resampled to whatever pitch
-the note asks for. `base` is the frequency the sample was recorded at — a note of
-that frequency plays the sample untouched; higher notes speed it up, lower notes
-slow it down. `base` defaults to `440` (A4).
+back a waveform, resampled to whatever pitch the note asks for. `data` is either:
+
+- a **name string** — binds a sound loaded from `sounds/<name>.ogg` (see below), or
+- a **PCM table** — raw samples in `-1..1` you generated in Lua.
+
+`base` is the frequency the sample plays back untouched at — a note of that
+frequency plays it 1:1; higher notes speed it up, lower notes slow it down.
+`base` defaults to `440` (A4).
+
+### Loading sound files
+
+Drop `.ogg` files in a `sounds/` folder next to `assets/` and `scripts/`. They
+are decoded and loudness-normalized at load, keyed by filename (extensionless,
+like textures and models). Bind one into an instrument slot by name — the lookup
+happens once, here; playback stays a plain integer-indexed instrument:
+
+```lua
+smpl(3, 'footstep')        -- bind sounds/footstep.ogg into slot 3
+note(440, 1, nil, 3)       -- play it at its natural pitch (base defaults to 440)
+```
+
+Only `.ogg` is loaded at runtime (tiny pure-Rust decoder). Convert `.wav`/`.mp3`
+sources to `.ogg` first with the `oggify` tool (`cargo run -p oggify -- <dir>`).
 
 The sample is a **one-shot**: it plays through once and then releases, regardless
 of the note's requested length (a longer length just holds the tail of silence).

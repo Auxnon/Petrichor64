@@ -1203,29 +1203,35 @@ function mute(channel) end"
         "smpl",
         move |_, _, (id, data, base): (usize, Value, Option<f32>)| {
             #[cfg(feature = "audio")]
-            {
-                // Read PCM by index (getn loop) rather than Vec<f32> FromLua so we
-                // don't hit silt's hash-order Table->Vec bug — sample order is
-                // critical, a scrambled buffer is just noise.
-                let mut pcm: Vec<f32> = Vec::new();
-                if let Value::Table(t) = data {
+            match data {
+                // A name binds a sound loaded from sounds/<name>.ogg into slot
+                // `id`. The lookup happens once, here — the mixer stays purely
+                // index-keyed.
+                Value::String(name) => {
+                    lua_err!(sing.send(SoundCommand::BindSample(id, name.to_string(), base)));
+                }
+                // A table is raw PCM. Read it by index (getn loop) rather than
+                // Vec<f32> FromLua so we don't hit silt's hash-order Table->Vec
+                // bug — sample order is critical, a scrambled buffer is noise.
+                Value::Table(t) => {
                     let tb = t.borrow();
+                    let mut pcm: Vec<f32> = Vec::new();
                     let mut i = 1;
                     while let Some(v) = tb.getn(i) {
                         pcm.push(v.into());
                         i += 1;
                     }
+                    lua_err!(sing.send(SoundCommand::MakeSample(id, pcm, base.unwrap_or(440.0))));
                 }
-                let base_freq = base.unwrap_or(440.0);
-                lua_err!(sing.send(SoundCommand::MakeSample(id, pcm, base_freq)));
+                _ => {}
             }
             Ok(())
         },
-        "Define instrument `id` from raw PCM samples (-1..1), pitched from `base` Hz (default 440)",
+        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1), pitched from `base` Hz (default 440)",
         "
 ---@param id integer
----@param data number[] raw PCM samples in -1..1
----@param base number? the frequency the sample was recorded at (default 440)
+---@param data string|number[] a loaded sound name (sounds/<name>.ogg), or raw PCM samples in -1..1
+---@param base number? the frequency the sample plays back untouched at (default 440)
 function smpl(id, data, base) end"
     );
 
@@ -1973,6 +1979,8 @@ pub fn load_empty(core: &mut Core) {
             &bundle.lua,
             "empty",
             payload,
+            #[cfg(feature = "audio")]
+            &core.singer,
             &mut core.loggy,
             core.global.debug,
         ));
@@ -2086,6 +2094,8 @@ async fn async_load_app(
                     &bundle.lua,
                     &s,
                     p,
+                    #[cfg(feature = "audio")]
+                    &core.singer,
                     &mut core.loggy,
                     debug,
                 )
@@ -2097,6 +2107,9 @@ async fn async_load_app(
                 if path.is_dir() {
                     let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
                     let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
+                    #[cfg(feature = "audio")]
+                    crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
 
                     crate::asset::walk_files(
                         #[cfg(feature = "headed")]
@@ -2140,6 +2153,8 @@ async fn async_load_app(
                                     &bundle.lua,
                                     &s,
                                     buff,
+                                    #[cfg(feature = "audio")]
+                                    &core.singer,
                                     &mut core.loggy,
                                     debug,
                                 )
@@ -2159,6 +2174,9 @@ async fn async_load_app(
             let path = crate::asset::determine_path(None);
             let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
             let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
+            #[cfg(feature = "audio")]
+            crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
 
             crate::asset::walk_files(
                 #[cfg(feature = "headed")]
