@@ -52,13 +52,12 @@ end
 function main()
 	mute()
 	instr(1, { 1, 0, .5, 0, .3 }) -- additive organ-ish tone (instrument 1)
-	-- Sampled pluck (instrument 2): the keys play this so you can hear the
-	-- retro sampler. Swap the last arg of note() back to 1 for the organ tone.
-	-- ~0.4s buffer so it rings out rather than clicking.
-	smpl(2, pluck_sample(220, 17000), 220)
-	-- Or load a real sound file: drop sounds/<name>.ogg and bind it by name,
-	-- then play it on any channel with that instrument id. e.g.
-	--   smpl(2, 'piano')   -- sounds/piano.ogg into slot 2, replacing the pluck
+	-- Instrument 2 = a sound loaded from disk: sounds/tone.ogg (a 440Hz pluck,
+	-- made with `oggify`). The keys pitch it around its 440 base. This is the
+	-- retro sampler reading a real file — the string lookup happens once here.
+	smpl(2, 'tone')
+	-- Alternatively, synthesize the sample in Lua (no file needed):
+	--   smpl(2, pluck_sample(220, 17000), 220)
 
 	-- Solid-ish key surfaces. `make('cube')` resolves to the cube *mesh* (a real
 	-- rectangular prism once scaled); a bare texture name would instead resolve
