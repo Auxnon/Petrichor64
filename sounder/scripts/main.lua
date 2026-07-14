@@ -32,9 +32,30 @@ function noisy(size, base, speck, chance)
 	return im
 end
 
+-- Bake a short "plucked string" one-shot: a few harmonics that fade to silence
+-- over the length of the buffer. `smpl` then pitches this around the keyboard.
+function pluck_sample(f, n)
+	local sr = 44100 -- author at 44.1kHz (a note at `f` plays the buffer ~untouched)
+	local buf = {}
+	for i = 1, n do
+		local t = (i - 1) / sr
+		local p = (i - 1) / n -- 0..1 through the buffer
+		-- Gentle decay that keeps energy up front then rings out (reads louder
+		-- and fuller than a straight linear fade).
+		local decay = (1 - p) * (1 - p)
+		local s = sin(t * f * tau) * 0.6 + sin(t * f * 2 * tau) * 0.3 + sin(t * f * 3 * tau) * 0.15
+		buf[i] = s * decay
+	end
+	return buf
+end
+
 function main()
 	mute()
-	instr(1, { 1, 0, .5, 0, .3 }) -- additive organ-ish tone for the keys
+	instr(1, { 1, 0, .5, 0, .3 }) -- additive organ-ish tone (instrument 1)
+	-- Sampled pluck (instrument 2): the keys play this so you can hear the
+	-- retro sampler. Swap the last arg of note() back to 1 for the organ tone.
+	-- ~0.4s buffer so it rings out rather than clicking.
+	smpl(2, pluck_sample(220, 17000), 220)
 
 	-- Solid-ish key surfaces. `make('cube')` resolves to the cube *mesh* (a real
 	-- rectangular prism once scaled); a bare texture name would instead resolve
@@ -89,7 +110,7 @@ function loop()
 		e.z += (target - e.z) * .4
 		-- Trigger the note once, on the first frame of the press (instrument 1).
 		if key(kname, true) then
-			note(scale[i][2], 0.5, nil, 1)
+			note(scale[i][2], 0.5, nil, 2)
 		end
 	end
 	cam { pos = { 0, 3, 9 }, rot = { tau / 4,  tau*(r -1 / 5) } }

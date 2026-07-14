@@ -1197,6 +1197,38 @@ function chord(freqs, length, instrument) end"
 function mute(channel) end"
     );
 
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "smpl",
+        move |_, _, (id, data, base): (usize, Value, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Read PCM by index (getn loop) rather than Vec<f32> FromLua so we
+                // don't hit silt's hash-order Table->Vec bug — sample order is
+                // critical, a scrambled buffer is just noise.
+                let mut pcm: Vec<f32> = Vec::new();
+                if let Value::Table(t) = data {
+                    let tb = t.borrow();
+                    let mut i = 1;
+                    while let Some(v) = tb.getn(i) {
+                        pcm.push(v.into());
+                        i += 1;
+                    }
+                }
+                let base_freq = base.unwrap_or(440.0);
+                lua_err!(sing.send(SoundCommand::MakeSample(id, pcm, base_freq)));
+            }
+            Ok(())
+        },
+        "Define instrument `id` from raw PCM samples (-1..1), pitched from `base` Hz (default 440)",
+        "
+---@param id integer
+---@param data number[] raw PCM samples in -1..1
+---@param base number? the frequency the sample was recorded at (default 440)
+function smpl(id, data, base) end"
+    );
+
     lua!(
         "instr",
         move |_, _, (id, spec, width): (usize, Value, Option<f32>)| {
@@ -2014,6 +2046,11 @@ async fn async_load_app(
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+
+    // App (re)load: clear any instruments/samples a previous run registered so
+    // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
+    #[cfg(feature = "audio")]
+    let _ = core.singer.send(SoundCommand::Reset);
 
     let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(

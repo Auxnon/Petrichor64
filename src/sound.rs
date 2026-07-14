@@ -124,6 +124,7 @@ where
     // Default instrument for notes that don't name one: a plain square wave.
     let default_instr = Instrument::oscillator(usize::MAX, WaveType::Square);
     let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
+    let mut samples: FxHashMap<usize, Sample> = FxHashMap::default();
 
     // Per-channel state: `current` is the sounding voice, `fading` is a
     // just-released voice still ramping down so consecutive notes cross-fade
@@ -149,6 +150,27 @@ where
                 }
                 SoundCommand::MakeInstrument(inst) => {
                     instruments.insert(inst.name, inst.normalized());
+                }
+                SoundCommand::MakeSample(id, mut pcm, base_freq) => {
+                    let base_freq = if base_freq > 0.0 { base_freq } else { 440.0 };
+                    // Loudness-match: samples come in at whatever amplitude the
+                    // author happened to bake, so normalise every buffer to a
+                    // consistent level (see normalize_pcm) — otherwise one sample
+                    // is inaudible and the next is deafening.
+                    normalize_pcm(&mut pcm);
+                    samples.insert(id, Sample { pcm, base_freq });
+                    instruments.insert(id, Instrument::sample(id));
+                }
+                SoundCommand::Reset => {
+                    // App (re)load: wipe user-defined instruments/samples and
+                    // silence every voice so a removed `smpl`/`instr` can't linger.
+                    instruments.clear();
+                    samples.clear();
+                    for c in 0..NUM_CH {
+                        queues[c].clear();
+                        current[c] = None;
+                        fading[c] = None;
+                    }
                 }
                 SoundCommand::Stop(ch) => match ch {
                     Some(c) => {
@@ -176,15 +198,15 @@ where
                 }
             }
 
-            // Sounding voice: advance phase, attack toward full, sustain, then
-            // hand off to `fading` for release when its duration elapses.
+            // Sounding voice: source a sample, attack toward full, sustain, then
+            // hand off to `fading` for release when its duration elapses (a
+            // one-shot sample that runs out sets remaining=0 to release itself).
             if let Some(v) = current[c].as_mut() {
                 let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                v.advance();
                 if v.env < 1.0 {
                     v.env = (v.env + attack_rate).min(1.0);
                 }
-                mix += osc(v.phase, instr, &mut v.rng) * v.volume * v.env;
+                mix += voice_out(v, instr, &samples) * v.volume * v.env;
                 v.remaining -= 1.0 / sample_rate;
                 if v.remaining <= 0.0 {
                     fading[c] = current[c].take();
@@ -194,12 +216,11 @@ where
             // Fading voice: release ramp to silence.
             if let Some(v) = fading[c].as_mut() {
                 let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                v.advance();
                 v.env -= release_rate;
                 if v.env <= 0.0 {
                     fading[c] = None;
                 } else {
-                    mix += osc(v.phase, instr, &mut v.rng) * v.volume * v.env;
+                    mix += voice_out(v, instr, &samples) * v.volume * v.env;
                 }
             }
         }
@@ -233,6 +254,15 @@ pub enum WaveType {
     Triangle,
     Pulse(f32), // duty cycle 0..1 (0.5 == square)
     Noise,
+    /// One-shot PCM sample, keyed into the sample store; played back pitched.
+    Sample(usize),
+}
+
+/// A loaded PCM sample (mono, -1..1). `base_freq` is the pitch at which it plays
+/// back 1:1 — a note above/below it resamples faster/slower.
+pub struct Sample {
+    pcm: Vec<f32>,
+    base_freq: f32,
 }
 
 /// Sample one instrument at `phase` (0..2π). `rng` is the voice's noise state.
@@ -277,6 +307,35 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
             *rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             (*rng >> 8) as f32 / 8_388_607.5 - 1.0
         }
+        // Samples are handled in voice_out (they need the store + a cursor).
+        WaveType::Sample(_) => 0.0,
+    }
+}
+
+/// One sample of a voice: advances its cursor and returns the raw signal.
+/// Sample instruments resample their PCM by pitch (freq/base_freq) with linear
+/// interpolation; everything else advances phase and runs `osc`.
+fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>) -> f32 {
+    if let WaveType::Sample(sid) = instr.wave {
+        if let Some(s) = samples.get(&sid) {
+            let i = v.sample_pos as usize;
+            let out = if i + 1 < s.pcm.len() {
+                let frac = v.sample_pos - i as f32;
+                s.pcm[i] * (1.0 - frac) + s.pcm[i + 1] * frac
+            } else if i < s.pcm.len() {
+                s.pcm[i]
+            } else {
+                v.remaining = 0.0; // one-shot finished => release
+                0.0
+            };
+            v.sample_pos += (v.freq / s.base_freq).max(0.0);
+            out
+        } else {
+            0.0
+        }
+    } else {
+        v.advance();
+        osc(v.phase, instr, &mut v.rng)
     }
 }
 
@@ -322,6 +381,10 @@ struct Voice {
     env: f32,
     /// Per-voice noise RNG state (seeded from the note so it varies per voice).
     rng: u32,
+    /// Playback cursor (float index) for Sample instruments.
+    sample_pos: f32,
+    /// The note's frequency, kept so Sample voices can resample by pitch.
+    freq: f32,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -333,6 +396,8 @@ impl Voice {
             volume: note.volume,
             env: 0.0,
             rng: note.frequency.to_bits() | 1, // nonzero, varies per note
+            sample_pos: 0.0,
+            freq: note.frequency,
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
@@ -372,6 +437,15 @@ impl Instrument {
             divisor: 1.0,
         }
     }
+    /// Sample-playback instrument, keyed to a stored sample of the same id.
+    pub fn sample(name: usize) -> Self {
+        Self {
+            name,
+            wave: WaveType::Sample(name),
+            freqs: Vec::new(),
+            divisor: 1.0,
+        }
+    }
     fn compute_divisor(freqs: &[f32]) -> f32 {
         let sum: f32 = freqs.iter().map(|a| a.abs()).sum();
         if sum > 0.0 {
@@ -389,6 +463,9 @@ impl Instrument {
 
 pub enum SoundCommand {
     MakeInstrument(Instrument),
+    /// Store a PCM sample (id, mono samples -1..1, base pitch) and register a
+    /// same-id instrument that plays it.
+    MakeSample(usize, Vec<f32>, f32),
     /// Play one note. `Some(ch)` targets a channel; `None` auto-allocates a free
     /// one (so overlapping `note()` calls form chords).
     PlayNote(Note, Option<usize>),
@@ -397,6 +474,37 @@ pub enum SoundCommand {
     /// Release a channel (`None` = all channels).
     Stop(Option<usize>),
     FadeChannel(usize, f32),
+    /// Drop all user instruments/samples and silence every voice (app reload).
+    Reset,
+}
+
+/// Loudness-match a sample buffer in place. Samples arrive at arbitrary
+/// amplitude, so we scale toward a target RMS (perceived loudness) while
+/// clamping the gain so the peak can't clip. Decaying one-shots (mostly quiet)
+/// end up peak-limited — the loudest safe level — while sustained buffers hit
+/// the RMS target. The result is comparable in loudness to the oscillators,
+/// which run near full scale.
+fn normalize_pcm(pcm: &mut [f32]) {
+    let mut peak = 0.0f32;
+    let mut sum_sq = 0.0f64;
+    for &s in pcm.iter() {
+        peak = peak.max(s.abs());
+        sum_sq += (s as f64) * (s as f64);
+    }
+    if peak <= 0.0 {
+        return; // silent buffer, nothing to scale
+    }
+    let rms = (sum_sq / pcm.len() as f64).sqrt() as f32;
+    const TARGET_RMS: f32 = 0.4; // ~ a mid-loud oscillator
+    const PEAK_CEIL: f32 = 0.98; // headroom against clipping
+    let gain = if rms > 0.0 {
+        (TARGET_RMS / rms).min(PEAK_CEIL / peak)
+    } else {
+        PEAK_CEIL / peak
+    };
+    for s in pcm.iter_mut() {
+        *s *= gain;
+    }
 }
 
 /// Pick the channel for a note: an explicit one, or the first fully-idle channel
