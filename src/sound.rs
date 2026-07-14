@@ -121,18 +121,8 @@ where
     let release_rate = 1.0 / (0.012 * sample_rate);
     let master_volume = 0.2;
 
-    // Default instrument: odd-harmonic (square-ish) additive tone. Harmonics are
-    // small integers now (index i => harmonic i+1) so a per-voice phase wrapped
-    // to [0, 2π) keeps full f32 precision — the old model multiplied phase by
-    // frequencies like 440, which only worked via an ever-growing global clock
-    // whose f32 precision decayed into the "scrambled after a while" bug.
-    let default_instr = Instrument::new(
-        usize::MAX,
-        (1..=15)
-            .map(|k| if k % 2 == 1 { 1.0 / k as f32 } else { 0.0 })
-            .collect(),
-        false,
-    );
+    // Default instrument for notes that don't name one: a plain square wave.
+    let default_instr = Instrument::oscillator(usize::MAX, WaveType::Square);
     let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
 
     // Per-channel state: `current` is the sounding voice, `fading` is a
@@ -194,7 +184,7 @@ where
                 if v.env < 1.0 {
                     v.env = (v.env + attack_rate).min(1.0);
                 }
-                mix += synth(v.phase, instr) * v.volume * v.env;
+                mix += osc(v.phase, instr, &mut v.rng) * v.volume * v.env;
                 v.remaining -= 1.0 / sample_rate;
                 if v.remaining <= 0.0 {
                     fading[c] = current[c].take();
@@ -209,7 +199,7 @@ where
                 if v.env <= 0.0 {
                     fading[c] = None;
                 } else {
-                    mix += synth(v.phase, instr) * v.volume * v.env;
+                    mix += osc(v.phase, instr, &mut v.rng) * v.volume * v.env;
                 }
             }
         }
@@ -232,14 +222,62 @@ where
 
 /// Additive synthesis: sum harmonics (index i => harmonic i+1) at the voice's
 /// current phase, normalised by the amplitude sum so output stays in ~[-1, 1].
-fn synth(phase: f32, instr: &Instrument) -> f32 {
-    let mut total = 0.0;
-    for (i, amp) in instr.freqs.iter().enumerate() {
-        if *amp != 0.0 {
-            total += (phase * (i + 1) as f32).sin() * amp;
+/// Oscillator shape for an instrument. `Additive` sums the harmonic table;
+/// the rest are direct waveform generators (cheaper, punchier, more chip-like).
+#[derive(Clone, Copy)]
+pub enum WaveType {
+    Additive,
+    Sine,
+    Square,
+    Saw,
+    Triangle,
+    Pulse(f32), // duty cycle 0..1 (0.5 == square)
+    Noise,
+}
+
+/// Sample one instrument at `phase` (0..2π). `rng` is the voice's noise state.
+fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
+    const PI: f32 = std::f32::consts::PI;
+    match instr.wave {
+        WaveType::Additive => {
+            let mut total = 0.0;
+            for (i, amp) in instr.freqs.iter().enumerate() {
+                if *amp != 0.0 {
+                    total += (phase * (i + 1) as f32).sin() * amp;
+                }
+            }
+            total / instr.divisor
+        }
+        WaveType::Sine => phase.sin(),
+        WaveType::Square => {
+            if phase < PI {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        WaveType::Pulse(w) => {
+            if phase < TWO_PI * w {
+                1.0
+            } else {
+                -1.0
+            }
+        }
+        WaveType::Saw => phase / PI - 1.0, // ramps -1..1 across the cycle
+        WaveType::Triangle => {
+            let t = phase / TWO_PI;
+            if t < 0.5 {
+                4.0 * t - 1.0
+            } else {
+                3.0 - 4.0 * t
+            }
+        }
+        WaveType::Noise => {
+            // xorshift-ish LCG per voice; full-rate white noise (ignores phase).
+            *rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (*rng >> 8) as f32 / 8_388_607.5 - 1.0
         }
     }
-    total / instr.divisor
 }
 
 fn write_data<T>(output: &mut [T], out_channels: usize, next_sample: &mut dyn FnMut() -> f32)
@@ -282,6 +320,8 @@ struct Voice {
     remaining: f32,
     volume: f32,
     env: f32,
+    /// Per-voice noise RNG state (seeded from the note so it varies per voice).
+    rng: u32,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -292,6 +332,7 @@ impl Voice {
             remaining: note.duration.max(0.0),
             volume: note.volume,
             env: 0.0,
+            rng: note.frequency.to_bits() | 1, // nonzero, varies per note
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
@@ -305,18 +346,30 @@ impl Voice {
 
 pub struct Instrument {
     name: usize,
-    /// Harmonic amplitudes; index i is harmonic (i+1) of the fundamental.
+    wave: WaveType,
+    /// Harmonic amplitudes (Additive only); index i is harmonic (i+1).
     freqs: Vec<f32>,
     divisor: f32,
 }
 
 impl Instrument {
-    pub fn new(name: usize, freqs: Vec<f32>, _half: bool) -> Self {
+    /// Additive instrument from a harmonic-amplitude table.
+    pub fn additive(name: usize, freqs: Vec<f32>) -> Self {
         let divisor = Self::compute_divisor(&freqs);
         Self {
             name,
+            wave: WaveType::Additive,
             freqs,
             divisor,
+        }
+    }
+    /// Direct-waveform instrument (square/saw/triangle/pulse/noise/sine).
+    pub fn oscillator(name: usize, wave: WaveType) -> Self {
+        Self {
+            name,
+            wave,
+            freqs: Vec::new(),
+            divisor: 1.0,
         }
     }
     fn compute_divisor(freqs: &[f32]) -> f32 {
