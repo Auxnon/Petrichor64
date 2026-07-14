@@ -137,6 +137,7 @@ pub async fn unpack(
     lua_master: &LuaCore,
     name: &str,
     file: Vec<u8>,
+    #[cfg(feature = "audio")] singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
     loggy: &mut Loggy,
     debug: bool,
 ) {
@@ -154,7 +155,7 @@ pub async fn unpack(
         }
     };
     let map =
-        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy)
+        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts", "sounds"], loggy)
             .await
         {
             Ok(a) => a,
@@ -248,6 +249,18 @@ pub async fn unpack(
                 _ => {}
             }
         }
+    }
+
+    // Decode any bundled sounds/*.ogg into the audio name bank (mirror of the
+    // directory path's load_sounds_from_dir).
+    #[cfg(feature = "audio")]
+    if let Some(dir) = map.get("sounds") {
+        let sounds: Vec<(String, Vec<u8>)> = dir
+            .iter()
+            .filter(|(item_name, _)| item_name.ends_with(".ogg"))
+            .map(|(item_name, buf)| (item_name.clone(), buf.clone()))
+            .collect();
+        load_sounds_from_buffers(sounds, singer, loggy);
     }
 }
 
@@ -613,6 +626,105 @@ pub fn get_script_items(
                 &format!("scripts directory cannot be located: {}", e),
             );
             Err(P64Error::MissingScripts)
+        }
+    }
+}
+
+/// Decode an OGG/Vorbis buffer to mono f32 PCM (-1..1). Multi-channel files are
+/// downmixed by averaging. Returns None on a malformed/unsupported stream.
+/// Runtime decode only ever needs ogg — everything else is converted to ogg by
+/// the separate `oggify` tool, so the engine carries just the tiny `lewton`
+/// pure-Rust decoder (no C deps).
+#[cfg(feature = "audio")]
+fn decode_ogg(bytes: Vec<u8>) -> Option<Vec<f32>> {
+    use lewton::inside_ogg::OggStreamReader;
+    let mut reader = match OggStreamReader::new(std::io::Cursor::new(bytes)) {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+    let channels = reader.ident_hdr.audio_channels.max(1) as usize;
+    let mut pcm: Vec<f32> = Vec::new();
+    // read_dec_packet_itl yields interleaved i16 frames until the stream ends.
+    while let Ok(Some(frame)) = reader.read_dec_packet_itl() {
+        for chunk in frame.chunks(channels) {
+            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+            pcm.push(sum as f32 / channels as f32 / 32768.0);
+        }
+    }
+    if pcm.is_empty() {
+        None
+    } else {
+        Some(pcm)
+    }
+}
+
+/// Decode each `sounds/*.ogg` under `dir` and stash it in the audio thread's
+/// name bank (keyed by the file stem). A later `smpl(id, 'stem')` binds it into
+/// an integer instrument slot — the mixer never sees the name. Missing `sounds/`
+/// folder is fine (most games have none).
+#[cfg(feature = "audio")]
+pub fn load_sounds_from_dir(
+    dir: &Path,
+    singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
+    loggy: &mut Loggy,
+) {
+    let sounds_path = dir.join("sounds");
+    let entries = match read_dir(&sounds_path) {
+        Ok(d) => d,
+        Err(_) => return, // no sounds/ folder — nothing to do
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("ogg") {
+            continue;
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        match fs::read(&path).ok().and_then(decode_ogg) {
+            Some(pcm) => {
+                loggy.log(
+                    LogType::Config,
+                    &format!("loaded sound '{}' ({} samples)", stem, pcm.len()),
+                );
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, 440.0));
+            }
+            None => loggy.log(
+                LogType::ConfigError,
+                &format!("failed to decode sound {}", path.display()),
+            ),
+        }
+    }
+}
+
+/// Decode already-extracted `sounds/` buffers (name -> ogg bytes) from a packed
+/// game into the audio thread's name bank. Mirror of `load_sounds_from_dir` for
+/// the bundled path.
+#[cfg(feature = "audio")]
+pub fn load_sounds_from_buffers(
+    sounds: Vec<(String, Vec<u8>)>,
+    singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
+    loggy: &mut Loggy,
+) {
+    for (name, bytes) in sounds {
+        let stem = Path::new(&name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&name)
+            .to_string();
+        match decode_ogg(bytes) {
+            Some(pcm) => {
+                loggy.log(
+                    LogType::Config,
+                    &format!("loaded sound '{}' ({} samples)", stem, pcm.len()),
+                );
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, 440.0));
+            }
+            None => loggy.log(
+                LogType::ConfigError,
+                &format!("failed to decode packed sound {}", stem),
+            ),
         }
     }
 }

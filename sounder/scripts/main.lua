@@ -56,6 +56,9 @@ function main()
 	-- retro sampler. Swap the last arg of note() back to 1 for the organ tone.
 	-- ~0.4s buffer so it rings out rather than clicking.
 	smpl(2, pluck_sample(220, 17000), 220)
+	-- Or load a real sound file: drop sounds/<name>.ogg and bind it by name,
+	-- then play it on any channel with that instrument id. e.g.
+	--   smpl(2, 'piano')   -- sounds/piano.ogg into slot 2, replacing the pluck
 
 	-- Solid-ish key surfaces. `make('cube')` resolves to the cube *mesh* (a real
 	-- rectangular prism once scaled); a bare texture name would instead resolve

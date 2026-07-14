@@ -219,3 +219,56 @@ lighting stays in the existing single forward pass, and it degrades to
 | `src/lua_define.rs` | Remove `mutations.gui = false; mutations.sky = false;` so BundleMutations defaults (`true`) stand |
 | `src/gui.rs` | Fix `ScreenLayer::check_render`: upload System from `self.image`; upload Primary/Sky from LuaImg without `pool.gui_dirty` gate; reset dirty only after successful upload |
 | `src/render.rs` | Change `draw(0..4, 0..4)` → `draw(0..4, 0..1)` for sky, GUI, and post passes |
+
+---
+
+## Sound System
+
+Native-only optional feature (`--features audio`, pulls `cpal`). One cpal output
+stream owns all synth state on the audio thread; the engine sends one-way
+`SoundCommand`s over `core.singer` (`mpsc`). The stream outlives Lua reloads, so
+`SoundCommand::Reset` (sent from `async_load_app` every load) wipes instruments,
+samples, the loaded-file bank, and all voices.
+
+**Design constraints (from the engine owner):**
+- Instruments/samples stay **integer-indexed** for a fast mixer hot path — never
+  string-keyed. Names exist only in load/bind staging.
+- Don't add Lua commands just to associate a sound file with an id — reuse
+  `smpl` (string arg binds a loaded file; table arg is raw PCM).
+- Load-everything-at-boot is fine for now; **asset unloading is a deferred
+  concern** (see below).
+
+### Phases
+
+| Phase | Status | What |
+|-------|--------|------|
+| 0 | ✅ done | repair scramble/cutting; per-voice wrapped phase + attack/release envelope |
+| 1 | ✅ done | polyphony: 16 channels, voice allocation (`pick_channel`), `chord`/`song` |
+| 2a | ✅ done | waveforms beyond square/tri: `sine`/`saw`/`pulse`/`noise`/additive (`WaveType`, `osc`) |
+| 2b | ✅ done | retro PCM sampling: `smpl` + `voice_out` pitch-resample, `normalize_pcm` loudness-match |
+| A (loading) | ✅ code done, ⚠ untested E2E | load `sounds/*.ogg` (pure-Rust `lewton`) → name bank → `smpl(id,'name')` bind; `Reset` clears bank; `Arc`-shared buffers |
+| B (oggify) | ⏳ next | separate CLI crate: `symphonia` decode (mp3+wav) → `vorbis_rs` encode → `.ogg`; walk a dir, confirm-before-delete originals (default no). Workspace-ify the repo; keep the Vorbis-encoder C dep out of the engine binary |
+| 3 | deferred | shared sound VM |
+| 4 | deferred | MIDI input (feature-gated) |
+
+### Remaining / gaps
+- **Packer doesn't bundle `sounds/`**: `asset::unpack` decodes bundled sounds and
+  the whitelist includes `sounds`, but `collect_packable_sources`/`pack_folder`
+  don't yet *write* `sounds/` into `.game.png`. Directory games work; packed
+  games can't carry sounds until the packer is updated.
+- **E2E load untested**: no ogg encoder on the dev machine and no `.ogg` fixture,
+  so the load path hasn't run against a real file yet. Verify once `oggify`
+  (Phase B) can produce one.
+- **Sample-rate/pitch coupling**: `voice_out` advances by `freq/base_freq` and
+  ignores the device rate vs the buffer's authored rate — pitch drifts ~8% on a
+  48 kHz device for a 44.1 kHz-authored buffer. Fine for retro; thread device
+  rate into `base_freq` scaling if precise tuning is ever needed.
+- **Silt `to_vec` hash-order bug** (unfixed upstream): read PCM/chord/song arrays
+  by `getn(i)` index loop, never `Vec<T>` `FromLua`.
+
+### Deferred: asset unloading (long-term)
+The load-everything-into-memory-at-boot model risks large memory footprints for
+big games. Not addressed now. This design leans the right way: the sound name
+bank is a natural unload hook (drop-by-name / free a slot) and `Arc` buffers
+avoid duplication. A full solution (refcounted unload across textures, models,
+and sounds) is a separate engine effort for when a game actually needs it.
