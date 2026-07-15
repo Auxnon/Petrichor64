@@ -77,16 +77,19 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
     ))]
     let host = cpal::default_host();
 
+    // Return an error rather than panicking when no device/config is available
+    // (e.g. a browser with no/blocked audio): the caller (root.rs) logs it and
+    // continues in silence instead of aborting the whole app.
     let device = if opt.device == "default" {
         host.default_output_device()
     } else {
         host.output_devices()?
             .find(|x| x.name().map(|y| y == opt.device).unwrap_or(false))
     }
-    .expect("failed to find output device");
+    .ok_or_else(|| anyhow::anyhow!("no audio output device found"))?;
     println!("Output device: {}", device.name()?);
 
-    let config = device.default_output_config().unwrap();
+    let config = device.default_output_config()?;
     println!("Default output config: {:?}", config);
 
     match config.sample_format() {
