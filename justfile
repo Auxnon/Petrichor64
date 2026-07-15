@@ -75,6 +75,11 @@ appimage:
 # ---------------------------------------------------------------------------
 
 # Dev server with live reload at http://localhost:8080.
+# NOTE: Trunk.toml sets filehash=false (worker.js imports a fixed bundle name),
+# so the browser caches Petrichor64_bg.wasm across rebuilds. After changing
+# features/protocol, hard-reload with DevTools "Disable cache" on — otherwise
+# the main thread and VM worker can run different vintages of the bundle (e.g.
+# "unknown variant `Sound`" if one has audio and the other doesn't).
 web:
     trunk serve
 
