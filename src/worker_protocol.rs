@@ -107,6 +107,11 @@ pub enum VmToHost {
     MapTex { name: String, index: u32 },
     /// A runtime/async error to surface in the engine console.
     Error(String),
+    /// A sound command the VM issued (note/instr/smpl/…). The VM worker has no
+    /// audio device (AudioContext is main-thread only), so it forwards these to
+    /// the main thread, which replays them into its cpal stream.
+    #[cfg(feature = "audio")]
+    Sound(crate::sound::SoundCommand),
 }
 
 /// Serializable form of a world [`Chunk`]. Its `cells` are a fixed 32³ array of
