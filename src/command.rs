@@ -2178,6 +2178,9 @@ async fn async_load_app(
                         &bundle.lua,
                         &asset_items,
                         &script_items,
+                        // Sounds already loaded above via load_sounds_from_dir;
+                        // walk_files's packable-list return is unused on load.
+                        &[],
                         &mut core.loggy,
                         debug,
                     );
@@ -2245,6 +2248,7 @@ async fn async_load_app(
                 &bundle.lua,
                 &asset_items,
                 &script_items,
+                &[],
                 &mut core.loggy,
                 debug,
             );
