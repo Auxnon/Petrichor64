@@ -130,9 +130,10 @@ where
     let default_instr = Instrument::oscillator(usize::MAX, WaveType::Square);
     let mut instruments: FxHashMap<usize, Instrument> = FxHashMap::default();
     let mut samples: FxHashMap<usize, Sample> = FxHashMap::default();
-    // Name->PCM bank for sounds loaded from disk (sounds/*.ogg). Consulted only
-    // when a `smpl(id, 'name')` binds a file into an integer slot — never in the
-    // mixer, which stays purely index-keyed. Buffers are Arc-shared.
+    // Name->(PCM, source sample-rate) bank for sounds loaded from disk
+    // (sounds/*.ogg). Consulted only when a `smpl(id, 'name')` binds a file into
+    // an integer slot — never in the mixer, which stays purely index-keyed.
+    // Buffers are Arc-shared.
     let mut loaded: FxHashMap<String, (Arc<[f32]>, f32)> = FxHashMap::default();
 
     // Per-channel state: `current` is the sounding voice, `fading` is a
@@ -167,33 +168,37 @@ where
                     // consistent level (see normalize_pcm) — otherwise one sample
                     // is inaudible and the next is deafening.
                     normalize_pcm(&mut pcm);
+                    // Raw Lua PCM has no source rate — treat it as device-rate
+                    // (rate_ratio 1.0), preserving the old 1-sample-per-output step.
                     samples.insert(
                         id,
                         Sample {
                             pcm: pcm.into(),
                             base_freq,
+                            rate_ratio: 1.0,
                         },
                     );
                     instruments.insert(id, Instrument::sample(id).with_env(env));
                 }
-                SoundCommand::LoadSample(name, mut pcm, base_freq) => {
+                SoundCommand::LoadSample(name, mut pcm, source_rate) => {
                     // Boot: a sounds/*.ogg was decoded on the host. Stash it in
-                    // the name bank (normalised, Arc-shared); a later
-                    // `smpl(id, name)` binds it into an integer slot.
-                    let base_freq = if base_freq > 0.0 { base_freq } else { 440.0 };
+                    // the name bank (normalised, Arc-shared) with its source
+                    // sample-rate; a later `smpl(id, name)` binds it into a slot.
                     normalize_pcm(&mut pcm);
-                    loaded.insert(name, (pcm.into(), base_freq));
+                    let source_rate = if source_rate > 0.0 { source_rate } else { sample_rate };
+                    loaded.insert(name, (pcm.into(), source_rate));
                 }
                 SoundCommand::BindSample(id, name, base, env) => {
                     // `smpl(id, 'name')`: resolve the loaded file once and copy
                     // its (Arc) buffer into integer slot `id`. Missing name =>
                     // leave the slot as-is (the note falls back to a default).
-                    if let Some((pcm, bank_base)) = loaded.get(&name) {
+                    if let Some((pcm, source_rate)) = loaded.get(&name) {
                         samples.insert(
                             id,
                             Sample {
                                 pcm: Arc::clone(pcm),
-                                base_freq: base.filter(|b| *b > 0.0).unwrap_or(*bank_base),
+                                base_freq: base.filter(|b| *b > 0.0).unwrap_or(440.0),
+                                rate_ratio: source_rate / sample_rate,
                             },
                         );
                         instruments.insert(id, Instrument::sample(id).with_env(env));
@@ -312,11 +317,15 @@ pub enum WaveType {
 }
 
 /// A loaded PCM sample (mono, -1..1). `base_freq` is the pitch at which it plays
-/// back 1:1 — a note above/below it resamples faster/slower. The buffer is an
-/// `Arc` so binding one loaded file into several instrument slots shares it.
+/// back 1:1 — a note above/below it resamples faster/slower. `rate_ratio` is the
+/// sample's source sample-rate divided by the audio device's rate: it corrects
+/// for a buffer recorded at, say, 44.1kHz playing on a 48kHz device, so pitch
+/// and tempo stay accurate (raw Lua PCM has no source rate, so it's 1.0). The
+/// buffer is an `Arc` so binding one loaded file into several slots shares it.
 pub struct Sample {
     pcm: Arc<[f32]>,
     base_freq: f32,
+    rate_ratio: f32,
 }
 
 /// Sample one instrument at `phase` (0..2π). `rng` is the voice's noise state.
@@ -382,7 +391,10 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
                 v.remaining = 0.0; // one-shot finished => release
                 0.0
             };
-            v.sample_pos += (v.freq / s.base_freq).max(0.0);
+            // Cursor step = pitch ratio × source/device rate ratio, so a note at
+            // base_freq plays the buffer at its recorded speed regardless of the
+            // device rate (fixes ~8% pitch/tempo drift on a 48kHz device).
+            v.sample_pos += (v.freq / s.base_freq * s.rate_ratio).max(0.0);
             out
         } else {
             0.0
@@ -589,8 +601,8 @@ pub enum SoundCommand {
     /// Store a PCM sample (id, mono samples -1..1, base pitch, envelope) and
     /// register a same-id instrument that plays it.
     MakeSample(usize, Vec<f32>, f32, Envelope),
-    /// Stash a disk-loaded sound in the name bank (name, mono PCM, base pitch).
-    /// Sent by the asset loader at boot; bound into a slot later by BindSample.
+    /// Stash a disk-loaded sound in the name bank (name, mono PCM, source
+    /// sample-rate). Sent by the asset loader at boot; bound later by BindSample.
     LoadSample(String, Vec<f32>, f32),
     /// Bind a name-banked sound into integer instrument slot `id`, optionally
     /// overriding its base pitch, with an envelope. Backs `smpl(id, 'name', cfg?)`.

@@ -252,19 +252,20 @@ samples, the loaded-file bank, and all voices.
 | 4 | deferred | MIDI input (feature-gated) |
 
 ### Remaining / gaps
-- **Packer doesn't bundle `sounds/`**: `asset::unpack` decodes bundled sounds and
-  the whitelist includes `sounds`, but `collect_packable_sources`/`pack_folder`
-  don't yet *write* `sounds/` into `.game.png`. Directory games work; packed
-  games can't carry sounds until the packer is updated.
-- **E2E load untested**: no ogg encoder on the dev machine and no `.ogg` fixture,
-  so the load path hasn't run against a real file yet. Verify once `oggify`
-  (Phase B) can produce one.
-- **Sample-rate/pitch coupling**: `voice_out` advances by `freq/base_freq` and
-  ignores the device rate vs the buffer's authored rate — pitch drifts ~8% on a
-  48 kHz device for a 44.1 kHz-authored buffer. Fine for retro; thread device
-  rate into `base_freq` scaling if precise tuning is ever needed.
+- **Packer bundles `sounds/`** ✅ — `collect_packable_sources` writes `.ogg` files
+  (raw wav/mp3 skipped: the engine can't decode them, convert with oggify first);
+  verified a packed `.game.png` carries the sounds. Both directory and packed
+  games now load sounds.
+- **Sample-rate/pitch correctness** ✅ — `Sample.rate_ratio` (= source rate /
+  device rate, source read from each ogg header by lewton) makes a note at
+  `base_freq` play at the recorded speed regardless of device rate. Raw Lua PCM
+  has no source rate so it's 1.0 (device-rate, unchanged). Device rate is a
+  load-time constant; nothing is user-passed.
 - **Silt `to_vec` hash-order bug** (unfixed upstream): read PCM/chord/song arrays
   by `getn(i)` index loop, never `Vec<T>` `FromLua`.
+- **Sample end-click** (minor, theoretical): a sample that doesn't decay to ~0 at
+  its buffer end jumps to 0 in one sample when it stops. tone.ogg/amens decay so
+  it's inaudible; add a short end-fade if a non-decaying sample ever clicks.
 
 ### Deferred: asset unloading (long-term)
 The load-everything-into-memory-at-boot model risks large memory footprints for

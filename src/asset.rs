@@ -66,6 +66,7 @@ pub async fn pack(
 
     let asset_items = get_asset_items(&path, loggy)?;
     let script_items = get_script_items(&path, loggy)?;
+    let sound_items = get_sound_items(&path);
 
     let sources = walk_files(
         #[cfg(feature = "headed")]
@@ -79,6 +80,7 @@ pub async fn pack(
         lua_master,
         &asset_items,
         &script_items,
+        &sound_items,
         loggy,
         debug,
     );
@@ -101,9 +103,10 @@ pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Res
     let path = PathBuf::from(dir);
     let asset_items = get_asset_items(&path, loggy)?;
     let script_items = get_script_items(&path, loggy)?;
+    let sound_items = get_sound_items(&path);
 
     // Same file set the engine's walk_files bundles, via the shared collector.
-    let sources = collect_packable_sources(&asset_items, &script_items);
+    let sources = collect_packable_sources(&asset_items, &script_items, &sound_items);
     if sources.is_empty() {
         loggy.log(
             LogType::ConfigError,
@@ -407,13 +410,16 @@ pub fn bundle_output_name(name: Option<&str>, path: &Path) -> String {
 }
 
 /// The set of files that go into a bundle zip: every recognised asset
-/// (`is_valid_type`) plus every `.lua` script except `*ignore.lua`. Shared by
-/// the engine's `walk_files` and the CLI `pack_folder` so both bundle exactly
-/// the same files. Paths are returned verbatim — the parent dir stays
-/// `assets`/`scripts`, which the unpacker keys on.
+/// (`is_valid_type`) plus every `.lua` script except `*ignore.lua`, plus every
+/// `.ogg` under `sounds/`. Shared by the engine's `walk_files` and the CLI
+/// `pack_folder` so both bundle exactly the same files. Paths are returned
+/// verbatim — the parent dir stays `assets`/`scripts`/`sounds`, which the
+/// unpacker keys on. Only `.ogg` sounds are bundled: the engine can't decode
+/// raw wav/mp3, so those must be converted first (see the `oggify` tool).
 pub fn collect_packable_sources<'a>(
     asset_items: &'a [PathBuf],
     script_items: &'a [PathBuf],
+    sound_items: &'a [PathBuf],
 ) -> Vec<&'a str> {
     let mut sources: Vec<&str> = Vec::new();
     for entry in asset_items {
@@ -435,6 +441,18 @@ pub fn collect_packable_sources<'a>(
                 if !p.ends_with("ignore.lua") {
                     sources.push(p);
                 }
+            }
+        }
+    }
+    for entry in sound_items {
+        let is_ogg = entry
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("ogg"))
+            .unwrap_or(false);
+        if is_ogg {
+            if let Some(p) = entry.to_str() {
+                sources.push(p);
             }
         }
     }
@@ -603,6 +621,18 @@ pub fn get_asset_items(
     }
 }
 
+/// List files under `<path>/sounds`. Unlike assets/scripts this folder is
+/// optional, so a missing one is not an error — it just yields an empty list.
+pub fn get_sound_items(current_path: &Path) -> Vec<PathBuf> {
+    match read_dir(current_path.join("sounds")) {
+        Ok(dir) => dir
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 pub fn get_script_items(
     current_path: &PathBuf,
     loggy: &mut Loggy,
@@ -636,13 +666,14 @@ pub fn get_script_items(
 /// the separate `oggify` tool, so the engine carries just the tiny `lewton`
 /// pure-Rust decoder (no C deps).
 #[cfg(feature = "audio")]
-fn decode_ogg(bytes: Vec<u8>) -> Option<Vec<f32>> {
+fn decode_ogg(bytes: Vec<u8>) -> Option<(Vec<f32>, f32)> {
     use lewton::inside_ogg::OggStreamReader;
     let mut reader = match OggStreamReader::new(std::io::Cursor::new(bytes)) {
         Ok(r) => r,
         Err(_) => return None,
     };
     let channels = reader.ident_hdr.audio_channels.max(1) as usize;
+    let source_rate = reader.ident_hdr.audio_sample_rate as f32;
     let mut pcm: Vec<f32> = Vec::new();
     // read_dec_packet_itl yields interleaved i16 frames until the stream ends.
     while let Ok(Some(frame)) = reader.read_dec_packet_itl() {
@@ -654,7 +685,7 @@ fn decode_ogg(bytes: Vec<u8>) -> Option<Vec<f32>> {
     if pcm.is_empty() {
         None
     } else {
-        Some(pcm)
+        Some((pcm, source_rate))
     }
 }
 
@@ -683,12 +714,12 @@ pub fn load_sounds_from_dir(
             None => continue,
         };
         match fs::read(&path).ok().and_then(decode_ogg) {
-            Some(pcm) => {
+            Some((pcm, rate)) => {
                 loggy.log(
                     LogType::Config,
-                    &format!("loaded sound '{}' ({} samples)", stem, pcm.len()),
+                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
                 );
-                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, 440.0));
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
             }
             None => loggy.log(
                 LogType::ConfigError,
@@ -714,12 +745,12 @@ pub fn load_sounds_from_buffers(
             .unwrap_or(&name)
             .to_string();
         match decode_ogg(bytes) {
-            Some(pcm) => {
+            Some((pcm, rate)) => {
                 loggy.log(
                     LogType::Config,
-                    &format!("loaded sound '{}' ({} samples)", stem, pcm.len()),
+                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
                 );
-                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, 440.0));
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
             }
             None => loggy.log(
                 LogType::ConfigError,
@@ -739,6 +770,7 @@ pub fn walk_files<'a>(
     lua_master: &LuaCore,
     asset_items: &'a Vec<PathBuf>,
     script_items: &'a Vec<PathBuf>,
+    sound_items: &'a [PathBuf],
     loggy: &mut Loggy,
     debug: bool,
 ) -> Vec<&'a str> {
@@ -851,7 +883,7 @@ pub fn walk_files<'a>(
     //.expect("Scripts directory failed to load")
     // The zip source list is exactly the shared collector's output — the loops
     // above only bake assets/scripts into the live instance (when activate).
-    collect_packable_sources(asset_items, script_items)
+    collect_packable_sources(asset_items, script_items, sound_items)
 }
 
 #[cfg(feature = "headed")]
