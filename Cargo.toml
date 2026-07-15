@@ -150,6 +150,10 @@ tokio = { version = "1.43.0", features = ["full"] }
 # wasm-only dependencies: browser glue for the web build.
 # ---------------------------------------------------------------------------
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# cpal needs its wasm-bindgen feature to use the WebAudio backend on wasm32;
+# without it the host finds no output device. (Feature unions with the base
+# optional cpal dep, which the `audio` feature enables.)
+cpal = { version = "0.16.0", optional = true, features = ["wasm-bindgen"] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
