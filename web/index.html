@@ -6,7 +6,13 @@
     <title>Petrichor64 (web)</title>
     <!-- Build the crate to wasm. Trunk runs `cargo build` for the wasm target,
          then wasm-bindgen, and injects the loader. The bin's main() is the entry. -->
-    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="Petrichor64" data-type="main" data-cargo-features="wasm" />
+    <!-- data-wasm-opt-params: modern rustc emits the standardized wasm feature
+         set (bulk-memory, nontrapping-fptoint, sign-ext, …); wasm-opt rejects
+         those ops unless the features are enabled. Enable them so optimization
+         stays on (vs. disabling wasm-opt). Enabling extra features is harmless —
+         it only permits ops, it doesn't inject them. All are baseline in modern
+         browsers. -->
+    <link data-trunk rel="rust" href="../Cargo.toml" data-bin="Petrichor64" data-type="main" data-cargo-features="wasm" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-multivalue --enable-reference-types" />
     <!-- copy the VM worker script into dist so it's served at /worker.js -->
     <link data-trunk rel="copy-file" href="worker.js" />
     <style>
