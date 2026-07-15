@@ -1281,6 +1281,12 @@ impl Core {
             VmToHost::Error(s) => {
                 web_sys::console::error_1(&format!("[vm error] {}", s).into());
             }
+            // Replay a VM sound command into the main thread's cpal stream (the
+            // worker has no audio device, so it forwarded it here).
+            #[cfg(feature = "audio")]
+            VmToHost::Sound(cmd) => {
+                let _ = self.singer.send(cmd);
+            }
         }
     }
 

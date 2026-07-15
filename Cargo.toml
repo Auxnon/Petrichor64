@@ -32,13 +32,13 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed"] # "online_capable" ,  "headed" , "include_auto"
+default=[ "silt","headed","audio"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
 online_capable=["rmp-serde", "bytes"]
 # `wasm` marks a wasm build (drop-in, CDN-friendly, no shared memory). NOT in
 # default — native builds must never enable it. tokio/tokio-util are non-optional
 # now (needed by async_zip on both targets), so this pulls no deps itself.
-wasm=[]
+wasm=["audio"]
 # `wasm-ultra` is the high-performance wasm build: SharedArrayBuffer + wasm
 # atomics for a shared entity buffer (requires COOP/COEP isolation headers on the
 # host page). Additive over `wasm`; ultra-only code gates on feature="wasm-ultra",

@@ -7,6 +7,7 @@ use std::{
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug)]
@@ -303,7 +304,7 @@ where
 /// current phase, normalised by the amplitude sum so output stays in ~[-1, 1].
 /// Oscillator shape for an instrument. `Additive` sums the harmonic table;
 /// the rest are direct waveform generators (cheaper, punchier, more chip-like).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum WaveType {
     Additive,
     Sine,
@@ -417,7 +418,7 @@ where
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Note {
     instrument: usize,
     pub frequency: f32,
@@ -440,7 +441,7 @@ impl Note {
 /// (0..1) held while the note sounds. Defaults reproduce the old fixed envelope
 /// (fast attack, no decay, full sustain, short release) so untouched instruments
 /// sound exactly as before.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Envelope {
     pub attack: f32,
     pub decay: f32,
@@ -535,6 +536,7 @@ impl Voice {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Instrument {
     name: usize,
     wave: WaveType,
@@ -596,6 +598,7 @@ impl Instrument {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SoundCommand {
     MakeInstrument(Instrument),
     /// Store a PCM sample (id, mono samples -1..1, base pitch, envelope) and

@@ -48,6 +48,10 @@ struct WorkerVm {
     /// to the worker's own world data each frame (Option A: the VM owns the world
     /// so bulk terrain edits stay local and sync as whole chunks).
     world_rx: Receiver<(TileCommand, SyncSender<TileResponse>)>,
+    /// Sound commands from the VM's note/instr/smpl calls. No AudioContext in a
+    /// worker, so these are drained + forwarded to the main thread's cpal stream.
+    #[cfg(feature = "audio")]
+    audio_rx: Receiver<crate::sound::SoundCommand>,
     /// The worker's world tile data (replaces the per-bundle world thread).
     world_layer: crate::tile::Layer,
     world_instance: WorldInstance,
@@ -163,6 +167,8 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         catcher,
         loggy_rx,
         world_rx,
+        #[cfg(feature = "audio")]
+        audio_rx,
         world_layer,
         world_instance,
         entities,
@@ -254,6 +260,14 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
             _ => {}
         }
     }
+
+    // Forward the VM's sound commands to the main thread (which owns the cpal
+    // stream — a worker has no AudioContext).
+    #[cfg(feature = "audio")]
+    while let Ok(cmd) = audio_rx.try_recv() {
+        out.push(VmToHost::Sound(cmd));
+    }
+
     let dirty = world_layer.get_dirty();
     if !dirty.is_empty() {
         out.push(VmToHost::WorldSync {
@@ -337,6 +351,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
     let (pitcher, catcher) = channel::<MainPacket>();
     let (loggy_tx, loggy_rx) = channel::<(LogType, String)>();
     let (world_tx, world_rx) = channel::<(TileCommand, SyncSender<TileResponse>)>();
+    #[cfg(feature = "audio")]
+    let (audio_tx, audio_rx) = channel::<crate::sound::SoundCommand>();
     let ent_counter = Rc::new(Mutex::new(2u64));
     let pads = Rc::new(RefCell::new(Pad::new()));
     let shared = SharedPool::new();
@@ -374,6 +390,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             pitcher.clone(),
             world_tx.clone(),
             Rc::clone(&gui_handle),
+            #[cfg(feature = "audio")]
+            audio_tx.clone(),
             Rc::clone(&keys_mutex),
             Rc::clone(&diff_keys_mutex),
             Rc::clone(&mice_mutex),
@@ -411,6 +429,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         catcher,
         loggy_rx,
         world_rx,
+        #[cfg(feature = "audio")]
+        audio_rx,
         world_layer: crate::tile::Layer::new(),
         world_instance: WorldInstance::new(bundle_id),
         entities: Vec::new(),
