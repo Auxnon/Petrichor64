@@ -117,12 +117,14 @@ where
     let out_channels = config.channels as usize;
     println!("Sample rate: {}  out channels: {}", sample_rate, out_channels);
 
-    // Envelope ramp rates (per sample): ~4ms attack, ~12ms release. A real
-    // envelope removes the clicks and the "notes fall off / merge poorly"
-    // artifacts the old crude one-deep crossfade produced.
-    let attack_rate = 1.0 / (0.004 * sample_rate);
-    let release_rate = 1.0 / (0.012 * sample_rate);
-    let master_volume = 0.2;
+    // Per-instrument ADSR (see Envelope / Voice::advance_env) shapes each voice;
+    // rates are derived per sample from the instrument's envelope + sample_rate.
+    // Master gain feeding a soft limiter (see the tanh below). A low gain used
+    // to be the only headroom against 16 voices clipping, but it also buried a
+    // lone note/sample at ~20% — far quieter than the source file. With the
+    // limiter we can run a healthy gain: single notes stay loud and ~linear,
+    // dense polyphony compresses smoothly instead of hard-clipping.
+    let master_volume = 0.5;
 
     // Default instrument for notes that don't name one: a plain square wave.
     let default_instr = Instrument::oscillator(usize::MAX, WaveType::Square);
@@ -158,7 +160,7 @@ where
                 SoundCommand::MakeInstrument(inst) => {
                     instruments.insert(inst.name, inst.normalized());
                 }
-                SoundCommand::MakeSample(id, mut pcm, base_freq) => {
+                SoundCommand::MakeSample(id, mut pcm, base_freq, env) => {
                     let base_freq = if base_freq > 0.0 { base_freq } else { 440.0 };
                     // Loudness-match: samples come in at whatever amplitude the
                     // author happened to bake, so normalise every buffer to a
@@ -172,7 +174,7 @@ where
                             base_freq,
                         },
                     );
-                    instruments.insert(id, Instrument::sample(id));
+                    instruments.insert(id, Instrument::sample(id).with_env(env));
                 }
                 SoundCommand::LoadSample(name, mut pcm, base_freq) => {
                     // Boot: a sounds/*.ogg was decoded on the host. Stash it in
@@ -182,7 +184,7 @@ where
                     normalize_pcm(&mut pcm);
                     loaded.insert(name, (pcm.into(), base_freq));
                 }
-                SoundCommand::BindSample(id, name, base) => {
+                SoundCommand::BindSample(id, name, base, env) => {
                     // `smpl(id, 'name')`: resolve the loaded file once and copy
                     // its (Arc) buffer into integer slot `id`. Missing name =>
                     // leave the slot as-is (the note falls back to a default).
@@ -194,7 +196,7 @@ where
                                 base_freq: base.filter(|b| *b > 0.0).unwrap_or(*bank_base),
                             },
                         );
-                        instruments.insert(id, Instrument::sample(id));
+                        instruments.insert(id, Instrument::sample(id).with_env(env));
                     }
                 }
                 SoundCommand::Reset => {
@@ -236,25 +238,35 @@ where
                 }
             }
 
-            // Sounding voice: source a sample, attack toward full, sustain, then
-            // hand off to `fading` for release when its duration elapses (a
-            // one-shot sample that runs out sets remaining=0 to release itself).
+            // Sounding voice: run the attack→decay→sustain envelope, then hand
+            // off to `fading` for release at note-off.
             if let Some(v) = current[c].as_mut() {
                 let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                if v.env < 1.0 {
-                    v.env = (v.env + attack_rate).min(1.0);
-                }
+                v.advance_env(&instr.env, sample_rate);
                 mix += voice_out(v, instr, &samples) * v.volume * v.env;
-                v.remaining -= 1.0 / sample_rate;
+                // One-shot samples play to their natural end, ignoring the note's
+                // duration — otherwise a pitched-DOWN sample (slower playback)
+                // gets cut off mid-buffer while still loud, an audible snap.
+                // voice_out sets remaining=0 when the buffer runs out, so the
+                // release still fires; oscillators use the duration timer.
+                if !matches!(instr.wave, WaveType::Sample(_)) {
+                    v.remaining -= 1.0 / sample_rate;
+                }
                 if v.remaining <= 0.0 {
-                    fading[c] = current[c].take();
+                    // Note-off: move to release. Set the stage on the taken voice
+                    // so we don't extend `v`'s borrow across the take.
+                    if let Some(mut voice) = current[c].take() {
+                        voice.stage = EnvStage::Release;
+                        fading[c] = Some(voice);
+                    }
                 }
             }
 
-            // Fading voice: release ramp to silence.
+            // Fading voice: release ramp to silence at the instrument's rate.
             if let Some(v) = fading[c].as_mut() {
                 let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                v.env -= release_rate;
+                let rel = instr.env.release;
+                v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
                 if v.env <= 0.0 {
                     fading[c] = None;
                 } else {
@@ -263,7 +275,10 @@ where
             }
         }
 
-        (mix * master_volume).clamp(-1.0, 1.0)
+        // Soft limiter: tanh is ~linear for small signals (a lone note passes
+        // through almost untouched) and saturates gently toward ±1 as voices
+        // stack up — no harsh hard-clip, and the output is always bounded.
+        (mix * master_volume).tanh()
     };
 
     let err_fn = |err| eprintln!("audio stream error: {}", err);
@@ -409,8 +424,39 @@ impl Note {
     }
 }
 
-/// Runtime state for one sounding note: a wrapped phase accumulator plus a
-/// linear envelope. Kept separate from `Note` (the queued spec).
+/// Per-instrument ADSR envelope. Times are in seconds; `sustain` is a level
+/// (0..1) held while the note sounds. Defaults reproduce the old fixed envelope
+/// (fast attack, no decay, full sustain, short release) so untouched instruments
+/// sound exactly as before.
+#[derive(Clone, Copy)]
+pub struct Envelope {
+    pub attack: f32,
+    pub decay: f32,
+    pub sustain: f32,
+    pub release: f32,
+}
+impl Default for Envelope {
+    fn default() -> Self {
+        Self {
+            attack: 0.004,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.012,
+        }
+    }
+}
+
+/// Which segment of the ADSR a voice is currently in.
+#[derive(Clone, Copy, PartialEq)]
+enum EnvStage {
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+}
+
+/// Runtime state for one sounding note: a wrapped phase accumulator plus an ADSR
+/// envelope. Kept separate from `Note` (the queued spec).
 struct Voice {
     phase: f32,
     phase_inc: f32,
@@ -418,6 +464,7 @@ struct Voice {
     remaining: f32,
     volume: f32,
     env: f32,
+    stage: EnvStage,
     /// Per-voice noise RNG state (seeded from the note so it varies per voice).
     rng: u32,
     /// Playback cursor (float index) for Sample instruments.
@@ -434,6 +481,7 @@ impl Voice {
             remaining: note.duration.max(0.0),
             volume: note.volume,
             env: 0.0,
+            stage: EnvStage::Attack,
             rng: note.frequency.to_bits() | 1, // nonzero, varies per note
             sample_pos: 0.0,
             freq: note.frequency,
@@ -446,6 +494,33 @@ impl Voice {
             self.phase -= TWO_PI;
         }
     }
+    /// Step the attack→decay→sustain portion of the envelope one sample. Release
+    /// is driven separately (in the fading block) after note-off.
+    fn advance_env(&mut self, env: &Envelope, sr: f32) {
+        match self.stage {
+            EnvStage::Attack => {
+                self.env += if env.attack > 0.0 { 1.0 / (env.attack * sr) } else { 1.0 };
+                if self.env >= 1.0 {
+                    self.env = 1.0;
+                    self.stage = EnvStage::Decay;
+                }
+            }
+            EnvStage::Decay => {
+                if env.decay > 0.0 && env.sustain < 1.0 {
+                    self.env -= (1.0 - env.sustain) / (env.decay * sr);
+                    if self.env <= env.sustain {
+                        self.env = env.sustain;
+                        self.stage = EnvStage::Sustain;
+                    }
+                } else {
+                    self.env = env.sustain;
+                    self.stage = EnvStage::Sustain;
+                }
+            }
+            EnvStage::Sustain => self.env = env.sustain,
+            EnvStage::Release => {} // handled after note-off
+        }
+    }
 }
 
 pub struct Instrument {
@@ -454,6 +529,7 @@ pub struct Instrument {
     /// Harmonic amplitudes (Additive only); index i is harmonic (i+1).
     freqs: Vec<f32>,
     divisor: f32,
+    env: Envelope,
 }
 
 impl Instrument {
@@ -465,6 +541,7 @@ impl Instrument {
             wave: WaveType::Additive,
             freqs,
             divisor,
+            env: Envelope::default(),
         }
     }
     /// Direct-waveform instrument (square/saw/triangle/pulse/noise/sine).
@@ -474,6 +551,7 @@ impl Instrument {
             wave,
             freqs: Vec::new(),
             divisor: 1.0,
+            env: Envelope::default(),
         }
     }
     /// Sample-playback instrument, keyed to a stored sample of the same id.
@@ -483,7 +561,13 @@ impl Instrument {
             wave: WaveType::Sample(name),
             freqs: Vec::new(),
             divisor: 1.0,
+            env: Envelope::default(),
         }
+    }
+    /// Set the envelope (builder style, used by the command layer).
+    pub fn with_env(mut self, env: Envelope) -> Self {
+        self.env = env;
+        self
     }
     fn compute_divisor(freqs: &[f32]) -> f32 {
         let sum: f32 = freqs.iter().map(|a| a.abs()).sum();
@@ -502,15 +586,15 @@ impl Instrument {
 
 pub enum SoundCommand {
     MakeInstrument(Instrument),
-    /// Store a PCM sample (id, mono samples -1..1, base pitch) and register a
-    /// same-id instrument that plays it.
-    MakeSample(usize, Vec<f32>, f32),
+    /// Store a PCM sample (id, mono samples -1..1, base pitch, envelope) and
+    /// register a same-id instrument that plays it.
+    MakeSample(usize, Vec<f32>, f32, Envelope),
     /// Stash a disk-loaded sound in the name bank (name, mono PCM, base pitch).
     /// Sent by the asset loader at boot; bound into a slot later by BindSample.
     LoadSample(String, Vec<f32>, f32),
     /// Bind a name-banked sound into integer instrument slot `id`, optionally
-    /// overriding its base pitch. Backs `smpl(id, 'name', base?)`.
-    BindSample(usize, String, Option<f32>),
+    /// overriding its base pitch, with an envelope. Backs `smpl(id, 'name', cfg?)`.
+    BindSample(usize, String, Option<f32>, Envelope),
     /// Play one note. `Some(ch)` targets a channel; `None` auto-allocates a free
     /// one (so overlapping `note()` calls form chords).
     PlayNote(Note, Option<usize>),

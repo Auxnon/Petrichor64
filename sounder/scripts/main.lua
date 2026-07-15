@@ -55,7 +55,8 @@ function main()
 	-- Instrument 2 = a sound loaded from disk: sounds/tone.ogg (a 440Hz pluck,
 	-- made with `oggify`). The keys pitch it around its 440 base. This is the
 	-- retro sampler reading a real file — the string lookup happens once here.
-	smpl(2, 'tone')
+	-- cfg gives it an ADSR envelope: a soft edge in and a gentle tail out.
+	smpl(2, 'tone', { atk = 0.005, rel = 0.15 })
 	-- Alternatively, synthesize the sample in Lua (no file needed):
 	--   smpl(2, pluck_sample(220, 17000), 220)
 
