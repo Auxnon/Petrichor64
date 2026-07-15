@@ -37,9 +37,17 @@ persistent audio state, clear it in the `Reset` arm too.
 - **Instruments and samples are keyed by integer id — keep it that way.** The
   mixer hot path is a fast index lookup (`FxHashMap<usize, …>`); do **not**
   move it to string keys. Names only exist in the load/bind staging.
-- **`instr(id, spec, width?)`** — oscillator (waveform-name string) or additive
-  (harmonic-amplitude table). **`smpl(id, data, base?)`** — sampler: `data` is
+- **`instr(id, spec, cfg?)`** — oscillator (waveform-name string) or additive
+  (harmonic-amplitude table). **`smpl(id, data, cfg?)`** — sampler: `data` is
   either a PCM table (raw `-1..1`) or a **name string** binding a loaded file.
+- **Envelope lives on the instrument, not the note** (keeps note/chord/song
+  terse with `instrument` trailing). The `cfg` table on `instr`/`smpl` carries
+  the ADSR (`atk`/`dec`/`sus`/`rel`) plus the type scalar (`wid` pulse duty /
+  `base` sample pitch). A bare number `cfg` is the legacy scalar. Defaults
+  reproduce the old fixed 4ms/12ms envelope. Parsed by `parse_sound_cfg`; the
+  synth runs a per-voice ADSR state machine (`EnvStage`/`Voice::advance_env`).
+- **Master bus**: `master_volume` into a `tanh` soft limiter (not a hard clamp),
+  so single notes stay loud while dense polyphony compresses instead of clipping.
 - **Waveforms** live in `WaveType` + `osc()`; **samples** go through
   `voice_out()` (pitch-resampled by `freq/base_freq`, linear interp, one-shots
   self-release). New sample buffers are loudness-matched via `normalize_pcm`.

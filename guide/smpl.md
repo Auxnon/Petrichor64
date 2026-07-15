@@ -3,8 +3,8 @@
 _define an instrument from a loaded sound file, or from raw PCM samples_
 
 ```lua
----@type fun(id: integer, data: string|number[], base?: number)
-function smpl(id, data, base)
+---@type fun(id: integer, data: string|number[], cfg?: table)
+function smpl(id, data, cfg)
 ```
 
 Registers instrument `id` as a **sampler**: instead of an oscillator, notes play
@@ -13,9 +13,19 @@ back a waveform, resampled to whatever pitch the note asks for. `data` is either
 - a **name string** — binds a sound loaded from `sounds/<name>.ogg` (see below), or
 - a **PCM table** — raw samples in `-1..1` you generated in Lua.
 
-`base` is the frequency the sample plays back untouched at — a note of that
-frequency plays it 1:1; higher notes speed it up, lower notes slow it down.
-`base` defaults to `440` (A4).
+### cfg (optional): base pitch + ADSR envelope
+
+The trailing `cfg` table (all keys optional):
+
+- `base` — the frequency the sample plays back untouched at; a note of that
+  frequency plays it 1:1, higher notes speed it up, lower slow it down. Default
+  `440` (A4).
+- `atk` / `dec` / `sus` / `rel` — the ADSR envelope, same as `instr` (attack,
+  decay, sustain level, release — times in seconds, `sus` a 0..1 level).
+
+A bare number as `cfg` is still read as `base` for back-compat
+(`smpl(id, pcm, 440)`). One-shot samples play to their natural end regardless of
+the note's length, then release with `rel`.
 
 ### Loading sound files
 

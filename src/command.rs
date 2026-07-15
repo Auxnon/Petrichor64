@@ -1,6 +1,6 @@
 use crate::root::Core;
 #[cfg(feature = "audio")]
-use crate::sound::{Instrument, Note, SoundCommand, WaveType};
+use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
 #[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
 use crate::{
@@ -408,6 +408,42 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         &_ => return Ok(false),
     }
     Ok(true)
+}
+
+/// Parse the trailing `cfg` argument shared by `instr`/`smpl`. Returns the
+/// ADSR envelope plus the command-specific scalar (`scalar_key` — "wid" for
+/// pulse duty, "base" for sample pitch). `cfg` may be:
+/// - a table `{ <scalar_key>=, atk=, dec=, sus=, rel= }` (any subset), or
+/// - a bare number (legacy: the scalar only — `instr(id,'pulse',0.25)`), or
+/// - nil/absent (defaults).
+#[cfg(feature = "audio")]
+fn parse_sound_cfg(cfg: Option<&Value>, scalar_key: &str) -> (Envelope, Option<f32>) {
+    let mut env = Envelope::default();
+    let mut scalar = None;
+    match cfg {
+        // legacy bare number = the type scalar only (e.g. instr(id,'pulse',0.25))
+        Some(v @ (Value::Number(_) | Value::Integer(_))) => scalar = Some(v.into()),
+        Some(Value::Table(t)) => {
+            let tb = t.borrow();
+            if let Some(v) = tb.get(scalar_key) {
+                scalar = Some(v.into());
+            }
+            if let Some(v) = tb.get("atk") {
+                env.attack = v.into();
+            }
+            if let Some(v) = tb.get("dec") {
+                env.decay = v.into();
+            }
+            if let Some(v) = tb.get("sus") {
+                env.sustain = v.into();
+            }
+            if let Some(v) = tb.get("rel") {
+                env.release = v.into();
+            }
+        }
+        _ => {}
+    }
+    (env, scalar)
 }
 
 pub fn init_lua_sys<'a, 'gc>(
@@ -1201,45 +1237,63 @@ function mute(channel) end"
     let sing = singer.clone();
     lua!(
         "smpl",
-        move |_, _, (id, data, base): (usize, Value, Option<f32>)| {
+        move |_, _, (id, data, cfg): (usize, Value, Option<Value>)| {
             #[cfg(feature = "audio")]
-            match data {
-                // A name binds a sound loaded from sounds/<name>.ogg into slot
-                // `id`. The lookup happens once, here — the mixer stays purely
-                // index-keyed.
-                Value::String(name) => {
-                    lua_err!(sing.send(SoundCommand::BindSample(id, name.to_string(), base)));
-                }
-                // A table is raw PCM. Read it by index (getn loop) rather than
-                // Vec<f32> FromLua so we don't hit silt's hash-order Table->Vec
-                // bug — sample order is critical, a scrambled buffer is noise.
-                Value::Table(t) => {
-                    let tb = t.borrow();
-                    let mut pcm: Vec<f32> = Vec::new();
-                    let mut i = 1;
-                    while let Some(v) = tb.getn(i) {
-                        pcm.push(v.into());
-                        i += 1;
+            {
+                // cfg (optional): { base=, atk=, dec=, sus=, rel= }, or a bare
+                // number for legacy base pitch. `base` is the natural-playback Hz.
+                let (env, base) = parse_sound_cfg(cfg.as_ref(), "base");
+                match data {
+                    // A name binds a sound loaded from sounds/<name>.ogg into slot
+                    // `id`. The lookup happens once, here — the mixer stays purely
+                    // index-keyed.
+                    Value::String(name) => {
+                        lua_err!(sing.send(SoundCommand::BindSample(
+                            id,
+                            name.to_string(),
+                            base,
+                            env
+                        )));
                     }
-                    lua_err!(sing.send(SoundCommand::MakeSample(id, pcm, base.unwrap_or(440.0))));
+                    // A table is raw PCM. Read it by index (getn loop) rather than
+                    // Vec<f32> FromLua so we don't hit silt's hash-order Table->Vec
+                    // bug — sample order is critical, a scrambled buffer is noise.
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut pcm: Vec<f32> = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            pcm.push(v.into());
+                            i += 1;
+                        }
+                        lua_err!(sing.send(SoundCommand::MakeSample(
+                            id,
+                            pcm,
+                            base.unwrap_or(440.0),
+                            env
+                        )));
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
             Ok(())
         },
-        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1), pitched from `base` Hz (default 440)",
+        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1); cfg = { base, atk, dec, sus, rel }",
         "
 ---@param id integer
 ---@param data string|number[] a loaded sound name (sounds/<name>.ogg), or raw PCM samples in -1..1
----@param base number? the frequency the sample plays back untouched at (default 440)
-function smpl(id, data, base) end"
+---@param cfg? { base?: number, atk?: number, dec?: number, sus?: number, rel?: number } base pitch (default 440) + ADSR envelope
+function smpl(id, data, cfg) end"
     );
 
     lua!(
         "instr",
-        move |_, _, (id, spec, width): (usize, Value, Option<f32>)| {
+        move |_, _, (id, spec, cfg): (usize, Value, Option<Value>)| {
             #[cfg(feature = "audio")]
             {
+                // cfg (optional): { wid=, atk=, dec=, sus=, rel= }, or a bare
+                // number for legacy pulse width. `wid` is the pulse duty.
+                let (env, wid) = parse_sound_cfg(cfg.as_ref(), "wid");
                 // spec is either a waveform name ('square', 'saw', 'tri', 'pulse',
                 // 'noise', 'sine') or a table of harmonic amplitudes (additive).
                 let inst = match spec {
@@ -1248,7 +1302,7 @@ function smpl(id, data, base) end"
                             "sine" | "sin" => WaveType::Sine,
                             "saw" => WaveType::Saw,
                             "tri" | "triangle" => WaveType::Triangle,
-                            "pulse" => WaveType::Pulse(width.unwrap_or(0.5)),
+                            "pulse" => WaveType::Pulse(wid.unwrap_or(0.5)),
                             "noise" => WaveType::Noise,
                             _ => WaveType::Square, // 'square'/'sqr' and fallback
                         };
@@ -1265,17 +1319,18 @@ function smpl(id, data, base) end"
                         Instrument::additive(id, amps)
                     }
                     _ => Instrument::oscillator(id, WaveType::Square),
-                };
+                }
+                .with_env(env);
                 lua_err!(singer.send(SoundCommand::MakeInstrument(inst)));
             }
             Ok(())
         },
-        "Define instrument `id`: a waveform name (square/saw/tri/pulse/noise/sine) or a harmonic-amplitude table",
+        "Define instrument `id`: a waveform name (square/saw/tri/pulse/noise/sine) or a harmonic-amplitude table; cfg = { wid, atk, dec, sus, rel }",
         "
 ---@param id integer
 ---@param spec string|number[] waveform name, or harmonic amplitudes (additive)
----@param width number? pulse duty 0..1 (for 'pulse')
-function instr(id, spec, width) end"
+---@param cfg? { wid?: number, atk?: number, dec?: number, sus?: number, rel?: number } pulse duty + ADSR envelope
+function instr(id, spec, cfg) end"
     );
 
     let pitcher = main_pitcher.clone();
