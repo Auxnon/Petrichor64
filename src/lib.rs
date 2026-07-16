@@ -1778,15 +1778,13 @@ impl Core {
                 }
                 MainCommmand::Quit(u) => {
                     if u > 0 {
-                        // println!(
-                        //     "quit with pending load {} {:?}",
-                        //     u, self.global.pending_load
-                        // );
-                        self.global.pending_load = None;
-                        match &self.global.pending_load {
-                            Some(l) => {
-                                let to_load = l.clone();
-                                self.log(LogType::Sys, &format!("load {}", l));
+                        // Take (read + clear) the queued load. The clear must NOT
+                        // precede the read — a stray `pending_load = None` here
+                        // used to null it first, so every arg/dropped .game.png
+                        // fell through to load_empty and "no bundle" loaded.
+                        match self.global.pending_load.take() {
+                            Some(to_load) => {
+                                self.log(LogType::Sys, &format!("load {}", to_load));
                                 crate::command::hard_reset(self);
 
                                 crate::command::load_app(self, Some(&to_load), None, None, None);
