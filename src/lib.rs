@@ -148,6 +148,11 @@ pub struct App {
     /// pointer-lock (which browsers only grant from a user gesture).
     #[cfg(target_arch = "wasm32")]
     pointer_lock_wanted: std::rc::Rc<std::cell::RefCell<bool>>,
+    /// The main-thread cpal stream, shared so a DOM gesture handler can resume
+    /// its AudioContext (browsers start it suspended until the user interacts).
+    /// Populated when the async Core is installed.
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    audio_stream: std::rc::Rc<std::cell::RefCell<Option<cpal::Stream>>>,
 }
 
 #[cfg(feature = "headed")]
@@ -170,6 +175,8 @@ impl Default for App {
             worker_inited: false,
             #[cfg(target_arch = "wasm32")]
             pointer_lock_wanted: std::rc::Rc::new(std::cell::RefCell::new(false)),
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            audio_stream: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 }
@@ -388,7 +395,12 @@ impl ApplicationHandler for App {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas) = window.canvas() {
                 attach_canvas_to_dom(&canvas);
-                install_web_input_handlers(&canvas, self.pointer_lock_wanted.clone());
+                install_web_input_handlers(
+                    &canvas,
+                    self.pointer_lock_wanted.clone(),
+                    #[cfg(feature = "audio")]
+                    self.audio_stream.clone(),
+                );
             }
             let pending = self.pending_core.clone();
             wasm_bindgen_futures::spawn_local(async move {
@@ -604,7 +616,13 @@ impl ApplicationHandler for App {
         // Install the asynchronously-built Core once it's ready (web only).
         #[cfg(target_arch = "wasm32")]
         if self.core.is_none() {
-            if let Some((core, catcher)) = self.pending_core.borrow_mut().take() {
+            if let Some((mut core, catcher)) = self.pending_core.borrow_mut().take() {
+                // Hand the audio stream to the shared cell the gesture handlers
+                // resume from (Core no longer needs to hold it alive — the Rc does).
+                #[cfg(feature = "audio")]
+                {
+                    *self.audio_stream.borrow_mut() = core.take_audio_stream();
+                }
                 self.core = Some(core);
                 self.catcher = Some(catcher);
             }
@@ -940,9 +958,37 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
 fn install_web_input_handlers(
     canvas: &web_sys::HtmlCanvasElement,
     pointer_lock_wanted: std::rc::Rc<std::cell::RefCell<bool>>,
+    #[cfg(feature = "audio")] audio_stream: std::rc::Rc<
+        std::cell::RefCell<Option<cpal::Stream>>,
+    >,
 ) {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
+
+    // Resume the audio device's AudioContext on the first real user gesture.
+    // Browsers start a context created without a gesture (our boot-time
+    // sound::init) suspended; cpal's Stream::play() calls resume(), which the
+    // browser only honors from inside a gesture handler — so do it here, on
+    // pointerdown and keydown (capture phase). Idempotent: resuming a running
+    // context is a no-op, so firing every gesture is fine.
+    #[cfg(feature = "audio")]
+    if let Some(win) = web_sys::window() {
+        use cpal::traits::StreamTrait;
+        for evt in ["pointerdown", "keydown"] {
+            let stream = audio_stream.clone();
+            let on_gesture = Closure::<dyn FnMut()>::new(move || {
+                if let Some(s) = stream.borrow().as_ref() {
+                    let _ = s.play();
+                }
+            });
+            let _ = win.add_event_listener_with_callback_and_bool(
+                evt,
+                on_gesture.as_ref().unchecked_ref(),
+                true,
+            );
+            on_gesture.forget();
+        }
+    }
 
     let lock_canvas = canvas.clone();
     let pointerdown =

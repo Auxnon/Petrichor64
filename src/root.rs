@@ -74,6 +74,14 @@ pub struct Core {
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
+    /// Hand off the audio stream so the App can keep it alive and resume its
+    /// AudioContext on the first user gesture — browsers start a context created
+    /// without a gesture (as at boot) suspended, so it stays silent until then.
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    pub(crate) fn take_audio_stream(&mut self) -> Option<cpal::Stream> {
+        self._stream.take()
+    }
+
     #[cfg(feature = "headed")]
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
