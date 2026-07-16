@@ -6,10 +6,12 @@ use std::{
     },
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct Opt {
     #[cfg(all(
@@ -21,6 +23,7 @@ struct Opt {
     device: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Opt {
     fn from_args() -> Self {
         #[cfg(all(
@@ -47,11 +50,13 @@ impl Opt {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init() -> (anyhow::Result<cpal::Stream>, Sender<SoundCommand>) {
     let (singer, audience) = channel::<SoundCommand>();
     (init_sound(audience), singer)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stream> {
     let opt = Opt::from_args();
 
@@ -144,25 +149,13 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
 const NUM_CH: usize = 16;
 const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 
-pub fn run<T>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    audience: Receiver<SoundCommand>,
-) -> Result<cpal::Stream, anyhow::Error>
-where
-    T: cpal::SizedSample + cpal::FromSample<f32>,
-{
-    let sample_rate = config.sample_rate.0 as f32;
-    let out_channels = config.channels as usize;
-    println!("Sample rate: {}  out channels: {}", sample_rate, out_channels);
-
-    // Per-instrument ADSR (see Envelope / Voice::advance_env) shapes each voice;
-    // rates are derived per sample from the instrument's envelope + sample_rate.
-    // Master gain feeding a soft limiter (see the tanh below). A low gain used
-    // to be the only headroom against 16 voices clipping, but it also buried a
-    // lone note/sample at ~20% — far quieter than the source file. With the
-    // limiter we can run a healthy gain: single notes stay loud and ~linear,
-    // dense polyphony compresses smoothly instead of hard-clipping.
+/// Build the per-sample mixer over its own synth state, returned as a closure.
+/// Shared by the native cpal stream and the wasm scheduled-buffer output — both
+/// just pull f32 samples from it. Drains pending SoundCommands each call, so
+/// note triggers stay effectively sample-accurate.
+fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut() -> f32 {
+    // Master gain feeding a soft limiter (the tanh below): single notes stay
+    // loud and ~linear, dense polyphony compresses instead of hard-clipping.
     let master_volume = 0.5;
 
     // Default instrument for notes that don't name one: a plain square wave.
@@ -183,7 +176,7 @@ where
     let mut fading: [Option<Voice>; NUM_CH] = Default::default();
 
     let mut steal_ch = 0usize;
-    let mut next_value = move || -> f32 {
+    move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
         // sample-accurate (the old code polled once per ~2000 samples, which
         // quantised note timing and could drop/merge fast notes).
@@ -323,8 +316,21 @@ where
         // through almost untouched) and saturates gently toward ±1 as voices
         // stack up — no harsh hard-clip, and the output is always bounded.
         (mix * master_volume).tanh()
-    };
+    }
+}
 
+/// Native audio output: a cpal stream pulling from the shared mixer.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    audience: Receiver<SoundCommand>,
+) -> Result<cpal::Stream, anyhow::Error>
+where
+    T: cpal::SizedSample + cpal::FromSample<f32>,
+{
+    let out_channels = config.channels as usize;
+    let mut next_value = make_mixer(config.sample_rate.0 as f32, audience);
     let err_fn = |err| eprintln!("audio stream error: {}", err);
     let stream = device.build_output_stream(
         config,
@@ -336,6 +342,85 @@ where
     )?;
     stream.play()?;
     Ok(stream)
+}
+
+/// Web audio output: schedule short PCM chunks onto the AudioContext's own clock
+/// ("two clocks" technique), so playback is glitch-free through main-thread jank
+/// as long as we keep `lookahead` seconds queued. cpal's WebAudio backend ran on
+/// the main thread and crackled; this bypasses it entirely.
+#[cfg(target_arch = "wasm32")]
+pub struct WebAudioOut {
+    ctx: web_sys::AudioContext,
+    mixer: Box<dyn FnMut() -> f32>,
+    /// AudioContext time (seconds) at which the next chunk should start.
+    next_time: f64,
+    chunk_frames: usize,
+    /// How far ahead of `currentTime` to keep audio queued. Bigger = smoother
+    /// but laggier; this is the responsiveness dial.
+    lookahead: f64,
+    sr: f32,
+    scratch: Vec<f32>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WebAudioOut {
+    pub fn new(audience: Receiver<SoundCommand>) -> Result<Self, wasm_bindgen::JsValue> {
+        let ctx = web_sys::AudioContext::new()?;
+        let sr = ctx.sample_rate();
+        let chunk_frames = (sr * 0.03).round().max(64.0) as usize; // ~30ms chunks
+        log::info!("web audio: {} Hz, {}-frame chunks", sr, chunk_frames);
+        Ok(Self {
+            mixer: Box::new(make_mixer(sr, audience)),
+            ctx,
+            next_time: 0.0,
+            chunk_frames,
+            lookahead: 0.09,
+            sr,
+            scratch: vec![0.0; chunk_frames],
+        })
+    }
+
+    /// A clone of the AudioContext (a JS reference) so a gesture handler can
+    /// resume it — browsers start it suspended until the first user interaction.
+    pub fn context(&self) -> web_sys::AudioContext {
+        self.ctx.clone()
+    }
+
+    /// Generate and schedule chunks until we're `lookahead` ahead of the audio
+    /// clock. Call once per frame. Falling behind (backgrounded tab) resyncs to
+    /// `now` rather than dumping a backlog.
+    pub fn pump(&mut self) {
+        let now = self.ctx.current_time();
+        if self.next_time < now {
+            self.next_time = now;
+        }
+        let chunk_secs = self.chunk_frames as f64 / self.sr as f64;
+        while self.next_time < now + self.lookahead {
+            for s in self.scratch.iter_mut() {
+                *s = (self.mixer)();
+            }
+            let buf = match self.ctx.create_buffer(1, self.chunk_frames as u32, self.sr) {
+                Ok(b) => b,
+                Err(_) => break,
+            };
+            if buf.copy_to_channel(&mut self.scratch, 0).is_err() {
+                break;
+            }
+            if let Ok(src) = self.ctx.create_buffer_source() {
+                src.set_buffer(Some(&buf));
+                let _ = src.connect_with_audio_node(&self.ctx.destination());
+                let _ = src.start_with_when(self.next_time);
+            }
+            self.next_time += chunk_secs;
+        }
+    }
+}
+
+/// Create the web audio driver + the command sender the engine sends notes on.
+#[cfg(target_arch = "wasm32")]
+pub fn init_web() -> (Result<WebAudioOut, wasm_bindgen::JsValue>, Sender<SoundCommand>) {
+    let (singer, audience) = channel::<SoundCommand>();
+    (WebAudioOut::new(audience), singer)
 }
 
 /// Additive synthesis: sum harmonics (index i => harmonic i+1) at the voice's
@@ -444,6 +529,7 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_data<T>(output: &mut [T], out_channels: usize, next_sample: &mut dyn FnMut() -> f32)
 where
     T: cpal::Sample + cpal::FromSample<f32>,

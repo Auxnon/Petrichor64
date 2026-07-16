@@ -39,8 +39,12 @@ type IB = ();
 pub struct Core {
     pub global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
-    #[cfg(feature = "audio")]
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     _stream: Option<cpal::Stream>,
+    /// Web audio output (wasm): schedules PCM chunks on the AudioContext clock.
+    /// Pumped once per frame; replaces the native cpal stream.
+    #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+    pub web_audio: Option<crate::sound::WebAudioOut>,
     #[cfg(feature = "audio")]
     pub singer: Sender<SoundCommand>,
 
@@ -74,14 +78,6 @@ pub struct Core {
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
-    /// Hand off the audio stream so the App can keep it alive and resume its
-    /// AudioContext on the first user gesture — browsers start a context created
-    /// without a gesture (as at boot) suspended, so it stays silent until then.
-    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-    pub(crate) fn take_audio_stream(&mut self) -> Option<cpal::Stream> {
-        self._stream.take()
-    }
-
     #[cfg(feature = "headed")]
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
@@ -110,9 +106,12 @@ impl<'core> Core {
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
 
-        #[cfg(feature = "audio")]
+        // Native: a cpal output stream (own audio thread). Web: cpal's WebAudio
+        // backend crackles on the main thread, so we drive Web Audio ourselves
+        // (WebAudioOut) with scheduled buffers. Both share the same synth.
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         let (stream, singer) = sound::init();
-        #[cfg(feature = "audio")]
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         let stream_result = match stream {
             Ok(stream) => Some(stream),
             Err(e) => {
@@ -123,13 +122,28 @@ impl<'core> Core {
                 None
             }
         };
+        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+        let (web_audio_res, singer) = sound::init_web();
+        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+        let web_audio = match web_audio_res {
+            Ok(w) => Some(w),
+            Err(e) => {
+                loggy.log(
+                    LogType::CoreError,
+                    &format!("web audio init failed, continuing in silence!: {:?}", e),
+                );
+                None
+            }
+        };
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
 
         let (pitcher, catcher) = channel::<MainPacket>();
         let core = Self {
             global,
-            #[cfg(feature = "audio")]
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
             _stream: stream_result,
+            #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+            web_audio,
             #[cfg(feature = "audio")]
             singer,
             world,
