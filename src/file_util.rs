@@ -440,7 +440,16 @@ pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
         loggy.log(LogType::ConfigError, &"file to unpack is 0 bytes!");
         return vec![];
     }
-    // println!("zip file found {}", gamefile.len());
+
+    // A bundle is either a raw zip (`PK\x03\x04`, what `pack` currently writes)
+    // or a viewable .game.png with the zip appended after the PNG's IEND chunk.
+    // Raw zip: hand it back untouched. PNG: strip up to IEND (the code below).
+    // (Without this, the IEND scan finds the marker *inside* an embedded PNG
+    // asset and returns a corrupted fragment — no entries load.)
+    if gamefile.len() >= 4 && gamefile[..4] == [0x50, 0x4B, 0x03, 0x04] {
+        loggy.log(LogType::Config, &format!("raw zip bundle, {} bytes", gamefile.len()));
+        return gamefile;
+    }
 
     let mut v = vec![];
     let mut toggle = false;
