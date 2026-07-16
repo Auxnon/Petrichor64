@@ -344,15 +344,10 @@ impl ApplicationHandler for App {
             let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
             self.catcher = Some(catcher);
 
+            // Boot to the built-in "nil" app (embedded nil.game.png via
+            // load_empty -> get_logo). A command-line/auto game replaces it
+            // below; with no arg, nil is the fallback state.
             crate::command::load_empty(&mut core);
-            {
-                crate::command::hard_reset(&mut core);
-                if let Err(e) =
-                    crate::command::load_app(&mut core, Some("test/basic"), None, None, None)
-                {
-                    core.loggy.log(LogType::CoreError, &format!("{}", e));
-                }
-            }
             core.loggy.clear();
 
             core.global.state_changes.push(StateChange::Config);
@@ -1218,11 +1213,9 @@ pub fn start() {
     env_logger::init();
     let (mut core, catcher) = block_on(Core::new());
 
+    // Boot to the built-in "nil" app (embedded nil.game.png). A game can be
+    // loaded afterward via the CLI/console; nil is the no-app fallback.
     crate::command::load_empty(&mut core);
-    crate::command::hard_reset(&mut core);
-    if let Err(e) = crate::command::load_app(&mut core, Some("test/basic"), None, None, None) {
-        core.loggy.log(LogType::CoreError, &format!("{}", e));
-    }
 
     let frame = Duration::from_secs_f32(1.0 / FPS);
     let bits = ControlState::default();
