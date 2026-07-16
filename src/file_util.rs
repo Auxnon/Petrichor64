@@ -271,6 +271,15 @@ pub async fn pack_zip(
     let new_file = tokio::fs::File::create(&Path::new(out)).await;
 
     let mut new_file = new_file.map_err(|e| P64Error::IoError(e))?;
+    // Write the icon PNG first, then append the zip, so the output is a valid,
+    // viewable .game.png (image + trailing zip). unpack() strips back to the
+    // PNG's IEND to recover the zip. (This prepend was dropped in the async_zip
+    // migration, which quietly turned carts into raw zips.)
+    use tokio::io::AsyncWriteExt;
+    new_file
+        .write_all(&bin)
+        .await
+        .map_err(|e| P64Error::IoError(e))?;
     let mut writer = ZipFileWriter::with_tokio(&mut new_file);
 
     for source in sources {
