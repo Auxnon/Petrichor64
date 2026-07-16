@@ -11,6 +11,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
+use crate::vocaloid::{Formant, FormantBank};
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct Opt {
@@ -271,7 +273,12 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
             if current[c].is_none() {
                 if let Some(note) = queues[c].pop_front() {
                     let inc = TWO_PI * note.frequency / sample_rate;
-                    current[c] = Some(Voice::from_note(&note, inc));
+                    let mut voice = Voice::from_note(&note, inc);
+                    // Sung note: bake its vowel's formant filters at this rate.
+                    if let Some(formants) = &note.formants {
+                        voice.voice_bank.set(formants, sample_rate);
+                    }
+                    current[c] = Some(voice);
                 }
             }
 
@@ -531,7 +538,15 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         }
     } else {
         v.advance();
-        osc(v.phase, instr, &mut v.rng)
+        if v.voice_bank.is_active() {
+            // Sung note: a rising sawtooth glottal source (harmonic-rich) run
+            // through the vowel's formant filters (see vocaloid).
+            const PI: f32 = std::f32::consts::PI;
+            let src = v.phase / PI - 1.0;
+            v.voice_bank.process(src)
+        } else {
+            osc(v.phase, instr, &mut v.rng)
+        }
     }
 }
 
@@ -555,6 +570,10 @@ pub struct Note {
     /// Sustain length in seconds (before the release ramp).
     pub duration: f32,
     pub volume: f32,
+    /// A sung note: the vowel's three formants. `None` = a normal instrument
+    /// note. When set, the voice uses a sawtooth glottal source shaped by these
+    /// formants (see `vocaloid`), ignoring the instrument's waveform.
+    pub formants: Option<[Formant; 3]>,
 }
 impl Note {
     pub fn new(instrument: usize, frequency: f32, duration: f32, volume: f32) -> Self {
@@ -563,6 +582,17 @@ impl Note {
             frequency,
             duration,
             volume,
+            formants: None,
+        }
+    }
+    /// A sung note at `frequency` with the given vowel formants.
+    pub fn sung(frequency: f32, duration: f32, volume: f32, formants: [Formant; 3]) -> Self {
+        Self {
+            instrument: 0,
+            frequency,
+            duration,
+            volume,
+            formants: Some(formants),
         }
     }
 }
@@ -614,6 +644,8 @@ struct Voice {
     sample_pos: f32,
     /// The note's frequency, kept so Sample voices can resample by pitch.
     freq: f32,
+    /// Formant filters for a sung (voice) note; inactive for normal notes.
+    voice_bank: FormantBank,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -628,6 +660,7 @@ impl Voice {
             rng: note.frequency.to_bits() | 1, // nonzero, varies per note
             sample_pos: 0.0,
             freq: note.frequency,
+            voice_bank: FormantBank::default(),
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
