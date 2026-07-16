@@ -754,18 +754,24 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    // With the console open, the app must not receive input — the
-                    // keys are going to the console. Send a neutral snapshot.
-                    let console_open = self.core.as_ref().map_or(false, |c| c.global.console);
-                    if console_open {
-                        w.post(&HostToVm::Loop {
-                            keys: vec![0u8; 256],
-                            analog: vec![0f32; 11],
-                        });
-                    } else {
-                        w.post(&HostToVm::loop_from(&self.bits));
+                    // Only drive the loop once the VM has been Init'd + Loaded
+                    // (bundle routed). Posting a Loop before Init — e.g. while the
+                    // bundle is still unzipping — errors "message before Init".
+                    if self.worker_inited {
+                        // With the console open, the app must not receive input —
+                        // the keys go to the console. Send a neutral snapshot.
+                        let console_open =
+                            self.core.as_ref().map_or(false, |c| c.global.console);
+                        if console_open {
+                            w.post(&HostToVm::Loop {
+                                keys: vec![0u8; 256],
+                                analog: vec![0f32; 11],
+                            });
+                        } else {
+                            w.post(&HostToVm::loop_from(&self.bits));
+                        }
+                        drained = w.drain();
                     }
-                    drained = w.drain();
                 }
             }
             for m in drained {
@@ -951,13 +957,18 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
 /// and splits it into scripts/textures/sounds for the caller to route.
 #[cfg(target_arch = "wasm32")]
 async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
+    // A .game.png starts with the PNG magic. A dev server (trunk) answers a
+    // missing /game.game.png with its index.html SPA fallback (200 OK), so we
+    // must verify the bytes are actually a PNG bundle — otherwise we'd try to
+    // unzip an HTML page. Anything else → use the embedded default.
+    const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
     let bytes = match fetch_bytes("/game.game.png").await {
-        Some(b) if !b.is_empty() => {
+        Some(b) if b.len() > 8 && b[..8] == PNG_MAGIC => {
             ::log::info!("web: loaded /game.game.png ({} bytes)", b.len());
             b
         }
         _ => {
-            ::log::info!("web: no /game.game.png, using embedded default bundle");
+            ::log::info!("web: no deployed /game.game.png, using embedded default bundle");
             embedded.to_vec()
         }
     };

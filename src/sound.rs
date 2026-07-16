@@ -390,6 +390,12 @@ impl WebAudioOut {
     /// clock. Call once per frame. Falling behind (backgrounded tab) resyncs to
     /// `now` rather than dumping a backlog.
     pub fn pump(&mut self) {
+        // Don't schedule into a suspended context (before the first user
+        // gesture) — the browser rejects start() and spams the console. The
+        // gesture handler resumes it; until then, stay quiet.
+        if self.ctx.state() != web_sys::AudioContextState::Running {
+            return;
+        }
         let now = self.ctx.current_time();
         if self.next_time < now {
             self.next_time = now;
