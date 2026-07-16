@@ -92,15 +92,34 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
     let config = device.default_output_config()?;
     println!("Default output config: {:?}", config);
 
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), audience),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), audience),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), audience),
+    let sample_format = config.sample_format();
+    // Only the wasm block below mutates this; native uses the device default.
+    #[allow(unused_mut)]
+    let mut stream_config: cpal::StreamConfig = config.into();
+    // Web audio runs its callback on the main thread (cpal's ScriptProcessor
+    // backend), competing with rendering — a small buffer starves and crackles.
+    // Ask for a larger buffer to ride through main-thread hitches. Costs latency
+    // (~85ms at 48kHz) but kills the static. Native keeps the device default.
+    #[cfg(target_arch = "wasm32")]
+    {
+        stream_config.buffer_size = cpal::BufferSize::Fixed(4096);
+    }
+    log::info!(
+        "audio: {} Hz, {} ch, buffer {:?}",
+        stream_config.sample_rate.0,
+        stream_config.channels,
+        stream_config.buffer_size
+    );
+
+    match sample_format {
+        cpal::SampleFormat::F32 => run::<f32>(&device, &stream_config, audience),
+        cpal::SampleFormat::I16 => run::<i16>(&device, &stream_config, audience),
+        cpal::SampleFormat::U16 => run::<u16>(&device, &stream_config, audience),
         // cpal 0.16 added many more sample formats; render f32 into whatever the
         // device wants where we can, else bail with a clear error.
-        cpal::SampleFormat::I32 => run::<i32>(&device, &config.into(), audience),
-        cpal::SampleFormat::U32 => run::<u32>(&device, &config.into(), audience),
-        cpal::SampleFormat::F64 => run::<f64>(&device, &config.into(), audience),
+        cpal::SampleFormat::I32 => run::<i32>(&device, &stream_config, audience),
+        cpal::SampleFormat::U32 => run::<u32>(&device, &stream_config, audience),
+        cpal::SampleFormat::F64 => run::<f64>(&device, &stream_config, audience),
         other => Err(anyhow::anyhow!("unsupported sample format {:?}", other)),
     }
 }
