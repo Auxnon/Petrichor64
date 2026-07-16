@@ -102,6 +102,22 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
     // (~85ms at 48kHz) but kills the static. Native keeps the device default.
     #[cfg(target_arch = "wasm32")]
     {
+        // cpal's WebAudio backend can report a default rate (e.g. 44100) that
+        // differs from the browser's real AudioContext rate (often 48000 on
+        // Mac hardware). Generating at the wrong rate makes the backend resample
+        // every sample → "jumpy" audio. Probe the real rate and generate at it.
+        if let Ok(ctx) = web_sys::AudioContext::new() {
+            let real = ctx.sample_rate() as u32;
+            let _ = ctx.close();
+            log::info!(
+                "audio: browser AudioContext rate {} Hz (cpal default {} Hz)",
+                real,
+                stream_config.sample_rate.0
+            );
+            if real > 0 {
+                stream_config.sample_rate = cpal::SampleRate(real);
+            }
+        }
         stream_config.buffer_size = cpal::BufferSize::Fixed(4096);
     }
     log::info!(
