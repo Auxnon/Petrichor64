@@ -153,6 +153,10 @@ pub struct App {
     /// Populated when the async Core is installed.
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     audio_ctx: std::rc::Rc<std::cell::RefCell<Option<web_sys::AudioContext>>>,
+    /// The game bundle, unzipped asynchronously (fetch or embedded). None until
+    /// ready; the frame loop routes it to the worker/GPU/audio once present.
+    #[cfg(target_arch = "wasm32")]
+    pending_bundle: std::rc::Rc<std::cell::RefCell<Option<WasmBundle>>>,
 }
 
 #[cfg(feature = "headed")]
@@ -177,6 +181,8 @@ impl Default for App {
             pointer_lock_wanted: std::rc::Rc::new(std::cell::RefCell::new(false)),
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             audio_ctx: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            pending_bundle: std::rc::Rc::new(std::cell::RefCell::new(None)),
         }
     }
 }
@@ -407,6 +413,16 @@ impl ApplicationHandler for App {
                 let (core, catcher) = Core::new(window).await;
                 ::log::info!("petrichor64: core ready — wgpu initialised");
                 *pending.borrow_mut() = Some((core, catcher));
+            });
+
+            // Load the game bundle in parallel (fetch /game.game.png or embedded
+            // default), unzip in memory; the frame loop routes it once ready.
+            let pending_bundle = self.pending_bundle.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                const EMBEDDED: &[u8] = include_bytes!("../web/default.game.png");
+                if let Some(bundle) = load_wasm_bundle(EMBEDDED).await {
+                    *pending_bundle.borrow_mut() = Some(bundle);
+                }
             });
         }
     }
@@ -660,32 +676,41 @@ impl ApplicationHandler for App {
             if let Some(w) = &self.worker {
                 if w.is_ready() {
                     if !self.worker_inited {
-                        // Load the payload bundle's loaded assets into the atlas
-                        // (disjoint field from self.worker), then send the app's
-                        // main.lua and call main(). Bundle scripts/assets are
-                        // embedded for now; proper .game.png unpack on wasm is a
-                        // follow-up.
-                        const PAYLOAD_MAIN: &str = include_str!("../payload/scripts/main.lua");
-                        const PAYLOAD_EXAMPLE: &[u8] =
-                            include_bytes!("../payload/assets/example.png");
-                        if let Some(core) = self.core.as_mut() {
-                            core.load_wasm_texture("example", PAYLOAD_EXAMPLE);
-                            // Set up bundle 0's main-side world (GPU meshing +
-                            // mapper) without a world thread; the worker owns the
-                            // tile data and syncs chunks here.
-                            core.world.init_local(0);
+                        // Once the bundle has finished unzipping, route it: load
+                        // textures into the GPU atlas + decode sounds into the
+                        // mixer (main thread), and send scripts + main() to the
+                        // VM worker. Until then, retry next frame.
+                        let bundle = self.pending_bundle.borrow_mut().take();
+                        if let Some(bundle) = bundle {
+                            if let Some(core) = self.core.as_mut() {
+                                // Set up bundle 0's main-side world (GPU meshing +
+                                // mapper); the worker owns the tile data and syncs
+                                // chunks here.
+                                core.world.init_local(0);
+                                for (name, png) in &bundle.textures {
+                                    core.load_wasm_texture(name, png);
+                                }
+                                #[cfg(feature = "audio")]
+                                crate::asset::load_sounds_from_buffers(
+                                    bundle.sounds.clone(),
+                                    &core.singer,
+                                    &mut core.loggy,
+                                );
+                            }
+                            w.post(&HostToVm::Init {
+                                bundle_id: 0,
+                                width: 256,
+                                height: 256,
+                            });
+                            for (name, content) in &bundle.scripts {
+                                w.post(&HostToVm::Load {
+                                    name: name.clone(),
+                                    content: content.clone(),
+                                });
+                            }
+                            w.post(&HostToVm::Main);
+                            self.worker_inited = true;
                         }
-                        w.post(&HostToVm::Init {
-                            bundle_id: 0,
-                            width: 256,
-                            height: 256,
-                        });
-                        w.post(&HostToVm::Load {
-                            name: "main".to_string(),
-                            content: PAYLOAD_MAIN.to_string(),
-                        });
-                        w.post(&HostToVm::Main);
-                        self.worker_inited = true;
                     }
                     // Console toggle (backtick), submit/history, and system
                     // shortcuts run on the main thread, same as native.
@@ -890,6 +915,103 @@ pub fn start() {
 /// not block: winit's `spawn_app` hands control back to JS and drives frames
 /// via requestAnimationFrame. App::resumed then initialises the engine
 /// asynchronously (wgpu adapter/device requests can't be blocked on the web).
+/// A game bundle unpacked in memory for the web build. No filesystem: scripts go
+/// to the VM worker, textures to the GPU atlas, sounds are decoded into the mixer.
+#[cfg(target_arch = "wasm32")]
+struct WasmBundle {
+    /// (stem, lua source)
+    scripts: Vec<(String, String)>,
+    /// (stem, png bytes)
+    textures: Vec<(String, Vec<u8>)>,
+    /// (path, ogg bytes) — passed as-is to load_sounds_from_buffers.
+    sounds: Vec<(String, Vec<u8>)>,
+}
+
+/// Fetch a URL's bytes, or None on any failure (missing file, network error).
+#[cfg(target_arch = "wasm32")]
+async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
+    use wasm_bindgen::JsCast;
+    let win = web_sys::window()?;
+    let resp_val = wasm_bindgen_futures::JsFuture::from(win.fetch_with_str(url))
+        .await
+        .ok()?;
+    let resp: web_sys::Response = resp_val.dyn_into().ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    let buf = wasm_bindgen_futures::JsFuture::from(resp.array_buffer().ok()?)
+        .await
+        .ok()?;
+    Some(js_sys::Uint8Array::new(&buf).to_vec())
+}
+
+/// Load the web game bundle: prefer a deployed `/game.game.png` (fetched over
+/// HTTP — swap games without a rebuild), else the embedded default baked in at
+/// build time. Unzips the `.game.png` in memory (same as the native packed path)
+/// and splits it into scripts/textures/sounds for the caller to route.
+#[cfg(target_arch = "wasm32")]
+async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
+    let bytes = match fetch_bytes("/game.game.png").await {
+        Some(b) if !b.is_empty() => {
+            ::log::info!("web: loaded /game.game.png ({} bytes)", b.len());
+            b
+        }
+        _ => {
+            ::log::info!("web: no /game.game.png, using embedded default bundle");
+            embedded.to_vec()
+        }
+    };
+
+    let mut loggy = crate::log::Loggy::new();
+    let mut archive = crate::file_util::get_archive(bytes, &mut loggy).await.ok()?;
+    let map = crate::file_util::unpack_and_walk(
+        &mut archive,
+        vec!["assets", "scripts", "sounds"],
+        &mut loggy,
+    )
+    .await
+    .ok()?;
+
+    let stem = |n: &str| {
+        std::path::Path::new(n)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(n)
+            .to_string()
+    };
+    let mut scripts = Vec::new();
+    if let Some(v) = map.get("scripts") {
+        for (name, bytes) in v {
+            if name.ends_with(".lua") && !name.ends_with("ignore.lua") {
+                scripts.push((stem(name), String::from_utf8_lossy(bytes).to_string()));
+            }
+        }
+    }
+    let textures = map
+        .get("assets")
+        .map(|v| {
+            v.iter()
+                .filter(|(n, _)| n.ends_with(".png"))
+                .map(|(n, b)| (stem(n), b.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let sounds = map
+        .get("sounds")
+        .map(|v| {
+            v.iter()
+                .filter(|(n, _)| n.ends_with(".ogg"))
+                .map(|(n, b)| (n.clone(), b.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(WasmBundle {
+        scripts,
+        textures,
+        sounds,
+    })
+}
+
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 pub fn start() {
     use winit::platform::web::EventLoopExtWebSys;
