@@ -371,8 +371,15 @@ impl ApplicationHandler for App {
             if let Some(s) = maybe_load {
                 core.global.console = false;
                 core.gui.disable_console();
-                core.global.pending_load = Some(s.clone());
-                core.bundle_manager.get_lua().call_drop(s);
+                // Load the command-line / auto game directly. The old path only
+                // stashed it in pending_load and relied on the boot app's
+                // drop()->quit() to swap it in, which never fires at cold boot —
+                // so a `.game.png` (or any) arg silently never loaded.
+                crate::command::hard_reset(&mut core);
+                if let Err(e) = crate::command::load_app(&mut core, Some(&s), None, None, None) {
+                    core.loggy
+                        .log(LogType::CoreError, &format!("failed to load {}: {}", s, e));
+                }
             } else {
                 #[cfg(feature = "include_auto")]
                 {
