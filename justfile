@@ -83,6 +83,13 @@ appimage:
 web:
     trunk serve
 
+# Re-run to pick up game edits (the bundle is baked at build time); engine-source
+# edits hot-reload on their own.
+# Bundle a game as the embedded default, then start the dev server immediately.
+web-serve game:
+    cargo run -- pack {{game}} web/default.game.png
+    trunk serve
+
 # Release web build into web/dist.
 web-build:
     trunk build --release
