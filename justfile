@@ -99,15 +99,18 @@ web-ultra:
 web-ultra-build:
     trunk build --release --features wasm-ultra
 
-# NOTE: this overwrites payload/ (the wasm-embedded game). The wasm loader
-# currently embeds only scripts/main.lua + assets/example.png — full multi-asset
-# .game.png unpack on the web is a follow-up (see PLAN.md), so complex games
-# won't fully load yet.
-# Bake a specific game into the wasm build (overwrites payload/), then build.
+# Packs the whole game (scripts + assets + sounds/*.ogg) into web/default.game.png,
+# which the engine unzips at boot when no /game.game.png is deployed.
+# Bake a game into the wasm build as the embedded default bundle, then build.
 web-app game:
-    cp {{game}}/scripts/main.lua payload/scripts/main.lua
-    -cp {{game}}/assets/example.png payload/assets/example.png
+    cargo run --release -- pack {{game}} web/default.game.png
     trunk build --release
+
+# The engine fetches /game.game.png at runtime, so games swap without a rebuild.
+# Deploy build: release wasm + the packed game placed beside it in web/dist.
+web-deploy game:
+    trunk build --release
+    cargo run --release -- pack {{game}} web/dist/game.game.png
 
 # ---------------------------------------------------------------------------
 # Tools
