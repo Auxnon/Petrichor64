@@ -957,13 +957,17 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
 /// and splits it into scripts/textures/sounds for the caller to route.
 #[cfg(target_arch = "wasm32")]
 async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
-    // A .game.png starts with the PNG magic. A dev server (trunk) answers a
-    // missing /game.game.png with its index.html SPA fallback (200 OK), so we
-    // must verify the bytes are actually a PNG bundle — otherwise we'd try to
-    // unzip an HTML page. Anything else → use the embedded default.
-    const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    // A bundle is a raw zip (`PK\x03\x04`) or a PNG-prefixed .game.png. A dev
+    // server (trunk) answers a missing /game.game.png with its index.html SPA
+    // fallback (200 OK), so verify the bytes actually look like a bundle —
+    // otherwise we'd try to unzip an HTML page. Anything else → embedded default.
+    let looks_like_bundle = |b: &[u8]| {
+        b.len() > 8
+            && (b[..4] == [0x50, 0x4B, 0x03, 0x04] // raw zip
+                || b[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) // PNG
+    };
     let bytes = match fetch_bytes("/game.game.png").await {
-        Some(b) if b.len() > 8 && b[..8] == PNG_MAGIC => {
+        Some(b) if looks_like_bundle(&b) => {
             ::log::info!("web: loaded /game.game.png ({} bytes)", b.len());
             b
         }
