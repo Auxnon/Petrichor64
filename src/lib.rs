@@ -65,6 +65,8 @@ mod render;
 mod root;
 #[cfg(feature = "audio")]
 mod sound;
+#[cfg(feature = "audio")]
+mod vocaloid;
 mod template;
 mod texture;
 mod tile;
