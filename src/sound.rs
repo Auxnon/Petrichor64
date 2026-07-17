@@ -11,6 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
+use crate::fx::Crossfade;
 use crate::vocaloid::{Biquad, Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -278,9 +279,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     if let Some(formants) = &note.formants {
                         voice.voice_bank.set(formants, sample_rate);
                     }
-                    // Consonant onset: a burst of band-passed noise before the vowel.
+                    // Consonant onset: a burst of band-passed noise, whose tail
+                    // crossfades into the vowel (up to 12ms, at most half the
+                    // onset) so it isn't an abrupt cut.
                     if let Some(k) = note.consonant {
-                        voice.consonant_samples = (k.secs * sample_rate) as u32;
+                        let xfade_secs = (k.secs * 0.5).min(0.012);
+                        let total = (k.secs * sample_rate) as u32;
+                        let xfade_samps = (xfade_secs * sample_rate) as u32;
+                        voice.consonant_samples = total.saturating_sub(xfade_samps);
+                        voice.consonant_xfade = Crossfade::new(xfade_secs, sample_rate);
                         voice.consonant_filter = Biquad::bandpass(k.freq, k.q, k.gain, sample_rate);
                     }
                     current[c] = Some(voice);
@@ -525,7 +532,7 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
 /// interpolation; everything else advances phase and runs `osc`.
 fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>) -> f32 {
     if let WaveType::Sample(sid) = instr.wave {
-        if let Some(s) = samples.get(&sid) {
+        return if let Some(s) = samples.get(&sid) {
             let i = v.sample_pos as usize;
             let out = if i + 1 < s.pcm.len() {
                 let frac = v.sample_pos - i as f32;
@@ -543,23 +550,31 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
             out
         } else {
             0.0
-        }
-    } else if v.consonant_samples > 0 {
-        // Consonant onset: band-passed noise burst, before the vowel starts.
-        v.consonant_samples -= 1;
-        v.advance(); // keep phase moving so the vowel is in-phase when it starts
-        v.consonant_filter.process(white_noise(&mut v.rng))
+        };
+    }
+
+    // The tonal body of this voice: a sung vowel (sawtooth glottal source through
+    // the formant bank) or a plain oscillator. Computed every sample so the
+    // formant filters warm up during a consonant onset and are ready for the
+    // crossfade. `advance` steps the phase.
+    v.advance();
+    let body = if v.voice_bank.is_active() {
+        const PI: f32 = std::f32::consts::PI;
+        v.voice_bank.process(v.phase / PI - 1.0)
     } else {
-        v.advance();
-        if v.voice_bank.is_active() {
-            // Sung note: a rising sawtooth glottal source (harmonic-rich) run
-            // through the vowel's formant filters (see vocaloid).
-            const PI: f32 = std::f32::consts::PI;
-            let src = v.phase / PI - 1.0;
-            v.voice_bank.process(src)
-        } else {
-            osc(v.phase, instr, &mut v.rng)
-        }
+        osc(v.phase, instr, &mut v.rng)
+    };
+
+    if v.consonant_samples > 0 {
+        // Pure consonant: band-passed noise burst before the vowel.
+        v.consonant_samples -= 1;
+        v.consonant_filter.process(white_noise(&mut v.rng))
+    } else if !v.consonant_xfade.done() {
+        // Onset tail: crossfade the consonant noise out and the vowel body in.
+        let cons = v.consonant_filter.process(white_noise(&mut v.rng));
+        v.consonant_xfade.mix(cons, body)
+    } else {
+        body
     }
 }
 
@@ -672,6 +687,8 @@ struct Voice {
     /// Consonant onset: remaining samples of band-passed noise before the vowel.
     consonant_samples: u32,
     consonant_filter: Biquad,
+    /// Blends the consonant noise into the vowel at the end of the onset.
+    consonant_xfade: Crossfade,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -689,6 +706,7 @@ impl Voice {
             voice_bank: FormantBank::default(),
             consonant_samples: 0,
             consonant_filter: Biquad::default(),
+            consonant_xfade: Crossfade::default(),
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
