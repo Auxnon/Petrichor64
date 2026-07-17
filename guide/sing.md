@@ -1,16 +1,25 @@
 ## sing
 
-_sing a syllable at a pitch (retro formant-synthesis voice)_
+_sing a syllable or phrase over a melody (retro formant-synthesis voice)_
 
 ```lua
----@type fun(syllable: string, freq: number, length?: number, channel?: integer)
-function sing(syllable, freq, length, channel)
+---@type fun(lyrics: string, melody: number|number[]|number[][], length?: number, channel?: integer)
+function sing(lyrics, melody, length, channel)
 ```
 
-Plays one **sung syllable**: an optional consonant onset (a short noise burst)
-followed by a harmonic-rich sawtooth "glottal" source at `freq`, shaped by the
+Sings `lyrics` — one **syllable** (`"sa"`) or a space-separated **phrase**
+(`"la la laa"`) — over `melody`. Each syllable is an optional consonant onset (a
+short noise burst) then a harmonic-rich sawtooth "glottal" source shaped by the
 vowel's formant filters — the way old speech chips (SAM, Votrax) sang. No
 recorded voice, all synthesized.
+
+- **`melody`** is one of:
+  - a single pitch (number) — every syllable sings that pitch;
+  - a table of pitches `{261, 329, 392}` — one per syllable;
+  - a table of `{freq, len}` pairs — per-syllable pitch *and* length.
+  - Fewer melody entries than syllables → the last one repeats.
+- A **phrase** (multiple syllables) sequences on one channel, back-to-back (like
+  `song`); a single syllable plays immediately (and overlapping calls harmonize).
 
 - `syllable` — a vowel with an optional leading consonant:
   - **vowels**: `a` `e` `i` `o` `u` (the sung tone).
@@ -18,29 +27,27 @@ recorded voice, all synthesized.
     `z` `v` `d` `g` `b`), plus the digraph `sh`. So `'sa'`, `'ta'`, `'shi'`,
     `'fu'` all work.
   - `l` `r` `m` `n` `w` `y` have no onset yet — they just sing the vowel.
-- `freq` — pitch in Hz (like `note`).
-- `length` — sustain seconds before release (default 1).
-- `channel` — optional; omit to auto-allocate a voice (overlapping calls harmonize).
-
-Sequence `sing` calls over time for a phrase; call several at once for a vocal chord.
+- `length` — default per-syllable sustain seconds (used when `melody` doesn't
+  give per-syllable lengths). Default 0.5.
+- `channel` — optional; for a single syllable, omit to auto-allocate a voice
+  (overlapping calls harmonize). A phrase sequences on one channel.
 
 ```lua
--- "la la laa" up a little scale
-sing('la', 261.63, 0.4)
-sing('la', 329.63, 0.4)
-sing('laa', 392.00, 0.8)
+-- a phrase up a little scale (one syllable per pitch)
+sing('la la laa', { 261.63, 329.63, 392.00 }, 0.4)
 
--- consonants: "sa ta sha"
-sing('sa', 440, 0.4)
-sing('ta', 440, 0.4)
-sing('sha', 440, 0.4)
+-- consonants, all on one pitch
+sing('sa ta sha', 440, 0.4)
 
--- a sustained vowel chord (three voices at once)
+-- per-syllable pitch AND length via {freq, len} pairs
+sing('do re mi', { {261,0.3}, {293,0.3}, {329,0.6} })
+
+-- a single sustained vowel; several at once = a vocal chord
 sing('o', 220, 2)
 sing('o', 277, 2)
 sing('o', 330, 2)
 ```
 
-Phase 1 voice: five vowels + unvoiced-consonant onsets. Voiced consonants and a
-lyric/phoneme sequencer (vowel glides) are future work. Shares the 16-voice
-polyphony and mixer with `note`/`smpl`. See also `note`, `instr`.
+Phase: five vowels + unvoiced-consonant onsets + a phrase sequencer. Voiced
+consonants (m/n/l/r glides) and vowel-to-vowel glides are future work. Shares the
+16-voice polyphony and mixer with `note`/`smpl`. See also `note`, `song`, `fade`.
