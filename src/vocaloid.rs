@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fx::Crossfade;
+
 const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 
 /// One formant: a resonance at `freq` Hz with quality `q` (sharpness) and output
@@ -38,20 +40,25 @@ pub struct Biquad {
 impl Biquad {
     /// Band-pass (constant 0 dB peak) at `freq` with quality `q`, scaled by `gain`.
     pub fn bandpass(freq: f32, q: f32, gain: f32, sample_rate: f32) -> Self {
+        let mut bq = Self::default();
+        bq.retune(freq, q, gain, sample_rate);
+        bq
+    }
+
+    /// Recompute the band-pass coefficients in place, **preserving** the filter
+    /// state (z1/z2). Lets a formant sweep continuously as its frequency glides
+    /// without the click a fresh filter (zeroed state) would cause.
+    pub fn retune(&mut self, freq: f32, q: f32, gain: f32, sample_rate: f32) {
         let w0 = TWO_PI * freq / sample_rate;
         let (sin_w0, cos_w0) = w0.sin_cos();
         let alpha = sin_w0 / (2.0 * q.max(0.001));
         let a0 = 1.0 + alpha;
-        Self {
-            b0: alpha / a0,
-            b1: 0.0,
-            b2: -alpha / a0,
-            a1: -2.0 * cos_w0 / a0,
-            a2: (1.0 - alpha) / a0,
-            z1: 0.0,
-            z2: 0.0,
-            gain,
-        }
+        self.b0 = alpha / a0;
+        self.b1 = 0.0;
+        self.b2 = -alpha / a0;
+        self.a1 = -2.0 * cos_w0 / a0;
+        self.a2 = (1.0 - alpha) / a0;
+        self.gain = gain;
     }
 
     /// Filter one input sample, advancing the state.
@@ -63,20 +70,43 @@ impl Biquad {
     }
 }
 
-/// A per-voice bank of up to three formant filters summed in parallel. Inactive
-/// until `set` is called with a vowel's formants, so plain notes skip it.
+/// A per-voice bank of up to three formant filters summed in parallel. Can hold
+/// a steady vowel or glide between two formant sets (for voiced consonants and
+/// diphthongs) — the filters are retuned each sample toward the target while a
+/// crossfade ramp runs. Inactive until `set`/`glide_to`, so plain notes skip it.
 #[derive(Clone, Copy, Default)]
 pub struct FormantBank {
     filters: [Biquad; 3],
+    from: [Formant; 3],
+    to: [Formant; 3],
+    glide: Crossfade,
+    sr: f32,
     active: bool,
 }
 
 impl FormantBank {
-    /// Bake the filters for a vowel's formants at the given sample rate.
+    /// Set a steady vowel (no glide).
     pub fn set(&mut self, formants: &[Formant; 3], sample_rate: f32) {
+        self.from = *formants;
+        self.to = *formants;
+        self.sr = sample_rate;
         for (bq, f) in self.filters.iter_mut().zip(formants.iter()) {
-            *bq = Biquad::bandpass(f.freq, f.q, f.gain, sample_rate);
+            bq.retune(f.freq, f.q, f.gain, sample_rate);
         }
+        self.glide = Crossfade::default(); // already at target
+        self.active = true;
+    }
+
+    /// Start at `from` and glide the formants to `to` over `secs` — a voiced
+    /// consonant sliding into its vowel, or a diphthong (vowel→vowel).
+    pub fn glide_to(&mut self, from: &[Formant; 3], to: &[Formant; 3], secs: f32, sample_rate: f32) {
+        self.from = *from;
+        self.to = *to;
+        self.sr = sample_rate;
+        for (bq, f) in self.filters.iter_mut().zip(from.iter()) {
+            bq.retune(f.freq, f.q, f.gain, sample_rate);
+        }
+        self.glide = Crossfade::new(secs, sample_rate);
         self.active = true;
     }
 
@@ -84,8 +114,21 @@ impl FormantBank {
         self.active
     }
 
-    /// Run the glottal source `src` through all formants and sum them.
+    /// Run the glottal source `src` through all formants and sum them, advancing
+    /// any in-flight glide (retuning each formant toward its target).
     pub fn process(&mut self, src: f32) -> f32 {
+        if !self.glide.done() {
+            let t = self.glide.mix(0.0, 1.0); // progress 0→1, advances the ramp
+            for i in 0..3 {
+                let (a, b) = (self.from[i], self.to[i]);
+                self.filters[i].retune(
+                    a.freq + (b.freq - a.freq) * t,
+                    a.q + (b.q - a.q) * t,
+                    a.gain + (b.gain - a.gain) * t,
+                    self.sr,
+                );
+            }
+        }
         let mut out = 0.0;
         for bq in self.filters.iter_mut() {
             out += bq.process(src);
@@ -112,10 +155,10 @@ pub fn vowel_formants(vowel: &str) -> [Formant; 3] {
     }
 }
 
-/// A consonant onset: a short burst of band-passed noise before the vowel. Only
-/// the unvoiced consonants are modeled this way (fricatives s/f/h/sh, plosives
-/// t/k/p and their voiced pairs approximated the same). Voiced consonants
-/// (l/r/m/n/w/y) have no noise onset yet — they just glide into the vowel.
+/// An *unvoiced* consonant onset: a short burst of band-passed noise before the
+/// vowel — fricatives s/f/h/sh and plosives t/k/p (voiced pairs z/v/d/g/b
+/// approximated the same). *Voiced* consonants (m/n/l/r/w/y) are handled instead
+/// as a voiced formant onset that glides into the vowel (see `voiced_onset`).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Consonant {
     pub freq: f32,
@@ -123,6 +166,31 @@ pub struct Consonant {
     /// Onset length in seconds.
     pub secs: f32,
     pub gain: f32,
+}
+
+/// A parsed sung syllable: an optional unvoiced noise onset, an optional starting
+/// formant set to glide *from* (a voiced consonant, or a diphthong's first
+/// vowel), and the vowel formants to land on.
+pub struct SungSyllable {
+    pub consonant: Option<Consonant>,
+    pub glide_from: Option<[Formant; 3]>,
+    pub glide_secs: f32,
+    pub vowel: [Formant; 3],
+}
+
+/// Formant target for a *voiced* consonant (m/n/l/r/w/y). These are tonal (use
+/// the glottal source) and glide into the following vowel.
+fn voiced_onset(c: char) -> Option<[Formant; 3]> {
+    let f = |freq, q, gain| Formant { freq, q, gain };
+    match c {
+        'm' => Some([f(250.0, 10.0, 1.0), f(1000.0, 10.0, 0.4), f(2200.0, 12.0, 0.2)]), // nasal
+        'n' => Some([f(250.0, 10.0, 1.0), f(1400.0, 11.0, 0.5), f(2500.0, 12.0, 0.2)]), // nasal
+        'l' => Some([f(360.0, 9.0, 1.0), f(1300.0, 10.0, 0.6), f(2800.0, 12.0, 0.3)]),  // lateral
+        'r' => Some([f(490.0, 9.0, 1.0), f(1350.0, 10.0, 0.6), f(1700.0, 11.0, 0.4)]),  // low F3
+        'w' => Some([f(300.0, 9.0, 1.0), f(610.0, 10.0, 0.5), f(2200.0, 11.0, 0.25)]),  // ~/u/
+        'y' => Some([f(270.0, 9.0, 1.0), f(2300.0, 11.0, 0.5), f(3000.0, 12.0, 0.25)]), // ~/i/
+        _ => None,
+    }
 }
 
 /// Map a leading character to its consonant onset, if any.
@@ -146,26 +214,53 @@ fn consonant_for(c: char) -> Option<Consonant> {
     }
 }
 
-/// Parse a sung syllable into its (optional) consonant onset and vowel formants.
-/// e.g. "sa" -> (s hiss, /a/), "la" -> (none, /a/), "shi" -> (sh, /i/), "o" -> (none, /o/).
-pub fn parse_syllable(s: &str) -> (Option<Consonant>, [Formant; 3]) {
+/// Parse a sung syllable. Examples:
+/// - `"sa"`  → unvoiced hiss onset, vowel /a/
+/// - `"la"`  → voiced /l/ formants gliding into /a/
+/// - `"ma"`  → voiced nasal /m/ gliding into /a/
+/// - `"ai"`  → diphthong: glide /a/ → /i/
+/// - `"o"`   → steady /o/
+pub fn parse_syllable(s: &str) -> SungSyllable {
     let lower = s.trim().to_lowercase();
-    // Digraphs first, then a single leading consonant.
-    let cons = if lower.starts_with("sh") || lower.starts_with("ch") {
-        Some(Consonant {
+
+    let mut consonant = None;
+    let mut glide_from = None;
+    let mut glide_secs = 0.0;
+
+    // Leading consonant: digraph first, then a single char (unvoiced noise or
+    // voiced glide).
+    if lower.starts_with("sh") || lower.starts_with("ch") {
+        consonant = Some(Consonant {
             freq: 3000.0,
             q: 1.2,
             secs: 0.09,
             gain: 0.5,
-        })
-    } else {
-        lower.chars().next().and_then(consonant_for)
-    };
-    // Vowel = the last vowel character (so "sa"/"str a" land on the vowel).
-    let vowel = lower
-        .chars()
-        .rev()
-        .find(|c| "aeiou".contains(*c))
-        .unwrap_or('a');
-    (cons, vowel_formants(&vowel.to_string()))
+        });
+    } else if let Some(first) = lower.chars().next() {
+        if let Some(k) = consonant_for(first) {
+            consonant = Some(k);
+        } else if let Some(vf) = voiced_onset(first) {
+            glide_from = Some(vf); // voiced consonant → glide into the vowel
+            glide_secs = 0.06;
+        }
+    }
+
+    // Vowels present, in order.
+    let vowels: Vec<char> = lower.chars().filter(|c| "aeiou".contains(*c)).collect();
+    let last = vowels.last().copied().unwrap_or('a');
+    let vowel = vowel_formants(&last.to_string());
+
+    // Diphthong: two different vowels and no voiced-consonant glide already —
+    // glide from the first vowel to the last over a longer window.
+    if glide_from.is_none() && vowels.len() >= 2 && vowels[0] != last {
+        glide_from = Some(vowel_formants(&vowels[0].to_string()));
+        glide_secs = 0.15;
+    }
+
+    SungSyllable {
+        consonant,
+        glide_from,
+        glide_secs,
+        vowel,
+    }
 }

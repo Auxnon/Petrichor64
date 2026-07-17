@@ -26,7 +26,10 @@ recorded voice, all synthesized.
   - **consonants** (noise onset): `s` `f` `h` `t` `k` `p` (and voiced pairs
     `z` `v` `d` `g` `b`), plus the digraph `sh`. So `'sa'`, `'ta'`, `'shi'`,
     `'fu'` all work.
-  - `l` `r` `m` `n` `w` `y` have no onset yet — they just sing the vowel.
+  - **voiced consonants** `m` `n` `l` `r` `w` `y` — tonal onsets that *glide*
+    into the vowel (so `'la'`, `'ma'`, `'ra'` sound like a real syllable).
+  - **diphthongs** — two vowels in one syllable glide between them: `'ai'`
+    ("eye"), `'au'` ("ow"), `'oi'` ("oy").
 - `length` — default per-syllable sustain seconds (used when `melody` doesn't
   give per-syllable lengths). Default 0.5.
 - `channel` — optional; for a single syllable, omit to auto-allocate a voice

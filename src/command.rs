@@ -1280,8 +1280,8 @@ function mute(channel) end"
                         .enumerate()
                         .map(|(i, syl)| {
                             let (freq, len) = steps[i.min(steps.len() - 1)];
-                            let (cons, formants) = crate::vocaloid::parse_syllable(syl);
-                            Note::sung(freq, len, 1.0, formants, cons)
+                            let syllable = crate::vocaloid::parse_syllable(syl);
+                            Note::sung(freq, len, 1.0, &syllable)
                         })
                         .collect();
                     if notes.len() == 1 {
