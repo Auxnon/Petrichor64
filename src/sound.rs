@@ -292,9 +292,16 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 if let Some(note) = queues[c].pop_front() {
                     let inc = TWO_PI * note.frequency / sample_rate;
                     let mut voice = Voice::from_note(&note, inc);
-                    // Sung note: bake its vowel's formant filters at this rate.
-                    if let Some(formants) = &note.formants {
-                        voice.voice_bank.set(formants, sample_rate);
+                    // Sung note: set the vowel formants, or glide from a voiced
+                    // consonant / diphthong start into them.
+                    if let Some(target) = &note.formants {
+                        if let Some(from) = &note.glide_from {
+                            voice
+                                .voice_bank
+                                .glide_to(from, target, note.glide_secs, sample_rate);
+                        } else {
+                            voice.voice_bank.set(target, sample_rate);
+                        }
                     }
                     // Consonant onset: a burst of band-passed noise, whose tail
                     // crossfades into the vowel (up to 12ms, at most half the
@@ -627,6 +634,10 @@ pub struct Note {
     pub formants: Option<[Formant; 3]>,
     /// Optional consonant onset (a short noise burst before the vowel).
     pub consonant: Option<Consonant>,
+    /// Optional starting formants to glide *from* into `formants` (a voiced
+    /// consonant, or a diphthong's first vowel), over `glide_secs`.
+    pub glide_from: Option<[Formant; 3]>,
+    pub glide_secs: f32,
 }
 impl Note {
     pub fn new(instrument: usize, frequency: f32, duration: f32, volume: f32) -> Self {
@@ -637,23 +648,27 @@ impl Note {
             volume,
             formants: None,
             consonant: None,
+            glide_from: None,
+            glide_secs: 0.0,
         }
     }
-    /// A sung note at `frequency`: a vowel (formants) with an optional consonant onset.
+    /// A sung note at `frequency` from a parsed syllable (vowel + optional
+    /// consonant onset + optional formant glide).
     pub fn sung(
         frequency: f32,
         duration: f32,
         volume: f32,
-        formants: [Formant; 3],
-        consonant: Option<Consonant>,
+        syllable: &crate::vocaloid::SungSyllable,
     ) -> Self {
         Self {
             instrument: 0,
             frequency,
             duration,
             volume,
-            formants: Some(formants),
-            consonant,
+            formants: Some(syllable.vowel),
+            consonant: syllable.consonant,
+            glide_from: syllable.glide_from,
+            glide_secs: syllable.glide_secs,
         }
     }
 }
