@@ -1329,6 +1329,40 @@ function fade(channel, secs, target) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "vox",
+        move |_, _, cfg: Value| {
+            #[cfg(feature = "audio")]
+            {
+                // Voice character for later `sing` notes: breath (aspiration
+                // noise) + vibrato (pitch wobble). Table cfg, all keys optional.
+                let mut breath = 0.0f32;
+                let mut vib = 0.0f32;
+                let mut hz = 5.5f32;
+                if let Value::Table(t) = &cfg {
+                    let tb = t.borrow();
+                    if let Some(v) = tb.get("breath") {
+                        breath = v.into();
+                    }
+                    if let Some(v) = tb.get("vib") {
+                        vib = v.into();
+                    }
+                    if let Some(v) = tb.get("hz") {
+                        hz = v.into();
+                    }
+                }
+                let _ = sing.send(SoundCommand::VoiceConfig(breath, vib, hz));
+            }
+            Ok(())
+        },
+        "Set the singing voice character for later sing() notes: { breath, vib, hz }",
+        "
+---@param cfg { breath?: number, vib?: number, hz?: number } breath 0..1, vibrato depth (~0.03), rate Hz (~5.5)
+function vox(cfg) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "smpl",
         move |_, _, (id, data, cfg): (usize, Value, Option<Value>)| {
             #[cfg(feature = "audio")]

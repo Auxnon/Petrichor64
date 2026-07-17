@@ -186,6 +186,12 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     let mut fade_from: [f32; NUM_CH] = [1.0; NUM_CH];
     let mut fade_to: [f32; NUM_CH] = [1.0; NUM_CH];
 
+    // Current singing-voice character (breath + vibrato), applied to each new
+    // sung note. Set by `vox`; reset on load.
+    let mut voice_breath = 0.0f32;
+    let mut voice_vib_depth = 0.0f32;
+    let mut voice_vib_rate = 5.5f32;
+
     let mut steal_ch = 0usize;
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
@@ -261,6 +267,9 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         channel_gain[c] = 1.0;
                         channel_fade[c] = Crossfade::default();
                     }
+                    voice_breath = 0.0;
+                    voice_vib_depth = 0.0;
+                    voice_vib_rate = 5.5;
                 }
                 SoundCommand::Stop(ch) => match ch {
                     Some(c) => {
@@ -272,6 +281,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         }
                     }
                 },
+                SoundCommand::VoiceConfig(breath, depth, rate) => {
+                    voice_breath = breath;
+                    voice_vib_depth = depth;
+                    voice_vib_rate = if rate > 0.0 { rate } else { 5.5 };
+                }
                 SoundCommand::FadeChannel(ch, secs, target) => {
                     // Ramp a channel's output gain to `target` over `secs` via a
                     // Crossfade. Fade out (target 0), fade in (1), or crossfade
@@ -293,7 +307,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     let inc = TWO_PI * note.frequency / sample_rate;
                     let mut voice = Voice::from_note(&note, inc);
                     // Sung note: set the vowel formants, or glide from a voiced
-                    // consonant / diphthong start into them.
+                    // consonant / diphthong start into them; apply voice character.
                     if let Some(target) = &note.formants {
                         if let Some(from) = &note.glide_from {
                             voice
@@ -302,6 +316,9 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         } else {
                             voice.voice_bank.set(target, sample_rate);
                         }
+                        voice.breath = voice_breath;
+                        voice.vib_depth = voice_vib_depth;
+                        voice.vib_rate = voice_vib_rate;
                     }
                     // Consonant onset: a burst of band-passed noise, whose tail
                     // crossfades into the vowel (up to 12ms, at most half the
@@ -323,7 +340,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
             if let Some(v) = current[c].as_mut() {
                 let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
                 v.advance_env(&instr.env, sample_rate);
-                mix += voice_out(v, instr, &samples) * v.volume * v.env;
+                mix += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
                 // One-shot samples play to their natural end, ignoring the note's
                 // duration — otherwise a pitched-DOWN sample (slower playback)
                 // gets cut off mid-buffer while still loud, an audible snap.
@@ -350,7 +367,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 if v.env <= 0.0 {
                     fading[c] = None;
                 } else {
-                    ch_out += voice_out(v, instr, &samples) * v.volume * v.env;
+                    ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
                 }
             }
 
@@ -560,7 +577,7 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
 /// One sample of a voice: advances its cursor and returns the raw signal.
 /// Sample instruments resample their PCM by pitch (freq/base_freq) with linear
 /// interpolation; everything else advances phase and runs `osc`.
-fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>) -> f32 {
+fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>, sr: f32) -> f32 {
     if let WaveType::Sample(sid) = instr.wave {
         return if let Some(s) = samples.get(&sid) {
             let i = v.sample_pos as usize;
@@ -583,6 +600,16 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         };
     }
 
+    // Vibrato (sung voices): a slow LFO wobbles the pitch. Recompute phase_inc
+    // from the modulated frequency before advancing.
+    if v.voice_bank.is_active() && v.vib_depth > 0.0 {
+        v.vib_phase += TWO_PI * v.vib_rate / sr;
+        if v.vib_phase >= TWO_PI {
+            v.vib_phase -= TWO_PI;
+        }
+        v.phase_inc = TWO_PI * v.freq * (1.0 + v.vib_depth * v.vib_phase.sin()) / sr;
+    }
+
     // The tonal body of this voice: a sung vowel (sawtooth glottal source through
     // the formant bank) or a plain oscillator. Computed every sample so the
     // formant filters warm up during a consonant onset and are ready for the
@@ -590,7 +617,11 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
     v.advance();
     let body = if v.voice_bank.is_active() {
         const PI: f32 = std::f32::consts::PI;
-        v.voice_bank.process(v.phase / PI - 1.0)
+        // Breath: aspiration noise mixed into the glottal source, then shaped by
+        // the same formants — a breathy vowel rather than a hiss on top.
+        let saw = v.phase / PI - 1.0;
+        let src = saw + v.breath * white_noise(&mut v.rng);
+        v.voice_bank.process(src)
     } else {
         osc(v.phase, instr, &mut v.rng)
     };
@@ -727,6 +758,12 @@ struct Voice {
     consonant_filter: Biquad,
     /// Blends the consonant noise into the vowel at the end of the onset.
     consonant_xfade: Crossfade,
+    /// Voice character (sung notes only): breath (aspiration noise mix) and a
+    /// vibrato LFO (depth as a pitch fraction, rate in Hz, running phase).
+    breath: f32,
+    vib_depth: f32,
+    vib_rate: f32,
+    vib_phase: f32,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -745,6 +782,10 @@ impl Voice {
             consonant_samples: 0,
             consonant_filter: Biquad::default(),
             consonant_xfade: Crossfade::default(),
+            breath: 0.0,
+            vib_depth: 0.0,
+            vib_rate: 0.0,
+            vib_phase: 0.0,
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
@@ -866,6 +907,9 @@ pub enum SoundCommand {
     Stop(Option<usize>),
     /// Ramp a channel's output gain: (channel, seconds, target gain 0..1).
     FadeChannel(usize, f32, f32),
+    /// Set the singing-voice character for later sung notes: (breath, vibrato
+    /// depth as a pitch fraction, vibrato rate Hz).
+    VoiceConfig(f32, f32, f32),
     /// Drop all user instruments/samples and silence every voice (app reload).
     Reset,
 }
