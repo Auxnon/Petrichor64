@@ -104,9 +104,68 @@ pub fn vowel_formants(vowel: &str) -> [Formant; 3] {
     match v {
         'e' => [f(400.0, 8.0, 1.0), f(1600.0, 10.0, 0.5), f(2700.0, 12.0, 0.3)],
         'i' => [f(270.0, 8.0, 1.0), f(2300.0, 11.0, 0.5), f(3000.0, 13.0, 0.3)],
-        'o' => [f(400.0, 8.0, 1.0), f(800.0, 9.0, 0.6), f(2600.0, 12.0, 0.3)],
-        'u' => [f(300.0, 8.0, 1.0), f(870.0, 9.0, 0.5), f(2240.0, 11.0, 0.3)],
+        'o' => [f(450.0, 8.0, 1.0), f(800.0, 9.0, 0.6), f(2600.0, 12.0, 0.3)],
+        // u ("oo") needs F2 clearly *below* o's, or it just reads as another o.
+        'u' => [f(320.0, 9.0, 1.0), f(620.0, 10.0, 0.5), f(2200.0, 11.0, 0.25)],
         // 'a' and anything else
         _ => [f(800.0, 8.0, 1.0), f(1150.0, 9.0, 0.6), f(2900.0, 12.0, 0.3)],
     }
+}
+
+/// A consonant onset: a short burst of band-passed noise before the vowel. Only
+/// the unvoiced consonants are modeled this way (fricatives s/f/h/sh, plosives
+/// t/k/p and their voiced pairs approximated the same). Voiced consonants
+/// (l/r/m/n/w/y) have no noise onset yet — they just glide into the vowel.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Consonant {
+    pub freq: f32,
+    pub q: f32,
+    /// Onset length in seconds.
+    pub secs: f32,
+    pub gain: f32,
+}
+
+/// Map a leading character to its consonant onset, if any.
+fn consonant_for(c: char) -> Option<Consonant> {
+    let cons = |freq, q, secs, gain| {
+        Some(Consonant {
+            freq,
+            q,
+            secs,
+            gain,
+        })
+    };
+    match c {
+        's' | 'z' => cons(6000.0, 2.0, 0.08, 0.5), // hiss
+        'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.45), // broadband
+        'h' => cons(1500.0, 0.7, 0.06, 0.4),       // breathy
+        't' | 'd' => cons(4000.0, 1.5, 0.02, 0.7), // sharp tick
+        'k' | 'g' => cons(2000.0, 1.5, 0.02, 0.7), // mid pop
+        'p' | 'b' => cons(800.0, 1.2, 0.02, 0.7),  // low pop
+        _ => None, // vowels + l/r/m/n/w/y
+    }
+}
+
+/// Parse a sung syllable into its (optional) consonant onset and vowel formants.
+/// e.g. "sa" -> (s hiss, /a/), "la" -> (none, /a/), "shi" -> (sh, /i/), "o" -> (none, /o/).
+pub fn parse_syllable(s: &str) -> (Option<Consonant>, [Formant; 3]) {
+    let lower = s.trim().to_lowercase();
+    // Digraphs first, then a single leading consonant.
+    let cons = if lower.starts_with("sh") || lower.starts_with("ch") {
+        Some(Consonant {
+            freq: 3000.0,
+            q: 1.2,
+            secs: 0.09,
+            gain: 0.5,
+        })
+    } else {
+        lower.chars().next().and_then(consonant_for)
+    };
+    // Vowel = the last vowel character (so "sa"/"str a" land on the vowel).
+    let vowel = lower
+        .chars()
+        .rev()
+        .find(|c| "aeiou".contains(*c))
+        .unwrap_or('a');
+    (cons, vowel_formants(&vowel.to_string()))
 }

@@ -1237,25 +1237,25 @@ function mute(channel) end"
     let sing = singer.clone();
     lua!(
         "sing",
-        move |_, _, (vowel, freq, length, channel): (String, f32, Option<f32>, Option<usize>)| {
+        move |_, _, (syllable, freq, length, channel): (String, f32, Option<f32>, Option<usize>)| {
             #[cfg(feature = "audio")]
             {
-                // Formant-synth voice: a sawtooth glottal source shaped by the
-                // vowel's formants (see vocaloid). One sung note per call —
-                // sequence them for a phrase.
-                let formants = crate::vocaloid::vowel_formants(&vowel);
-                let note = Note::sung(freq, length.unwrap_or(1.0), 1.0, formants);
+                // Formant-synth voice: an optional consonant onset (noise burst)
+                // then a sawtooth glottal source shaped by the vowel's formants
+                // (see vocaloid). One sung syllable per call — sequence for a phrase.
+                let (consonant, formants) = crate::vocaloid::parse_syllable(&syllable);
+                let note = Note::sung(freq, length.unwrap_or(1.0), 1.0, formants, consonant);
                 let _ = sing.send(SoundCommand::PlayNote(note, channel));
             }
             Ok(())
         },
-        "Sing a vowel (a/e/i/o/u) at a pitch — retro formant-synth voice",
+        "Sing a syllable (vowel a/e/i/o/u, optional leading consonant e.g. 'sa','ta','sha') at a pitch",
         "
----@param vowel string vowel a/e/i/o/u (first char is used)
+---@param syllable string a vowel, optionally with a leading consonant (e.g. 'a','la','sa','sha')
 ---@param freq number pitch in Hz
 ---@param length number?
 ---@param channel integer?
-function sing(vowel, freq, length, channel) end"
+function sing(syllable, freq, length, channel) end"
     );
 
     #[cfg(feature = "audio")]

@@ -11,7 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
-use crate::vocaloid::{Formant, FormantBank};
+use crate::vocaloid::{Biquad, Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
@@ -278,6 +278,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     if let Some(formants) = &note.formants {
                         voice.voice_bank.set(formants, sample_rate);
                     }
+                    // Consonant onset: a burst of band-passed noise before the vowel.
+                    if let Some(k) = note.consonant {
+                        voice.consonant_samples = (k.secs * sample_rate) as u32;
+                        voice.consonant_filter = Biquad::bandpass(k.freq, k.q, k.gain, sample_rate);
+                    }
                     current[c] = Some(voice);
                 }
             }
@@ -465,6 +470,13 @@ pub struct Sample {
     rate_ratio: f32,
 }
 
+/// Full-rate white noise from a per-voice xorshift-ish LCG (advances `rng`).
+/// Shared by the noise oscillator and the consonant onsets.
+fn white_noise(rng: &mut u32) -> f32 {
+    *rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    (*rng >> 8) as f32 / 8_388_607.5 - 1.0
+}
+
 /// Sample one instrument at `phase` (0..2π). `rng` is the voice's noise state.
 fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
     const PI: f32 = std::f32::consts::PI;
@@ -502,11 +514,7 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
                 3.0 - 4.0 * t
             }
         }
-        WaveType::Noise => {
-            // xorshift-ish LCG per voice; full-rate white noise (ignores phase).
-            *rng = rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (*rng >> 8) as f32 / 8_388_607.5 - 1.0
-        }
+        WaveType::Noise => white_noise(rng),
         // Samples are handled in voice_out (they need the store + a cursor).
         WaveType::Sample(_) => 0.0,
     }
@@ -536,6 +544,11 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         } else {
             0.0
         }
+    } else if v.consonant_samples > 0 {
+        // Consonant onset: band-passed noise burst, before the vowel starts.
+        v.consonant_samples -= 1;
+        v.advance(); // keep phase moving so the vowel is in-phase when it starts
+        v.consonant_filter.process(white_noise(&mut v.rng))
     } else {
         v.advance();
         if v.voice_bank.is_active() {
@@ -574,6 +587,8 @@ pub struct Note {
     /// note. When set, the voice uses a sawtooth glottal source shaped by these
     /// formants (see `vocaloid`), ignoring the instrument's waveform.
     pub formants: Option<[Formant; 3]>,
+    /// Optional consonant onset (a short noise burst before the vowel).
+    pub consonant: Option<Consonant>,
 }
 impl Note {
     pub fn new(instrument: usize, frequency: f32, duration: f32, volume: f32) -> Self {
@@ -583,16 +598,24 @@ impl Note {
             duration,
             volume,
             formants: None,
+            consonant: None,
         }
     }
-    /// A sung note at `frequency` with the given vowel formants.
-    pub fn sung(frequency: f32, duration: f32, volume: f32, formants: [Formant; 3]) -> Self {
+    /// A sung note at `frequency`: a vowel (formants) with an optional consonant onset.
+    pub fn sung(
+        frequency: f32,
+        duration: f32,
+        volume: f32,
+        formants: [Formant; 3],
+        consonant: Option<Consonant>,
+    ) -> Self {
         Self {
             instrument: 0,
             frequency,
             duration,
             volume,
             formants: Some(formants),
+            consonant,
         }
     }
 }
@@ -646,6 +669,9 @@ struct Voice {
     freq: f32,
     /// Formant filters for a sung (voice) note; inactive for normal notes.
     voice_bank: FormantBank,
+    /// Consonant onset: remaining samples of band-passed noise before the vowel.
+    consonant_samples: u32,
+    consonant_filter: Biquad,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -661,6 +687,8 @@ impl Voice {
             sample_pos: 0.0,
             freq: note.frequency,
             voice_bank: FormantBank::default(),
+            consonant_samples: 0,
+            consonant_filter: Biquad::default(),
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.
