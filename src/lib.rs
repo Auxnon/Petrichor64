@@ -64,6 +64,8 @@ mod ray;
 mod render;
 mod root;
 #[cfg(feature = "audio")]
+mod fx;
+#[cfg(feature = "audio")]
 mod sound;
 #[cfg(feature = "audio")]
 mod vocaloid;
