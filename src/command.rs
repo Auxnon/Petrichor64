@@ -1237,25 +1237,93 @@ function mute(channel) end"
     let sing = singer.clone();
     lua!(
         "sing",
-        move |_, _, (syllable, freq, length, channel): (String, f32, Option<f32>, Option<usize>)| {
+        move |_, _, (lyrics, melody, length, channel): (String, Value, Option<f32>, Option<usize>)| {
             #[cfg(feature = "audio")]
             {
-                // Formant-synth voice: an optional consonant onset (noise burst)
-                // then a sawtooth glottal source shaped by the vowel's formants
-                // (see vocaloid). One sung syllable per call — sequence for a phrase.
-                let (consonant, formants) = crate::vocaloid::parse_syllable(&syllable);
-                let note = Note::sung(freq, length.unwrap_or(1.0), 1.0, formants, consonant);
-                let _ = sing.send(SoundCommand::PlayNote(note, channel));
+                // Formant-synth voice. `lyrics` is one syllable ("sa") or a
+                // space-separated phrase ("la la laa"); `melody` is a single
+                // pitch (all syllables) or a table of pitches / {freq,len} pairs
+                // (one per syllable, index-clamped). Multiple syllables sequence
+                // on one channel (like `song`); a single one plays immediately.
+                let default_len = length.unwrap_or(0.5);
+                // (freq, len) per melody step.
+                let steps: Vec<(f32, f32)> = match &melody {
+                    Value::Number(n) => vec![(*n as f32, default_len)],
+                    Value::Integer(n) => vec![(*n as f32, default_len)],
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut out = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            match v {
+                                // {freq, len?}
+                                Value::Table(pair) => {
+                                    let p = pair.borrow();
+                                    let f: f32 = p.getn(1).map(|x| x.into()).unwrap_or(440.0);
+                                    let l: f32 =
+                                        p.getn(2).map(|x| x.into()).unwrap_or(default_len);
+                                    out.push((f, l));
+                                }
+                                // bare freq
+                                other => out.push((other.into(), default_len)),
+                            }
+                            i += 1;
+                        }
+                        out
+                    }
+                    _ => vec![],
+                };
+                let syllables: Vec<&str> = lyrics.split_whitespace().collect();
+                if !syllables.is_empty() && !steps.is_empty() {
+                    let notes: Vec<Note> = syllables
+                        .iter()
+                        .enumerate()
+                        .map(|(i, syl)| {
+                            let (freq, len) = steps[i.min(steps.len() - 1)];
+                            let (cons, formants) = crate::vocaloid::parse_syllable(syl);
+                            Note::sung(freq, len, 1.0, formants, cons)
+                        })
+                        .collect();
+                    if notes.len() == 1 {
+                        let _ = sing.send(SoundCommand::PlayNote(notes[0], channel));
+                    } else {
+                        // A phrase is one sequential voice on a single channel.
+                        let _ = sing.send(SoundCommand::Chain(notes, channel));
+                    }
+                }
             }
             Ok(())
         },
-        "Sing a syllable (vowel a/e/i/o/u, optional leading consonant e.g. 'sa','ta','sha') at a pitch",
+        "Sing a syllable or space-separated phrase over a melody (a pitch, or a table of pitches / {freq,len} pairs)",
         "
----@param syllable string a vowel, optionally with a leading consonant (e.g. 'a','la','sa','sha')
----@param freq number pitch in Hz
----@param length number?
+---@param lyrics string a syllable ('sa') or phrase ('la la laa'); vowels a/e/i/o/u + optional consonant
+---@param melody number|number[]|number[][] one pitch, or a pitch (or {freq,len}) per syllable
+---@param length number? default per-syllable length
 ---@param channel integer?
-function sing(syllable, freq, length, channel) end"
+function sing(lyrics, melody, length, channel) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "fade",
+        move |_, _, (channel, secs, target): (usize, f32, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level effect: ramp a channel's output gain to `target`
+                // over `secs` (Crossfade). Fade out (default 0), fade in (1), or
+                // crossfade two channels with a pair of opposite fades.
+                let _ =
+                    sing.send(SoundCommand::FadeChannel(channel, secs, target.unwrap_or(0.0)));
+            }
+            Ok(())
+        },
+        "Fade a channel's volume to target (0..1, default 0) over secs — fade in/out or crossfade channels",
+        "
+---@param channel integer
+---@param secs number fade duration in seconds
+---@param target number? target gain 0..1 (default 0 = fade out)
+function fade(channel, secs, target) end"
     );
 
     #[cfg(feature = "audio")]

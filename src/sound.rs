@@ -178,6 +178,14 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     let mut current: [Option<Voice>; NUM_CH] = Default::default();
     let mut fading: [Option<Voice>; NUM_CH] = Default::default();
 
+    // Per-channel output gain + an optional in-flight fade (a Crossfade ramp).
+    // The first channel-level "effect" — fade a channel in/out, or crossfade two
+    // channels with a pair of opposite fades. Gain multiplies the channel's mix.
+    let mut channel_gain: [f32; NUM_CH] = [1.0; NUM_CH];
+    let mut channel_fade: [Crossfade; NUM_CH] = [Crossfade::default(); NUM_CH];
+    let mut fade_from: [f32; NUM_CH] = [1.0; NUM_CH];
+    let mut fade_to: [f32; NUM_CH] = [1.0; NUM_CH];
+
     let mut steal_ch = 0usize;
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
@@ -250,6 +258,8 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         queues[c].clear();
                         current[c] = None;
                         fading[c] = None;
+                        channel_gain[c] = 1.0;
+                        channel_fade[c] = Crossfade::default();
                     }
                 }
                 SoundCommand::Stop(ch) => match ch {
@@ -262,14 +272,21 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         }
                     }
                 },
-                SoundCommand::FadeChannel(ch, _dur) => {
-                    release_channel(ch.min(NUM_CH - 1), &mut current, &mut fading, &mut queues);
+                SoundCommand::FadeChannel(ch, secs, target) => {
+                    // Ramp a channel's output gain to `target` over `secs` via a
+                    // Crossfade. Fade out (target 0), fade in (1), or crossfade
+                    // two channels with a pair of opposite fades.
+                    let c = ch.min(NUM_CH - 1);
+                    fade_from[c] = channel_gain[c];
+                    fade_to[c] = target.clamp(0.0, 1.0);
+                    channel_fade[c] = Crossfade::new(secs.max(0.0), sample_rate);
                 }
             }
         }
 
         let mut mix = 0.0f32;
         for c in 0..NUM_CH {
+            let mut ch_out = 0.0f32;
             // Start the next queued note when the channel is idle.
             if current[c].is_none() {
                 if let Some(note) = queues[c].pop_front() {
@@ -326,9 +343,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 if v.env <= 0.0 {
                     fading[c] = None;
                 } else {
-                    mix += voice_out(v, instr, &samples) * v.volume * v.env;
+                    ch_out += voice_out(v, instr, &samples) * v.volume * v.env;
                 }
             }
+
+            // Channel effect: advance an in-flight fade, then apply the gain.
+            if !channel_fade[c].done() {
+                channel_gain[c] = channel_fade[c].mix(fade_from[c], fade_to[c]);
+            }
+            mix += ch_out * channel_gain[c];
         }
 
         // Soft limiter: tanh is ~linear for small signals (a lone note passes
@@ -826,7 +849,8 @@ pub enum SoundCommand {
     Chain(Vec<Note>, Option<usize>),
     /// Release a channel (`None` = all channels).
     Stop(Option<usize>),
-    FadeChannel(usize, f32),
+    /// Ramp a channel's output gain: (channel, seconds, target gain 0..1).
+    FadeChannel(usize, f32, f32),
     /// Drop all user instruments/samples and silence every voice (app reload).
     Reset,
 }
