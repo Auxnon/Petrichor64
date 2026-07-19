@@ -1348,6 +1348,34 @@ function fade(channel, secs, target) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "echo",
+        move |_, _, (channel, secs, feedback, mix): (usize, f32, Option<f32>, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level effect: a feedback delay. `secs` is the delay time
+                // between echoes, `feedback` how much each echo carries into the
+                // next (decay), `mix` the wet level. `secs <= 0` turns it off.
+                let _ = sing.send(SoundCommand::EchoChannel(
+                    channel,
+                    secs,
+                    feedback.unwrap_or(0.4),
+                    mix.unwrap_or(0.5),
+                ));
+            }
+            Ok(())
+        },
+        "Add a feedback-delay echo to a channel: (channel, secs, feedback 0..1, wet mix). secs<=0 disables it",
+        "
+---@param channel integer
+---@param secs number delay time between echoes (<=0 disables)
+---@param feedback number? echo decay per repeat 0..1 (default 0.4)
+---@param mix number? wet level, echo loudness (default 0.5)
+function echo(channel, secs, feedback, mix) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "vox",
         move |_, _, (a, b): (Value, Option<Value>)| {
             #[cfg(feature = "audio")]

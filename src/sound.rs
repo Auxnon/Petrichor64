@@ -11,7 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
-use crate::fx::Crossfade;
+use crate::fx::{Crossfade, Echo};
 use crate::vocaloid::{Biquad, Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -282,6 +282,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     chan.fade_to = target.clamp(0.0, 1.0);
                     chan.fade = Crossfade::new(secs.max(0.0), sample_rate);
                 }
+                SoundCommand::EchoChannel(ch, secs, feedback, mix) => {
+                    let c = ch.min(channels.len() - 1);
+                    channels[c].echo.set(secs, feedback, mix, sample_rate);
+                }
                 SoundCommand::SetLanes(counts) => {
                     // `attr{ lanes = {4,3,5} }`: set per-channel polyphony. Entry i
                     // (1-based in Lua) sets channel (i-1); unlisted channels keep
@@ -372,8 +376,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
             }
 
-            // Channel effect: advance an in-flight fade, then apply the gain to
-            // the whole channel (all its lanes).
+            // Channel effects: run the echo (feedback delay) on the summed
+            // channel output — its tail keeps ringing after the voices stop —
+            // then advance an in-flight fade and apply the gain to the whole
+            // channel (dry + echoes alike).
+            ch_out = chan.echo.process(ch_out);
             if !chan.fade.done() {
                 chan.gain = chan.fade.mix(chan.fade_from, chan.fade_to);
             }
@@ -758,6 +765,8 @@ struct Channel {
     fade: Crossfade,
     fade_from: f32,
     fade_to: f32,
+    /// Channel-level feedback delay (`echo`); a no-op until configured.
+    echo: Echo,
     /// Singing-voice character applied to sung notes started on this channel.
     breath: f32,
     vib_depth: f32,
@@ -775,6 +784,7 @@ impl Channel {
             fade: Crossfade::default(),
             fade_from: 1.0,
             fade_to: 1.0,
+            echo: Echo::default(),
             breath: 0.0,
             vib_depth: 0.0,
             vib_rate: 5.5,
@@ -834,6 +844,7 @@ impl Channel {
         self.fade = Crossfade::default();
         self.fade_from = 1.0;
         self.fade_to = 1.0;
+        self.echo.clear();
         self.breath = 0.0;
         self.vib_depth = 0.0;
         self.vib_rate = 5.5;
@@ -1013,6 +1024,9 @@ pub enum SoundCommand {
     Stop(Option<usize>),
     /// Ramp a channel's output gain: (channel, seconds, target gain 0..1).
     FadeChannel(usize, f32, f32),
+    /// Set a channel's echo (feedback delay): (channel, delay secs, feedback
+    /// 0..1, wet mix). `secs <= 0` disables it.
+    EchoChannel(usize, f32, f32, f32),
     /// Set a channel's singing-voice character for its later sung notes:
     /// (channel, breath, vibrato depth as a pitch fraction, vibrato rate Hz).
     VoiceConfig(usize, f32, f32, f32),
