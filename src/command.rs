@@ -2,6 +2,8 @@ use crate::root::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
 #[cfg(feature = "audio")]
+use crate::fx::FilterKind;
+#[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
 use crate::{
     bundle::{BundleMutations, BundleResources},
@@ -1371,6 +1373,56 @@ function fade(channel, secs, target) end"
 ---@param feedback number? echo decay per repeat 0..1 (default 0.4)
 ---@param mix number? wet level, echo loudness (default 0.5)
 function echo(channel, secs, feedback, mix) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "filt",
+        move |_,
+              _,
+              (channel, kind, cutoff, q, secs): (
+            usize,
+            Option<String>,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level resonant filter. `kind` picks the shape; `cutoff`
+                // the corner/center Hz; `q` the resonance (0.707 flat, higher =
+                // peak); `secs` optionally sweeps the cutoff there over time.
+                // An unknown/absent/"off" kind disables the filter.
+                let kind = match kind.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    Some(ref k) if k == "low" || k == "lp" || k == "lowpass" => Some(FilterKind::Low),
+                    Some(ref k) if k == "high" || k == "hp" || k == "highpass" => {
+                        Some(FilterKind::High)
+                    }
+                    Some(ref k) if k == "band" || k == "bp" || k == "bandpass" => {
+                        Some(FilterKind::Band)
+                    }
+                    Some(ref k) if k == "notch" || k == "reject" => Some(FilterKind::Notch),
+                    _ => None, // "off"/nil/unknown → disable
+                };
+                let _ = sing.send(SoundCommand::FilterChannel(
+                    channel,
+                    kind,
+                    cutoff.unwrap_or(1000.0),
+                    q.unwrap_or(0.707),
+                    secs.unwrap_or(0.0),
+                ));
+            }
+            Ok(())
+        },
+        "Resonant filter on a channel: (channel, kind 'low'|'high'|'band'|'notch', cutoff Hz, q, sweep secs). kind off/nil disables",
+        "
+---@param channel integer
+---@param kind string? 'low' | 'high' | 'band' | 'notch' (off/nil disables)
+---@param cutoff number? corner/center frequency Hz (default 1000)
+---@param q number? resonance: 0.707 flat, higher peaks at cutoff (default 0.707)
+---@param secs number? sweep the cutoff over this many seconds (default 0 = instant)
+function filt(channel, kind, cutoff, q, secs) end"
     );
 
     #[cfg(feature = "audio")]
