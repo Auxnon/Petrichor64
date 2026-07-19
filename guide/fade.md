@@ -16,8 +16,9 @@ a whole channel.
 - `secs` — fade duration in seconds.
 - `target` — target gain, `0..1`. Default `0` (fade to silence). `1` fades in.
 
-Notes on that channel keep playing; only their combined level is scaled. Play a
-note/`sing`/`smpl` on an explicit channel so you know which one to fade.
+Every voice on that channel (all its lanes) keeps playing; only their combined
+level is scaled. Play a note/`sing`/`smpl` on an explicit channel so you know
+which one to fade.
 
 ```lua
 note(440, 4, 3, 1)   -- hold a tone on channel 3
@@ -29,4 +30,4 @@ fade(2, 1.5, 1)      -- channel 2 up
 ```
 
 More effects (filter sweeps, delay, …) will layer onto channels the same way as
-the effects system grows. See also `mute`, `note`, `sing`.
+the effects system grows. See also `mute`, `note`, `sing`, `vox`, `attr`.

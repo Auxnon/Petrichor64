@@ -955,11 +955,30 @@ function reload() end"
     );
 
     let pitcher = main_pitcher.clone();
+    #[cfg(feature = "audio")]
+    let attr_singer = singer.clone();
     lua!(
         "attr",
         move |lu, mc, table: Option<Value>| {
             match table {
                 Some(Value::Table(t)) => {
+                    // Audio: a `lanes = {4,3,5}` array sets per-channel polyphony
+                    // (entry i → channel i-1). Extracted here and pushed to the
+                    // synth; the rest of the table is app-state globals as usual.
+                    #[cfg(feature = "audio")]
+                    {
+                        if let Some(Value::Table(lanes_t)) = t.borrow().get("lanes") {
+                            let lt = lanes_t.borrow();
+                            let mut counts = Vec::new();
+                            let mut i = 1;
+                            while let Some(v) = lt.getn(i) {
+                                let n: f32 = v.into();
+                                counts.push(n.max(1.0) as usize);
+                                i += 1;
+                            }
+                            let _ = attr_singer.send(SoundCommand::SetLanes(counts));
+                        }
+                    }
                     let hash = table_hasher(&t.borrow());
                     lua_err!(pitcher.send((bundle_id, MainCommmand::Globals(hash))));
 
@@ -1330,11 +1349,20 @@ function fade(channel, secs, target) end"
     let sing = singer.clone();
     lua!(
         "vox",
-        move |_, _, cfg: Value| {
+        move |_, _, (a, b): (Value, Option<Value>)| {
             #[cfg(feature = "audio")]
             {
-                // Voice character for later `sing` notes: breath (aspiration
-                // noise) + vibrato (pitch wobble). Table cfg, all keys optional.
+                // Per-channel singing-voice character for that channel's later
+                // `sing` notes: breath (aspiration noise) + vibrato (pitch wobble).
+                // Channel-scoped like `fade`, so different channels = different
+                // singers. Accepts `vox(channel, cfg)` or `vox(cfg)` (channel 0):
+                // if the first arg is a number it's the channel and `b` is the cfg
+                // table; if it's a table it's the cfg for channel 0.
+                let (ch, cfg) = match &a {
+                    Value::Number(n) => (*n as usize, b.unwrap_or(Value::Nil)),
+                    Value::Integer(n) => (*n as usize, b.unwrap_or(Value::Nil)),
+                    _ => (0usize, a.clone()),
+                };
                 let mut breath = 0.0f32;
                 let mut vib = 0.0f32;
                 let mut hz = 5.5f32;
@@ -1350,14 +1378,15 @@ function fade(channel, secs, target) end"
                         hz = v.into();
                     }
                 }
-                let _ = sing.send(SoundCommand::VoiceConfig(breath, vib, hz));
+                let _ = sing.send(SoundCommand::VoiceConfig(ch, breath, vib, hz));
             }
             Ok(())
         },
-        "Set the singing voice character for later sing() notes: { breath, vib, hz }",
+        "Set a channel's singing voice character for its later sing() notes: (channel, { breath, vib, hz })",
         "
+---@param channel integer? channel to configure (default 0)
 ---@param cfg { breath?: number, vib?: number, hz?: number } breath 0..1, vibrato depth (~0.03), rate Hz (~5.5)
-function vox(cfg) end"
+function vox(channel, cfg) end"
     );
 
     #[cfg(feature = "audio")]

@@ -33,9 +33,21 @@ Tweak monitor properties, lock mouse, disable console, etc. If there's a global 
 - lock: boolean - Prevent the console from being open. Technically an anti-cheat but probably not
 - fog: number - sets a simple draw distance based fog that fades into the skybox raster
 
+**Sound**
+
+- lanes: integer[] - per-channel **polyphony**. A sound channel is a "track": it
+  can sound several notes at once (a chord) up to its lane count. The array is
+  positional — the 1st entry is channel 0, the 2nd is channel 1, … (channels are
+  0-based, as in `note`/`fade`). So `lanes = {4, 3, 5}` gives channel 0 four
+  lanes, channel 1 three, channel 2 five; channels you don't list keep the
+  default (8). A chord plays across one channel's lanes, so its voice character
+  (`vox`) and effects (`fade`) stay consistent. Different simultaneous
+  timbres/singers = different channels.
+
 ```lua
 attr({title="Your Game Or App Name Goes Here"})
 attr{modernize=0} -- try default crt monitor settings
 attr{fullscreen=true}
 attr{fog=100.0}
+attr{lanes={4,3,5}} -- channel 0: 4-note poly, channel 1: 3, channel 2: 5
 ```
