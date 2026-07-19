@@ -47,3 +47,66 @@ impl Crossfade {
         out
     }
 }
+
+/// A feedback delay line — an **echo**. Owns a ring buffer sized to the delay
+/// time; each sample it reads the delayed value, writes back `input + delayed *
+/// feedback` (so echoes repeat and decay), and returns `input + delayed * mix`
+/// (the dry signal plus the wet echoes). Inactive by default (a no-op that just
+/// passes the input through) until `set` allocates the line. A channel-level
+/// effect: it processes the channel's whole mixed output, so its echoes keep
+/// ringing out after the notes stop (fed zero input, the tail decays by feedback).
+#[derive(Default)]
+pub struct Echo {
+    buf: Vec<f32>,
+    pos: usize,
+    feedback: f32,
+    /// Wet level: how loud the echoes are relative to the dry signal.
+    mix: f32,
+    active: bool,
+}
+
+impl Echo {
+    /// Configure the delay: `secs` delay time, `feedback` (echo decay per repeat,
+    /// clamped below 1 so it can't run away), `mix` (wet level). `secs <= 0`
+    /// disables the effect and frees the buffer.
+    pub fn set(&mut self, secs: f32, feedback: f32, mix: f32, sample_rate: f32) {
+        let samples = (secs * sample_rate) as usize;
+        if samples == 0 {
+            self.active = false;
+            self.buf = Vec::new();
+            self.pos = 0;
+            return;
+        }
+        // Resize (preserving as much tail as fits) and (re)configure.
+        self.buf.resize(samples, 0.0);
+        if self.pos >= self.buf.len() {
+            self.pos = 0;
+        }
+        self.feedback = feedback.clamp(0.0, 0.95);
+        self.mix = mix.max(0.0);
+        self.active = true;
+    }
+
+    /// Clear the echo (silence the tail, keep it disabled). Used on app reload.
+    pub fn clear(&mut self) {
+        self.buf = Vec::new();
+        self.pos = 0;
+        self.feedback = 0.0;
+        self.mix = 0.0;
+        self.active = false;
+    }
+
+    /// Process one sample: returns dry + wet, advancing the delay line.
+    pub fn process(&mut self, input: f32) -> f32 {
+        if !self.active || self.buf.is_empty() {
+            return input;
+        }
+        let delayed = self.buf[self.pos];
+        self.buf[self.pos] = input + delayed * self.feedback;
+        self.pos += 1;
+        if self.pos >= self.buf.len() {
+            self.pos = 0;
+        }
+        input + delayed * self.mix
+    }
+}
