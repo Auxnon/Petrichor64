@@ -11,8 +11,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
-use crate::fx::{Crossfade, Echo};
-use crate::vocaloid::{Biquad, Consonant, Formant, FormantBank};
+use crate::fx::{Biquad, Crossfade, Echo, Filter, FilterKind};
+use crate::vocaloid::{Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
@@ -286,6 +286,13 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     let c = ch.min(channels.len() - 1);
                     channels[c].echo.set(secs, feedback, mix, sample_rate);
                 }
+                SoundCommand::FilterChannel(ch, kind, cutoff, q, secs) => {
+                    let c = ch.min(channels.len() - 1);
+                    match kind {
+                        Some(k) => channels[c].filter.set(k, cutoff, q, secs, sample_rate),
+                        None => channels[c].filter.clear(),
+                    }
+                }
                 SoundCommand::SetLanes(counts) => {
                     // `attr{ lanes = {4,3,5} }`: set per-channel polyphony. Entry i
                     // (1-based in Lua) sets channel (i-1); unlisted channels keep
@@ -376,10 +383,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
             }
 
-            // Channel effects: run the echo (feedback delay) on the summed
-            // channel output — its tail keeps ringing after the voices stop —
-            // then advance an in-flight fade and apply the gain to the whole
-            // channel (dry + echoes alike).
+            // Channel effects, in chain order: filter the summed output, then
+            // echo the filtered signal (its tail keeps ringing after the voices
+            // stop), then advance an in-flight fade and apply the gain to the
+            // whole channel (dry + echoes alike).
+            ch_out = chan.filter.process(ch_out);
             ch_out = chan.echo.process(ch_out);
             if !chan.fade.done() {
                 chan.gain = chan.fade.mix(chan.fade_from, chan.fade_to);
@@ -765,6 +773,8 @@ struct Channel {
     fade: Crossfade,
     fade_from: f32,
     fade_to: f32,
+    /// Channel-level resonant filter (`filt`); a no-op until configured.
+    filter: Filter,
     /// Channel-level feedback delay (`echo`); a no-op until configured.
     echo: Echo,
     /// Singing-voice character applied to sung notes started on this channel.
@@ -784,6 +794,7 @@ impl Channel {
             fade: Crossfade::default(),
             fade_from: 1.0,
             fade_to: 1.0,
+            filter: Filter::default(),
             echo: Echo::default(),
             breath: 0.0,
             vib_depth: 0.0,
@@ -844,6 +855,7 @@ impl Channel {
         self.fade = Crossfade::default();
         self.fade_from = 1.0;
         self.fade_to = 1.0;
+        self.filter.clear();
         self.echo.clear();
         self.breath = 0.0;
         self.vib_depth = 0.0;
@@ -1027,6 +1039,9 @@ pub enum SoundCommand {
     /// Set a channel's echo (feedback delay): (channel, delay secs, feedback
     /// 0..1, wet mix). `secs <= 0` disables it.
     EchoChannel(usize, f32, f32, f32),
+    /// Set a channel's resonant filter: (channel, kind or `None` = off, cutoff
+    /// Hz, resonance q, sweep secs — 0 = immediate). Backs `filt`.
+    FilterChannel(usize, Option<FilterKind>, f32, f32, f32),
     /// Set a channel's singing-voice character for its later sung notes:
     /// (channel, breath, vibrato depth as a pitch fraction, vibrato rate Hz).
     VoiceConfig(usize, f32, f32, f32),

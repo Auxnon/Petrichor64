@@ -8,9 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::fx::Crossfade;
-
-const TWO_PI: f32 = std::f32::consts::PI * 2.0;
+use crate::fx::{Biquad, Crossfade};
 
 /// One formant: a resonance at `freq` Hz with quality `q` (sharpness) and output
 /// `gain`. A vowel is three of these. Serializable so a sung `Note` can carry it
@@ -20,54 +18,6 @@ pub struct Formant {
     pub freq: f32,
     pub q: f32,
     pub gain: f32,
-}
-
-/// A resonant band-pass biquad (transposed direct-form II). Coefficients are
-/// baked once from (freq, q, sample_rate); `z1`/`z2` are the per-voice state, so
-/// each sounding voice needs its own. Default is a silent/pass-nothing filter.
-#[derive(Clone, Copy, Default)]
-pub struct Biquad {
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
-    z1: f32,
-    z2: f32,
-    gain: f32,
-}
-
-impl Biquad {
-    /// Band-pass (constant 0 dB peak) at `freq` with quality `q`, scaled by `gain`.
-    pub fn bandpass(freq: f32, q: f32, gain: f32, sample_rate: f32) -> Self {
-        let mut bq = Self::default();
-        bq.retune(freq, q, gain, sample_rate);
-        bq
-    }
-
-    /// Recompute the band-pass coefficients in place, **preserving** the filter
-    /// state (z1/z2). Lets a formant sweep continuously as its frequency glides
-    /// without the click a fresh filter (zeroed state) would cause.
-    pub fn retune(&mut self, freq: f32, q: f32, gain: f32, sample_rate: f32) {
-        let w0 = TWO_PI * freq / sample_rate;
-        let (sin_w0, cos_w0) = w0.sin_cos();
-        let alpha = sin_w0 / (2.0 * q.max(0.001));
-        let a0 = 1.0 + alpha;
-        self.b0 = alpha / a0;
-        self.b1 = 0.0;
-        self.b2 = -alpha / a0;
-        self.a1 = -2.0 * cos_w0 / a0;
-        self.a2 = (1.0 - alpha) / a0;
-        self.gain = gain;
-    }
-
-    /// Filter one input sample, advancing the state.
-    pub fn process(&mut self, x: f32) -> f32 {
-        let y = self.b0 * x + self.z1;
-        self.z1 = self.b1 * x + self.z2 - self.a1 * y;
-        self.z2 = self.b2 * x - self.a2 * y;
-        y * self.gain
-    }
 }
 
 /// A per-voice bank of up to three formant filters summed in parallel. Can hold
