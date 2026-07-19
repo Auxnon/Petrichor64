@@ -7,8 +7,9 @@ _play several notes at once_
 function chord(freqs, length, instrument)
 ```
 
-Play multiple frequencies simultaneously. Each frequency is voiced on its own
-free channel, so they sound together rather than in sequence. `length` is in
+Play multiple frequencies simultaneously. Each frequency takes a free lane of
+channel 0, so they sound together rather than in sequence (raise channel 0's lane
+count with `attr{lanes}` if a chord is bigger than the default 8). `length` is in
 seconds (default 1), and `instrument` selects a table defined with `instr`
 (default 0, the built-in square-ish tone).
 

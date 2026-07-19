@@ -148,8 +148,12 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
     }
 }
 
-/// Number of independent playback channels.
+/// Number of independent playback channels ("tracks").
 const NUM_CH: usize = 16;
+/// Default polyphony lanes per channel — how many notes one channel can sound at
+/// once (chords). Generous by default so casual chords "just work" with no
+/// config; carve specific channels up/down with `attr{ lanes = {…} }`.
+const DEFAULT_LANES: usize = 8;
 const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 
 /// Build the per-sample mixer over its own synth state, returned as a closure.
@@ -171,28 +175,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     // Buffers are Arc-shared.
     let mut loaded: FxHashMap<String, (Arc<[f32]>, f32)> = FxHashMap::default();
 
-    // Per-channel state: `current` is the sounding voice, `fading` is a
-    // just-released voice still ramping down so consecutive notes cross-fade
-    // instead of clicking.
-    let mut queues: [VecDeque<Note>; NUM_CH] = Default::default();
-    let mut current: [Option<Voice>; NUM_CH] = Default::default();
-    let mut fading: [Option<Voice>; NUM_CH] = Default::default();
+    // The channels ("tracks"). Each owns a pool of polyphony lanes plus its own
+    // gain/fade and singing-voice character — a chord sounds across one channel's
+    // lanes, so its character/effects stay consistent. `attr{lanes}` resizes them.
+    let mut channels: Vec<Channel> = (0..NUM_CH).map(|_| Channel::new(DEFAULT_LANES)).collect();
 
-    // Per-channel output gain + an optional in-flight fade (a Crossfade ramp).
-    // The first channel-level "effect" — fade a channel in/out, or crossfade two
-    // channels with a pair of opposite fades. Gain multiplies the channel's mix.
-    let mut channel_gain: [f32; NUM_CH] = [1.0; NUM_CH];
-    let mut channel_fade: [Crossfade; NUM_CH] = [Crossfade::default(); NUM_CH];
-    let mut fade_from: [f32; NUM_CH] = [1.0; NUM_CH];
-    let mut fade_to: [f32; NUM_CH] = [1.0; NUM_CH];
-
-    // Current singing-voice character (breath + vibrato), applied to each new
-    // sung note. Set by `vox`; reset on load.
-    let mut voice_breath = 0.0f32;
-    let mut voice_vib_depth = 0.0f32;
-    let mut voice_vib_rate = 5.5f32;
-
-    let mut steal_ch = 0usize;
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
         // sample-accurate (the old code polled once per ~2000 samples, which
@@ -200,12 +187,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
         while let Ok(cmd) = audience.try_recv() {
             match cmd {
                 SoundCommand::PlayNote(note, ch) => {
-                    let c = pick_channel(ch, &current, &fading, &queues, &mut steal_ch);
-                    queues[c].push_back(note);
+                    let c = ch.unwrap_or(0).min(channels.len() - 1);
+                    let l = channels[c].pick_lane();
+                    channels[c].queues[l].push_back(note);
                 }
                 SoundCommand::Chain(notes, ch) => {
-                    let c = pick_channel(ch, &current, &fading, &queues, &mut steal_ch);
-                    queues[c].extend(notes);
+                    // A song/phrase sequences on a single lane of the channel.
+                    let c = ch.unwrap_or(0).min(channels.len() - 1);
+                    let l = channels[c].pick_lane();
+                    channels[c].queues[l].extend(notes);
                 }
                 SoundCommand::MakeInstrument(inst) => {
                     instruments.insert(inst.name, inst.normalized());
@@ -260,122 +250,134 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     instruments.clear();
                     samples.clear();
                     loaded.clear();
-                    for c in 0..NUM_CH {
-                        queues[c].clear();
-                        current[c] = None;
-                        fading[c] = None;
-                        channel_gain[c] = 1.0;
-                        channel_fade[c] = Crossfade::default();
+                    for chan in channels.iter_mut() {
+                        chan.reset();
                     }
-                    voice_breath = 0.0;
-                    voice_vib_depth = 0.0;
-                    voice_vib_rate = 5.5;
                 }
                 SoundCommand::Stop(ch) => match ch {
                     Some(c) => {
-                        release_channel(c.min(NUM_CH - 1), &mut current, &mut fading, &mut queues)
+                        let c = c.min(channels.len() - 1);
+                        channels[c].release_all();
                     }
                     None => {
-                        for c in 0..NUM_CH {
-                            release_channel(c, &mut current, &mut fading, &mut queues);
+                        for chan in channels.iter_mut() {
+                            chan.release_all();
                         }
                     }
                 },
-                SoundCommand::VoiceConfig(breath, depth, rate) => {
-                    voice_breath = breath;
-                    voice_vib_depth = depth;
-                    voice_vib_rate = if rate > 0.0 { rate } else { 5.5 };
+                SoundCommand::VoiceConfig(ch, breath, depth, rate) => {
+                    let c = ch.min(channels.len() - 1);
+                    let chan = &mut channels[c];
+                    chan.breath = breath;
+                    chan.vib_depth = depth;
+                    chan.vib_rate = if rate > 0.0 { rate } else { 5.5 };
                 }
                 SoundCommand::FadeChannel(ch, secs, target) => {
                     // Ramp a channel's output gain to `target` over `secs` via a
                     // Crossfade. Fade out (target 0), fade in (1), or crossfade
                     // two channels with a pair of opposite fades.
-                    let c = ch.min(NUM_CH - 1);
-                    fade_from[c] = channel_gain[c];
-                    fade_to[c] = target.clamp(0.0, 1.0);
-                    channel_fade[c] = Crossfade::new(secs.max(0.0), sample_rate);
+                    let c = ch.min(channels.len() - 1);
+                    let chan = &mut channels[c];
+                    chan.fade_from = chan.gain;
+                    chan.fade_to = target.clamp(0.0, 1.0);
+                    chan.fade = Crossfade::new(secs.max(0.0), sample_rate);
+                }
+                SoundCommand::SetLanes(counts) => {
+                    // `attr{ lanes = {4,3,5} }`: set per-channel polyphony. Entry i
+                    // (1-based in Lua) sets channel (i-1); unlisted channels keep
+                    // their current lane count.
+                    for (i, &n) in counts.iter().enumerate() {
+                        if i < channels.len() {
+                            channels[i].set_lanes(n);
+                        }
+                    }
                 }
             }
         }
 
         let mut mix = 0.0f32;
-        for c in 0..NUM_CH {
+        for chan in channels.iter_mut() {
             let mut ch_out = 0.0f32;
-            // Start the next queued note when the channel is idle.
-            if current[c].is_none() {
-                if let Some(note) = queues[c].pop_front() {
-                    let inc = TWO_PI * note.frequency / sample_rate;
-                    let mut voice = Voice::from_note(&note, inc);
-                    // Sung note: set the vowel formants, or glide from a voiced
-                    // consonant / diphthong start into them; apply voice character.
-                    if let Some(target) = &note.formants {
-                        if let Some(from) = &note.glide_from {
-                            voice
-                                .voice_bank
-                                .glide_to(from, target, note.glide_secs, sample_rate);
-                        } else {
-                            voice.voice_bank.set(target, sample_rate);
+            for l in 0..chan.lanes() {
+                // Start the next queued note when this lane is idle.
+                if chan.current[l].is_none() {
+                    if let Some(note) = chan.queues[l].pop_front() {
+                        let inc = TWO_PI * note.frequency / sample_rate;
+                        let mut voice = Voice::from_note(&note, inc);
+                        // Sung note: set the vowel formants, or glide from a voiced
+                        // consonant / diphthong start into them; stamp the channel's
+                        // voice character (breath/vibrato) onto the voice.
+                        if let Some(target) = &note.formants {
+                            if let Some(from) = &note.glide_from {
+                                voice
+                                    .voice_bank
+                                    .glide_to(from, target, note.glide_secs, sample_rate);
+                            } else {
+                                voice.voice_bank.set(target, sample_rate);
+                            }
+                            voice.breath = chan.breath;
+                            voice.vib_depth = chan.vib_depth;
+                            voice.vib_rate = chan.vib_rate;
                         }
-                        voice.breath = voice_breath;
-                        voice.vib_depth = voice_vib_depth;
-                        voice.vib_rate = voice_vib_rate;
+                        // Consonant onset: a burst of band-passed noise, whose tail
+                        // crossfades into the vowel (up to 12ms, at most half the
+                        // onset) so it isn't an abrupt cut.
+                        if let Some(k) = note.consonant {
+                            let xfade_secs = (k.secs * 0.5).min(0.012);
+                            let total = (k.secs * sample_rate) as u32;
+                            let xfade_samps = (xfade_secs * sample_rate) as u32;
+                            voice.consonant_samples = total.saturating_sub(xfade_samps);
+                            voice.consonant_xfade = Crossfade::new(xfade_secs, sample_rate);
+                            voice.consonant_filter =
+                                Biquad::bandpass(k.freq, k.q, k.gain, sample_rate);
+                        }
+                        chan.current[l] = Some(voice);
                     }
-                    // Consonant onset: a burst of band-passed noise, whose tail
-                    // crossfades into the vowel (up to 12ms, at most half the
-                    // onset) so it isn't an abrupt cut.
-                    if let Some(k) = note.consonant {
-                        let xfade_secs = (k.secs * 0.5).min(0.012);
-                        let total = (k.secs * sample_rate) as u32;
-                        let xfade_samps = (xfade_secs * sample_rate) as u32;
-                        voice.consonant_samples = total.saturating_sub(xfade_samps);
-                        voice.consonant_xfade = Crossfade::new(xfade_secs, sample_rate);
-                        voice.consonant_filter = Biquad::bandpass(k.freq, k.q, k.gain, sample_rate);
-                    }
-                    current[c] = Some(voice);
                 }
-            }
 
-            // Sounding voice: run the attack→decay→sustain envelope, then hand
-            // off to `fading` for release at note-off.
-            if let Some(v) = current[c].as_mut() {
-                let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                v.advance_env(&instr.env, sample_rate);
-                mix += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
-                // One-shot samples play to their natural end, ignoring the note's
-                // duration — otherwise a pitched-DOWN sample (slower playback)
-                // gets cut off mid-buffer while still loud, an audible snap.
-                // voice_out sets remaining=0 when the buffer runs out, so the
-                // release still fires; oscillators use the duration timer.
-                if !matches!(instr.wave, WaveType::Sample(_)) {
-                    v.remaining -= 1.0 / sample_rate;
-                }
-                if v.remaining <= 0.0 {
-                    // Note-off: move to release. Set the stage on the taken voice
-                    // so we don't extend `v`'s borrow across the take.
-                    if let Some(mut voice) = current[c].take() {
-                        voice.stage = EnvStage::Release;
-                        fading[c] = Some(voice);
-                    }
-                }
-            }
-
-            // Fading voice: release ramp to silence at the instrument's rate.
-            if let Some(v) = fading[c].as_mut() {
-                let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                let rel = instr.env.release;
-                v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
-                if v.env <= 0.0 {
-                    fading[c] = None;
-                } else {
+                // Sounding voice: run the attack→decay→sustain envelope, then hand
+                // off to `fading` for release at note-off.
+                if let Some(v) = chan.current[l].as_mut() {
+                    let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
+                    v.advance_env(&instr.env, sample_rate);
                     ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
+                    // One-shot samples play to their natural end, ignoring the note's
+                    // duration — otherwise a pitched-DOWN sample (slower playback)
+                    // gets cut off mid-buffer while still loud, an audible snap.
+                    // voice_out sets remaining=0 when the buffer runs out, so the
+                    // release still fires; oscillators use the duration timer.
+                    if !matches!(instr.wave, WaveType::Sample(_)) {
+                        v.remaining -= 1.0 / sample_rate;
+                    }
+                    if v.remaining <= 0.0 {
+                        // Note-off: move to release. Set the stage on the taken voice
+                        // so we don't extend `v`'s borrow across the take.
+                        if let Some(mut voice) = chan.current[l].take() {
+                            voice.stage = EnvStage::Release;
+                            chan.fading[l] = Some(voice);
+                        }
+                    }
+                }
+
+                // Fading voice: release ramp to silence at the instrument's rate.
+                if let Some(v) = chan.fading[l].as_mut() {
+                    let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
+                    let rel = instr.env.release;
+                    v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
+                    if v.env <= 0.0 {
+                        chan.fading[l] = None;
+                    } else {
+                        ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
+                    }
                 }
             }
 
-            // Channel effect: advance an in-flight fade, then apply the gain.
-            if !channel_fade[c].done() {
-                channel_gain[c] = channel_fade[c].mix(fade_from[c], fade_to[c]);
+            // Channel effect: advance an in-flight fade, then apply the gain to
+            // the whole channel (all its lanes).
+            if !chan.fade.done() {
+                chan.gain = chan.fade.mix(chan.fade_from, chan.fade_to);
             }
-            mix += ch_out * channel_gain[c];
+            mix += ch_out * chan.gain;
         }
 
         // Soft limiter: tanh is ~linear for small signals (a lone note passes
@@ -735,6 +737,109 @@ enum EnvStage {
     Release,
 }
 
+/// One playback channel — a "track". It owns a pool of `lanes` monophonic voice
+/// slots (its polyphony: a chord uses several lanes of the *same* channel, so a
+/// chord's character/effects stay consistent), plus channel-level state that
+/// applies to everything sounding on it: output `gain` with an in-flight `fade`,
+/// and the singing-voice character (`breath`/`vibrato`) stamped onto sung notes
+/// started here. Effects live on the channel; timbre/polyphony live in its lanes.
+struct Channel {
+    /// Per-lane pending-note queue (a phrase/song sequences on one lane).
+    queues: Vec<VecDeque<Note>>,
+    /// Per-lane sounding voice.
+    current: Vec<Option<Voice>>,
+    /// Per-lane releasing voice (ramping down so consecutive notes don't click).
+    fading: Vec<Option<Voice>>,
+    /// Round-robin lane to steal when all lanes are busy.
+    steal: usize,
+    /// Output gain (multiplies the whole channel's mix).
+    gain: f32,
+    /// In-flight gain ramp (a channel-level `fade`).
+    fade: Crossfade,
+    fade_from: f32,
+    fade_to: f32,
+    /// Singing-voice character applied to sung notes started on this channel.
+    breath: f32,
+    vib_depth: f32,
+    vib_rate: f32,
+}
+impl Channel {
+    fn new(lanes: usize) -> Self {
+        let lanes = lanes.max(1);
+        Self {
+            queues: (0..lanes).map(|_| VecDeque::new()).collect(),
+            current: (0..lanes).map(|_| None).collect(),
+            fading: (0..lanes).map(|_| None).collect(),
+            steal: 0,
+            gain: 1.0,
+            fade: Crossfade::default(),
+            fade_from: 1.0,
+            fade_to: 1.0,
+            breath: 0.0,
+            vib_depth: 0.0,
+            vib_rate: 5.5,
+        }
+    }
+    fn lanes(&self) -> usize {
+        self.current.len()
+    }
+    /// Resize the lane pool (a config event via `attr{lanes}`, never the hot path).
+    fn set_lanes(&mut self, lanes: usize) {
+        let lanes = lanes.max(1);
+        self.queues.resize_with(lanes, VecDeque::new);
+        self.current.resize_with(lanes, || None);
+        self.fading.resize_with(lanes, || None);
+        if self.steal >= lanes {
+            self.steal = 0;
+        }
+    }
+    /// Pick a lane for a new note: the first fully-idle lane, else round-robin
+    /// steal (the channel's polyphony cap = its lane count).
+    fn pick_lane(&mut self) -> usize {
+        let lanes = self.lanes();
+        (0..lanes)
+            .find(|&l| {
+                self.current[l].is_none() && self.fading[l].is_none() && self.queues[l].is_empty()
+            })
+            .unwrap_or_else(|| {
+                let l = self.steal;
+                self.steal = (self.steal + 1) % lanes;
+                l
+            })
+    }
+    /// Release every lane (clear queues, ramp sounding voices down): `mute`/`Stop`.
+    fn release_all(&mut self) {
+        for l in 0..self.lanes() {
+            self.queues[l].clear();
+            if let Some(v) = self.current[l].take() {
+                self.fading[l] = Some(v);
+            }
+        }
+    }
+    /// App reload: silence everything and restore channel defaults (incl. the
+    /// default lane count, so a new game that never calls `attr` starts clean).
+    fn reset(&mut self) {
+        self.set_lanes(DEFAULT_LANES);
+        for q in self.queues.iter_mut() {
+            q.clear();
+        }
+        for c in self.current.iter_mut() {
+            *c = None;
+        }
+        for f in self.fading.iter_mut() {
+            *f = None;
+        }
+        self.steal = 0;
+        self.gain = 1.0;
+        self.fade = Crossfade::default();
+        self.fade_from = 1.0;
+        self.fade_to = 1.0;
+        self.breath = 0.0;
+        self.vib_depth = 0.0;
+        self.vib_rate = 5.5;
+    }
+}
+
 /// Runtime state for one sounding note: a wrapped phase accumulator plus an ADSR
 /// envelope. Kept separate from `Note` (the queued spec).
 struct Voice {
@@ -898,18 +1003,21 @@ pub enum SoundCommand {
     /// Bind a name-banked sound into integer instrument slot `id`, optionally
     /// overriding its base pitch, with an envelope. Backs `smpl(id, 'name', cfg?)`.
     BindSample(usize, String, Option<f32>, Envelope),
-    /// Play one note. `Some(ch)` targets a channel; `None` auto-allocates a free
-    /// one (so overlapping `note()` calls form chords).
+    /// Play one note. `Some(ch)` targets a channel; `None` = channel 0 (the
+    /// default track). The note takes a free lane of that channel, so overlapping
+    /// notes on one channel form a chord (up to its lane count).
     PlayNote(Note, Option<usize>),
-    /// Queue a sequence on a single channel (`None` auto-allocates one).
+    /// Queue a sequence on a single lane of a channel (`None` = channel 0).
     Chain(Vec<Note>, Option<usize>),
-    /// Release a channel (`None` = all channels).
+    /// Release a channel — all its lanes (`None` = every channel).
     Stop(Option<usize>),
     /// Ramp a channel's output gain: (channel, seconds, target gain 0..1).
     FadeChannel(usize, f32, f32),
-    /// Set the singing-voice character for later sung notes: (breath, vibrato
-    /// depth as a pitch fraction, vibrato rate Hz).
-    VoiceConfig(f32, f32, f32),
+    /// Set a channel's singing-voice character for its later sung notes:
+    /// (channel, breath, vibrato depth as a pitch fraction, vibrato rate Hz).
+    VoiceConfig(usize, f32, f32, f32),
+    /// Set per-channel polyphony lane counts: entry i sets channel i (`attr{lanes}`).
+    SetLanes(Vec<usize>),
     /// Drop all user instruments/samples and silence every voice (app reload).
     Reset,
 }
@@ -943,37 +1051,3 @@ fn normalize_pcm(pcm: &mut [f32]) {
     }
 }
 
-/// Pick the channel for a note: an explicit one, or the first fully-idle channel
-/// so simultaneous notes voice separately. Falls back to round-robin stealing
-/// when all 16 are busy (a 16-voice cap).
-fn pick_channel(
-    ch: Option<usize>,
-    current: &[Option<Voice>],
-    fading: &[Option<Voice>],
-    queues: &[VecDeque<Note>],
-    steal: &mut usize,
-) -> usize {
-    match ch {
-        Some(c) => c.min(NUM_CH - 1),
-        None => (0..NUM_CH)
-            .find(|&c| current[c].is_none() && fading[c].is_none() && queues[c].is_empty())
-            .unwrap_or_else(|| {
-                let c = *steal;
-                *steal = (*steal + 1) % NUM_CH;
-                c
-            }),
-    }
-}
-
-/// Clear a channel's queue and release its sounding voice (ramp down, no click).
-fn release_channel(
-    c: usize,
-    current: &mut [Option<Voice>],
-    fading: &mut [Option<Voice>],
-    queues: &mut [VecDeque<Note>],
-) {
-    queues[c].clear();
-    if let Some(v) = current[c].take() {
-        fading[c] = Some(v);
-    }
-}

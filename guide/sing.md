@@ -32,8 +32,10 @@ recorded voice, all synthesized.
     ("eye"), `'au'` ("ow"), `'oi'` ("oy").
 - `length` — default per-syllable sustain seconds (used when `melody` doesn't
   give per-syllable lengths). Default 0.5.
-- `channel` — optional; for a single syllable, omit to auto-allocate a voice
-  (overlapping calls harmonize). A phrase sequences on one channel.
+- `channel` — which channel ("track") to sing on. Default `0`. A phrase sequences
+  on one lane of the channel; a single syllable takes a free lane, so overlapping
+  `sing` calls on the same channel harmonize (a vocal chord). Set the channel's
+  voice character with `vox(channel, …)`.
 
 ```lua
 -- a phrase up a little scale (one syllable per pitch)
@@ -51,6 +53,6 @@ sing('o', 277, 2)
 sing('o', 330, 2)
 ```
 
-Phase: five vowels + unvoiced-consonant onsets + a phrase sequencer. Voiced
-consonants (m/n/l/r glides) and vowel-to-vowel glides are future work. Shares the
-16-voice polyphony and mixer with `note`/`smpl`. See also `note`, `song`, `fade`.
+Shares the channel/lane polyphony and mixer with `note`/`smpl` — a sung chord
+uses one channel's lanes (see `attr{lanes}`), so the whole chord shares that
+channel's `vox` character. See also `note`, `song`, `fade`, `vox`, `attr`.
