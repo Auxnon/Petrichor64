@@ -265,3 +265,129 @@ impl Filter {
         self.biquad.process(x)
     }
 }
+
+/// One feedback comb filter with a one-pole low-pass in the loop (the damping) —
+/// a Freeverb building block. Empty (silent) until sized by `Reverb::set`.
+#[derive(Default)]
+struct Comb {
+    buf: Vec<f32>,
+    pos: usize,
+    /// Low-pass state in the feedback path (high-frequency damping).
+    store: f32,
+    feedback: f32,
+    damp: f32,
+}
+impl Comb {
+    fn process(&mut self, input: f32) -> f32 {
+        if self.buf.is_empty() {
+            return 0.0;
+        }
+        let out = self.buf[self.pos];
+        self.store = out * (1.0 - self.damp) + self.store * self.damp;
+        self.buf[self.pos] = input + self.store * self.feedback;
+        self.pos += 1;
+        if self.pos >= self.buf.len() {
+            self.pos = 0;
+        }
+        out
+    }
+}
+
+/// One Schroeder all-pass filter — smears the comb output so it reads as diffuse
+/// reverb rather than discrete echoes. Empty (pass-through) until sized.
+#[derive(Default)]
+struct Allpass {
+    buf: Vec<f32>,
+    pos: usize,
+    feedback: f32,
+}
+impl Allpass {
+    fn process(&mut self, input: f32) -> f32 {
+        if self.buf.is_empty() {
+            return input;
+        }
+        let bufout = self.buf[self.pos];
+        let out = -input + bufout;
+        self.buf[self.pos] = input + bufout * self.feedback;
+        self.pos += 1;
+        if self.pos >= self.buf.len() {
+            self.pos = 0;
+        }
+        out
+    }
+}
+
+// Freeverb's tuned delay lengths (samples at 44.1 kHz), scaled to the device rate
+// in `set`. The mutually-prime lengths are what make the tail sound smooth.
+const COMB_TUNING: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+const ALLPASS_TUNING: [usize; 4] = [556, 441, 341, 225];
+const REVERB_TUNING_SR: f32 = 44100.0;
+
+/// A **reverb** — a compact Freeverb (8 parallel damped comb filters summed, then
+/// 4 series all-pass filters). A channel-level effect: it processes the channel's
+/// whole mixed output and its tail rings out after the voices stop. Inactive by
+/// default (passes input through) until `set` allocates the delay lines.
+#[derive(Default)]
+pub struct Reverb {
+    combs: [Comb; 8],
+    allpasses: [Allpass; 4],
+    /// Wet level (how much reverb is mixed on top of the dry signal).
+    wet: f32,
+    active: bool,
+}
+
+impl Reverb {
+    /// Configure the reverb. `room` is the tail length/decay (comb feedback,
+    /// `0..1` — bigger = longer), `damp` rolls off the tail's highs (`0..1`),
+    /// `wet` is the reverb level. `room <= 0` disables it and frees the buffers.
+    pub fn set(&mut self, room: f32, damp: f32, wet: f32, sample_rate: f32) {
+        if room <= 0.0 {
+            self.clear();
+            return;
+        }
+        let scale = sample_rate / REVERB_TUNING_SR;
+        // Map room 0..1 to a safe feedback range (never ≥1, which would run away).
+        let feedback = (0.7 + room.clamp(0.0, 1.0) * 0.28).min(0.98);
+        let damp = damp.clamp(0.0, 1.0);
+        for (comb, &tuning) in self.combs.iter_mut().zip(COMB_TUNING.iter()) {
+            let len = ((tuning as f32 * scale) as usize).max(1);
+            comb.buf.clear();
+            comb.buf.resize(len, 0.0);
+            comb.pos = 0;
+            comb.store = 0.0;
+            comb.feedback = feedback;
+            comb.damp = damp;
+        }
+        for (ap, &tuning) in self.allpasses.iter_mut().zip(ALLPASS_TUNING.iter()) {
+            let len = ((tuning as f32 * scale) as usize).max(1);
+            ap.buf.clear();
+            ap.buf.resize(len, 0.0);
+            ap.pos = 0;
+            ap.feedback = 0.5;
+        }
+        self.wet = wet.max(0.0);
+        self.active = true;
+    }
+
+    /// Disable the reverb (pass-through) and free its buffers. Used on app reload.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Process one sample: dry + wet reverb, advancing all the delay lines.
+    pub fn process(&mut self, input: f32) -> f32 {
+        if !self.active {
+            return input;
+        }
+        // Fixed input gain (Freeverb) keeps the summed comb feedback bounded.
+        let inp = input * 0.015;
+        let mut out = 0.0;
+        for comb in self.combs.iter_mut() {
+            out += comb.process(inp);
+        }
+        for ap in self.allpasses.iter_mut() {
+            out = ap.process(out);
+        }
+        input + out * self.wet
+    }
+}

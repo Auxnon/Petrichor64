@@ -11,7 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
-use crate::fx::{Biquad, Crossfade, Echo, Filter, FilterKind};
+use crate::fx::{Biquad, Crossfade, Echo, Filter, FilterKind, Reverb};
 use crate::vocaloid::{Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -293,6 +293,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         None => channels[c].filter.clear(),
                     }
                 }
+                SoundCommand::ReverbChannel(ch, room, damp, wet) => {
+                    let c = ch.min(channels.len() - 1);
+                    channels[c].reverb.set(room, damp, wet, sample_rate);
+                }
                 SoundCommand::SetLanes(counts) => {
                     // `attr{ lanes = {4,3,5} }`: set per-channel polyphony. Entry i
                     // (1-based in Lua) sets channel (i-1); unlisted channels keep
@@ -384,11 +388,12 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
             }
 
             // Channel effects, in chain order: filter the summed output, then
-            // echo the filtered signal (its tail keeps ringing after the voices
-            // stop), then advance an in-flight fade and apply the gain to the
-            // whole channel (dry + echoes alike).
+            // echo it (discrete repeats), then reverb (diffuse tail) — both tails
+            // keep ringing after the voices stop — then advance an in-flight fade
+            // and apply the gain to the whole channel (dry + wet alike).
             ch_out = chan.filter.process(ch_out);
             ch_out = chan.echo.process(ch_out);
+            ch_out = chan.reverb.process(ch_out);
             if !chan.fade.done() {
                 chan.gain = chan.fade.mix(chan.fade_from, chan.fade_to);
             }
@@ -777,6 +782,8 @@ struct Channel {
     filter: Filter,
     /// Channel-level feedback delay (`echo`); a no-op until configured.
     echo: Echo,
+    /// Channel-level reverb (`verb`); a no-op until configured.
+    reverb: Reverb,
     /// Singing-voice character applied to sung notes started on this channel.
     breath: f32,
     vib_depth: f32,
@@ -796,6 +803,7 @@ impl Channel {
             fade_to: 1.0,
             filter: Filter::default(),
             echo: Echo::default(),
+            reverb: Reverb::default(),
             breath: 0.0,
             vib_depth: 0.0,
             vib_rate: 5.5,
@@ -857,6 +865,7 @@ impl Channel {
         self.fade_to = 1.0;
         self.filter.clear();
         self.echo.clear();
+        self.reverb.clear();
         self.breath = 0.0;
         self.vib_depth = 0.0;
         self.vib_rate = 5.5;
@@ -1042,6 +1051,9 @@ pub enum SoundCommand {
     /// Set a channel's resonant filter: (channel, kind or `None` = off, cutoff
     /// Hz, resonance q, sweep secs — 0 = immediate). Backs `filt`.
     FilterChannel(usize, Option<FilterKind>, f32, f32, f32),
+    /// Set a channel's reverb: (channel, room/decay 0..1, damping 0..1, wet mix).
+    /// `room <= 0` disables it. Backs `verb`.
+    ReverbChannel(usize, f32, f32, f32),
     /// Set a channel's singing-voice character for its later sung notes:
     /// (channel, breath, vibrato depth as a pitch fraction, vibrato rate Hz).
     VoiceConfig(usize, f32, f32, f32),

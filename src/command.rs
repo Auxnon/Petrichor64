@@ -1428,6 +1428,34 @@ function filt(channel, kind, cutoff, q, secs) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "verb",
+        move |_, _, (channel, room, damp, wet): (usize, f32, Option<f32>, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level reverb (a compact Freeverb). `room` is the tail
+                // length/decay 0..1, `damp` rolls off the tail's highs 0..1, `wet`
+                // the reverb level. `room <= 0` turns it off.
+                let _ = sing.send(SoundCommand::ReverbChannel(
+                    channel,
+                    room,
+                    damp.unwrap_or(0.5),
+                    wet.unwrap_or(0.3),
+                ));
+            }
+            Ok(())
+        },
+        "Add reverb to a channel: (channel, room/decay 0..1, damp 0..1, wet mix). room<=0 disables it",
+        "
+---@param channel integer
+---@param room number tail length/decay 0..1 (<=0 disables)
+---@param damp number? high-frequency damping of the tail 0..1 (default 0.5)
+---@param wet number? reverb level mixed over the dry signal (default 0.3)
+function verb(channel, room, damp, wet) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "vox",
         move |_, _, (a, b): (Value, Option<Value>)| {
             #[cfg(feature = "audio")]
