@@ -330,21 +330,25 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                             } else {
                                 voice.voice_bank.set(target, sample_rate);
                             }
+                            voice.vowel = *target; // for a voiced coda to glide from
                             voice.breath = chan.breath;
                             voice.vib_depth = chan.vib_depth;
                             voice.vib_rate = chan.vib_rate;
                         }
-                        // Consonant onset: a burst of band-passed noise, whose tail
-                        // crossfades into the vowel (up to 12ms, at most half the
-                        // onset) so it isn't an abrupt cut.
-                        if let Some(k) = note.consonant {
-                            let xfade_secs = (k.secs * 0.5).min(0.012);
-                            let total = (k.secs * sample_rate) as u32;
-                            let xfade_samps = (xfade_secs * sample_rate) as u32;
-                            voice.consonant_samples = total.saturating_sub(xfade_samps);
-                            voice.consonant_xfade = Crossfade::new(xfade_secs, sample_rate);
-                            voice.consonant_filter =
-                                Biquad::bandpass(k.freq, k.q, k.gain, sample_rate);
+                        // Coda (played at note-off) + onset cluster: queue the
+                        // onset bursts and start the first. Each is band-passed
+                        // noise; the final onset burst crossfades into the vowel
+                        // (up to 12ms) so it isn't an abrupt cut.
+                        voice.coda_glide = note.coda_glide;
+                        voice.coda = note.coda;
+                        voice.onset = note.onset;
+                        voice.onset_i = 0;
+                        voice.onset_xfade_last = true;
+                        if !voice.onset.is_empty() {
+                            let is_last = voice.onset.len() == 1;
+                            let k = voice.onset[0];
+                            voice.onset_i = 1;
+                            voice.load_burst(&k, is_last, sample_rate);
                         }
                         chan.current[l] = Some(voice);
                     }
@@ -365,11 +369,17 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         v.remaining -= 1.0 / sample_rate;
                     }
                     if v.remaining <= 0.0 {
-                        // Note-off: move to release. Set the stage on the taken voice
-                        // so we don't extend `v`'s borrow across the take.
-                        if let Some(mut voice) = chan.current[l].take() {
-                            voice.stage = EnvStage::Release;
-                            chan.fading[l] = Some(voice);
+                        // Sustain (or a coda segment) ended. If there's still a
+                        // coda to play (a voiced ending or unvoiced bursts), keep
+                        // the voice sounding; otherwise release it. `advance_coda`
+                        // is a no-op for notes without a coda.
+                        if !v.advance_coda(sample_rate) {
+                            // Note-off: move to release. Set the stage on the taken
+                            // voice so we don't extend `v`'s borrow across the take.
+                            if let Some(mut voice) = chan.current[l].take() {
+                                voice.stage = EnvStage::Release;
+                                chan.fading[l] = Some(voice);
+                            }
                         }
                     }
                 }
@@ -648,8 +658,18 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         osc(v.phase, instr, &mut v.rng)
     };
 
+    // Advance the consonant queue: when the active burst is spent and another is
+    // queued (an onset cluster like s+t, or the coda bursts), start the next.
+    // The final onset burst crossfades into the vowel; coda bursts don't.
+    if v.consonant_samples == 0 && v.consonant_xfade.done() && v.onset_i < v.onset.len() {
+        let k = v.onset[v.onset_i];
+        v.onset_i += 1;
+        let xfade = v.onset_i >= v.onset.len() && v.onset_xfade_last;
+        v.load_burst(&k, xfade, sr);
+    }
+
     if v.consonant_samples > 0 {
-        // Pure consonant: band-passed noise burst before the vowel.
+        // Pure consonant: a band-passed noise burst.
         v.consonant_samples -= 1;
         v.consonant_filter.process(white_noise(&mut v.rng))
     } else if !v.consonant_xfade.done() {
@@ -674,7 +694,7 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Note {
     instrument: usize,
     pub frequency: f32,
@@ -685,12 +705,19 @@ pub struct Note {
     /// note. When set, the voice uses a sawtooth glottal source shaped by these
     /// formants (see `vocaloid`), ignoring the instrument's waveform.
     pub formants: Option<[Formant; 3]>,
-    /// Optional consonant onset (a short noise burst before the vowel).
-    pub consonant: Option<Consonant>,
+    /// Onset consonant cluster: unvoiced noise bursts played in order before the
+    /// vowel (e.g. s+t for "st").
+    pub onset: Vec<Consonant>,
     /// Optional starting formants to glide *from* into `formants` (a voiced
-    /// consonant, or a diphthong's first vowel), over `glide_secs`.
+    /// onset consonant, or a diphthong's first vowel), over `glide_secs`.
     pub glide_from: Option<[Formant; 3]>,
     pub glide_secs: f32,
+    /// Optional voiced coda to glide *to* at note-off (a nasal/liquid ending
+    /// like the "n" in "sun").
+    pub coda_glide: Option<[Formant; 3]>,
+    /// Coda consonant cluster: unvoiced bursts played after the vowel (the "t"
+    /// in "cat", "t"+"s" in "cats").
+    pub coda: Vec<Consonant>,
 }
 impl Note {
     pub fn new(instrument: usize, frequency: f32, duration: f32, volume: f32) -> Self {
@@ -700,13 +727,15 @@ impl Note {
             duration,
             volume,
             formants: None,
-            consonant: None,
+            onset: Vec::new(),
             glide_from: None,
             glide_secs: 0.0,
+            coda_glide: None,
+            coda: Vec::new(),
         }
     }
-    /// A sung note at `frequency` from a parsed syllable (vowel + optional
-    /// consonant onset + optional formant glide).
+    /// A sung note at `frequency` from a parsed syllable (onset cluster + vowel +
+    /// optional glides + coda cluster).
     pub fn sung(
         frequency: f32,
         duration: f32,
@@ -719,9 +748,11 @@ impl Note {
             duration,
             volume,
             formants: Some(syllable.vowel),
-            consonant: syllable.consonant,
+            onset: syllable.onset.clone(),
             glide_from: syllable.glide_from,
             glide_secs: syllable.glide_secs,
+            coda_glide: syllable.coda_glide,
+            coda: syllable.coda.clone(),
         }
     }
 }
@@ -755,6 +786,17 @@ enum EnvStage {
     Decay,
     Sustain,
     Release,
+}
+
+/// How far a sung voice has progressed through its coda (the consonants after
+/// the vowel) once its sustain ends. `None` until note-off; then a voiced glide
+/// (nasal/liquid ending), then any unvoiced bursts, then `Done` → release.
+#[derive(Clone, Copy, PartialEq)]
+enum CodaStage {
+    None,
+    Glide,
+    Bursts,
+    Done,
 }
 
 /// One playback channel — a "track". It owns a pool of `lanes` monophonic voice
@@ -890,11 +932,26 @@ struct Voice {
     freq: f32,
     /// Formant filters for a sung (voice) note; inactive for normal notes.
     voice_bank: FormantBank,
-    /// Consonant onset: remaining samples of band-passed noise before the vowel.
+    /// The active consonant burst: remaining samples of band-passed noise.
     consonant_samples: u32,
     consonant_filter: Biquad,
-    /// Blends the consonant noise into the vowel at the end of the onset.
+    /// Blends the *final* onset burst's noise into the vowel (skipped mid-cluster
+    /// and for coda bursts, which have no vowel to land on).
     consonant_xfade: Crossfade,
+    /// Consonant bursts still to play (onset cluster before the vowel, then reused
+    /// for the coda cluster after it), advanced through by `onset_i`.
+    onset: Vec<Consonant>,
+    onset_i: usize,
+    /// Whether the last burst in `onset` crossfades into the vowel (onset) or just
+    /// ends (coda).
+    onset_xfade_last: bool,
+    /// The landed vowel formants, kept so a voiced coda can glide *from* them.
+    vowel: [Formant; 3],
+    /// Voiced coda ending to glide to at note-off (nasal/liquid), and the unvoiced
+    /// coda bursts to play after it; `coda_stage` tracks progress.
+    coda_glide: Option<[Formant; 3]>,
+    coda: Vec<Consonant>,
+    coda_stage: CodaStage,
     /// Voice character (sung notes only): breath (aspiration noise mix) and a
     /// vibrato LFO (depth as a pitch fraction, rate in Hz, running phase).
     breath: f32,
@@ -919,10 +976,68 @@ impl Voice {
             consonant_samples: 0,
             consonant_filter: Biquad::default(),
             consonant_xfade: Crossfade::default(),
+            onset: Vec::new(),
+            onset_i: 0,
+            onset_xfade_last: true,
+            vowel: [Formant::default(); 3],
+            coda_glide: None,
+            coda: Vec::new(),
+            coda_stage: CodaStage::None,
             breath: 0.0,
             vib_depth: 0.0,
             vib_rate: 0.0,
             vib_phase: 0.0,
+        }
+    }
+    /// Load the next queued consonant burst into the active-burst slot. The final
+    /// onset burst crossfades into the vowel; mid-cluster and coda bursts don't.
+    fn load_burst(&mut self, k: &Consonant, xfade_into_vowel: bool, sr: f32) {
+        let total = (k.secs * sr) as u32;
+        if xfade_into_vowel {
+            let xfade_secs = (k.secs * 0.5).min(0.012);
+            let xfade_samps = (xfade_secs * sr) as u32;
+            self.consonant_samples = total.saturating_sub(xfade_samps);
+            self.consonant_xfade = Crossfade::new(xfade_secs, sr);
+        } else {
+            self.consonant_samples = total.max(1);
+            self.consonant_xfade = Crossfade::default(); // done → no blend
+        }
+        self.consonant_filter = Biquad::bandpass(k.freq, k.q, k.gain, sr);
+    }
+    /// Advance the coda one segment when the sustain (or a prior coda segment)
+    /// runs out. Returns `true` if it set up more sound to play (a voiced glide
+    /// or a burst run), `false` when the coda is finished and the voice should
+    /// release. A no-op (returns `false`) for notes without a coda.
+    fn advance_coda(&mut self, sr: f32) -> bool {
+        loop {
+            match self.coda_stage {
+                CodaStage::None => self.coda_stage = CodaStage::Glide,
+                CodaStage::Glide => {
+                    self.coda_stage = CodaStage::Bursts;
+                    if let Some(target) = self.coda_glide.take() {
+                        // Glide the vowel into the nasal/liquid ending, staying tonal.
+                        self.voice_bank.glide_to(&self.vowel, &target, 0.08, sr);
+                        self.remaining = 0.08;
+                        return true;
+                    }
+                }
+                CodaStage::Bursts => {
+                    self.coda_stage = CodaStage::Done;
+                    if !self.coda.is_empty() {
+                        // Reuse the onset burst machinery to play the coda bursts
+                        // (no vowel to blend into → no final xfade).
+                        self.onset = std::mem::take(&mut self.coda);
+                        self.onset_i = 0;
+                        self.onset_xfade_last = false;
+                        self.consonant_samples = 0;
+                        self.consonant_xfade = Crossfade::default();
+                        let total: f32 = self.onset.iter().map(|k| k.secs).sum();
+                        self.remaining = total.max(0.001);
+                        return true;
+                    }
+                }
+                CodaStage::Done => return false,
+            }
         }
     }
     /// Advance and wrap the phase to keep f32 precision indefinitely.

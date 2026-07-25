@@ -1306,7 +1306,7 @@ function mute(channel) end"
                         })
                         .collect();
                     if notes.len() == 1 {
-                        let _ = sing.send(SoundCommand::PlayNote(notes[0], channel));
+                        let _ = sing.send(SoundCommand::PlayNote(notes[0].clone(), channel));
                     } else {
                         // A phrase is one sequential voice on a single channel.
                         let _ = sing.send(SoundCommand::Chain(notes, channel));
