@@ -118,14 +118,73 @@ pub struct Consonant {
     pub gain: f32,
 }
 
-/// A parsed sung syllable: an optional unvoiced noise onset, an optional starting
-/// formant set to glide *from* (a voiced consonant, or a diphthong's first
-/// vowel), and the vowel formants to land on.
+/// A parsed sung syllable, in playback order: an **onset** cluster of unvoiced
+/// noise bursts, an optional voiced onset to glide *from* (a voiced consonant or
+/// a diphthong's first vowel), the **vowel** to land on, an optional voiced
+/// **coda** to glide *to* at the end (a nasal/liquid ending like `sun`/`call`),
+/// then a **coda** cluster of unvoiced bursts (`cat`, `cats`). Lets whole
+/// CVC(C) words sing, not just CV syllables.
 pub struct SungSyllable {
-    pub consonant: Option<Consonant>,
+    pub onset: Vec<Consonant>,
     pub glide_from: Option<[Formant; 3]>,
     pub glide_secs: f32,
     pub vowel: [Formant; 3],
+    pub coda_glide: Option<[Formant; 3]>,
+    pub coda: Vec<Consonant>,
+}
+
+/// One consonant in a cluster: an unvoiced noise burst, or a voiced (nasal /
+/// liquid / glide) formant set that the vowel glides through.
+enum Cons {
+    Unvoiced(Consonant),
+    Voiced([Formant; 3]),
+}
+
+/// Split a run of consonant characters into ordered tokens, handling the common
+/// digraphs: `sh`/`ch` (hiss), `ng` (nasal), `ck` (→k), `th` (→f-ish). Used for
+/// both the onset and coda clusters, so `str`/`spl`/`nts`/`nk` all decompose.
+fn parse_consonants(s: &str) -> Vec<Cons> {
+    let sh = Consonant { freq: 3000.0, q: 1.2, secs: 0.09, gain: 0.5 };
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match (c, next) {
+            ('s', Some('h')) | ('c', Some('h')) => {
+                out.push(Cons::Unvoiced(sh));
+                i += 2;
+            }
+            ('n', Some('g')) => {
+                if let Some(vf) = voiced_onset('n') {
+                    out.push(Cons::Voiced(vf)); // nasal
+                }
+                i += 2;
+            }
+            ('c', Some('k')) => {
+                if let Some(k) = consonant_for('k') {
+                    out.push(Cons::Unvoiced(k));
+                }
+                i += 2;
+            }
+            ('t', Some('h')) => {
+                if let Some(k) = consonant_for('f') {
+                    out.push(Cons::Unvoiced(k)); // approximate 'th' as a soft fricative
+                }
+                i += 2;
+            }
+            _ => {
+                if let Some(k) = consonant_for(c) {
+                    out.push(Cons::Unvoiced(k));
+                } else if let Some(vf) = voiced_onset(c) {
+                    out.push(Cons::Voiced(vf));
+                }
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Formant target for a *voiced* consonant (m/n/l/r/w/y). These are tonal (use
@@ -164,53 +223,85 @@ fn consonant_for(c: char) -> Option<Consonant> {
     }
 }
 
-/// Parse a sung syllable. Examples:
-/// - `"sa"`  → unvoiced hiss onset, vowel /a/
-/// - `"la"`  → voiced /l/ formants gliding into /a/
-/// - `"ma"`  → voiced nasal /m/ gliding into /a/
-/// - `"ai"`  → diphthong: glide /a/ → /i/
-/// - `"o"`   → steady /o/
+/// Parse a sung syllable into onset / vowel / coda. Examples:
+/// - `"sa"`   → unvoiced hiss onset, vowel /a/
+/// - `"la"`   → voiced /l/ formants gliding into /a/
+/// - `"ai"`   → diphthong: glide /a/ → /i/
+/// - `"stra"` → onset cluster s+t bursts, /r/ glide, vowel /a/
+/// - `"cat"`  → onset /k/, vowel /a/, coda /t/ burst
+/// - `"sun"`  → onset /s/, vowel /u/, voiced /n/ coda glide
+/// - `"sink"` → /s/, /i/, /n/ coda glide + /k/ burst
 pub fn parse_syllable(s: &str) -> SungSyllable {
     let lower = s.trim().to_lowercase();
+    let chars: Vec<char> = lower.chars().collect();
+    let is_vowel = |c: char| "aeiou".contains(c);
 
-    let mut consonant = None;
+    // Split into onset (leading consonants) | nucleus (the vowel run) | coda
+    // (trailing consonants, up to the next vowel — one syllable per token).
+    let (onset_str, nucleus, coda_str) = match chars.iter().position(|&c| is_vowel(c)) {
+        Some(start) => {
+            let mut end = start;
+            while end < chars.len() && is_vowel(chars[end]) {
+                end += 1;
+            }
+            let mut ce = end;
+            while ce < chars.len() && !is_vowel(chars[ce]) {
+                ce += 1;
+            }
+            (
+                chars[..start].iter().collect::<String>(),
+                chars[start..end].to_vec(),
+                chars[end..ce].iter().collect::<String>(),
+            )
+        }
+        // No vowel: sing the consonants over a default /a/.
+        None => (lower.clone(), vec!['a'], String::new()),
+    };
+
+    // Onset: unvoiced bursts, plus an optional voiced glide-from (last one wins).
+    let mut onset = Vec::new();
     let mut glide_from = None;
     let mut glide_secs = 0.0;
-
-    // Leading consonant: digraph first, then a single char (unvoiced noise or
-    // voiced glide).
-    if lower.starts_with("sh") || lower.starts_with("ch") {
-        consonant = Some(Consonant {
-            freq: 3000.0,
-            q: 1.2,
-            secs: 0.09,
-            gain: 0.5,
-        });
-    } else if let Some(first) = lower.chars().next() {
-        if let Some(k) = consonant_for(first) {
-            consonant = Some(k);
-        } else if let Some(vf) = voiced_onset(first) {
-            glide_from = Some(vf); // voiced consonant → glide into the vowel
-            glide_secs = 0.06;
+    for tok in parse_consonants(&onset_str) {
+        match tok {
+            Cons::Unvoiced(k) => onset.push(k),
+            Cons::Voiced(vf) => {
+                glide_from = Some(vf);
+                glide_secs = 0.06;
+            }
         }
     }
 
-    // Vowels present, in order.
-    let vowels: Vec<char> = lower.chars().filter(|c| "aeiou".contains(*c)).collect();
-    let last = vowels.last().copied().unwrap_or('a');
+    // Vowel nucleus, and a diphthong glide if the run holds two different vowels
+    // (only when a voiced onset glide didn't already claim the glide).
+    let last = nucleus.last().copied().unwrap_or('a');
     let vowel = vowel_formants(&last.to_string());
-
-    // Diphthong: two different vowels and no voiced-consonant glide already —
-    // glide from the first vowel to the last over a longer window.
-    if glide_from.is_none() && vowels.len() >= 2 && vowels[0] != last {
-        glide_from = Some(vowel_formants(&vowels[0].to_string()));
+    if glide_from.is_none() && nucleus.len() >= 2 && nucleus[0] != last {
+        glide_from = Some(vowel_formants(&nucleus[0].to_string()));
         glide_secs = 0.15;
     }
 
+    // Coda: an optional voiced ending to glide *to* (first voiced — a nasal/
+    // liquid tail), then any unvoiced bursts (`t`, `s`, `k`…).
+    let mut coda_glide = None;
+    let mut coda = Vec::new();
+    for tok in parse_consonants(&coda_str) {
+        match tok {
+            Cons::Voiced(vf) => {
+                if coda_glide.is_none() {
+                    coda_glide = Some(vf);
+                }
+            }
+            Cons::Unvoiced(k) => coda.push(k),
+        }
+    }
+
     SungSyllable {
-        consonant,
+        onset,
         glide_from,
         glide_secs,
         vowel,
+        coda_glide,
+        coda,
     }
 }

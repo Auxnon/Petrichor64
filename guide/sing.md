@@ -21,13 +21,18 @@ recorded voice, all synthesized.
 - A **phrase** (multiple syllables) sequences on one channel, back-to-back (like
   `song`); a single syllable plays immediately (and overlapping calls harmonize).
 
-- `syllable` — a vowel with an optional leading consonant:
+- `syllable` — a whole CVC(C) syllable: an optional onset consonant cluster, a
+  vowel, and an optional coda cluster. So `'strong'`, `'cat'`, `'sun'` all sing.
   - **vowels**: `a` `e` `i` `o` `u` (the sung tone).
   - **consonants** (noise onset): `s` `f` `h` `t` `k` `p` (and voiced pairs
-    `z` `v` `d` `g` `b`), plus the digraph `sh`. So `'sa'`, `'ta'`, `'shi'`,
-    `'fu'` all work.
+    `z` `v` `d` `g` `b`), plus digraphs `sh`/`ch`/`th`. So `'sa'`, `'ta'`, `'shi'`.
   - **voiced consonants** `m` `n` `l` `r` `w` `y` — tonal onsets that *glide*
     into the vowel (so `'la'`, `'ma'`, `'ra'` sound like a real syllable).
+  - **onset clusters** — several consonants before the vowel play in order:
+    `'st'`, `'tr'`, `'pl'`, `'str'`, `'spr'` (`'stop'`, `'tree'`, `'strong'`).
+  - **codas** — consonants *after* the vowel: unvoiced bursts (`'cat'`, `'stop'`,
+    `'cats'`, `'ask'`) and voiced endings that glide the vowel into a nasal/liquid
+    (`'sun'`, `'call'`, `'him'`, `'sing'`); mixed too (`'sink'`, `'want'`).
   - **diphthongs** — two vowels in one syllable glide between them: `'ai'`
     ("eye"), `'au'` ("ow"), `'oi'` ("oy").
 - `length` — default per-syllable sustain seconds (used when `melody` doesn't
@@ -43,6 +48,9 @@ sing('la la laa', { 261.63, 329.63, 392.00 }, 0.4)
 
 -- consonants, all on one pitch
 sing('sa ta sha', 440, 0.4)
+
+-- whole words: onset clusters + codas
+sing('strong cat sun', { 262, 294, 330 }, 0.6)
 
 -- per-syllable pitch AND length via {freq, len} pairs
 sing('do re mi', { {261,0.3}, {293,0.3}, {329,0.6} })
