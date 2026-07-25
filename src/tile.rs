@@ -1,7 +1,9 @@
 use rustc_hash::FxHashMap;
 use std::{collections::hash_map::Entry, ops::Mul, rc::Rc};
 
-use glam::{ivec3, IVec3, Mat4, Vec4};
+use glam::{ivec3, IVec3, Vec4};
+#[cfg(feature = "headed")]
+use glam::Mat4;
 #[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Buffer, Device};
 
@@ -67,7 +69,7 @@ impl Layer {
             }
         };
 
-        let mut c = self.get_chunk_mut(ix, iy, iz);
+        let c = self.get_chunk_mut(ix, iy, iz);
         let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE) + iy.rem_euclid(CHUNK_SIZE))
             * CHUNK_SIZE)
             + iz.rem_euclid(CHUNK_SIZE)) as usize;
@@ -92,7 +94,7 @@ impl Layer {
         ix: i32,
         iy: i32,
         iz: i32,
-    ) -> (Option<(String, u8)>) {
+    ) -> Option<(String, u8)>  {
         let t = match self.get_chunk(ix, iy, iz) {
             Some(c) => {
                 let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
