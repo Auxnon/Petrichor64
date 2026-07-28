@@ -14,8 +14,8 @@ it's a channel-level effect, so a chord (which sounds across one channel's lanes
 echoes as a whole.
 
 - `channel` — the channel to echo (0-based, as in `note`/`fade`).
-- `secs` — delay time between echoes, in seconds. `secs <= 0` **disables** the
-  echo (and clears its tail).
+- `secs` — delay time between echoes, in seconds (max **2**; longer is clamped).
+  `secs <= 0` **disables** the echo (and clears its tail).
 - `feedback` — how much of each echo carries into the next, `0..1` (the decay).
   `0` = a single repeat; higher = more repeats before fading. Default `0.4`;
   clamped below `1` so it can't run away.
