@@ -52,16 +52,28 @@ impl Crossfade {
     }
 }
 
-/// A feedback delay line — an **echo**. Owns a ring buffer sized to the delay
-/// time; each sample it reads the delayed value, writes back `input + delayed *
-/// feedback` (so echoes repeat and decay), and returns `input + delayed * mix`
-/// (the dry signal plus the wet echoes). Inactive by default (a no-op that just
-/// passes the input through) until `set` allocates the line. A channel-level
-/// effect: it processes the channel's whole mixed output, so its echoes keep
-/// ringing out after the notes stop (fed zero input, the tail decays by feedback).
+/// Longest delay time an `Echo` can be set to. The ring buffer is allocated once
+/// at this size by `Echo::new`, and `set` only moves the *active length* around
+/// inside it — so changing the delay never allocates. See the note on
+/// `Echo::new` about why that matters.
+const MAX_ECHO_SECS: f32 = 2.0;
+
+/// A feedback delay line — an **echo**. Each sample it reads the delayed value,
+/// writes back `input + delayed * feedback` (so echoes repeat and decay), and
+/// returns `input + delayed * mix` (the dry signal plus the wet echoes). A
+/// channel-level effect: it processes the channel's whole mixed output, so its
+/// echoes keep ringing out after the notes stop (fed zero input, the tail decays
+/// by feedback).
+///
+/// The buffer is allocated **once**, up front (`Echo::new`), and `set`/`clear`
+/// only touch scalars and zero memory — never the allocator. `Default` yields an
+/// unprepared, pass-through echo.
 #[derive(Default)]
 pub struct Echo {
+    /// Ring buffer at full `MAX_ECHO_SECS` capacity; only `..len` is in use.
     buf: Vec<f32>,
+    /// Active delay length in samples (`<= buf.len()`); 0 = unconfigured.
+    len: usize,
     pos: usize,
     feedback: f32,
     /// Wet level: how loud the echoes are relative to the dry signal.
@@ -70,45 +82,70 @@ pub struct Echo {
 }
 
 impl Echo {
-    /// Configure the delay: `secs` delay time, `feedback` (echo decay per repeat,
-    /// clamped below 1 so it can't run away), `mix` (wet level). `secs <= 0`
-    /// disables the effect and frees the buffer.
+    /// Allocate the delay line once, at max capacity. **Call this off the audio
+    /// thread** (at mixer construction): `set` runs inside the audio callback,
+    /// where allocating would take the allocator lock and risk a missed deadline
+    /// (an audible dropout), so all the heap work happens here instead.
+    pub fn new(sample_rate: f32) -> Self {
+        let cap = (MAX_ECHO_SECS * sample_rate).max(1.0) as usize;
+        Self {
+            buf: vec![0.0; cap],
+            ..Default::default()
+        }
+    }
+
+    /// Configure the delay: `secs` delay time (clamped to `MAX_ECHO_SECS`),
+    /// `feedback` (echo decay per repeat, clamped below 1 so it can't run away),
+    /// `mix` (wet level). `secs <= 0` disables the effect. Allocation-free.
     pub fn set(&mut self, secs: f32, feedback: f32, mix: f32, sample_rate: f32) {
-        let samples = (secs * sample_rate) as usize;
-        if samples == 0 {
-            self.active = false;
-            self.buf = Vec::new();
-            self.pos = 0;
+        let want = (secs * sample_rate) as usize;
+        let len = want.min(self.buf.len());
+        if len == 0 {
+            // Disabled, or never prepared (no capacity to delay into).
+            self.silence();
             return;
         }
-        // Resize (preserving as much tail as fits) and (re)configure.
-        self.buf.resize(samples, 0.0);
-        if self.pos >= self.buf.len() {
+        if len != self.len {
+            // The delay time changed, so the buffer's contents no longer line up
+            // with the new loop length — zero the region in play (a bounded
+            // memset, no allocation) instead of spraying stale audio. Changing
+            // only feedback/mix leaves the tail intact.
+            let used = self.len.max(len).min(self.buf.len());
+            self.buf[..used].fill(0.0);
             self.pos = 0;
+            self.len = len;
         }
         self.feedback = feedback.clamp(0.0, 0.95);
         self.mix = mix.max(0.0);
         self.active = true;
     }
 
-    /// Clear the echo (silence the tail, keep it disabled). Used on app reload.
-    pub fn clear(&mut self) {
-        self.buf = Vec::new();
+    /// Silence the tail and stop processing, **keeping** the allocated buffer.
+    fn silence(&mut self) {
+        let used = self.len.min(self.buf.len());
+        self.buf[..used].fill(0.0);
         self.pos = 0;
+        self.active = false;
+    }
+
+    /// Clear the echo (silence the tail, keep it disabled) without freeing the
+    /// buffer, so a reload doesn't deallocate on the audio thread.
+    pub fn clear(&mut self) {
+        self.silence();
+        self.len = 0;
         self.feedback = 0.0;
         self.mix = 0.0;
-        self.active = false;
     }
 
     /// Process one sample: returns dry + wet, advancing the delay line.
     pub fn process(&mut self, input: f32) -> f32 {
-        if !self.active || self.buf.is_empty() {
+        if !self.active || self.len == 0 {
             return input;
         }
         let delayed = self.buf[self.pos];
         self.buf[self.pos] = input + delayed * self.feedback;
         self.pos += 1;
-        if self.pos >= self.buf.len() {
+        if self.pos >= self.len {
             self.pos = 0;
         }
         input + delayed * self.mix
@@ -325,8 +362,13 @@ const REVERB_TUNING_SR: f32 = 44100.0;
 
 /// A **reverb** — a compact Freeverb (8 parallel damped comb filters summed, then
 /// 4 series all-pass filters). A channel-level effect: it processes the channel's
-/// whole mixed output and its tail rings out after the voices stop. Inactive by
-/// default (passes input through) until `set` allocates the delay lines.
+/// whole mixed output and its tail rings out after the voices stop.
+///
+/// All 12 delay lines are allocated **once** by `Reverb::new`. Their lengths come
+/// from the tuning tables and the device sample rate only — `room`/`damp`/`wet`
+/// are pure coefficients — so nothing ever needs resizing, and `set`/`clear` stay
+/// allocation-free on the audio thread. `Default` yields an unprepared,
+/// pass-through reverb.
 #[derive(Default)]
 pub struct Reverb {
     combs: [Comb; 8],
@@ -337,41 +379,59 @@ pub struct Reverb {
 }
 
 impl Reverb {
+    /// Allocate all 12 delay lines once, sized from the device rate. **Call this
+    /// off the audio thread** (at mixer construction): `set` runs inside the audio
+    /// callback, and allocating 12 buffers there could miss the callback's
+    /// deadline and cause an audible dropout.
+    pub fn new(sample_rate: f32) -> Self {
+        let scale = sample_rate / REVERB_TUNING_SR;
+        let mut rv = Self::default();
+        for (comb, &tuning) in rv.combs.iter_mut().zip(COMB_TUNING.iter()) {
+            comb.buf = vec![0.0; ((tuning as f32 * scale) as usize).max(1)];
+        }
+        for (ap, &tuning) in rv.allpasses.iter_mut().zip(ALLPASS_TUNING.iter()) {
+            ap.buf = vec![0.0; ((tuning as f32 * scale) as usize).max(1)];
+            ap.feedback = 0.5;
+        }
+        rv
+    }
+
     /// Configure the reverb. `room` is the tail length/decay (comb feedback,
     /// `0..1` — bigger = longer), `damp` rolls off the tail's highs (`0..1`),
-    /// `wet` is the reverb level. `room <= 0` disables it and frees the buffers.
-    pub fn set(&mut self, room: f32, damp: f32, wet: f32, sample_rate: f32) {
+    /// `wet` is the reverb level. `room <= 0` disables it. Coefficients only —
+    /// allocation-free.
+    pub fn set(&mut self, room: f32, damp: f32, wet: f32) {
         if room <= 0.0 {
             self.clear();
             return;
         }
-        let scale = sample_rate / REVERB_TUNING_SR;
         // Map room 0..1 to a safe feedback range (never ≥1, which would run away).
         let feedback = (0.7 + room.clamp(0.0, 1.0) * 0.28).min(0.98);
         let damp = damp.clamp(0.0, 1.0);
-        for (comb, &tuning) in self.combs.iter_mut().zip(COMB_TUNING.iter()) {
-            let len = ((tuning as f32 * scale) as usize).max(1);
-            comb.buf.clear();
-            comb.buf.resize(len, 0.0);
-            comb.pos = 0;
-            comb.store = 0.0;
+        for comb in self.combs.iter_mut() {
             comb.feedback = feedback;
             comb.damp = damp;
-        }
-        for (ap, &tuning) in self.allpasses.iter_mut().zip(ALLPASS_TUNING.iter()) {
-            let len = ((tuning as f32 * scale) as usize).max(1);
-            ap.buf.clear();
-            ap.buf.resize(len, 0.0);
-            ap.pos = 0;
-            ap.feedback = 0.5;
         }
         self.wet = wet.max(0.0);
         self.active = true;
     }
 
-    /// Disable the reverb (pass-through) and free its buffers. Used on app reload.
+    /// Disable the reverb (pass-through) and silence its tail, **keeping** the
+    /// allocated buffers so a reload doesn't deallocate on the audio thread.
     pub fn clear(&mut self) {
-        *self = Self::default();
+        for comb in self.combs.iter_mut() {
+            comb.buf.fill(0.0);
+            comb.pos = 0;
+            comb.store = 0.0;
+            comb.feedback = 0.0;
+            comb.damp = 0.0;
+        }
+        for ap in self.allpasses.iter_mut() {
+            ap.buf.fill(0.0);
+            ap.pos = 0;
+        }
+        self.wet = 0.0;
+        self.active = false;
     }
 
     /// Process one sample: dry + wet reverb, advancing all the delay lines.

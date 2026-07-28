@@ -178,7 +178,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     // The channels ("tracks"). Each owns a pool of polyphony lanes plus its own
     // gain/fade and singing-voice character — a chord sounds across one channel's
     // lanes, so its character/effects stay consistent. `attr{lanes}` resizes them.
-    let mut channels: Vec<Channel> = (0..NUM_CH).map(|_| Channel::new(DEFAULT_LANES)).collect();
+    // Built here, on the setup thread before the stream starts, so every
+    // buffer-owning effect allocates its delay lines off the audio thread.
+    let mut channels: Vec<Channel> = (0..NUM_CH)
+        .map(|_| Channel::new(DEFAULT_LANES, sample_rate))
+        .collect();
 
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
@@ -295,7 +299,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
                 SoundCommand::ReverbChannel(ch, room, damp, wet) => {
                     let c = ch.min(channels.len() - 1);
-                    channels[c].reverb.set(room, damp, wet, sample_rate);
+                    channels[c].reverb.set(room, damp, wet);
                 }
                 SoundCommand::CrushChannel(ch, bits, rate) => {
                     let c = ch.min(channels.len() - 1);
@@ -847,7 +851,10 @@ struct Channel {
     vib_rate: f32,
 }
 impl Channel {
-    fn new(lanes: usize) -> Self {
+    /// Build a channel with `lanes` polyphony slots. Takes the device
+    /// `sample_rate` so the buffer-owning effects (echo, reverb) can allocate
+    /// their delay lines **here**, off the audio thread — see `Echo::new`.
+    fn new(lanes: usize, sample_rate: f32) -> Self {
         let lanes = lanes.max(1);
         Self {
             queues: (0..lanes).map(|_| VecDeque::new()).collect(),
@@ -861,8 +868,8 @@ impl Channel {
             drive: Drive::default(),
             crush: Crush::default(),
             filter: Filter::default(),
-            echo: Echo::default(),
-            reverb: Reverb::default(),
+            echo: Echo::new(sample_rate),
+            reverb: Reverb::new(sample_rate),
             breath: 0.0,
             vib_depth: 0.0,
             vib_rate: 5.5,
@@ -872,6 +879,11 @@ impl Channel {
         self.current.len()
     }
     /// Resize the lane pool (a config event via `attr{lanes}`, never the hot path).
+    ///
+    /// NOTE: these `resize_with`s allocate, and this runs on the audio thread —
+    /// fine while `attr{lanes}` is a boot/config-time call, but if lanes ever
+    /// become something games retune during play, preallocate a max lane pool
+    /// (like `Echo`/`Reverb` do) and just move an active count instead.
     fn set_lanes(&mut self, lanes: usize) {
         let lanes = lanes.max(1);
         self.queues.resize_with(lanes, VecDeque::new);
