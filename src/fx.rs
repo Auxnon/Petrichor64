@@ -391,3 +391,146 @@ impl Reverb {
         input + out * self.wet
     }
 }
+
+/// A **bitcrusher** — the classic retro/lo-fi degrade, in two independent parts:
+/// *bit-depth* reduction (quantize the amplitude to `2^bits` steps, adding the
+/// gritty quantization noise of an 8-bit console) and *sample-rate* decimation
+/// (latch the signal at a lower rate and hold it, adding aliasing sizzle).
+/// Allocation-free (no delay lines), so it's safe to toggle per frame as a
+/// momentary "punch-in" effect. Inactive by default (passes input through).
+#[derive(Clone, Copy, Default)]
+pub struct Crush {
+    /// Quantization step; `0` = no bit reduction.
+    step: f32,
+    /// Latch rate as a fraction of the device rate (`>= 1` = every sample).
+    rate_inc: f32,
+    /// Latch phase accumulator and the currently held output value.
+    phase: f32,
+    held: f32,
+    active: bool,
+}
+
+impl Crush {
+    /// Configure the crusher. `bits` is the target bit depth (1 = harshest,
+    /// `>= 16` = no quantization, `<= 0` disables the whole effect); `rate` is the
+    /// target sample rate in Hz (`<= 0` or above the device rate = no decimation).
+    pub fn set(&mut self, bits: f32, rate: f32, sample_rate: f32) {
+        if bits <= 0.0 {
+            *self = Self::default();
+            return;
+        }
+        let bits = bits.min(16.0);
+        // 2^bits levels across the -1..1 range. At 1 bit this is a 3-level
+        // (-1/0/+1) square-ish crunch, which is the sound people want from it.
+        self.step = if bits >= 16.0 {
+            0.0
+        } else {
+            2.0 / 2f32.powf(bits)
+        };
+        self.rate_inc = if rate > 0.0 {
+            (rate / sample_rate).min(1.0)
+        } else {
+            1.0
+        };
+        self.phase = 1.0; // latch immediately on the next sample
+        self.active = true;
+    }
+
+    /// Disable the crusher (pass-through).
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Process one sample: decimate, then quantize.
+    pub fn process(&mut self, x: f32) -> f32 {
+        if !self.active {
+            return x;
+        }
+        self.phase += self.rate_inc;
+        if self.phase >= 1.0 {
+            self.phase -= 1.0;
+            self.held = if self.step > 0.0 {
+                (x / self.step).round() * self.step
+            } else {
+                x
+            };
+        }
+        self.held
+    }
+}
+
+/// The waveshaping curve a `Drive` uses.
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+pub enum DriveShape {
+    /// Smooth tanh saturation — warm, tube-ish, level-compensated.
+    #[default]
+    Soft,
+    /// Hard clipping — buzzy and aggressive, the classic square-off.
+    Hard,
+    /// Foldback — peaks reflect back down instead of clipping, for chaotic
+    /// ring-mod-flavoured harmonics.
+    Fold,
+}
+
+/// Reflect a value back into `-1..1` instead of clipping it (foldback distortion).
+fn foldback(mut v: f32) -> f32 {
+    let mut guard = 0;
+    while v.abs() > 1.0 && guard < 8 {
+        v = v.signum() * (2.0 - v.abs());
+        guard += 1;
+    }
+    v.clamp(-1.0, 1.0)
+}
+
+/// **Drive / distortion** — a waveshaper: boost the signal into a nonlinear curve
+/// so it saturates and grows harmonics. Allocation-free, so it's safe to toggle
+/// per frame. Inactive by default (passes input through).
+#[derive(Clone, Copy, Default)]
+pub struct Drive {
+    /// Gain into the curve, and the makeup gain after it.
+    pre: f32,
+    post: f32,
+    shape: DriveShape,
+    active: bool,
+}
+
+impl Drive {
+    /// Configure the drive. `amount` is a normalized `0..1` knob (`<= 0` disables);
+    /// `shape` picks the curve. Soft is level-compensated so raising the amount
+    /// adds grit rather than just volume.
+    pub fn set(&mut self, amount: f32, shape: DriveShape) {
+        if amount <= 0.0 {
+            *self = Self::default();
+            return;
+        }
+        let a = amount.clamp(0.0, 1.0);
+        self.pre = 1.0 + a * 24.0; // up to 25x into the curve
+        self.post = match shape {
+            // Normalize so a full-scale input still lands at full scale.
+            DriveShape::Soft => 1.0 / self.pre.tanh(),
+            // Already bounded to ±1 by the curve itself.
+            DriveShape::Hard | DriveShape::Fold => 1.0,
+        };
+        self.shape = shape;
+        self.active = true;
+    }
+
+    /// Disable the drive (pass-through).
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Process one sample through the waveshaper.
+    pub fn process(&mut self, x: f32) -> f32 {
+        if !self.active {
+            return x;
+        }
+        let v = x * self.pre;
+        let y = match self.shape {
+            DriveShape::Soft => v.tanh(),
+            DriveShape::Hard => v.clamp(-1.0, 1.0),
+            DriveShape::Fold => foldback(v),
+        };
+        y * self.post
+    }
+}
