@@ -2,7 +2,7 @@ use crate::root::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
 #[cfg(feature = "audio")]
-use crate::fx::FilterKind;
+use crate::fx::{DriveShape, FilterKind};
 #[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
 use crate::{
@@ -1451,6 +1451,57 @@ function filt(channel, kind, cutoff, q, secs) end"
 ---@param damp number? high-frequency damping of the tail 0..1 (default 0.5)
 ---@param wet number? reverb level mixed over the dry signal (default 0.3)
 function verb(channel, room, damp, wet) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "crsh",
+        move |_, _, (channel, bits, rate): (usize, f32, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level bitcrusher: quantize to `bits` of depth and
+                // (optionally) latch at a lower `rate` in Hz. `bits <= 0` disables.
+                let _ = sing.send(SoundCommand::CrushChannel(
+                    channel,
+                    bits,
+                    rate.unwrap_or(0.0),
+                ));
+            }
+            Ok(())
+        },
+        "Bitcrush a channel: (channel, bits 1..16, rate Hz). bits<=0 disables it",
+        "
+---@param channel integer
+---@param bits number target bit depth 1..16 (<=0 disables, 16 = no quantizing)
+---@param rate number? target sample rate in Hz for decimation (default 0 = none)
+function crsh(channel, bits, rate) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "grit",
+        move |_, _, (channel, amount, mode): (usize, f32, Option<String>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level drive/distortion: push the signal into a
+                // waveshaping curve. `amount <= 0` disables it.
+                let shape = match mode.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    Some(ref m) if m == "hard" || m == "clip" => DriveShape::Hard,
+                    Some(ref m) if m == "fold" || m == "foldback" => DriveShape::Fold,
+                    _ => DriveShape::Soft, // default / 'soft'
+                };
+                let _ = sing.send(SoundCommand::DriveChannel(channel, amount, shape));
+            }
+            Ok(())
+        },
+        "Drive/distort a channel: (channel, amount 0..1, curve 'soft'|'hard'|'fold'). amount<=0 disables it",
+        "
+---@param channel integer
+---@param amount number drive amount 0..1 (<=0 disables)
+---@param mode string? curve: 'soft' (default, tanh) | 'hard' (clip) | 'fold' (foldback)
+function grit(channel, amount, mode) end"
     );
 
     #[cfg(feature = "audio")]

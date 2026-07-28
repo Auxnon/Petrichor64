@@ -11,7 +11,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
-use crate::fx::{Biquad, Crossfade, Echo, Filter, FilterKind, Reverb};
+use crate::fx::{Biquad, Crossfade, Crush, Drive, DriveShape, Echo, Filter, FilterKind, Reverb};
 use crate::vocaloid::{Consonant, Formant, FormantBank};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -297,6 +297,14 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     let c = ch.min(channels.len() - 1);
                     channels[c].reverb.set(room, damp, wet, sample_rate);
                 }
+                SoundCommand::CrushChannel(ch, bits, rate) => {
+                    let c = ch.min(channels.len() - 1);
+                    channels[c].crush.set(bits, rate, sample_rate);
+                }
+                SoundCommand::DriveChannel(ch, amount, shape) => {
+                    let c = ch.min(channels.len() - 1);
+                    channels[c].drive.set(amount, shape);
+                }
                 SoundCommand::SetLanes(counts) => {
                     // `attr{ lanes = {4,3,5} }`: set per-channel polyphony. Entry i
                     // (1-based in Lua) sets channel (i-1); unlisted channels keep
@@ -397,10 +405,13 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
             }
 
-            // Channel effects, in chain order: filter the summed output, then
-            // echo it (discrete repeats), then reverb (diffuse tail) — both tails
-            // keep ringing after the voices stop — then advance an in-flight fade
-            // and apply the gain to the whole channel (dry + wet alike).
+            // Channel effects, in chain order (like a pedal chain): drive and
+            // bitcrush generate harmonics first, the filter then tames them, then
+            // echo (discrete repeats) and reverb (diffuse tail) — both tails keep
+            // ringing after the voices stop — then advance an in-flight fade and
+            // apply the gain to the whole channel (dry + wet alike).
+            ch_out = chan.drive.process(ch_out);
+            ch_out = chan.crush.process(ch_out);
             ch_out = chan.filter.process(ch_out);
             ch_out = chan.echo.process(ch_out);
             ch_out = chan.reverb.process(ch_out);
@@ -820,6 +831,10 @@ struct Channel {
     fade: Crossfade,
     fade_from: f32,
     fade_to: f32,
+    /// Channel-level waveshaping distortion (`grit`); a no-op until configured.
+    drive: Drive,
+    /// Channel-level bitcrusher (`crsh`); a no-op until configured.
+    crush: Crush,
     /// Channel-level resonant filter (`filt`); a no-op until configured.
     filter: Filter,
     /// Channel-level feedback delay (`echo`); a no-op until configured.
@@ -843,6 +858,8 @@ impl Channel {
             fade: Crossfade::default(),
             fade_from: 1.0,
             fade_to: 1.0,
+            drive: Drive::default(),
+            crush: Crush::default(),
             filter: Filter::default(),
             echo: Echo::default(),
             reverb: Reverb::default(),
@@ -905,6 +922,8 @@ impl Channel {
         self.fade = Crossfade::default();
         self.fade_from = 1.0;
         self.fade_to = 1.0;
+        self.drive.clear();
+        self.crush.clear();
         self.filter.clear();
         self.echo.clear();
         self.reverb.clear();
@@ -1169,6 +1188,12 @@ pub enum SoundCommand {
     /// Set a channel's reverb: (channel, room/decay 0..1, damping 0..1, wet mix).
     /// `room <= 0` disables it. Backs `verb`.
     ReverbChannel(usize, f32, f32, f32),
+    /// Set a channel's bitcrusher: (channel, bit depth, target sample-rate Hz).
+    /// `bits <= 0` disables it. Backs `crsh`.
+    CrushChannel(usize, f32, f32),
+    /// Set a channel's drive/distortion: (channel, amount 0..1, curve).
+    /// `amount <= 0` disables it. Backs `grit`.
+    DriveChannel(usize, f32, DriveShape),
     /// Set a channel's singing-voice character for its later sung notes:
     /// (channel, breath, vibrato depth as a pitch fraction, vibrato rate Hz).
     VoiceConfig(usize, f32, f32, f32),
