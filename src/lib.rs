@@ -67,6 +67,9 @@ mod root;
 mod fx;
 #[cfg(feature = "audio")]
 mod sound;
+// MIDI input is native-only for now (midir has no wasm path wired up here).
+#[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+mod midi;
 #[cfg(feature = "audio")]
 mod vocaloid;
 mod template;

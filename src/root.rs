@@ -1,5 +1,7 @@
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
+#[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+use crate::midi;
 use crate::{
     bundle::BundleManager,
     ent_manager::EntManager,
@@ -135,6 +137,16 @@ impl<'core> Core {
                 None
             }
         };
+        // MIDI in: grab the first available input port at boot so a plugged-in
+        // (or OS-paired Bluetooth) controller just plays the synth. No device is
+        // the normal case, so a failure here is logged at most, never fatal. The
+        // connection lives in `midi`'s statics, so there's nothing to store.
+        #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+        match midi::open(singer.clone(), None) {
+            Ok(port) => loggy.log(LogType::Config, &format!("midi in: {}", port)),
+            Err(e) => loggy.log(LogType::Config, &format!("no midi in ({})", e)),
+        }
+
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
 
         let (pitcher, catcher) = channel::<MainPacket>();

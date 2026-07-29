@@ -269,6 +269,29 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         }
                     }
                 },
+                SoundCommand::ReleaseNote(ch, freq) => {
+                    // Note-off: end the sustain of the matching voice so the
+                    // normal note-off path runs (coda, then the release ramp).
+                    // Frequencies come from the same note→Hz formula on both
+                    // ends, so an epsilon compare is plenty.
+                    let range = match ch {
+                        Some(c) => {
+                            let c = c.min(channels.len() - 1);
+                            c..c + 1
+                        }
+                        None => 0..channels.len(),
+                    };
+                    'release: for c in range {
+                        for l in 0..channels[c].lanes() {
+                            if let Some(v) = channels[c].current[l].as_mut() {
+                                if (v.freq - freq).abs() < 0.01 && v.remaining > 0.0 {
+                                    v.remaining = 0.0;
+                                    break 'release;
+                                }
+                            }
+                        }
+                    }
+                }
                 SoundCommand::VoiceConfig(ch, breath, depth, rate) => {
                     let c = ch.min(channels.len() - 1);
                     let chan = &mut channels[c];
@@ -1189,6 +1212,12 @@ pub enum SoundCommand {
     Chain(Vec<Note>, Option<usize>),
     /// Release a channel — all its lanes (`None` = every channel).
     Stop(Option<usize>),
+    /// Release the sounding voice at `frequency` on a channel (`None` = search
+    /// every channel) — a real per-note *note-off*, as opposed to `Stop`, which
+    /// cuts a whole channel. Backs MIDI note-off, where a held key must sustain
+    /// until released; only the first match is released, so repeated notes at the
+    /// same pitch unwind one per note-off.
+    ReleaseNote(Option<usize>, f32),
     /// Ramp a channel's output gain: (channel, seconds, target gain 0..1).
     FadeChannel(usize, f32, f32),
     /// Set a channel's echo (feedback delay): (channel, delay secs, feedback
