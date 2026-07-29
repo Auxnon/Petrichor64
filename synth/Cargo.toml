@@ -1,0 +1,46 @@
+[package]
+name = "petrichor-synth"
+version = "0.1.0"
+edition = "2021"
+description = "Petrichor64's synth: pure-DSP mixer, effects and formant voice, plus optional host I/O"
+
+# Why this is its own crate: the engine and the browser AudioWorklet both need the
+# synth, and the worklet must be a *small* wasm module — no wgpu, no Lua VM, no
+# asset pipeline. Splitting the DSP out means one source of truth for both, rather
+# than a copy that drifts. The DSP here is I/O-free by default; the cpal and
+# WebAudio glue is feature-gated so the worklet build compiles none of it.
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[features]
+default = []
+# Host audio I/O via cpal (native output stream + microphone capture) and the
+# main-thread WebAudio fallback. The engine turns this on; the worklet does not.
+host-io = ["cpal", "anyhow"]
+# JACK host on Linux/BSD (the cpal init path checks for it). Declared so the
+# `feature = "jack"` cfgs in sound.rs are recognised rather than warned about.
+jack = []
+
+[dependencies]
+serde = { version = "1.0.219", features = ["derive"] }
+rustc-hash = "2.1.1"
+log = "0.4.28"
+cpal = { version = "0.16.0", optional = true }
+anyhow = { version = "1.0.100", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# cpal needs wasm-bindgen to see a WebAudio device at all (see the engine's
+# Cargo.toml); features union with the optional dep above.
+cpal = { version = "0.16.0", optional = true, features = ["wasm-bindgen"] }
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "AudioContext",
+    "AudioContextState",
+    "BaseAudioContext",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioScheduledSourceNode",
+    "AudioDestinationNode",
+] }

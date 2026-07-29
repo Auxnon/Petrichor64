@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 # with a C dep we deliberately keep out of the size-optimized engine build).
 # Build it explicitly: `cargo build -p oggify`.
 [workspace]
-members = ["tools/oggify"]
+members = ["tools/oggify", "synth"]
 # Engine-only by default so `cargo build` never drags in oggify's C encoder.
 # Build the tool explicitly: `cargo build -p oggify`.
 default-members = ["."]
@@ -51,7 +51,10 @@ headed=["wgpu", "winit", "winit_input_helper"]
 # directly rather than the wgpu-cooked chunk/entity buffers, so it doesn't
 # depend on (or conflict with) the wgpu renderer.
 render-tui=["crossterm"]
-audio=["cpal", "lewton"]
+# The synth itself lives in the `petrichor-synth` workspace crate (shared with the
+# browser AudioWorklet build); `host-io` pulls in its cpal/WebAudio glue, and cpal
+# stays listed here for the wasm feature-union noted below.
+audio=["cpal", "lewton", "petrichor-synth"]
 # MIDI input, native-only and off by default (MIDI is a niche for a fantasy
 # console, so its cost stays opt-in). Implies `audio`, since incoming notes are
 # played by the synth. See src/midi.rs and guide/midi.md.
@@ -67,6 +70,10 @@ studio=[]
 #wgpu = { version = "0.12", features = ["webgl"],optional=true }
 wgpu = { version = "29.0.3", optional=true }
 cpal={ version ="0.16.0", optional=true }
+# The shared synth crate (DSP + host I/O). `host-io` gives us the cpal output
+# stream, mic capture and the WebAudio fallback; the AudioWorklet build of this
+# same crate leaves that feature off so its wasm module stays small.
+petrichor-synth={ path="synth", optional=true, features=["host-io"] }
 # Pure-Rust OGG/Vorbis decoder for loading sounds/*.ogg at boot (no C deps).
 # Encoding to ogg lives in the separate `oggify` tool, not the engine binary.
 lewton={ version ="0.10.2", optional=true }
