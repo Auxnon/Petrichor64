@@ -148,6 +148,141 @@ pub fn init_sound(audience: Receiver<SoundCommand>) -> anyhow::Result<cpal::Stre
     }
 }
 
+/// Name the captured microphone audio is filed under in the loaded-sound bank, so
+/// `smpl(id, 'mic')` can rebind the last recording to more slots.
+pub const MIC_BANK_NAME: &str = "mic";
+
+/// Longest single microphone capture, in seconds — a snippet sampler, not a tape
+/// deck. The record buffer is preallocated to this at capture start.
+pub const MAX_MIC_SECS: f32 = 10.0;
+
+/// Open the default audio **input** device and record one mono snippet.
+///
+/// Captures `secs` of audio, then hands it to the synth as a playable sample: the
+/// PCM goes into the loaded-sound bank under `MIC_BANK_NAME` (which carries the
+/// input device's own sample rate, so playback pitch is right even when the input
+/// and output devices run at different rates) and is bound to instrument slot
+/// `id`. After that, `note(440, len, ch, id)` plays the recording at its natural
+/// speed — 440 being the base pitch the binding uses.
+///
+/// The returned stream must be kept alive for the duration; `done` flips to true
+/// once the snippet has been sent, so the caller can drop the stream and release
+/// the microphone (rather than holding it open and leaving the OS "mic in use"
+/// indicator lit).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn record_mic(
+    id: usize,
+    secs: f32,
+    singer: Sender<SoundCommand>,
+    done: Arc<std::sync::atomic::AtomicBool>,
+) -> anyhow::Result<cpal::Stream> {
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or_else(|| anyhow::anyhow!("no audio input device found"))?;
+    let config = device.default_input_config()?;
+    let sample_rate = config.sample_rate().0 as f32;
+    let channels = config.channels() as usize;
+    let secs = secs.clamp(0.05, MAX_MIC_SECS);
+    let target = (secs * sample_rate) as usize;
+    log::info!(
+        "mic: {} Hz, {} ch, capturing {:.2}s into slot {}",
+        sample_rate,
+        channels,
+        secs,
+        id
+    );
+
+    let stream_config: cpal::StreamConfig = config.clone().into();
+    let err_fn = |err| log::warn!("mic stream error: {}", err);
+    match config.sample_format() {
+        cpal::SampleFormat::F32 => capture::<f32>(
+            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+        ),
+        cpal::SampleFormat::I16 => capture::<i16>(
+            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+        ),
+        cpal::SampleFormat::U16 => capture::<u16>(
+            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+        ),
+        cpal::SampleFormat::I32 => capture::<i32>(
+            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+        ),
+        cpal::SampleFormat::F64 => capture::<f64>(
+            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+        ),
+        other => Err(anyhow::anyhow!("unsupported mic sample format {:?}", other)),
+    }
+}
+
+/// Build the input stream for one capture. The callback owns its record buffer
+/// (preallocated here, off the audio thread), downmixes to mono, and when it has
+/// `target` samples ships them to the synth and sets `done` — so nothing is
+/// allocated or locked in the input callback itself.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+fn capture<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    channels: usize,
+    target: usize,
+    id: usize,
+    sample_rate: f32,
+    singer: Sender<SoundCommand>,
+    done: Arc<std::sync::atomic::AtomicBool>,
+    err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
+) -> anyhow::Result<cpal::Stream>
+where
+    T: cpal::SizedSample + Send + 'static,
+    f32: cpal::FromSample<T>,
+{
+    use std::sync::atomic::Ordering;
+    let mut buf: Vec<f32> = Vec::with_capacity(target);
+    let mut sent = false;
+    let stream = device.build_input_stream(
+        config,
+        move |data: &[T], _: &cpal::InputCallbackInfo| {
+            if sent {
+                return;
+            }
+            // Downmix interleaved frames to mono; we only ever sample in mono.
+            for frame in data.chunks(channels.max(1)) {
+                if buf.len() >= target {
+                    break;
+                }
+                let mut sum = 0.0f32;
+                for s in frame {
+                    sum += <f32 as cpal::FromSample<T>>::from_sample_(*s);
+                }
+                buf.push(sum / channels.max(1) as f32);
+            }
+            if buf.len() >= target {
+                // Snippet complete: file it in the name bank (which normalizes it
+                // and keeps the input rate for correct playback pitch) and bind it
+                // to the requested slot. One move, no copy of the PCM.
+                let pcm = std::mem::take(&mut buf);
+                let _ = singer.send(SoundCommand::LoadSample(
+                    MIC_BANK_NAME.to_string(),
+                    pcm,
+                    sample_rate,
+                ));
+                let _ = singer.send(SoundCommand::BindSample(
+                    id,
+                    MIC_BANK_NAME.to_string(),
+                    Some(440.0),
+                    Envelope::default(),
+                ));
+                sent = true;
+                done.store(true, Ordering::Release);
+            }
+        },
+        err_fn,
+        None,
+    )?;
+    stream.play()?;
+    Ok(stream)
+}
+
 /// Number of independent playback channels ("tracks").
 const NUM_CH: usize = 16;
 /// Default polyphony lanes per channel — how many notes one channel can sound at

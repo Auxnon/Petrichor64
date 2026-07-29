@@ -43,6 +43,13 @@ pub struct Core {
     /** despite it's unuse, this stream needs to persist or sound will not occur */
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     _stream: Option<cpal::Stream>,
+    /// Live microphone capture, if one is in flight. Held only to keep the input
+    /// stream open; dropped as soon as `mic_done` flips, which releases the mic
+    /// (and clears the OS "in use" indicator) rather than holding it open.
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    pub mic_stream: Option<cpal::Stream>,
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    pub mic_done: Arc<std::sync::atomic::AtomicBool>,
     /// Web audio output (wasm): schedules PCM chunks on the AudioContext clock.
     /// Pumped once per frame; replaces the native cpal stream.
     #[cfg(all(feature = "audio", target_arch = "wasm32"))]
@@ -154,6 +161,10 @@ impl<'core> Core {
             global,
             #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
             _stream: stream_result,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_stream: None,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(all(feature = "audio", target_arch = "wasm32"))]
             web_audio,
             #[cfg(feature = "audio")]
