@@ -1453,6 +1453,31 @@ function filt(channel, kind, cutoff, q, secs) end"
 function verb(channel, room, damp, wet) end"
     );
 
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "mic",
+        move |_, _, (id, secs): (Option<usize>, Option<f32>)| {
+            // `mic(id, secs?)` records a snippet from the default input device
+            // into sample slot `id`; `mic()` reports whether one is in flight.
+            // Recording is always explicit — the engine never opens the mic on
+            // its own, and the stream is released as soon as the capture lands.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
+            // `None` id is a pure query (is a capture running?) and never opens
+            // the microphone; `Some(id)` starts one.
+            lua_err!(pitcher.send((
+                bundle_id,
+                MainCommmand::MicRecord(id, secs.unwrap_or(1.0), tx)
+            )));
+            Ok(Value::Bool(rx.recv().unwrap_or(false)))
+        },
+        "Record a microphone snippet into a sample slot: mic(id, secs?). mic() = is a capture running?",
+        "
+---@param id integer? sample/instrument slot to record into (omit to query)
+---@param secs number? capture length in seconds (default 1, max 10)
+---@return boolean started (or, with no args, whether a capture is running)
+function mic(id, secs) end"
+    );
+
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
@@ -2956,6 +2981,13 @@ pub enum MainCommmand {
     Load(String),
     Subload(String, bool),
     WorldSync(Vec<Chunk>, bool),
+    /// Microphone capture. `Some(id)` starts a capture of `secs` seconds into
+    /// sample slot `id`, replying whether it actually started (false = no input
+    /// device, or one is already running). `None` is a **query only** — it never
+    /// opens the mic, and replies whether a capture is in flight. The input stream
+    /// has to be built and owned on the main thread (cpal streams aren't Send),
+    /// hence the round trip.
+    MicRecord(Option<usize>, f32, SyncSender<bool>),
     Null(),
     Stats(),
     Read(String, SyncSender<Option<String>>),

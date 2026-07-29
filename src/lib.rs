@@ -1489,6 +1489,17 @@ impl Core {
     }
 
     fn update(&mut self, catcher: &Receiver<MainPacket>) -> Option<UpdateOut> {
+        // A finished mic capture has already shipped its sample to the synth, so
+        // drop the input stream to release the microphone right away instead of
+        // sitting on it (and on the OS's "mic in use" indicator).
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        if self.mic_stream.is_some()
+            && self.mic_done.load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.mic_stream = None;
+            self.log(LogType::Config, "mic: capture complete");
+        }
+
         let mut loop_complete = false;
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
@@ -1715,6 +1726,41 @@ impl Core {
                 MainCommmand::AsyncError(e) => {
                     let s = format!("!!{}", e);
                     self.log(log::LogType::LuaError, &s);
+                }
+                #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+                MainCommmand::MicRecord(id, secs, tx) => {
+                    // cpal streams aren't Send, so the input stream is built and
+                    // owned here on the main thread. One capture at a time.
+                    let busy = self.mic_stream.is_some();
+                    let reply = match id {
+                        // Query only — must never open the microphone.
+                        None => busy,
+                        Some(_) if busy => false,
+                        Some(id) => {
+                            self.mic_done
+                                .store(false, std::sync::atomic::Ordering::Release);
+                            match crate::sound::record_mic(
+                                id,
+                                secs,
+                                self.singer.clone(),
+                                self.mic_done.clone(),
+                            ) {
+                                Ok(stream) => {
+                                    self.mic_stream = Some(stream);
+                                    true
+                                }
+                                Err(e) => {
+                                    self.log(LogType::ConfigError, &format!("!!mic: {}", e));
+                                    false
+                                }
+                            }
+                        }
+                    };
+                    self.log_check(tx.send(reply));
+                }
+                #[cfg(not(all(feature = "audio", not(target_arch = "wasm32"))))]
+                MainCommmand::MicRecord(_, _, tx) => {
+                    self.log_check(tx.send(false));
                 }
                 MainCommmand::Read(path, tx) => {
                     println!("read {}", path);
