@@ -1456,6 +1456,74 @@ function verb(channel, room, damp, wet) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "midi",
+        move |lu, mc, (action, name): (Option<String>, Option<String>)| {
+            #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+            {
+                // One native, selected by the (optional) first argument:
+                //   midi()          -> drain pending events (the per-frame call)
+                //   midi('ports')   -> list available input port names
+                //   midi('port')    -> the connected port's name, or nil
+                //   midi('open', n?)-> connect (n matches a port name substring)
+                //   midi('close')   -> disconnect
+                match action.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    None => {
+                        // Events as an array of {status, channel, data1, data2}.
+                        let mut out = lu.raw_table();
+                        for (i, (status, ch, d1, d2)) in
+                            crate::midi::drain().into_iter().enumerate()
+                        {
+                            let mut ev = lu.raw_table();
+                            ev.set(1, Value::Integer(status as i64));
+                            ev.set(2, Value::Integer(ch as i64));
+                            ev.set(3, Value::Integer(d1 as i64));
+                            ev.set(4, Value::Integer(d2 as i64));
+                            out.set(i as i64 + 1, lu.wrap_table(mc, ev));
+                        }
+                        return Ok(lu.wrap_table(mc, out));
+                    }
+                    Some(ref a) if a == "ports" => {
+                        let mut out = lu.raw_table();
+                        for (i, p) in crate::midi::ports().into_iter().enumerate() {
+                            out.set(i as i64 + 1, Value::String(p));
+                        }
+                        return Ok(lu.wrap_table(mc, out));
+                    }
+                    Some(ref a) if a == "port" => {
+                        return Ok(match crate::midi::connected() {
+                            Some(p) => Value::String(p),
+                            None => Value::Nil,
+                        });
+                    }
+                    Some(ref a) if a == "open" => {
+                        return Ok(
+                            match crate::midi::open(sing.clone(), name.as_deref()) {
+                                Ok(p) => Value::String(p),
+                                Err(_) => Value::Nil,
+                            },
+                        );
+                    }
+                    Some(ref a) if a == "close" => {
+                        crate::midi::close();
+                        return Ok(Value::Nil);
+                    }
+                    _ => return Ok(Value::Nil),
+                }
+            }
+            #[cfg(not(all(feature = "midi", not(target_arch = "wasm32"))))]
+            Ok(Value::Nil)
+        },
+        "MIDI in: midi() drains events, midi('ports'|'port'), midi('open', name?), midi('close')",
+        "
+---@param action string? nil = drain events; 'ports' | 'port' | 'open' | 'close'
+---@param name string? port name substring for 'open'
+---@return table|string|nil
+function midi(action, name) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "crsh",
         move |_, _, (channel, bits, rate): (usize, f32, Option<f32>)| {
             #[cfg(feature = "audio")]
@@ -2429,6 +2497,10 @@ async fn async_load_app(
     // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
     #[cfg(feature = "audio")]
     let _ = core.singer.send(SoundCommand::Reset);
+    // MIDI hardware outlives a reload (like the audio stream), but the new app
+    // shouldn't inherit the old one's queued events or held notes.
+    #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+    crate::midi::reset(&core.singer);
 
     let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(

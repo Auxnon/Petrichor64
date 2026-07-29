@@ -52,6 +52,10 @@ headed=["wgpu", "winit", "winit_input_helper"]
 # depend on (or conflict with) the wgpu renderer.
 render-tui=["crossterm"]
 audio=["cpal", "lewton"]
+# MIDI input, native-only and off by default (MIDI is a niche for a fantasy
+# console, so its cost stays opt-in). Implies `audio`, since incoming notes are
+# played by the synth. See src/midi.rs and guide/midi.md.
+midi=["midir", "audio"]
 puc_lua=["mlua"]
 silt=["silt-lua"]
 picc=["piccolo"]
@@ -142,6 +146,13 @@ native-dialog = "0.9.0"
 # TUI backend: terminal control has no wasm32 target, so it lives here rather
 # than in the shared [dependencies] table.
 crossterm = { version = "0.28.1", optional = true }
+# MIDI input (the `midi` feature). midir is a thin FFI binding over each host's
+# native MIDI stack — CoreMIDI on macOS, WinMM/WinRT on Windows, ALSA seq on
+# Linux — which is also what gets us BLE MIDI for free: macOS and Windows present
+# an OS-paired Bluetooth MIDI device as an ordinary MIDI port. Native-only for
+# now; midir does have a Web MIDI backend, but wiring it through the wasm VM
+# worker is a separate job (see guide/midi.md).
+midir = { version = "0.10.1", optional = true }
 # native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
 # feature set declared in [dependencies]. Features union across target tables.
 tokio = { version = "1.43.0", features = ["full"] }
