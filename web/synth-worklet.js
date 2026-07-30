@@ -17,6 +17,10 @@
 //
 // Loaded by the engine as: ctx.audioWorklet.addModule('synth-worklet.js')
 
+// MUST come first: the worklet scope has no TextDecoder/TextEncoder, and the glue
+// below builds one at module top level. Import order is the polyfill's only chance
+// to run (static imports are hoisted, so an inline polyfill would be too late).
+import './worklet-polyfill.js';
 // `initSync` is a *named* export of wasm-bindgen's --target web glue (the default
 // export is the async initializer, which would try to fetch — impossible in here).
 import { initSync, Synth } from './petrichor_synth.js';
