@@ -109,13 +109,65 @@ pub fn vowel_formants(vowel: &str) -> [Formant; 3] {
 /// vowel — fricatives s/f/h/sh and plosives t/k/p (voiced pairs z/v/d/g/b
 /// approximated the same). *Voiced* consonants (m/n/l/r/w/y) are handled instead
 /// as a voiced formant onset that glides into the vowel (see `voiced_onset`).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct Consonant {
     pub freq: f32,
     pub q: f32,
     /// Onset length in seconds.
     pub secs: f32,
     pub gain: f32,
+}
+
+/// Most bursts a [`Cluster`] holds. Four covers anything worth pronouncing —
+/// "str" contributes two unvoiced bursts, "nts" three.
+pub const CLUSTER_MAX: usize = 4;
+
+/// A consonant cluster: up to [`CLUSTER_MAX`] bursts, stored inline.
+///
+/// Fixed-size deliberately, where a `Vec` would read more naturally. These ride
+/// inside a `Note`, which is handed to the audio thread and **dropped there** — so
+/// a `Vec` meant every sung note allocated on the engine side and called `free()`
+/// inside the audio callback, the one place that must never wait on the allocator.
+/// (Plain notes were always safe: an empty `Vec` doesn't allocate. Only singing
+/// tripped it.) Real clusters are short, so an inline array costs a few bytes and
+/// removes the hazard outright — and keeps `Note` `Copy`.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct Cluster {
+    bursts: [Consonant; CLUSTER_MAX],
+    len: u8,
+}
+
+impl Cluster {
+    pub const MAX: usize = CLUSTER_MAX;
+
+    /// Append a burst, dropping any past [`CLUSTER_MAX`]. A syllable with five
+    /// stacked consonants isn't something we need to pronounce, and quietly losing
+    /// the tail beats refusing to sing the word.
+    pub fn push(&mut self, burst: Consonant) {
+        if (self.len as usize) < CLUSTER_MAX {
+            self.bursts[self.len as usize] = burst;
+            self.len += 1;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, Consonant> {
+        self.bursts[..self.len as usize].iter()
+    }
+}
+
+impl std::ops::Index<usize> for Cluster {
+    type Output = Consonant;
+    fn index(&self, i: usize) -> &Consonant {
+        &self.bursts[..self.len as usize][i]
+    }
 }
 
 /// A parsed sung syllable, in playback order: an **onset** cluster of unvoiced
@@ -125,12 +177,12 @@ pub struct Consonant {
 /// then a **coda** cluster of unvoiced bursts (`cat`, `cats`). Lets whole
 /// CVC(C) words sing, not just CV syllables.
 pub struct SungSyllable {
-    pub onset: Vec<Consonant>,
+    pub onset: Cluster,
     pub glide_from: Option<[Formant; 3]>,
     pub glide_secs: f32,
     pub vowel: [Formant; 3],
     pub coda_glide: Option<[Formant; 3]>,
-    pub coda: Vec<Consonant>,
+    pub coda: Cluster,
 }
 
 /// One consonant in a cluster: an unvoiced noise burst, or a voiced (nasal /
@@ -259,7 +311,7 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
     };
 
     // Onset: unvoiced bursts, plus an optional voiced glide-from (last one wins).
-    let mut onset = Vec::new();
+    let mut onset = Cluster::default();
     let mut glide_from = None;
     let mut glide_secs = 0.0;
     for tok in parse_consonants(&onset_str) {
@@ -284,7 +336,7 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
     // Coda: an optional voiced ending to glide *to* (first voiced — a nasal/
     // liquid tail), then any unvoiced bursts (`t`, `s`, `k`…).
     let mut coda_glide = None;
-    let mut coda = Vec::new();
+    let mut coda = Cluster::default();
     for tok in parse_consonants(&coda_str) {
         match tok {
             Cons::Voiced(vf) => {

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 
 use crate::fx::{Biquad, Crossfade, Crush, Drive, DriveShape, Echo, Filter, FilterKind, Reverb};
-use crate::vocaloid::{Consonant, Formant, FormantBank};
+use crate::vocaloid::{Cluster, Consonant, Formant, FormantBank};
 
 #[cfg(all(feature = "host-io", not(target_arch = "wasm32")))]
 #[derive(Debug)]
@@ -887,7 +887,9 @@ where
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// `Copy` again, now that the consonant clusters are fixed-size: a note is plain
+/// data the audio thread can take by value and forget, with nothing to free.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Note {
     instrument: usize,
     pub frequency: f32,
@@ -900,7 +902,7 @@ pub struct Note {
     pub formants: Option<[Formant; 3]>,
     /// Onset consonant cluster: unvoiced noise bursts played in order before the
     /// vowel (e.g. s+t for "st").
-    pub onset: Vec<Consonant>,
+    pub onset: Cluster,
     /// Optional starting formants to glide *from* into `formants` (a voiced
     /// onset consonant, or a diphthong's first vowel), over `glide_secs`.
     pub glide_from: Option<[Formant; 3]>,
@@ -910,7 +912,7 @@ pub struct Note {
     pub coda_glide: Option<[Formant; 3]>,
     /// Coda consonant cluster: unvoiced bursts played after the vowel (the "t"
     /// in "cat", "t"+"s" in "cats").
-    pub coda: Vec<Consonant>,
+    pub coda: Cluster,
 }
 impl Note {
     pub fn new(instrument: usize, frequency: f32, duration: f32, volume: f32) -> Self {
@@ -920,11 +922,11 @@ impl Note {
             duration,
             volume,
             formants: None,
-            onset: Vec::new(),
+            onset: Cluster::default(),
             glide_from: None,
             glide_secs: 0.0,
             coda_glide: None,
-            coda: Vec::new(),
+            coda: Cluster::default(),
         }
     }
     /// A sung note at `frequency` from a parsed syllable (onset cluster + vowel +
@@ -941,11 +943,11 @@ impl Note {
             duration,
             volume,
             formants: Some(syllable.vowel),
-            onset: syllable.onset.clone(),
+            onset: syllable.onset,
             glide_from: syllable.glide_from,
             glide_secs: syllable.glide_secs,
             coda_glide: syllable.coda_glide,
-            coda: syllable.coda.clone(),
+            coda: syllable.coda,
         }
     }
 }
@@ -1149,7 +1151,7 @@ struct Voice {
     consonant_xfade: Crossfade,
     /// Consonant bursts still to play (onset cluster before the vowel, then reused
     /// for the coda cluster after it), advanced through by `onset_i`.
-    onset: Vec<Consonant>,
+    onset: Cluster,
     onset_i: usize,
     /// Whether the last burst in `onset` crossfades into the vowel (onset) or just
     /// ends (coda).
@@ -1159,7 +1161,7 @@ struct Voice {
     /// Voiced coda ending to glide to at note-off (nasal/liquid), and the unvoiced
     /// coda bursts to play after it; `coda_stage` tracks progress.
     coda_glide: Option<[Formant; 3]>,
-    coda: Vec<Consonant>,
+    coda: Cluster,
     coda_stage: CodaStage,
     /// Voice character (sung notes only): breath (aspiration noise mix) and a
     /// vibrato LFO (depth as a pitch fraction, rate in Hz, running phase).
@@ -1185,12 +1187,12 @@ impl Voice {
             consonant_samples: 0,
             consonant_filter: Biquad::default(),
             consonant_xfade: Crossfade::default(),
-            onset: Vec::new(),
+            onset: Cluster::default(),
             onset_i: 0,
             onset_xfade_last: true,
             vowel: [Formant::default(); 3],
             coda_glide: None,
-            coda: Vec::new(),
+            coda: Cluster::default(),
             coda_stage: CodaStage::None,
             breath: 0.0,
             vib_depth: 0.0,
@@ -1527,6 +1529,45 @@ mod tests {
                 SoundCommand::PlayNote(Note::new(0, 440.0, 1.0, 1.0), Some(2)),
             ],
             4800,
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// A sung note must sound, including its consonants. The onset/coda clusters
+    /// went from `Vec` to a fixed-size `Cluster` to keep the audio thread away from
+    /// the allocator, and nothing else covered the singing path — "sun" exercises an
+    /// unvoiced onset burst, a vowel, and a voiced coda glide in one note.
+    #[test]
+    fn sung_note_makes_sound() {
+        let syllable = crate::vocaloid::parse_syllable("sun");
+        assert!(!syllable.onset.is_empty(), "expected an /s/ onset burst");
+        let peak = peak_of(
+            vec![SoundCommand::PlayNote(
+                Note::sung(220.0, 1.0, 1.0, &syllable),
+                None,
+            )],
+            9600, // 200ms — long enough to get past the onset into the vowel
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// A cluster longer than `Cluster::MAX` must truncate, not panic or corrupt:
+    /// the voice indexes bursts by position, so an over-long word has to stay
+    /// in bounds. "strengths" is the nastiest thing English offers here.
+    #[test]
+    fn overlong_cluster_truncates_and_still_sounds() {
+        let syllable = crate::vocaloid::parse_syllable("strengths");
+        assert!(
+            syllable.onset.len() <= Cluster::MAX && syllable.coda.len() <= Cluster::MAX,
+            "clusters must be capped at {}",
+            Cluster::MAX
+        );
+        let peak = peak_of(
+            vec![SoundCommand::PlayNote(
+                Note::sung(220.0, 1.0, 1.0, &syllable),
+                None,
+            )],
+            9600,
         );
         assert!(peak > 0.01, "expected signal, got peak {}", peak);
     }
