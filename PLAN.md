@@ -399,3 +399,73 @@ These are the natural contents of a "cold lane" if the transport is ever split.
 returns nothing) — the feature is declared and awaiting an implementation. The
 worklet needs *nothing* from it: a separate wasm module with its own linear memory,
 unaffected by COOP/COEP. Ultra is an upgrade to the transport, not a prerequisite.
+
+## Mobile: Android now, iOS anticipated
+
+### Where it stands
+
+The engine **type-checks for `aarch64-linux-android`** (`cargo check --target
+aarch64-linux-android`), touch input works through the existing mouse API, and
+`android_main` exists. It has **not been built into an APK or run on a device** —
+that needs an Android SDK + NDK, which the dev machine doesn't have (see below).
+
+### `desktop` is not the same as `not(wasm)`
+
+The assumption that "native" implies clipboard, native dialogs and a terminal is
+what broke first: `native-dialog` has no Android backend at all. So build.rs now
+emits a **`desktop`** cfg (macOS/Windows/Linux/BSD), and the desktop-only crates
+(`clipboard`, `native-dialog`, `crossterm`, `midir`) moved to a Cargo target table
+gated on the equivalent longhand predicate.
+
+The duplication is forced, not sloppy: a build-script cfg **cannot** drive
+dependency resolution, so the condition exists in both places and they must be kept
+in step. build.rs says so at the point of definition.
+
+`OS` (visible to Lua) gained `"droid"` and `"ios"`, plus an `"other"` fallback so an
+unforeseen platform fails at runtime with an odd name rather than refusing to
+compile.
+
+### Touch → `mus()`
+
+Folded into the mouse so every existing game works untouched: the **primary** finger
+is the cursor, contact is a left click. Primary means *the first finger down that is
+still down*, tracked by winit's touch id — so a second finger landing and lifting
+mid-drag doesn't hijack the cursor or release the button, which is what id-less
+handling gets wrong. Deltas are accumulated per frame in pixels (touch has no
+`DeviceEvent::MouseMotion`), and a tap produces no delta on first contact so it
+doesn't read as a flick. Position stays where the finger lifted, like a mouse that
+stopped moving.
+
+Not gated to mobile: winit reports touch identically on Android, iOS and desktop
+touchscreens, so this also makes a Surface or touch laptop work. Multi-touch
+gestures should get their own Lua command rather than being smuggled through `mus`.
+
+### Remaining before it runs a game on a device
+
+1. **Where the game comes from.** Desktop takes a path; web fetches
+   `/game.game.png` or falls back to an embedded bundle. An APK has neither — the
+   game wants reading out of APK assets via `AndroidApp::asset_manager()`. The
+   embedded-bundle path is wasm-only today because it goes through `fetch`.
+2. **Surface lifecycle.** Android destroys the native window when backgrounded, and
+   `resumed` fires again on return. `resumed` only builds a window when there isn't
+   one, so the wgpu surface would be stale — the surface needs recreating *without*
+   rebuilding `Core` and losing the running game. Expect a black screen or a crash
+   on the first background/foreground cycle until this is done.
+3. **Toolchain.** `rustup target add aarch64-linux-android` is done. An APK also
+   needs the Android SDK + NDK and one of `cargo-apk` (simplest for
+   `native-activity`, unmaintained) / `cargo-ndk` + Gradle / `xbuild`. Add
+   `armv7-linux-androideabi` and `x86_64-linux-android` for older devices and the
+   emulator.
+4. **Audio is unverified.** cpal compiled for Android without complaint (it uses
+   AAudio/Oboe there), but nothing has produced a sound. Expect this to need real
+   attention — mobile audio wants larger buffers than desktop.
+
+### For iOS later
+
+The `desktop` cfg and the touch handling are already iOS-shaped — iOS is excluded
+from the desktop-only deps and reports touch the same way, so it should reach the
+same "type-checks" state cheaply. What differs: entry point (winit has an iOS
+`EventLoop` path, no `android_main` equivalent), assets come from the app bundle
+rather than an AssetManager, audio is CoreAudio via cpal (already supported), and
+signing/provisioning is a whole separate problem. The `midi` feature could actually
+work there (CoreMIDI), unlike Android.

@@ -14,6 +14,7 @@ use crate::log::LogType;
 #[cfg(feature = "headed")]
 use crate::controls::bit_check;
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(desktop)]
 use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
 #[cfg(feature = "headed")]
@@ -117,6 +118,25 @@ const OS: &str = "mac";
 #[cfg(target_arch = "wasm32")]
 const OS: &str = "web";
 
+// Visible to Lua, so games can adapt (touch-sized hit targets, no keyboard).
+#[cfg(target_os = "android")]
+const OS: &str = "droid";
+
+#[cfg(target_os = "ios")]
+const OS: &str = "ios";
+
+// Anything else native: better a build that runs and reports an odd name than one
+// that won't compile because a platform wasn't foreseen here.
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    target_os = "ios",
+    target_arch = "wasm32"
+)))]
+const OS: &str = "other";
+
 const FPS: f32 = 60.;
 
 /// Per-loop output of `Core::update`: the freshly-built entity instance buffers
@@ -152,6 +172,13 @@ pub struct App {
     /// The VM web worker (wasm only). Spawned once; drives the Lua VM off-thread.
     #[cfg(target_arch = "wasm32")]
     worker: Option<crate::web_worker::WorkerHandle>,
+    /// The finger acting as the cursor, by winit touch id — see the `Touch` arm.
+    /// `None` when nothing is touching. Not cfg'd to mobile: desktop touchscreens
+    /// send these events too.
+    primary_touch: Option<u64>,
+    /// Last primary-touch position in window pixels, for computing drag deltas
+    /// (touch has no equivalent of DeviceEvent::MouseMotion).
+    touch_last: Option<(f64, f64)>,
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
@@ -193,6 +220,8 @@ impl Default for App {
             pending_core: std::rc::Rc::new(std::cell::RefCell::new(None)),
             #[cfg(target_arch = "wasm32")]
             worker: None,
+            primary_touch: None,
+            touch_last: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -558,6 +587,72 @@ impl ApplicationHandler for App {
                     if size.width > 0 && size.height > 0 {
                         core.global.mouse_pos.x = position.x as f32 / size.width as f32;
                         core.global.mouse_pos.y = position.y as f32 / size.height as f32;
+                    }
+                }
+            }
+
+            // ----------------------------------------------------------------
+            // Touch, folded into the mouse so every existing game and `mus()` call
+            // works on a phone unchanged: the *primary* finger is the cursor, and
+            // touching down is a left click.
+            //
+            // Primary means the first finger down that is still down — tracked by
+            // winit's touch id, not "whichever event arrived". That distinction is
+            // the whole point: a second finger landing and lifting during a drag
+            // must not move the cursor or release the button, which is exactly what
+            // id-less handling gets wrong. Extra fingers are ignored for now; when
+            // multi-touch gestures arrive they belong in their own Lua command
+            // rather than being smuggled through `mus`.
+            //
+            // Platform-independent on purpose: winit reports touch the same way on
+            // Android, iOS and desktop touchscreens, so this also makes a Surface or
+            // a touch-screen laptop work.
+            WindowEvent::Touch(touch) => {
+                use winit::event::TouchPhase;
+                let size = self.window.as_ref().map(|w| w.inner_size());
+                let (Some(core), Some(size)) = (&mut self.core, size) else {
+                    return;
+                };
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+                match touch.phase {
+                    TouchPhase::Started => {
+                        if self.primary_touch.is_none() {
+                            self.primary_touch = Some(touch.id);
+                            // No delta on the first contact: there's no previous
+                            // position to be relative to, and inventing one makes a
+                            // tap look like a flick to anything reading `mus` delta.
+                            self.touch_last = Some((touch.location.x, touch.location.y));
+                            core.global.mouse_pos.x = touch.location.x as f32 / size.width as f32;
+                            core.global.mouse_pos.y = touch.location.y as f32 / size.height as f32;
+                            core.global.mouse_buttons[0] = 1.0;
+                        }
+                    }
+                    TouchPhase::Moved => {
+                        if self.primary_touch == Some(touch.id) {
+                            core.global.mouse_pos.x = touch.location.x as f32 / size.width as f32;
+                            core.global.mouse_pos.y = touch.location.y as f32 / size.height as f32;
+                            // Accumulated, not assigned: several moves can land in
+                            // one frame and a delta that overwrote its predecessor
+                            // would under-report the drag. Pixels, to match the
+                            // units DeviceEvent::MouseMotion reports on desktop.
+                            if let Some((lx, ly)) = self.touch_last {
+                                core.global.mouse_delta.x += (touch.location.x - lx) as f32;
+                                core.global.mouse_delta.y += (touch.location.y - ly) as f32;
+                            }
+                            self.touch_last = Some((touch.location.x, touch.location.y));
+                        }
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        if self.primary_touch == Some(touch.id) {
+                            self.primary_touch = None;
+                            self.touch_last = None;
+                            core.global.mouse_buttons[0] = 0.0;
+                            // Position deliberately left where the finger lifted,
+                            // like a mouse that stopped moving. Games read the last
+                            // position on release to decide what was hit.
+                        }
                     }
                 }
             }
@@ -968,6 +1063,48 @@ pub fn run_cli() -> bool {
         return true;
     }
     false
+}
+
+/// Android's entry point. There is no `main` on Android: the activity loads this
+/// shared library and calls `android_main`, handing over the `AndroidApp` that owns
+/// the native window and the event queue — which is why the event loop has to be
+/// built from it rather than from scratch.
+///
+/// `no_mangle` because the activity looks the symbol up by name, and the crate is
+/// already built as a `cdylib` (for wasm), which is exactly what an APK needs.
+///
+/// **Not yet complete** — two pieces stand between this and running a game on a
+/// device, both noted in PLAN.md:
+///  - *Where the game comes from.* Desktop takes a path, web fetches or falls back
+///    to an embedded bundle; an APK has neither. The game wants to be read out of
+///    the APK's assets via `AndroidApp::asset_manager()`.
+///  - *Surface lifecycle.* Android destroys the native window when the app is
+///    backgrounded and `resumed` fires again on return. `resumed` here only builds a
+///    window when there isn't one, so the wgpu surface would be stale — the surface
+///    needs recreating without rebuilding `Core` and losing the running game.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn android_main(app: android_activity::AndroidApp) {
+    use winit::platform::android::EventLoopBuilderExtAndroid;
+
+    android_logger::init_once(
+        android_logger::Config::default().with_max_level(::log::LevelFilter::Info),
+    );
+    ::log::info!("petrichor64: android_main");
+
+    let event_loop = match EventLoop::<()>::builder().with_android_app(app).build() {
+        Ok(el) => el,
+        Err(e) => {
+            // No dialog and no stdout here; logcat is the only channel.
+            ::log::error!("petrichor64: event loop build failed: {}", e);
+            return;
+        }
+    };
+
+    let mut engine = App::default();
+    if let Err(e) = event_loop.run_app(&mut engine) {
+        ::log::error!("petrichor64: event loop exited with {:?}", e);
+    }
 }
 
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
@@ -1969,7 +2106,7 @@ impl Core {
                     loop_complete = true;
                 }
                 MainCommmand::Copy(s) => {
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(desktop)]
                     if let Ok(mut ctx) = ClipboardContext::new() {
                         if let Err(_) = ctx.set_contents(s) {
                             self.log(LogType::IoError, &format!("!!Clipboard error"));
@@ -2030,7 +2167,7 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
     //         );
     //     }
     // }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(desktop)]
     native_dialog::DialogBuilder::message()
         .set_level(native_dialog::MessageLevel::Error)
         .set_title("Petrichor64 Error")
@@ -2042,4 +2179,9 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
     // No native dialog on the web; surface the error to the JS console instead.
     #[cfg(target_arch = "wasm32")]
     web_sys::console::error_1(&format!("Petrichor64 Error: {}", e).into());
+    // Phones have no modal-dialog crate we can call from here (and no console the
+    // user can see). Log it: on Android this lands in `adb logcat`, which is where
+    // you'd be looking anyway.
+    #[cfg(all(not(desktop), not(target_arch = "wasm32")))]
+    ::log::error!("Petrichor64 Error: {}", e);
 }
