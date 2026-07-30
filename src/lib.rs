@@ -138,6 +138,11 @@ pub struct App {
     bits: ControlState,
     /// Key state from the previous Lua frame — used for pressed/released detection.
     bits_prev: [bool; 256],
+    /// A game named on the command line (or found by auto-load), applied on the
+    /// first frame rather than during `resumed`. Unpacking a game is slow enough
+    /// that doing it while the window is being created stops the OS activating it.
+    #[cfg(not(target_arch = "wasm32"))]
+    deferred_load: Option<String>,
     /// wasm builds init the engine asynchronously (wgpu adapter/device requests
     /// can't block the browser main thread). `resumed` kicks off the build via
     /// spawn_local and drops the finished Core here; the frame loop installs it
@@ -178,6 +183,8 @@ impl Default for App {
             catcher: None,
             bits: ControlState::default(),
             bits_prev: [false; 256],
+            #[cfg(not(target_arch = "wasm32"))]
+            deferred_load: None,
             #[cfg(target_arch = "wasm32")]
             pending_core: std::rc::Rc::new(std::cell::RefCell::new(None)),
             #[cfg(target_arch = "wasm32")]
@@ -344,6 +351,11 @@ impl ApplicationHandler for App {
                 .expect("failed to create window"),
         );
         self.window = Some(window.clone());
+        // Ask the OS to bring us forward. Launched from a terminal the window can
+        // otherwise open behind it and never take keyboard focus, which reads as
+        // "the app ignores all input". A hint only — window managers may refuse it.
+        #[cfg(not(target_arch = "wasm32"))]
+        window.focus_window();
 
         // --- Native: build Core synchronously and load the default app. ---
         #[cfg(not(target_arch = "wasm32"))]
@@ -373,15 +385,16 @@ impl ApplicationHandler for App {
             if let Some(s) = maybe_load {
                 core.global.console = false;
                 core.gui.disable_console();
-                // Load the command-line / auto game directly. The old path only
-                // stashed it in pending_load and relied on the boot app's
-                // drop()->quit() to swap it in, which never fires at cold boot —
-                // so a `.game.png` (or any) arg silently never loaded.
-                crate::command::hard_reset(&mut core);
-                if let Err(e) = crate::command::load_app(&mut core, Some(&s), None, None, None) {
-                    core.loggy
-                        .log(LogType::CoreError, &format!("failed to load {}: {}", s, e));
-                }
+                // Defer the actual load to the first frame (see `about_to_wait`).
+                // It used to run right here, but unpacking a game and decoding its
+                // oggs is heavy, and `resumed` is where the window is created — a
+                // long block in it means the OS never gets to activate the window,
+                // so it opened behind the terminal and never took keyboard focus.
+                // (The load has to happen *somewhere* explicit: the original code
+                // only stashed the arg in `pending_load` and relied on the boot
+                // app's drop()->quit(), which never fires at cold boot, so a
+                // `.game.png` arg silently never loaded at all.)
+                self.deferred_load = Some(s);
             } else {
                 #[cfg(feature = "include_auto")]
                 {
@@ -638,6 +651,21 @@ impl ApplicationHandler for App {
     /// Called once per iteration of the event loop before sleeping.
     /// This is where the 60 Hz Lua update runs.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Apply a command-line / auto-loaded game, now that the window exists and
+        // the OS has had a chance to bring it to the front. Doing this inside
+        // `resumed` blocked window activation long enough that the window opened
+        // behind the terminal and never took keyboard focus.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = self.deferred_load.take() {
+            if let Some(core) = self.core.as_mut() {
+                crate::command::hard_reset(core);
+                if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
+                    core.loggy
+                        .log(LogType::CoreError, &format!("failed to load {}: {}", path, e));
+                }
+            }
+        }
+
         // Install the asynchronously-built Core once it's ready (web only).
         #[cfg(target_arch = "wasm32")]
         if self.core.is_none() {
