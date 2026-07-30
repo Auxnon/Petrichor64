@@ -213,6 +213,8 @@ web-sys = { version = "0.3", features = [
     "WorkerType",
     "WorkerOptions",
     "MessageEvent",
+    # The AudioWorklet command lane transferred to the VM worker (web_worker.rs).
+    "MessagePort",
     "EventTarget",
     "MouseEvent",
     "KeyboardEvent",

@@ -54,6 +54,25 @@ impl WorkerHandle {
                             ),
                         }
                     }
+                    // Sound commands the worker couldn't send down its private lane
+                    // to the worklet (it has none yet, or the worklet never
+                    // started and the main-thread scheduler is playing instead).
+                    // MessagePack, the same format the lane carries — decoded back
+                    // into commands and fed through the normal path from here.
+                    #[cfg(feature = "audio")]
+                    if let Ok(sounds) = js_sys::Reflect::get(&data, &JsValue::from_str("sounds")) {
+                        if let Ok(arr) = sounds.dyn_into::<js_sys::Array>() {
+                            for blob in arr.iter() {
+                                if let Ok(bytes) = blob.dyn_into::<js_sys::Uint8Array>() {
+                                    if let Some(cmd) =
+                                        crate::sound::decode_command(&bytes.to_vec())
+                                    {
+                                        inbox.push_back(VmToHost::Sound(cmd));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Per-frame entity transforms: a transferred Uint8Array we
                     // unpack back into an EntUpdate (copied once into wasm; no
                     // per-entity JS objects crossed the boundary).
@@ -95,6 +114,35 @@ impl WorkerHandle {
                 web_sys::console::error_1(&format!("[main] cannot encode HostToVm: {:?}", e).into())
             }
         }
+    }
+
+    /// Give the worker the AudioWorklet command lane, so its sound commands go
+    /// straight to the audio thread instead of through here.
+    ///
+    /// The port is **transferred** — it has to be; a `MessagePort` cannot be cloned,
+    /// and after this the main thread no longer holds it (which is the point).
+    #[cfg(feature = "audio")]
+    pub fn give_sound_port(&self, port: web_sys::MessagePort) {
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("kind"), &"sound-port".into());
+        let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("port"), &port);
+        let transfer = js_sys::Array::new();
+        transfer.push(&port);
+        if let Err(e) = self.worker.post_message_with_transfer(&msg, &transfer) {
+            web_sys::console::error_1(
+                &format!("[main] could not transfer the sound lane: {:?}", e).into(),
+            );
+        }
+    }
+
+    /// Tell the worker no lane is coming, so it stops holding sound commands back
+    /// and sends them here for the main-thread scheduler to play. Without this a
+    /// browser with no AudioWorklet would buffer commands forever and stay silent.
+    #[cfg(feature = "audio")]
+    pub fn tell_no_sound_lane(&self) {
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("kind"), &"sound-no-lane".into());
+        let _ = self.worker.post_message(&msg);
     }
 
     /// Take everything the worker has posted since the last drain.
