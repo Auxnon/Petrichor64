@@ -2521,10 +2521,10 @@ async fn async_load_app(
     // App (re)load: drop the `attr` state the previous app declared, so a new game
     // starts from defaults instead of inheriting it. The console lock is the one
     // that bites — the boot fallback (`nil`) locks the console, so every game
-    // loaded after it used to inherit the lock and stay unreachable.
+    // loaded after it used to inherit the lock and stay unreachable. This only
+    // clears the lock; whether the console is *open* is left exactly as it was
+    // (an open console captures all keyboard input).
     core.global.clean_app_attrs();
-    #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
-    core.gui.enable_console(&core.loggy);
 
     // App (re)load: clear any instruments/samples a previous run registered so
     // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
