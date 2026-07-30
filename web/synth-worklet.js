@@ -43,6 +43,11 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     this.reportUntil = 0;
     this.lastReport = 0;
     this.port.onmessage = (e) => this.onMessage(e.data);
+    // Proof of construction. The processor is built on the audio *rendering*
+    // thread, which a suspended AudioContext never starts — so this message
+    // arriving is what distinguishes "the worklet never came alive" from "it came
+    // alive and something later failed". Both look identical from the main thread.
+    this.port.postMessage({ type: 'hello' });
   }
 
   onMessage(msg) {
