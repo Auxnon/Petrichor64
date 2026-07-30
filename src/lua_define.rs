@@ -280,7 +280,31 @@ impl<'lt> LuaCore {
                             "new controller connector starting".to_owned(),
                         ))?;
                     }
-                    let mut gilrs = Gilrs::new().unwrap();
+                    // gilrs has no Android backend, and `new()` reports that as
+                    // `Err(NotImplemented)` — but that variant *carries a working
+                    // instance* which simply lists no gamepads, which is exactly
+                    // right for a phone. Unwrapping it aborted the process on
+                    // startup (SIGABRT before the first frame), so take the
+                    // instance and carry on without pads.
+                    let mut gilrs = match Gilrs::new() {
+                        Ok(g) => g,
+                        Err(gilrs::Error::NotImplemented(g)) => {
+                            loggy.send((
+                                LogType::LuaSys,
+                                "no gamepad support on this platform".to_owned(),
+                            ))?;
+                            g
+                        }
+                        // Anything else is a real failure with no instance to fall
+                        // back on. Say which, rather than a bare unwrap panic.
+                        Err(e) => {
+                            loggy.send((
+                                LogType::LuaSysError,
+                                format!("gamepad subsystem failed to start: {}", e),
+                            ))?;
+                            panic!("gamepad subsystem failed to start: {}", e);
+                        }
+                    };
                     for (_id, gamepad) in gilrs.gamepads() {
                         loggy.send((
                             LogType::LuaSys,

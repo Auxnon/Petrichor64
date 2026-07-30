@@ -202,7 +202,20 @@ impl<'w> Gfx<'w> {
             // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
             // lost? can we check if immediate is better?
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: CompositeAlphaMode::Opaque,
+            // Ask for what the surface actually supports. `Opaque` was hardcoded,
+            // which is fine on desktop and the web but fatal on Android, where the
+            // surface reports only `[Inherit]` — `Surface::configure` fails
+            // validation and the app dies before drawing a frame. Opaque is still
+            // preferred where it exists (the engine draws a full-screen opaque
+            // image, and letting the compositor blend costs work for nothing).
+            alpha_mode: if surface_caps
+                .alpha_modes
+                .contains(&CompositeAlphaMode::Opaque)
+            {
+                CompositeAlphaMode::Opaque
+            } else {
+                surface_caps.alpha_modes[0]
+            },
             view_formats: vec![],
         };
 
