@@ -933,11 +933,31 @@ pub fn run_cli() -> bool {
 pub fn start() {
     env_logger::init();
 
-    let event_loop = match EventLoop::<()>::new() {
-        Ok(el) => el,
-        Err(e) => {
-            error_window(Box::new(e));
-            return;
+    let event_loop = {
+        #[allow(unused_mut)]
+        let mut builder = EventLoop::<()>::builder();
+        // macOS: a bare binary launched from a terminal is not automatically the
+        // *active application*. Its window can appear (even in front) while the
+        // app itself never activates, so key events keep going to whatever was
+        // focused before — the terminal — and the engine looks like it ignores all
+        // input. Nothing set a policy before, which left this to luck: anything
+        // that shifted startup timing (which boot app loads, whether the console is
+        // disabled) changed whether we happened to win activation.
+        //
+        // `Regular` makes us an ordinary foreground app (dock icon, menu bar), and
+        // activating over other apps takes focus the way a double-clicked .app does.
+        #[cfg(target_os = "macos")]
+        {
+            use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+            builder.with_activation_policy(ActivationPolicy::Regular);
+            builder.with_activate_ignoring_other_apps(true);
+        }
+        match builder.build() {
+            Ok(el) => el,
+            Err(e) => {
+                error_window(Box::new(e));
+                return;
+            }
         }
     };
 
