@@ -469,6 +469,33 @@ The first link attempt (API 24) failed with `ld.lld: error: unable to find libra
 optional on Android, 24 becomes reachable again. `android_api` in the justfile is
 the single place this is set.
 
+### Verified on hardware (Galaxy Z Fold 5, Android 16)
+
+The APK installs, launches, loads the game baked in with `include_auto`, decodes its
+oggs and holds a steady **60 fps**. Two startup aborts had to be fixed to get there —
+a hardcoded surface `alpha_mode` and gilrs's missing Android backend, both in
+`5bbf327`.
+
+**Touch works and is exact.** A tap at (400, 1200) on a 904x2316 screen reports
+`x=0.4425, y=0.5181` — 400/904 and 1200/2316 to four decimals. Press/release edges
+fire correctly.
+
+**Unprojection is aspect-correct**, which is the thing a phone was most likely to
+break. Off-centre ray deflection per unit of screen space came out 0.315 horizontal
+vs 0.809 vertical — a ratio of 2.57 against the screen's own aspect of 2316/904 =
+2.56. And visually, a cube placed at `mus().v * 12` lands centred on the crosshair to
+within a pixel or two.
+
+`test/touch` is the app that proves it, kept as a smoke test. Three things it
+documents by example, each of which looked like an engine bug first: `m1` is a
+boolean (not 0/1); `fill()` on the gui layer is *opaque* and hides the 3D scene, so
+use `clr()`; and the cube mesh is corner-anchored and untextured by default, so it
+needs `tex`/`offset` to show up where you expect.
+
+The inner (unfolded) display is 1812x2176 and the app survived being moved to it, but
+a deliberate background/foreground cycle is still untested — see the surface
+lifecycle gap above.
+
 ### Verified so far
 
 - `libpetrichor64.so` **links** for `aarch64-linux-android`: 300 MB debug,
