@@ -172,6 +172,10 @@ pub struct App {
     /// The VM web worker (wasm only). Spawned once; drives the Lua VM off-thread.
     #[cfg(target_arch = "wasm32")]
     worker: Option<crate::web_worker::WorkerHandle>,
+    /// Set at boot when the game is compiled in (`include_auto`); the load itself
+    /// happens on the first frame, so window activation isn't blocked by unpacking.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
+    deferred_auto: bool,
     /// The finger acting as the cursor, by winit touch id — see the `Touch` arm.
     /// `None` when nothing is touching. Not cfg'd to mobile: desktop touchscreens
     /// send these events too.
@@ -220,6 +224,8 @@ impl Default for App {
             pending_core: std::rc::Rc::new(std::cell::RefCell::new(None)),
             #[cfg(target_arch = "wasm32")]
             worker: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
+            deferred_auto: false,
             primary_touch: None,
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
@@ -436,6 +442,15 @@ impl ApplicationHandler for App {
                     core.global.console = false;
                     core.gui.disable_console();
                     let _id = core.bundle_manager.console_bundle_target;
+                    // Load the *compiled-in* bundle on the first frame (same
+                    // deferral as a CLI path, for the same window-activation
+                    // reason). This branch used to only disable the console and
+                    // leave loading to `check_for_auto`, which looks for
+                    // auto.game.png *next to the executable* — meaningless inside
+                    // an APK, where there's no exe directory to sit beside. So a
+                    // bundled game never started on Android; on desktop it worked
+                    // only because the file happened to be there too.
+                    self.deferred_auto = true;
                 }
 
                 #[cfg(not(feature = "include_auto"))]
@@ -763,6 +778,26 @@ impl ApplicationHandler for App {
                 if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
                     core.loggy
                         .log(LogType::CoreError, &format!("failed to load {}: {}", path, e));
+                }
+            }
+        }
+
+        // The game baked in at compile time (`include_auto`), for builds that have
+        // no filesystem to find it on — an APK, or a relocated desktop binary.
+        #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
+        if self.deferred_auto {
+            self.deferred_auto = false;
+            if let Some(core) = self.core.as_mut() {
+                crate::command::hard_reset(core);
+                let payload = include_bytes!("../auto.game.png").to_vec();
+                ::log::info!("loading included game ({} bytes)", payload.len());
+                if let Err(e) =
+                    crate::command::load_app(core, Some("INCLUDE_AUTO"), Some(payload), None, None)
+                {
+                    core.loggy.log(
+                        LogType::CoreError,
+                        &format!("failed to load the included game: {}", e),
+                    );
                 }
             }
         }
