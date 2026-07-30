@@ -59,6 +59,8 @@ pub struct WebOut {
     /// feeds its mixer the commands the engine is already producing.
     fallback: Option<WebAudioOut>,
     fallback_tx: Option<Sender<SoundCommand>>,
+    /// Frames until the next resume() attempt (see pump).
+    resume_wait: u32,
     /// Logged once, so a suspended context doesn't spam every frame.
     warned_suspended: bool,
     /// Set if constructing the fallback failed, so we don't retry every frame.
@@ -85,6 +87,7 @@ impl WebOut {
             fallback_tx: None,
             fallback_failed: false,
             warned_suspended: false,
+            resume_wait: 1,
         })
     }
 
@@ -108,7 +111,15 @@ impl WebOut {
         // user activation, and this runs every frame, so the first frame after any
         // interaction gets it — no reliance on one handler being wired up.
         if !running {
-            let _ = self.ctx.resume();
+            // Retry sparsely, not every frame: before the page has user activation
+            // the browser both rejects this *and* logs a warning, so per-frame
+            // retries bury the console (hundreds of "AudioContext was not allowed
+            // to start"). Once a second is plenty to catch the first gesture.
+            self.resume_wait = self.resume_wait.saturating_sub(1);
+            if self.resume_wait == 0 {
+                self.resume_wait = 60;
+                let _ = self.ctx.resume();
+            }
             if !self.warned_suspended {
                 self.warned_suspended = true;
                 log::info!("web audio: context suspended, waiting for a user gesture");
