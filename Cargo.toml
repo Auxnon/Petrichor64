@@ -152,14 +152,18 @@ crossbeam = "0.8.4"
 atomicell = "0.2.0"
 
 # ---------------------------------------------------------------------------
-# Native-only dependencies: desktop crates with no wasm support. Their call
-# sites are gated behind cfg(not(target_arch = "wasm32")) in the source.
+# Desktop-only dependencies: crates that need a desktop OS, not merely a native
+# one. None of them build for Android or iOS (native-dialog has no backend there
+# at all), so "not wasm" is not a strong enough condition once phones are targets.
+#
+# This predicate must stay in step with the `desktop` cfg that build.rs emits,
+# which is what the call sites use — a build-script cfg can't drive dependency
+# resolution, so the condition has to be written out longhand here.
 # ---------------------------------------------------------------------------
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
 clipboard = "0.5.0"
 native-dialog = "0.9.0"
-# TUI backend: terminal control has no wasm32 target, so it lives here rather
-# than in the shared [dependencies] table.
+# TUI backend: terminal control has no wasm32 target, and a phone has no terminal.
 crossterm = { version = "0.28.1", optional = true }
 # MIDI input (the `midi` feature). midir is a thin FFI binding over each host's
 # native MIDI stack — CoreMIDI on macOS, WinMM/WinRT on Windows, ALSA seq on
@@ -168,9 +172,33 @@ crossterm = { version = "0.28.1", optional = true }
 # now; midir does have a Web MIDI backend, but wiring it through the wasm VM
 # worker is a separate job (see guide/midi.md).
 midir = { version = "0.10.1", optional = true }
+
+# ---------------------------------------------------------------------------
+# All-native dependencies: fine on desktop *and* mobile.
+# ---------------------------------------------------------------------------
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
 # feature set declared in [dependencies]. Features union across target tables.
 tokio = { version = "1.43.0", features = ["full"] }
+
+# ---------------------------------------------------------------------------
+# Android. winit already depends on `android-activity`, but that crate refuses to
+# compile until one of its two backends is chosen, so the choice has to be made
+# here.
+#
+# `native-activity` over `game-activity`: it needs no Java/Gradle scaffolding, so
+# `cargo apk` can build a runnable APK on its own. The tradeoff is weaker text
+# input (no proper soft-keyboard/IME plumbing), which the in-engine console will
+# eventually want — switching to `game-activity` later is a feature swap here plus
+# a Gradle project, and nothing in the engine's own code depends on which is used.
+# ---------------------------------------------------------------------------
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30.13", features = ["android-native-activity"], optional = true }
+# The `AndroidApp` handed to `android_main`, which the event loop is built from.
+android-activity = "0.6"
+# Routes `log` to logcat. Android has no stdout to read, so without this every
+# `log::info!` in the engine goes nowhere and a failure to start is invisible.
+android_logger = "0.14"
 
 # ---------------------------------------------------------------------------
 # wasm-only dependencies: browser glue for the web build.

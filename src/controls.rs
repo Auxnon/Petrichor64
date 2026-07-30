@@ -2,6 +2,7 @@ use crate::log::LogType;
 use crate::types::ControlState;
 use crate::{bundle::BundleManager, Core};
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(desktop)]
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use winit::event::ElementState;
@@ -74,12 +75,12 @@ pub fn controls_evaluate(
             core.loggy.history_down();
         } else if held_cmd {
             if key_pressed(KeyCode::KeyC) {
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(desktop)]
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     let _ = ctx.set_contents(core.loggy.get_line());
                 }
             } else if key_pressed(KeyCode::KeyV) {
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(desktop)]
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
                         core.loggy.add(&s);
@@ -149,7 +150,7 @@ pub fn controls_evaluate(
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
             } else if key_pressed(KeyCode::KeyV) {
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(desktop)]
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
                         core.bundle_manager.get_main_bundle().lua.call_drop(s);
