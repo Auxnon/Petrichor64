@@ -32,7 +32,7 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed","audio"] # "online_capable" ,  "headed" , "include_auto"
+default=[ "silt","headed","audio","studio"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
 online_capable=["rmp-serde", "bytes"]
 # `wasm` marks a wasm build (drop-in, CDN-friendly, no shared memory). NOT in
