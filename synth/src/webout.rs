@@ -77,6 +77,11 @@ pub struct WebOut {
     resume_wait: u32,
     /// Logged once, so a suspended context doesn't spam every frame.
     warned_suspended: bool,
+    /// Set when the worklet reports its synth is live. Watched so a worklet that
+    /// starts but never becomes usable falls back instead of playing silence.
+    ready: Rc<std::cell::Cell<bool>>,
+    /// Frames since the node was created, for that timeout.
+    worklet_frames: u32,
 }
 
 impl WebOut {
@@ -100,6 +105,8 @@ impl WebOut {
             fallback_failed: false,
             resume_wait: 1,
             warned_suspended: false,
+            ready: Rc::new(std::cell::Cell::new(false)),
+            worklet_frames: 0,
         })
     }
 
@@ -180,6 +187,20 @@ impl WebOut {
                 }
             }
             1 => {
+                // A worklet that started but never reported a live synth would
+                // play silence forever. Give the handshake a few seconds, then
+                // take the scheduler instead — degraded beats mute.
+                if !self.ready.get() {
+                    self.worklet_frames += 1;
+                    if self.worklet_frames > 240 {
+                        log::error!(
+                            "web audio: worklet never reported a ready synth; \
+                             falling back to the main-thread scheduler"
+                        );
+                        *self.stage.borrow_mut() = Stage::Fallback;
+                        return;
+                    }
+                }
                 if !self.pending.is_empty() {
                     if let Stage::Worklet(node) = &*self.stage.borrow() {
                         if let Ok(port) = node.port() {
@@ -233,6 +254,11 @@ impl WebOut {
         // failures (e.g. the wasm not instantiating inside the worklet) — without
         // this, such a failure is a silent page with no fallback and no message.
         let watched = self.stage.clone();
+        let ready_flag = self.ready.clone();
+        // Captured so the handshake below can hand the module over.
+        let pending_module = module.clone();
+        let handshake_port = port.clone();
+        let rate = self.ctx.sample_rate() as f64;
         let on_msg =
             Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
                 let data = e.data();
@@ -249,11 +275,28 @@ impl WebOut {
                         .unwrap_or(f64::NAN)
                 };
                 match field("type").as_str() {
-                    // Posted from the processor's constructor: proof the audio
-                    // thread actually built it, which is the step that silently
-                    // never happened while the context was suspended.
-                    "hello" => log::info!("web audio: worklet processor constructed"),
+                    // Posted from the processor's constructor. This is the
+                    // handshake: only now does a processor exist to receive the
+                    // module. Posting it at node-creation time raced construction
+                    // on the audio thread and the message was silently dropped —
+                    // the processor came up and then sat there with no synth.
+                    "hello" => {
+                        log::info!("web audio: worklet processor constructed, sending synth wasm");
+                        let msg = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"wasm".into());
+                        let _ = js_sys::Reflect::set(&msg, &"module".into(), &pending_module);
+                        // Pass the rate we measured rather than trusting the
+                        // worklet scope's global: a non-finite rate there would make
+                        // every phase increment NaN — silence with no error at all.
+                        let _ = js_sys::Reflect::set(
+                            &msg,
+                            &"sampleRate".into(),
+                            &JsValue::from_f64(rate),
+                        );
+                        let _ = handshake_port.post_message(&msg);
+                    }
                     "ready" => {
+                        ready_flag.set(true);
                         log::info!("web audio: AudioWorklet synth ready @ {} Hz", num("rate"))
                     }
                     // Says which link is broken when there's no sound and no error:
@@ -283,18 +326,7 @@ impl WebOut {
         // queued arrives.
         on_msg.forget();
 
-        let msg = js_sys::Object::new();
-        js_sys::Reflect::set(&msg, &"type".into(), &"wasm".into())?;
-        js_sys::Reflect::set(&msg, &"module".into(), module)?;
-        // Pass the rate we measured rather than relying on the worklet scope's
-        // global: a non-finite rate in there would make every phase increment NaN,
-        // i.e. silence with no error anywhere.
-        js_sys::Reflect::set(
-            &msg,
-            &"sampleRate".into(),
-            &JsValue::from_f64(self.ctx.sample_rate() as f64),
-        )?;
-        port.post_message(&msg)?;
+        // The module is deliberately NOT posted here — see the "hello" arm above.
         Ok(node)
     }
 }
