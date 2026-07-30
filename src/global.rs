@@ -149,11 +149,14 @@ impl Global {
     ///
     /// The console lock is the one that bites: the boot fallback (`nil`) locks the
     /// console, so without this every game loaded afterwards inherited the lock and
-    /// the console stayed unreachable. Note this only clears the flags; the load
-    /// path re-enables the console widget itself (see `command.rs::load_app`).
+    /// the console stayed unreachable.
+    ///
+    /// Deliberately does NOT touch `console`. That flag is whether the console is
+    /// currently *open*, and an open console swallows all keyboard input (see
+    /// `controls.rs`) — forcing it true here left games unplayable, keys and all.
+    /// Clearing `locked` is enough: backtick can toggle the console again.
     pub fn clean_app_attrs(&mut self) {
         self.locked = false;
-        self.console = true;
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
