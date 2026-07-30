@@ -16,9 +16,11 @@ pub mod fx;
 pub mod sound;
 pub mod vocaloid;
 // The synth's side of the low-latency browser path: what runs *inside* the
-// AudioWorklet. Built for wasm only, and independent of `host-io` — this is the
-// worklet's own host.
-#[cfg(target_arch = "wasm32")]
+// AudioWorklet. Only for the wasm-pack build of this crate (`just synth-wasm`),
+// which is the module the worklet loads — hence its own feature rather than plain
+// wasm32. The engine can never call `Synth`, so compiling it there just anchored
+// the entire DSP as live code in a bundle that reaches it another way.
+#[cfg(all(feature = "worklet", target_arch = "wasm32"))]
 pub mod worklet;
 // The engine's side: sets the worklet up and forwards commands to it, falling
 // back to the main-thread scheduler in `sound.rs` if that can't be done.
