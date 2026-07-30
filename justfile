@@ -297,7 +297,13 @@ android-apk game profile="release":
     cargo apk build --lib --features include_auto $FLAG
     find target/{{profile}}/apk -name '*.apk' -exec ls -la {} \;
 
-# Install and launch on a connected device (`adb devices` should list it).
+# Build, install and launch a game in one step: `just android-run sounder`.
+# The game is baked into the APK, so switching games is a rebuild — this is the
+# recipe you actually want day to day.
+android-run game profile="release": (android-apk game profile)
+    @just android-install {{profile}}
+
+# Install and launch whatever APK was built last (`adb devices` should list it).
 android-install profile="release":
     #!/usr/bin/env bash
     set -euo pipefail

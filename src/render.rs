@@ -98,6 +98,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         core.global.smooth_cam_rot,
     );
 
+    // Cache these so the ray can be re-traced at the top of the next frame, before
+    // Lua reads it (see `Core::refresh_cursor_ray`). Tracing only here left the
+    // unprojected cursor one frame stale.
+    core.global.last_cam_matrices = Some((mx_persp, mx_view));
     crate::ray::trace(core, mx_persp, mx_view);
     let gfx = &core.gfx;
 

@@ -961,6 +961,11 @@ impl ApplicationHandler for App {
                             &self.bits_prev,
                         );
                     }
+                    // Same as native: re-trace the cursor ray against this frame's
+                    // pointer position before the VM sees it, since render runs later.
+                    if let Some(core) = self.core.as_mut() {
+                        core.refresh_cursor_ray();
+                    }
                     // Keys are already in self.bits.0 (window_event's bit_check);
                     // copy the mouse/analog state from core.global into bits.1,
                     // mirroring the native about_to_wait input copy.
@@ -1082,6 +1087,11 @@ impl ApplicationHandler for App {
             if let Some(ib) = core.update(catcher) {
                 core.instance_buffers = ib;
             }
+
+            // Bring the unprojected cursor up to date with this frame's pointer
+            // position before handing it to Lua — render, which is where the ray is
+            // otherwise computed, doesn't run until after the Lua loop.
+            core.refresh_cursor_ray();
 
             // Copy mouse / analogue state into the float portion of bits
             // so Lua can read cursor and scroll data.

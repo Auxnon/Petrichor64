@@ -253,6 +253,25 @@ impl<'core> Core {
     }
 
     #[cfg(feature = "headed")]
+    /// Re-unproject the cursor against the *current* pointer position, using the
+    /// camera matrices cached by the last render.
+    ///
+    /// The ray was only ever computed inside `render`, which runs after Lua has
+    /// already read it for the frame — so `mus().vx/vy/vz` lagged the pointer by a
+    /// frame. Barely visible with a mouse, which you move toward a target and hold
+    /// still on; wrong with touch, where a finger appears at its destination and the
+    /// press-edge frame therefore carried a ray aimed at wherever the pointer was
+    /// before. Tapping one piano key straight after another played the old one.
+    ///
+    /// The camera matrices are a frame old, which costs nothing here: the pointer
+    /// position is what picking depends on, and a camera that moved slightly since
+    /// last frame shifts the ray far less than a stale cursor does.
+    pub fn refresh_cursor_ray(&mut self) {
+        if let Some((persp, view)) = self.global.last_cam_matrices {
+            crate::ray::trace(self, persp, view);
+        }
+    }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.gfx.set_config_size(new_size);
