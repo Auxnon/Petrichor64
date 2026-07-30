@@ -43,6 +43,15 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     this.reportUntil = 0;
     this.lastReport = 0;
     this.port.onmessage = (e) => this.onMessage(e.data);
+    // A message that arrives but fails to deserialize fires this instead of
+    // onmessage — the case where a posted WebAssembly.Module doesn't survive the
+    // hop to this thread. Without a handler it is completely silent on both sides.
+    this.port.onmessageerror = () => {
+      this.port.postMessage({
+        type: 'error',
+        message: 'a message from the main thread could not be deserialized',
+      });
+    };
     // Proof of construction. The processor is built on the audio *rendering*
     // thread, which a suspended AudioContext never starts — so this message
     // arriving is what distinguishes "the worklet never came alive" from "it came
@@ -55,9 +64,21 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     switch (msg.type) {
       case 'wasm':
         try {
-          // initSync takes an already-compiled module, which is exactly what we
-          // have (nothing in here can fetch one).
-          initSync({ module: msg.module });
+          // Raw bytes, compiled here. A pre-compiled WebAssembly.Module would save
+          // this work, but Chrome refuses to deserialize one on the audio thread —
+          // the message fails to arrive at all (see the main thread's Stage::Loaded).
+          //
+          // initSync sync-compiles a BufferSource. That blocks this thread for a
+          // few ms on ~289 KB, which is why it happens during the handshake, before
+          // any note is sounding. (The 4 KB limit on synchronous compilation
+          // applies to the main thread; we are not on it.)
+          const wasm = msg.bytes;
+          if (!wasm) {
+            this.port.postMessage({ type: 'error', message: 'no wasm bytes in the message' });
+            break;
+          }
+          this.port.postMessage({ type: 'got', via: `${wasm.byteLength} bytes` });
+          initSync({ module: wasm });
           // Prefer the rate the main thread measured; fall back to the scope's
           // global. A non-finite rate would make every phase increment NaN and
           // the output silent-but-error-free, so refuse to build on one.
