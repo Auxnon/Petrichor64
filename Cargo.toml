@@ -39,6 +39,14 @@ online_capable=["rmp-serde", "bytes"]
 # default — native builds must never enable it. tokio/tokio-util are non-optional
 # now (needed by async_zip on both targets), so this pulls no deps itself.
 wasm=["audio"]
+# The browser's main-thread audio scheduler, used only if the AudioWorklet path
+# fails to start. Enabled by web/index.html (so normal web builds have it) rather
+# than by `wasm` itself, because cargo features only ever add: folding it into
+# `wasm` would make it impossible to leave out. Dropping it also drops the whole
+# DSP from the engine's wasm, since the mixer is only reachable from here on that
+# target (the worklet module carries its own copy) — but a browser that cannot run
+# the worklet then gets no sound at all.
+web-fallback=["petrichor-synth/web-fallback"]
 # `wasm-ultra` is the high-performance wasm build: SharedArrayBuffer + wasm
 # atomics for a shared entity buffer (requires COOP/COEP isolation headers on the
 # host page). Additive over `wasm`; ultra-only code gates on feature="wasm-ultra",

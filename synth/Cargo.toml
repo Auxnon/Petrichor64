@@ -17,6 +17,18 @@ default = []
 # Host audio I/O via cpal (native output stream + microphone capture) and the
 # main-thread WebAudio fallback. The engine turns this on; the worklet does not.
 host-io = ["cpal", "anyhow"]
+# The browser's main-thread scheduler (`WebAudioOut`), used only when the
+# AudioWorklet path can't start. It runs the mixer on the main thread, so leaving
+# it in compiles the *whole* DSP — mixer, effects, formant voice — into the engine's
+# own wasm as well as the worklet's, where it is otherwise dead code. Off means a
+# browser that can't run the worklet gets no sound at all, so keep it on unless
+# bundle size is the overriding concern. wasm-only; no effect on native builds.
+web-fallback = []
+# The AudioWorklet entry point (`worklet::Synth`). Enabled only by the wasm-pack
+# build that produces the worklet's own module — see `just synth-wasm`. The engine
+# depends on this crate too, and there `Synth` is unreachable, so building it in
+# only kept the DSP alive as live code.
+worklet = []
 # JACK host on Linux/BSD (the cpal init path checks for it). Declared so the
 # `feature = "jack"` cfgs in sound.rs are recognised rather than warned about.
 jack = []

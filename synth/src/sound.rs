@@ -628,7 +628,7 @@ where
 /// ("two clocks" technique), so playback is glitch-free through main-thread jank
 /// as long as we keep `lookahead` seconds queued. cpal's WebAudio backend ran on
 /// the main thread and crackled; this bypasses it entirely.
-#[cfg(all(feature = "host-io", target_arch = "wasm32"))]
+#[cfg(all(feature = "host-io", feature = "web-fallback", target_arch = "wasm32"))]
 pub struct WebAudioOut {
     ctx: web_sys::AudioContext,
     mixer: Box<dyn FnMut() -> f32>,
@@ -642,7 +642,7 @@ pub struct WebAudioOut {
     scratch: Vec<f32>,
 }
 
-#[cfg(all(feature = "host-io", target_arch = "wasm32"))]
+#[cfg(all(feature = "host-io", feature = "web-fallback", target_arch = "wasm32"))]
 impl WebAudioOut {
     pub fn new(audience: Receiver<SoundCommand>) -> Result<Self, wasm_bindgen::JsValue> {
         Self::with_context(web_sys::AudioContext::new()?, audience)
@@ -714,7 +714,7 @@ impl WebAudioOut {
 }
 
 /// Create the web audio driver + the command sender the engine sends notes on.
-#[cfg(all(feature = "host-io", target_arch = "wasm32"))]
+#[cfg(all(feature = "host-io", feature = "web-fallback", target_arch = "wasm32"))]
 pub fn init_web() -> (Result<WebAudioOut, wasm_bindgen::JsValue>, Sender<SoundCommand>) {
     let (singer, audience) = channel::<SoundCommand>();
     (WebAudioOut::new(audience), singer)
