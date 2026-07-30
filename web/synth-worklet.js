@@ -33,6 +33,15 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     // process() call (we don't know the block size until then, though it is 128
     // in every current browser) — never per block.
     this.scratch = null;
+    // Diagnostics. "No sound, no errors" is otherwise almost impossible to
+    // localise from outside: these counters say whether we're being rendered at
+    // all, whether commands are arriving, and whether the mixer is producing
+    // signal. Reported for the first few seconds only, then silent.
+    this.blocks = 0;
+    this.cmds = 0;
+    this.peak = 0;
+    this.reportUntil = 0;
+    this.lastReport = 0;
     this.port.onmessage = (e) => this.onMessage(e.data);
   }
 
@@ -44,8 +53,20 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
           // initSync takes an already-compiled module, which is exactly what we
           // have (nothing in here can fetch one).
           initSync({ module: msg.module });
-          this.synth = new Synth(sampleRate);
-          this.port.postMessage({ type: 'ready' });
+          // Prefer the rate the main thread measured; fall back to the scope's
+          // global. A non-finite rate would make every phase increment NaN and
+          // the output silent-but-error-free, so refuse to build on one.
+          const rate = Number.isFinite(msg.sampleRate) ? msg.sampleRate : sampleRate;
+          if (!Number.isFinite(rate) || rate <= 0) {
+            this.port.postMessage({
+              type: 'error',
+              message: `bad sampleRate (${msg.sampleRate} / ${sampleRate})`,
+            });
+            break;
+          }
+          this.synth = new Synth(rate);
+          this.reportUntil = currentTime + 6;
+          this.port.postMessage({ type: 'ready', rate });
         } catch (err) {
           // Report instead of throwing: an exception in here kills the audio
           // thread and silences the page with no explanation.
@@ -57,6 +78,7 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
         // same mpsc the mixer drains natively.
         if (this.synth && msg.bytes) {
           try {
+            this.cmds++;
             this.synth.command(msg.bytes);
           } catch (err) {
             this.port.postMessage({ type: 'error', message: String(err) });
@@ -86,6 +108,27 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     // The synth is mono (as on native, where write_data copies one value into
     // every frame slot); fan it out to each output channel.
     for (const channel of out) channel.set(this.scratch);
+
+    // Diagnostics: is anything actually coming out, and does it reach the graph?
+    this.blocks++;
+    if (currentTime < this.reportUntil) {
+      for (let i = 0; i < frames; i++) {
+        const a = Math.abs(this.scratch[i]);
+        if (a > this.peak) this.peak = a;
+      }
+      if (currentTime - this.lastReport >= 1) {
+        this.lastReport = currentTime;
+        this.port.postMessage({
+          type: 'stats',
+          blocks: this.blocks,
+          cmds: this.cmds,
+          peak: this.peak,
+          channels: out.length,
+          frames,
+        });
+        this.peak = 0;
+      }
+    }
     // Keep the node alive even while silent — the engine may start notes later.
     return true;
   }
