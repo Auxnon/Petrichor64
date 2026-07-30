@@ -59,6 +59,8 @@ pub struct WebOut {
     /// feeds its mixer the commands the engine is already producing.
     fallback: Option<WebAudioOut>,
     fallback_tx: Option<Sender<SoundCommand>>,
+    /// Logged once, so a suspended context doesn't spam every frame.
+    warned_suspended: bool,
     /// Set if constructing the fallback failed, so we don't retry every frame.
     fallback_failed: bool,
 }
@@ -82,6 +84,7 @@ impl WebOut {
             fallback: None,
             fallback_tx: None,
             fallback_failed: false,
+            warned_suspended: false,
         })
     }
 
@@ -100,6 +103,17 @@ impl WebOut {
         // Nothing can be delivered before the first user gesture resumes the
         // context; hold commands rather than dropping them.
         let running = self.ctx.state() == web_sys::AudioContextState::Running;
+        // Belt and braces alongside the engine's gesture handlers: retry resume
+        // here too. Browsers only honour resume() once the page has had *some*
+        // user activation, and this runs every frame, so the first frame after any
+        // interaction gets it — no reliance on one handler being wired up.
+        if !running {
+            let _ = self.ctx.resume();
+            if !self.warned_suspended {
+                self.warned_suspended = true;
+                log::info!("web audio: context suspended, waiting for a user gesture");
+            }
+        }
 
         let stage_is = match &*self.stage.borrow() {
             Stage::Setup => 0,
@@ -210,8 +224,28 @@ async fn setup(ctx: web_sys::AudioContext, stage: Rc<RefCell<Stage>>) {
                                 .and_then(|v| v.as_string())
                                 .unwrap_or_default()
                         };
+                        let num = |k: &str| {
+                            js_sys::Reflect::get(&data, &k.into())
+                                .ok()
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(f64::NAN)
+                        };
                         match field("type").as_str() {
-                            "ready" => log::info!("web audio: AudioWorklet synth ready"),
+                            "ready" => {
+                                log::info!("web audio: AudioWorklet synth ready @ {} Hz", num("rate"))
+                            }
+                            // Says which link is broken when there's no sound and
+                            // no error: no stats at all => we're not being
+                            // rendered; cmds 0 => commands aren't arriving;
+                            // peak 0 => the mixer is producing silence.
+                            "stats" => log::info!(
+                                "web audio: blocks={} cmds={} peak={:.4} channels={} frames={}",
+                                num("blocks"),
+                                num("cmds"),
+                                num("peak"),
+                                num("channels"),
+                                num("frames"),
+                            ),
                             "error" => {
                                 log::error!(
                                     "web audio: worklet failed ({}); falling back to the \
@@ -262,6 +296,14 @@ async fn try_setup(ctx: &web_sys::AudioContext) -> Result<web_sys::AudioWorkletN
     let msg = js_sys::Object::new();
     js_sys::Reflect::set(&msg, &"type".into(), &"wasm".into())?;
     js_sys::Reflect::set(&msg, &"module".into(), &module)?;
+    // Pass the rate we measured rather than relying on the worklet scope's global:
+    // a non-finite rate in there would make every phase increment NaN, i.e. silence
+    // with no error anywhere.
+    js_sys::Reflect::set(
+        &msg,
+        &"sampleRate".into(),
+        &JsValue::from_f64(ctx.sample_rate() as f64),
+    )?;
     port.post_message(&msg)?;
     Ok(node)
 }
