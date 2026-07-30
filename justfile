@@ -306,6 +306,10 @@ android-install profile="release":
     APK="$(find target/{{profile}}/apk -name '*.apk' | head -1)"
     [ -n "$APK" ] || { echo "no APK — run `just android-apk <game>` first"; exit 1; }
     "$ADB" install -r "$APK"
+    # Force-stop first: `install -r` replaces the APK but leaves a running process
+    # on the old code, and launching just brings that stale instance to the front —
+    # so you test the previous build and can't tell.
+    "$ADB" shell am force-stop com.makeavoy.petrichor64 || true
     "$ADB" shell monkey -p com.makeavoy.petrichor64 -c android.intent.category.LAUNCHER 1
 
 # Type-check for Android without needing the NDK (checking doesn't link, so this
