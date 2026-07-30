@@ -15,6 +15,15 @@
 pub mod fx;
 pub mod sound;
 pub mod vocaloid;
+// The synth's side of the low-latency browser path: what runs *inside* the
+// AudioWorklet. Built for wasm only, and independent of `host-io` — this is the
+// worklet's own host.
+#[cfg(target_arch = "wasm32")]
+pub mod worklet;
+// The engine's side: sets the worklet up and forwards commands to it, falling
+// back to the main-thread scheduler in `sound.rs` if that can't be done.
+#[cfg(all(feature = "host-io", target_arch = "wasm32"))]
+pub mod webout;
 
 // The engine refers to these as `crate::sound::X` / `crate::fx::X` today, and the
 // shim modules left behind in the engine re-export from here, so nothing at the

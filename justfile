@@ -74,24 +74,38 @@ appimage:
 # can import the bundle. `wasm` feature comes from web/index.html.
 # ---------------------------------------------------------------------------
 
+# Build the synth's own wasm module for the AudioWorklet, into web/.
+#
+# Separate from the Trunk build on purpose: the worklet needs a SMALL module (the
+# engine's is ~3.4MB), and AudioWorkletGlobalScope has no fetch, so the main thread
+# compiles this and hands it over by postMessage. `host-io` stays OFF here — the
+# worklet is its own host, and none of the cpal/mic glue belongs in it.
+# Trunk copies the two emitted files into dist (see web/index.html).
+# Needs `cargo install wasm-pack`. Output goes to its own web/synth/ subdir
+# because wasm-pack drops a catch-all .gitignore in its out-dir — pointed at
+# web/ directly that would ignore index.html and worker.js too.
+synth-wasm:
+    wasm-pack build synth --release --target web --out-dir ../web/synth \
+        -- --no-default-features
+
 # Dev server with live reload at http://localhost:8080.
 # NOTE: Trunk.toml sets filehash=false (worker.js imports a fixed bundle name),
 # so the browser caches Petrichor64_bg.wasm across rebuilds. After changing
 # features/protocol, hard-reload with DevTools "Disable cache" on — otherwise
 # the main thread and VM worker can run different vintages of the bundle (e.g.
 # "unknown variant `Sound`" if one has audio and the other doesn't).
-web:
+web: synth-wasm
     trunk serve
 
 # Re-run to pick up game edits (the bundle is baked at build time); engine-source
 # edits hot-reload on their own.
 # Bundle a game as the embedded default, then start the dev server immediately.
-web-serve game:
+web-serve game: synth-wasm
     cargo run -- pack {{game}} web/default.game.png
     trunk serve
 
 # Release web build into web/dist.
-web-build:
+web-build: synth-wasm
     trunk build --release
 
 # SharedArrayBuffer build. REQUIRES cross-origin isolation: the page must be

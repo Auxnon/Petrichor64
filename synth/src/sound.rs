@@ -295,6 +295,15 @@ const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 /// Shared by the native cpal stream and the wasm scheduled-buffer output — both
 /// just pull f32 samples from it. Drains pending SoundCommands each call, so
 /// note triggers stay effectively sample-accurate.
+/// The mixer as a trait object, for hosts that must store it behind a `Box` (the
+/// browser outputs: the main-thread `WebAudioOut` fallback and the AudioWorklet).
+pub fn make_mixer_boxed(
+    sample_rate: f32,
+    audience: Receiver<SoundCommand>,
+) -> Box<dyn FnMut() -> f32> {
+    Box::new(make_mixer(sample_rate, audience))
+}
+
 fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut() -> f32 {
     // Master gain feeding a soft limiter (the tanh below): single notes stay
     // loud and ~linear, dense polyphony compresses instead of hard-clipping.
