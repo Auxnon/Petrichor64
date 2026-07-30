@@ -273,3 +273,129 @@ big games. Not addressed now. This design leans the right way: the sound name
 bank is a natural unload hook (drop-by-name / free a slot) and `Arc` buffers
 avoid duplication. A full solution (refcounted unload across textures, models,
 and sounds) is a separate engine effort for when a game actually needs it.
+
+## Web Audio (AudioWorklet) and the wasm-ultra ladder
+
+The browser plays sound through the **AudioWorklet**: the synth (`petrichor-synth`,
+compiled to its own small wasm module) runs *inside* the browser's audio rendering
+thread, filling 128-frame blocks (~2.7 ms at 48 kHz). `synth/src/webout.rs` is the
+engine's side; `web/synth-worklet.js` is the processor.
+
+`WebAudioOut` (in `synth/src/sound.rs`) is the fallback: it generates audio on the
+**main** thread and schedules ~90 ms ahead. Glitch-free but far too laggy to play
+music with — it exists so a browser that can't run a worklet still makes sound.
+Behind the `web-fallback` feature, listed in `web/index.html` rather than folded
+into `wasm` (cargo features only ever *add*, so inside `wasm` it could never be
+left out). Measured cost of keeping it: **25 KB raw / 8 KB gzipped**. Keep it on.
+
+### Startup order is the whole game here
+
+Four separate silent-audio bugs came out of this path; all four presented as a
+clean console and no sound. What the current design encodes:
+
+1. **A processor is constructed on the audio rendering thread, which a *suspended*
+   AudioContext never starts.** So the node isn't created until `pump` sees the
+   context actually `Running` (i.e. after a user gesture).
+2. **The wasm handover is a handshake, not a post.** The processor sends `hello`
+   from its constructor; only then does the main thread send the wasm. Posting at
+   node-creation time raced construction and the message was silently dropped.
+3. **Send the wasm as raw bytes, never a compiled `WebAssembly.Module`.** Chrome
+   refuses to *deserialize* a module inside an `AudioWorkletGlobalScope` (cloning
+   one is only defined within an agent cluster; the audio thread is its own). It
+   fails on arrival — `postMessage` returns Ok. Deserialization is also
+   all-or-nothing per message, so a module and bytes in one envelope die together.
+   The worklet sync-compiles the bytes (~289 KB, a few ms, off the main thread
+   where the 4 KB sync-compile limit doesn't apply).
+4. **Hold commands until the synth confirms it exists.** A processor with no synth
+   discards them, and the ones sent at boot are the `instr`/`smpl` definitions — so
+   forwarding them into a dead worklet left the fallback with no instruments and
+   every note came out as a default beep.
+
+Every failure mode here is now loud: `post_message` results are checked, both ports
+carry `onmessageerror` (the event that fires when a message *arrives* but won't
+deserialize — the only signal for #3), the worklet acks the wasm with a byte count,
+and a worklet that starts but never reports a live synth falls back after ~4 s.
+
+### Command transport
+
+Commands reach the worklet as MessagePack (`encode_command`/`decode_command`, public
+on the synth crate so every sender agrees on the format — a command can carry a
+decoded ogg, which as a JS array would be one boxed number per sample).
+
+The **VM worker owns a private `MessagePort`** to the worklet, transferred to it by
+the main thread once the synth is live, so a note goes from Lua straight to the
+audio thread. Two frames of latency came off this:
+
+- one was an **ordering accident** — `pump()` ran at the top of `about_to_wait`, but
+  the worker's notes are applied ~120 lines below it, so every note missed the
+  forward and waited a frame. `pump()` now runs after the apply loop.
+- the other was the **main-thread hop** itself, which the lane removes.
+
+Routing is settled once and **never switches mid-stream**: until the worker is told
+which route applies it *buffers*. Switching would reorder — commands in flight to
+the main thread would arrive after ones later sent down the lane, and `instr`/`smpl`
+landing after the notes that use them is bug #4 again. So the main thread either
+transfers the lane or says "no lane is coming" (that message matters: a browser
+without AudioWorklet has only the main-thread route, and a worker buffering forever
+would be silent). Buffering costs nothing audible — the lane can't open before the
+first gesture, and the context is suspended until then.
+
+### Latency budget, and a warning about measuring it
+
+| stage | native | web |
+|-------|--------|-----|
+| key → Lua (one 60 fps frame) | ~16 ms | ~16 ms |
+| `note()` → audio thread | <1 ms (mpsc) | ~0 ms (lane) |
+| device block | ~10 ms (CoreAudio) | 2.7 ms (worklet) |
+| **engine total** | **~27 ms** | **~19 ms** |
+
+**Bluetooth output adds 100–200 ms** and sits downstream of both, so it swamps
+everything above and makes native and web feel identical. Judge latency on wired
+output only. If Petrichor is to be usable for performance, the docs should say so
+the way every DAW does.
+
+### mpsc vs. a shared-memory ring (the actual trade-off)
+
+They aren't competitors. `mpsc` is an **ownership-transfer channel** (arbitrary Rust
+values, allocation allowed); a SAB ring is a **byte pipe** (fixed-size records, no
+allocation). Latency isn't the difference — native's mpsc is already excellent, and
+the mixer drains it *per sample*, so a native note is sample-accurate to within one
+buffer. The ring's value is narrow: crossing a thread boundary on wasm without
+postMessage + serde.
+
+What *did* matter was allocation. `Note` carried two `Vec<Consonant>`, was taken by
+value on the audio thread and dropped there — `free()` in the audio callback, the
+one place that must never wait on the allocator. Fixed by `vocaloid::Cluster`
+(4 bursts inline + a length, `Copy`, truncating). Note that plain notes were always
+safe: an empty `Vec` doesn't allocate. Only `sing` tripped it.
+
+Still allocating on the audio thread, deliberately: `Chain(Vec<Note>)` (a song is
+queued rarely), and `Reset`/`LoadSample` (load time, where a glitch is invisible).
+These are the natural contents of a "cold lane" if the transport is ever split.
+
+### The ladder (in value order)
+
+1. ~~Port transfer~~ ✅ done — biggest win, needed no shared memory.
+2. **Sample-accurate scheduling.** A *command-schema* property, not a transport one:
+   the native mixer already drains per sample, so adding a timestamp field buys
+   sample-accurate `arp`/`song` on native today with mpsc untouched. Do this before
+   any ring work — it's what makes the clock/`arp` feature feel right.
+3. **SAB command ring** (needs `wasm-ultra`). Worker writes fixed-size POD records;
+   the worklet reads them in `process()` via `Atomics.load` on the write cursor. No
+   serialization, no postMessage. Never `Atomics.wait` on the audio thread —
+   polling per render quantum is the correct pattern and costs nothing. Variable
+   payloads stay off the ring (`LoadSample` carries 345k floats): keep them on
+   postMessage, or put PCM in a separate SAB arena and pass `(offset, len)`. The
+   commands are already integer-keyed, which fits.
+   **Synergy:** wasm-ultra's shared entity buffer wants the same SPSC-ring
+   primitive. Build it once, use it for both.
+4. **Shared PCM arena** — kills the duplicated ~4 MB heap, makes `smpl` zero-copy.
+   The hard one: `+atomics,+bulk-memory --shared-memory` means nightly and
+   `-Z build-std`, and two wasm *instances* can't share `Arc<Vec<f32>>` — it needs a
+   hand-managed arena, not Rust-level sharing. Lowest priority; samples load once.
+5. **Mic input ring** — same primitive, zero-copy capture.
+
+**wasm-ultra is currently 0 lines of code** (`grep -rn 'feature = "wasm-ultra"' src/`
+returns nothing) — the feature is declared and awaiting an implementation. The
+worklet needs *nothing* from it: a separate wasm module with its own linear memory,
+unaffected by COOP/COEP. Ultra is an upgrade to the transport, not a prerequisite.
