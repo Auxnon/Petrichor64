@@ -164,3 +164,78 @@ test:
 
 clean:
     cargo clean
+
+# ---------------------------------------------------------------------------
+# Android
+# ---------------------------------------------------------------------------
+# Nothing machine-specific is committed: the SDK comes from $ANDROID_HOME (falling
+# back to the Android Studio default) and the NDK is whichever version is newest
+# under it. Override either with `ANDROID_HOME=... ANDROID_NDK_HOME=... just android`.
+#
+# API 26 is a floor, not a preference: cpal's Android backend links `-laaudio`, and
+# AAudio only exists from Android 8.0. Below that the link fails outright with
+# "unable to find library -laaudio". If audio is ever made optional on Android, 24
+# becomes possible again.
+android_api := "26"
+
+# Build the engine as an Android shared library (.so).
+# `just android` for debug, `just android release` for a shippable one.
+android profile="debug":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    [ -d "$SDK" ] || { echo "no Android SDK at $SDK (set ANDROID_HOME)"; exit 1; }
+    NDK="${ANDROID_NDK_HOME:-$(ls -1d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}"
+    [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "no NDK under $SDK/ndk (install one in Android Studio)"; exit 1; }
+    HOSTDIR="$(ls -1d "$NDK"/toolchains/llvm/prebuilt/* | head -1)"
+    TC="$HOSTDIR/bin"
+    TRIPLE=aarch64-linux-android
+    echo "SDK $SDK"
+    echo "NDK $NDK (API {{android_api}})"
+    # The cc crate needs CC/CXX/AR per-target for any C/C++ dependency; rustc needs
+    # the linker. The versioned clang wrapper bakes in the API level and sysroot,
+    # which is why it's used rather than bare clang plus flags.
+    export ANDROID_HOME="$SDK" ANDROID_NDK_HOME="$NDK"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TC/${TRIPLE}{{android_api}}-clang"
+    export CC_aarch64_linux_android="$TC/${TRIPLE}{{android_api}}-clang"
+    export CXX_aarch64_linux_android="$TC/${TRIPLE}{{android_api}}-clang++"
+    export AR_aarch64_linux_android="$TC/llvm-ar"
+    FLAG=""; [ "{{profile}}" = "release" ] && FLAG="--release"
+    # --lib only: the `Petrichor64` bin has no meaning on Android (the activity
+    # loads the cdylib and calls android_main), and building it just wastes time.
+    cargo build --target "$TRIPLE" --lib $FLAG
+    OUT="target/$TRIPLE/{{profile}}/libpetrichor64.so"
+    ls -la "$OUT"
+    # The activity resolves these by name; if either is missing the app dies at
+    # startup with no useful message, so check rather than assume.
+    "$TC/llvm-nm" --defined-only --dynamic "$OUT" | grep -qE ' T android_main' \
+      && echo "ok: android_main exported" || { echo "MISSING android_main"; exit 1; }
+    "$TC/llvm-nm" --defined-only --dynamic "$OUT" | grep -qE ' T ANativeActivity_onCreate' \
+      && echo "ok: ANativeActivity_onCreate exported" || { echo "MISSING ANativeActivity_onCreate"; exit 1; }
+
+# Type-check for Android without needing the NDK (checking doesn't link, so this
+# works with only `rustup target add aarch64-linux-android`). Kept out of `just
+# check` so that recipe still works for anyone who hasn't added the target.
+check-android:
+    cargo check --target aarch64-linux-android --lib
+
+# Add the other ABIs (32-bit phones, and the x86_64 emulator).
+android-targets:
+    rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+# Tail the engine's logcat output. Android has no stdout, so this is where
+# `log::info!` and any panic actually surface.
+android-log:
+    #!/usr/bin/env bash
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    exec "$SDK/platform-tools/adb" logcat -v color petrichor64:V RustStdoutStderr:V '*:S'
+
+# Print the shell exports worth having on PATH (adb, sdkmanager, emulator).
+# Eval it or paste it into your shell rc: `just android-env >> ~/.zshrc`
+android-env:
+    #!/usr/bin/env bash
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    NDK="$(ls -1d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)"
+    echo "export ANDROID_HOME=\"$SDK\""
+    echo "export ANDROID_NDK_HOME=\"$NDK\""
+    echo "export PATH=\"\$PATH:$SDK/platform-tools:$SDK/emulator:$SDK/cmdline-tools/latest/bin\""

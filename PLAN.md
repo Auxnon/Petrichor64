@@ -451,14 +451,37 @@ gestures should get their own Lua command rather than being smuggled through `mu
    one, so the wgpu surface would be stale — the surface needs recreating *without*
    rebuilding `Core` and losing the running game. Expect a black screen or a crash
    on the first background/foreground cycle until this is done.
-3. **Toolchain.** `rustup target add aarch64-linux-android` is done. An APK also
-   needs the Android SDK + NDK and one of `cargo-apk` (simplest for
-   `native-activity`, unmaintained) / `cargo-ndk` + Gradle / `xbuild`. Add
-   `armv7-linux-androideabi` and `x86_64-linux-android` for older devices and the
-   emulator.
-4. **Audio is unverified.** cpal compiled for Android without complaint (it uses
-   AAudio/Oboe there), but nothing has produced a sound. Expect this to need real
-   attention — mobile audio wants larger buffers than desktop.
+3. **APK packaging.** The `.so` is done (`just android` / `just android release`)
+   but nothing wraps it into an installable APK yet. Options: `cargo-apk`
+   (simplest for `native-activity`, but unmaintained and untested against NDK 30 /
+   build-tools 36), `cargo-ndk` + a Gradle project (most control, most setup), or
+   `xbuild`. Packaging needs an `AndroidManifest.xml` whose
+   `android.app.lib_name` is `petrichor64` (matching the emitted
+   `libpetrichor64.so`) and `minSdkVersion` 26 — see below.
+4. **Audio is unverified.** It links, but nothing has produced a sound. Expect this
+   to need attention — mobile audio wants larger buffers than desktop.
+
+### minSdk is 26, and audio is why
+
+The first link attempt (API 24) failed with `ld.lld: error: unable to find library
+-laaudio`. cpal's Android backend links **AAudio**, which only exists from Android
+8.0 (API 26). So the audio feature sets the platform floor; if audio is ever made
+optional on Android, 24 becomes reachable again. `android_api` in the justfile is
+the single place this is set.
+
+### Verified so far
+
+- `libpetrichor64.so` **links** for `aarch64-linux-android`: 300 MB debug,
+  **11 MB release**.
+- Both entry symbols are exported and the justfile *checks* them rather than
+  assuming, because a missing one kills the app at startup with no useful message:
+  `android_main` (ours) and `ANativeActivity_onCreate` (android-activity's
+  native-activity backend, which is what `android.app.lib_name` resolves).
+- `just check-android` type-checks without needing the NDK at all (checking doesn't
+  link), so the target can't rot unnoticed.
+- The toolchain is discovered, never hardcoded: `$ANDROID_HOME` or the Android
+  Studio default, newest NDK under it. `just android-env` prints the shell exports
+  worth having (`adb`, `emulator`, `sdkmanager`).
 
 ### For iOS later
 
