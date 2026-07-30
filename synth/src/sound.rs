@@ -645,7 +645,18 @@ pub struct WebAudioOut {
 #[cfg(all(feature = "host-io", target_arch = "wasm32"))]
 impl WebAudioOut {
     pub fn new(audience: Receiver<SoundCommand>) -> Result<Self, wasm_bindgen::JsValue> {
-        let ctx = web_sys::AudioContext::new()?;
+        Self::with_context(web_sys::AudioContext::new()?, audience)
+    }
+
+    /// Build on an **existing** AudioContext. Important when this is used as the
+    /// worklet path's fallback: browsers start a context suspended until a user
+    /// gesture, and the engine's gesture handler only knows about the context it
+    /// was given (`WebOut::context`). A fallback that made its own context would
+    /// never be resumed, and the page would sit silent.
+    pub fn with_context(
+        ctx: web_sys::AudioContext,
+        audience: Receiver<SoundCommand>,
+    ) -> Result<Self, wasm_bindgen::JsValue> {
         let sr = ctx.sample_rate();
         let chunk_frames = (sr * 0.03).round().max(64.0) as usize; // ~30ms chunks
         log::info!("web audio: {} Hz, {}-frame chunks", sr, chunk_frames);

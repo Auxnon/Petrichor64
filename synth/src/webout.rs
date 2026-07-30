@@ -23,6 +23,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
@@ -137,7 +138,9 @@ impl WebOut {
                 // same command stream and let it generate audio here.
                 if self.fallback.is_none() && !self.fallback_failed {
                     let (tx, rx) = channel::<SoundCommand>();
-                    match WebAudioOut::new(rx) {
+                    // Share our AudioContext: it's the one the engine's gesture
+                    // handler resumes, and a suspended context stays silent.
+                    match WebAudioOut::with_context(self.ctx.clone(), rx) {
                         Ok(out) => {
                             self.fallback = Some(out);
                             self.fallback_tx = Some(tx);
@@ -192,6 +195,40 @@ fn post_command(port: &web_sys::MessagePort, cmd: &SoundCommand) {
 async fn setup(ctx: web_sys::AudioContext, stage: Rc<RefCell<Stage>>) {
     match try_setup(&ctx).await {
         Ok(node) => {
+            // `addModule` rejecting covers a worklet that fails to *load*, but not
+            // one that fails once running (say the wasm not instantiating inside
+            // it). The processor reports that over the port; without listening,
+            // such a failure is a silent page with no fallback and no explanation.
+            if let Ok(port) = node.port() {
+                let watched = stage.clone();
+                let on_msg = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+                    move |e: web_sys::MessageEvent| {
+                        let data = e.data();
+                        let field = |k: &str| {
+                            js_sys::Reflect::get(&data, &k.into())
+                                .ok()
+                                .and_then(|v| v.as_string())
+                                .unwrap_or_default()
+                        };
+                        match field("type").as_str() {
+                            "ready" => log::info!("web audio: AudioWorklet synth ready"),
+                            "error" => {
+                                log::error!(
+                                    "web audio: worklet failed ({}); falling back to the \
+                                     main-thread scheduler (higher latency)",
+                                    field("message")
+                                );
+                                *watched.borrow_mut() = Stage::Fallback;
+                            }
+                            _ => {}
+                        }
+                    },
+                );
+                port.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
+                // Setting onmessage also starts the port, so anything the worklet
+                // already queued (it may have replied before we got here) arrives.
+                on_msg.forget();
+            }
             log::info!("web audio: AudioWorklet running (low latency path)");
             *stage.borrow_mut() = Stage::Worklet(node);
         }
