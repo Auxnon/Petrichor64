@@ -86,7 +86,7 @@ appimage:
 # web/ directly that would ignore index.html and worker.js too.
 synth-wasm:
     wasm-pack build synth --release --target web --out-dir ../web/synth \
-        -- --no-default-features
+        -- --no-default-features --features worklet
 
 # Dev server with live reload at http://localhost:8080.
 # NOTE: Trunk.toml sets filehash=false (worker.js imports a fixed bundle name),
