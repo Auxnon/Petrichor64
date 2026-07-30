@@ -1697,10 +1697,19 @@ impl Core {
                                     self.gfx.set_title(&s);
                                 }
                             }
+                            // Honour the value like every other boolean attr: this
+                            // used to lock unconditionally, so `attr{lock=false}`
+                            // still locked and nothing could ever unlock — leaving
+                            // the console unreachable for the rest of the session.
                             "lock" => {
-                                self.global.console = false;
-                                self.gui.disable_console();
-                                self.global.locked = true;
+                                let lock = Self::val2bool(v);
+                                self.global.locked = lock;
+                                self.global.console = !lock;
+                                if lock {
+                                    self.gui.disable_console();
+                                } else {
+                                    self.gui.enable_console(&self.loggy);
+                                }
                             }
 
                             _ => {}
@@ -1708,8 +1717,9 @@ impl Core {
                         #[cfg(not(feature = "headed"))]
                         match k.as_str() {
                             "lock" => {
-                                self.global.console = false;
-                                self.global.locked = true;
+                                let lock = Self::val2bool(v);
+                                self.global.locked = lock;
+                                self.global.console = !lock;
                             }
                             _ => {}
                         }
