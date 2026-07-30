@@ -172,6 +172,10 @@ pub struct App {
     /// The VM web worker (wasm only). Spawned once; drives the Lua VM off-thread.
     #[cfg(target_arch = "wasm32")]
     worker: Option<crate::web_worker::WorkerHandle>,
+    /// Set while the native window (and therefore the surface) is gone — Android
+    /// tears it down whenever the app leaves the foreground. Named for what it means
+    /// rather than "suspended", which is already a method on this type.
+    surface_lost: bool,
     /// Set at boot when the game is compiled in (`include_auto`); the load itself
     /// happens on the first frame, so window activation isn't blocked by unpacking.
     #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
@@ -226,6 +230,7 @@ impl Default for App {
             worker: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
             deferred_auto: false,
+            surface_lost: false,
             primary_touch: None,
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
@@ -359,6 +364,32 @@ impl ApplicationHandler for App {
     /// This is where we create the window and initialise the engine.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
+            // Already built — but `resumed` is not a once-per-launch event on
+            // mobile. Android destroys the native window whenever the app leaves
+            // the foreground (locking the screen is enough) and calls this again
+            // with a fresh one on the way back. The surface still points at the
+            // window that's gone, so every frame drew nowhere and the app came
+            // back black. Rebuild just the surface, keeping the device, the
+            // pipelines and the running game.
+            if self.surface_lost {
+                self.surface_lost = false;
+                let size = self.window.as_ref().map(|w| w.inner_size());
+                if let Some(core) = self.core.as_mut() {
+                    if core.gfx.recreate_surface() {
+                        ::log::info!("petrichor64: surface rebuilt after resume");
+                        // Re-derive everything sized from the surface: the new
+                        // window need not match the old one (rotation, a fold
+                        // opening), and `resize` is already the path that rebuilds
+                        // the depth texture, post targets and gui scaling.
+                        if let Some(size) = size {
+                            core.resize(size);
+                        }
+                    }
+                }
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
+                }
+            }
             return;
         }
 
@@ -499,6 +530,17 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// The native window is going away. On Android this fires whenever the app
+    /// leaves the foreground — locking the screen is enough — and the surface built
+    /// from that window dies with it. Stop drawing until `resumed` hands us a new
+    /// one, rather than spending every frame failing to acquire a texture.
+    ///
+    /// Desktop and web never call this, so the flag simply stays false there.
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        ::log::info!("petrichor64: suspended — surface released");
+        self.surface_lost = true;
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         // Ignore events for unknown windows.
         if self.window.as_ref().map_or(true, |w| w.id() != id) {
@@ -536,6 +578,12 @@ impl ApplicationHandler for App {
 
             // ----------------------------------------------------------------
             WindowEvent::RedrawRequested => {
+                // Backgrounded on mobile: there is no surface to draw into, and
+                // acquiring a texture would fail every frame until `resumed` builds
+                // a new one.
+                if self.surface_lost {
+                    return;
+                }
                 if let Some(core) = &mut self.core {
                     match core.render() {
                         render::DrawState::Success => {}
