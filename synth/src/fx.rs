@@ -56,7 +56,14 @@ impl Crossfade {
 /// at this size by `Echo::new`, and `set` only moves the *active length* around
 /// inside it — so changing the delay never allocates. See the note on
 /// `Echo::new` about why that matters.
-const MAX_ECHO_SECS: f32 = 2.0;
+///
+/// This is a **memory budget**, not just a limit: every channel preallocates one,
+/// so it costs `MAX_ECHO_SECS × rate × 4 bytes × NUM_CH` up front whether or not
+/// any game uses echo (≈3 MB at 48 kHz across 16 channels). Irrelevant natively,
+/// but it's the bulk of the heap in the browser AudioWorklet build, so it's kept
+/// to a musically useful ceiling: 1 s covers up to a half-note delay at 120 BPM,
+/// which is past where echo stops reading as echo.
+const MAX_ECHO_SECS: f32 = 1.0;
 
 /// A feedback delay line — an **echo**. Each sample it reads the delayed value,
 /// writes back `input + delayed * feedback` (so echoes repeat and decay), and

@@ -53,7 +53,7 @@ pub struct Core {
     /// Web audio output (wasm): schedules PCM chunks on the AudioContext clock.
     /// Pumped once per frame; replaces the native cpal stream.
     #[cfg(all(feature = "audio", target_arch = "wasm32"))]
-    pub web_audio: Option<crate::sound::WebAudioOut>,
+    pub web_audio: Option<crate::sound::WebOut>,
     #[cfg(feature = "audio")]
     pub singer: Sender<SoundCommand>,
 
@@ -117,7 +117,7 @@ impl<'core> Core {
 
         // Native: a cpal output stream (own audio thread). Web: cpal's WebAudio
         // backend crackles on the main thread, so we drive Web Audio ourselves
-        // (WebAudioOut) with scheduled buffers. Both share the same synth.
+        // (an AudioWorklet, or a scheduled-buffer fallback). Both share the same synth.
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         let (stream, singer) = sound::init();
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
