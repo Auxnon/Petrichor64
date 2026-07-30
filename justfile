@@ -213,6 +213,101 @@ android profile="debug":
     "$TC/llvm-nm" --defined-only --dynamic "$OUT" | grep -qE ' T ANativeActivity_onCreate' \
       && echo "ok: ANativeActivity_onCreate exported" || { echo "MISSING ANativeActivity_onCreate"; exit 1; }
 
+# Build an installable APK with a game baked in: `just android-apk sounder`.
+#
+# Needs `cargo install cargo-apk`. Two environment quirks it handles for you:
+#
+#  * **Java.** cargo-apk shells out to `keytool`/`apksigner`, and macOS's
+#    /usr/bin/java is a stub that reports no runtime unless a JDK is installed.
+#    Android Studio ships one (its JetBrains Runtime), so that's used if present —
+#    no separate JDK install needed. A system JDK works too and takes precedence.
+#
+#  * **The SDK platform.** cargo-apk's ndk-build only recognises platforms named
+#    `android-<integer>` that are within the NDK's supported range
+#    (NDK_MAX_PLATFORM_LEVEL in the NDK's build/core/platforms.mk). Newer SDKs
+#    install minor-versioned names like `android-37.0`, which it can't parse — and
+#    API 37 is past NDK 30's max of 36 anyway, so it would be filtered out even if
+#    it could. When no usable platform exists, this builds a shim SDK under target/
+#    (symlinks to the real one, plus an in-range platform name) rather than editing
+#    your SDK. Install any platform in range via Android Studio's SDK Manager
+#    (API 33-36) and the shim stops being used.
+#
+# The game is compiled *into* the library via `include_auto`, so the APK needs no
+# assets and no AssetManager work — dynamic loading comes later.
+android-apk game profile="release":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-apk >/dev/null || { echo "needs: cargo install cargo-apk"; exit 1; }
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    NDK="${ANDROID_NDK_HOME:-$(ls -1d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}"
+    [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "no NDK under $SDK/ndk"; exit 1; }
+
+    # A JDK: system first, else Android Studio's bundled runtime.
+    if ! /usr/libexec/java_home >/dev/null 2>&1; then
+      JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+      [ -d "$JBR" ] || { echo "no JDK found; install one or Android Studio"; exit 1; }
+      export JAVA_HOME="$JBR"
+      export PATH="$JAVA_HOME/bin:$PATH"
+      echo "java: Android Studio's bundled JDK"
+    fi
+
+    # cargo-apk wants exactly `platforms/android-<target_sdk_version>`, and that
+    # value lives in Cargo.toml — read it rather than duplicating it here.
+    TSDK="$(sed -n 's/^target_sdk_version *= *//p' Cargo.toml | head -1 | tr -dc 0-9)"
+    MAX="$(sed -n 's/^NDK_MAX_PLATFORM_LEVEL := //p' "$NDK/build/core/platforms.mk")"
+    [ "$TSDK" -le "$MAX" ] || { echo "target_sdk_version $TSDK exceeds NDK max $MAX"; exit 1; }
+    if [ -d "$SDK/platforms/android-$TSDK" ]; then
+      echo "sdk platform: android-$TSDK"
+      export ANDROID_HOME="$SDK"
+    else
+      NEWEST="$(ls -1d "$SDK"/platforms/* | sort -V | tail -1)"
+      SHIM="$PWD/target/android-sdk-shim"
+      echo "no platforms/android-$TSDK; shimming $(basename "$NEWEST") under target/ (install API $TSDK in Android Studio to stop needing this)"
+      rm -rf "$SHIM"; mkdir -p "$SHIM/platforms/android-$TSDK"
+      for d in build-tools platform-tools ndk licenses emulator; do
+        [ -e "$SDK/$d" ] && ln -s "$SDK/$d" "$SHIM/$d"
+      done
+      # A real directory with linked contents: read_dir reports a symlinked
+      # directory as a symlink, not a dir, and the scan skips those.
+      for f in "$NEWEST"/*; do ln -s "$f" "$SHIM/platforms/android-$TSDK/$(basename "$f")"; done
+      export ANDROID_HOME="$SHIM"
+    fi
+    export ANDROID_NDK_HOME="$NDK"
+
+    # A release build must be signed, and cargo-apk only auto-generates a key for
+    # dev profiles. This makes a throwaway one under target/ (gitignored, not a
+    # secret, good only for sideloading) via the env override, so no keystore path
+    # is committed. For a real release, export CARGO_APK_RELEASE_KEYSTORE and
+    # CARGO_APK_RELEASE_KEYSTORE_PASSWORD pointing at a key you keep safe.
+    if [ "{{profile}}" = "release" ] && [ -z "${CARGO_APK_RELEASE_KEYSTORE:-}" ]; then
+      KS="$PWD/target/android-dev.keystore"
+      if [ ! -f "$KS" ]; then
+        echo "generating a throwaway signing key at $KS"
+        keytool -genkeypair -v -keystore "$KS" -storepass android -alias androiddebugkey \
+          -keypass android -dname "CN=Petrichor64 Dev,O=Petrichor64,C=US" \
+          -keyalg RSA -keysize 2048 -validity 10000 >/dev/null
+      fi
+      export CARGO_APK_RELEASE_KEYSTORE="$KS"
+      export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+    fi
+
+    # Bake the game in. include_bytes! needs the file present at compile time.
+    cargo run --release -- pack {{game}} auto.game.png
+    FLAG=""; [ "{{profile}}" = "release" ] && FLAG="--release"
+    cargo apk build --lib --features include_auto $FLAG
+    find target/{{profile}}/apk -name '*.apk' -exec ls -la {} \;
+
+# Install and launch on a connected device (`adb devices` should list it).
+android-install profile="release":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+    ADB="$SDK/platform-tools/adb"
+    APK="$(find target/{{profile}}/apk -name '*.apk' | head -1)"
+    [ -n "$APK" ] || { echo "no APK — run `just android-apk <game>` first"; exit 1; }
+    "$ADB" install -r "$APK"
+    "$ADB" shell monkey -p com.makeavoy.petrichor64 -c android.intent.category.LAUNCHER 1
+
 # Type-check for Android without needing the NDK (checking doesn't link, so this
 # works with only `rustup target add aarch64-linux-android`). Kept out of `just
 # check` so that recipe still works for anyone who hasn't added the target.

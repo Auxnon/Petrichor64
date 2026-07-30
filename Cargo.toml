@@ -279,6 +279,28 @@ web-sys = { version = "0.3", features = [
 # deb_depends = []
 # osx_frameworks = []
 
+# ---------------------------------------------------------------------------
+# Android packaging (cargo-apk). `just android-apk`.
+#
+# The game is baked into the library via the `include_auto` feature for now, so
+# nothing here needs to ship assets — dynamic loading from APK assets comes later.
+# ---------------------------------------------------------------------------
+[package.metadata.android]
+package = "com.makeavoy.petrichor64"
+# Only arm64 for now; add the others when there's a reason to test on an old phone
+# or the x86_64 emulator (`just android-targets` installs them).
+build_targets = ["aarch64-linux-android"]
+apk_name = "petrichor64"
+
+[package.metadata.android.sdk]
+# 26 is forced by audio: cpal's Android backend links AAudio, which doesn't exist
+# before Android 8.0. See the justfile's `android_api`.
+min_sdk_version = 26
+target_sdk_version = 33
+
+[package.metadata.android.application]
+label = "Petrichor64"
+
 [package.metadata.bundle]
 name = "Petrichor64"
 identifier = "com.makeavoy.petrichor64"
