@@ -80,6 +80,9 @@ web-sys = { version = "0.3", features = [
     "AudioWorklet",
     "AudioWorkletNode",
     "MessagePort",
+    # A second, private MessagePort for commands, handed to the VM worker so notes
+    # skip the main thread entirely (see WebOut::open_command_lane).
+    "MessageChannel",
     "MessageEvent",
     "Window",
     "Response",

@@ -6,4 +6,4 @@ pub use petrichor_synth::sound::*;
 // Browser output: the AudioWorklet path, with the main-thread scheduler in
 // `sound.rs` as its fallback. `init_web` here shadows the one re-exported above.
 #[cfg(target_arch = "wasm32")]
-pub use petrichor_synth::webout::{init_web, WebOut};
+pub use petrichor_synth::webout::{decode_command, encode_command, init_web, WebOut};

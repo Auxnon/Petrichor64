@@ -101,6 +101,15 @@ pub struct WebOut {
     ready: Rc<std::cell::Cell<bool>>,
     /// Frames since the node was created, for that timeout.
     worklet_frames: u32,
+    /// Our end of a private command lane to the worklet, created once the synth is
+    /// live and waiting to be handed to whoever actually produces commands (on wasm
+    /// that's the VM worker — see [`WebOut::take_command_port`]).
+    cmd_port: Option<web_sys::MessagePort>,
+    /// Set once the lane has been given away, so we don't mint a second one.
+    cmd_port_handed: bool,
+    /// Warned once if a command shows up here *after* the lane left, since ordering
+    /// against the lane's traffic is then no longer guaranteed.
+    warned_late_send: bool,
 }
 
 impl WebOut {
@@ -131,6 +140,9 @@ impl WebOut {
             warned_suspended: false,
             ready: Rc::new(std::cell::Cell::new(false)),
             worklet_frames: 0,
+            cmd_port: None,
+            cmd_port_handed: false,
+            warned_late_send: false,
         })
     }
 
@@ -233,8 +245,43 @@ impl WebOut {
                     // so this costs nothing when the handover works.
                     return;
                 }
+                // The synth is live. Mint the private command lane (once) and flush
+                // anything buffered onto it *before* handing it over, so the boot's
+                // setup commands are queued ahead of whatever the new owner sends.
+                if self.cmd_port.is_none() && !self.cmd_port_handed {
+                    match self.open_command_lane() {
+                        Ok(port) => self.cmd_port = Some(port),
+                        Err(e) => {
+                            // Mark it handed so this isn't retried (and re-logged)
+                            // every frame. Commands keep flowing over the node port
+                            // — a frame slower, but working.
+                            self.cmd_port_handed = true;
+                            log::error!(
+                                "web audio: could not open the command lane ({:?}); commands \
+                                 will keep going through the main thread",
+                                e
+                            );
+                        }
+                    }
+                }
+
                 if !self.pending.is_empty() {
-                    if let Stage::Worklet(node) = &*self.stage.borrow() {
+                    // Prefer the lane while we still hold it; once it's handed over,
+                    // its owner sends directly and anything arriving here is a
+                    // latecomer we can only put on the node port.
+                    if let Some(port) = self.cmd_port.clone() {
+                        for cmd in self.pending.drain(..) {
+                            post_command(&port, &cmd);
+                        }
+                    } else if let Stage::Worklet(node) = &*self.stage.borrow() {
+                        if self.cmd_port_handed && !self.warned_late_send {
+                            self.warned_late_send = true;
+                            log::warn!(
+                                "web audio: a sound command was sent from the main thread after \
+                                 the command lane was handed to the VM worker — it will play, but \
+                                 its order against the worker's commands isn't guaranteed"
+                            );
+                        }
                         if let Ok(port) = node.port() {
                             for cmd in self.pending.drain(..) {
                                 post_command(&port, &cmd);
@@ -288,6 +335,53 @@ impl WebOut {
                 self.pending.clear();
             }
         }
+    }
+
+    /// Open a private one-way command lane to the worklet: a `MessageChannel` whose
+    /// far end is handed to the processor, and whose near end this returns.
+    ///
+    /// Why a second port at all, when the node already has one: the node's port
+    /// carries the handshake and the worklet's diagnostics, and it belongs to the
+    /// main thread. Commands are produced somewhere else entirely (the VM worker),
+    /// and a `MessagePort` is transferable — so giving the worker its own port lets
+    /// a note go straight from Lua to the audio thread, instead of being posted to
+    /// the main thread, applied on its next frame, and forwarded on the one after.
+    fn open_command_lane(&self) -> Result<web_sys::MessagePort, JsValue> {
+        let node_port = match &*self.stage.borrow() {
+            Stage::Worklet(node) => node.port()?,
+            _ => return Err(JsValue::from_str("no worklet node")),
+        };
+        let channel = web_sys::MessageChannel::new()?;
+        let near = channel.port1();
+        let far = channel.port2();
+
+        // Hand the far end over the node port, transferring it (a port must be
+        // transferred, never cloned).
+        let msg = js_sys::Object::new();
+        js_sys::Reflect::set(&msg, &"type".into(), &"cmd-port".into())?;
+        js_sys::Reflect::set(&msg, &"port".into(), &far)?;
+        let transfer = js_sys::Array::new();
+        transfer.push(&far);
+        node_port.post_message_with_transferable(&msg, &transfer)?;
+        log::info!("web audio: command lane open");
+        Ok(near)
+    }
+
+    /// True once we've given up on the worklet. Whoever produces commands needs to
+    /// know: no lane is ever coming, so they should stop waiting for one.
+    pub fn is_fallback(&self) -> bool {
+        matches!(&*self.stage.borrow(), Stage::Fallback)
+    }
+
+    /// Take the command lane, to be transferred to whoever produces commands.
+    ///
+    /// Returns `Some` exactly once, and only after the worklet's synth is live —
+    /// before that there is nothing on the far end to receive anything. The caller
+    /// must actually transfer it; a `MessagePort` left un-transferred is inert.
+    pub fn take_command_port(&mut self) -> Option<web_sys::MessagePort> {
+        let port = self.cmd_port.take()?;
+        self.cmd_port_handed = true;
+        Some(port)
     }
 
     /// Create the node, wire it to the speakers, listen for its reports, and hand
@@ -359,6 +453,9 @@ impl WebOut {
                     // wasm it could actually use. Distinguishes "never arrived"
                     // from "arrived and failed to instantiate".
                     "got" => log::info!("web audio: worklet received the wasm as {}", field("via")),
+                    // The private command lane is attached at the far end. Notes now
+                    // reach the audio thread without the main thread in the path.
+                    "lane" => log::info!("web audio: worklet attached the command lane"),
                     "ready" => {
                         ready_flag.set(true);
                         log::info!("web audio: AudioWorklet synth ready @ {} Hz", num("rate"))
@@ -404,16 +501,39 @@ impl WebOut {
     }
 }
 
-/// Serialize one command as MessagePack and post it to the worklet. A binary
-/// codec matters here: a command can carry a whole decoded ogg as `Vec<f32>`,
-/// which as a JS array would be one boxed number per sample.
-fn post_command(port: &web_sys::MessagePort, cmd: &SoundCommand) {
-    let bytes = match rmp_serde::to_vec(cmd) {
-        Ok(b) => b,
+/// Encode one command in the worklet's wire format (MessagePack).
+///
+/// Public because commands reach the worklet from two places — the main thread and
+/// the VM worker, which owns the command lane — and both must speak the same
+/// format. A binary codec matters here: a command can carry a whole decoded ogg as
+/// `Vec<f32>`, which as a JS array would be one boxed number per sample.
+pub fn encode_command(cmd: &SoundCommand) -> Option<Vec<u8>> {
+    match rmp_serde::to_vec(cmd) {
+        Ok(b) => Some(b),
         Err(e) => {
             log::error!("sound command encode failed: {}", e);
-            return;
+            None
         }
+    }
+}
+
+/// Decode a command in that format — for the route back through the main thread,
+/// used when there's no worklet and the fallback scheduler has to play it instead.
+pub fn decode_command(bytes: &[u8]) -> Option<SoundCommand> {
+    match rmp_serde::from_slice(bytes) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            log::error!("sound command decode failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Serialize one command and post it to the worklet.
+fn post_command(port: &web_sys::MessagePort, cmd: &SoundCommand) {
+    let bytes = match encode_command(cmd) {
+        Some(b) => b,
+        None => return,
     };
     let msg = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&msg, &"type".into(), &"cmd".into());

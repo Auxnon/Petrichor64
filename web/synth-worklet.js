@@ -99,6 +99,21 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
           this.port.postMessage({ type: 'error', message: String(err) });
         }
         break;
+      case 'cmd-port':
+        // A private lane for commands, owned by whoever actually produces them
+        // (the VM worker). Its traffic is identical to 'cmd' below — only the
+        // route differs, skipping the main thread and its frame boundary.
+        if (msg.port) {
+          msg.port.onmessage = (e) => this.onMessage(e.data);
+          msg.port.onmessageerror = () => {
+            this.port.postMessage({
+              type: 'error',
+              message: 'a message on the command lane could not be deserialized',
+            });
+          };
+          this.port.postMessage({ type: 'lane' });
+        }
+        break;
       case 'cmd':
         // One MessagePack-encoded SoundCommand. Decoded in Rust; queued onto the
         // same mpsc the mixer drains natively.

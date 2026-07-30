@@ -155,6 +155,10 @@ pub struct App {
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
+    /// Whether the worker has been told how its sound commands travel — given the
+    /// worklet's command lane, or told none is coming. Settled once per session.
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    sound_lane_settled: bool,
     /// Shared "app wants the mouse grabbed" flag (mirrors global.mouse_grab).
     /// The canvas mousedown handler reads it to decide whether to request
     /// pointer-lock (which browsers only grant from a user gesture).
@@ -191,6 +195,8 @@ impl Default for App {
             worker: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            sound_lane_settled: false,
             #[cfg(target_arch = "wasm32")]
             pointer_lock_wanted: std::rc::Rc::new(std::cell::RefCell::new(false)),
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -682,15 +688,6 @@ impl ApplicationHandler for App {
             }
         }
 
-        // Keep the web audio queue filled ahead of the audio clock (glitch-free
-        // through render jank). Runs every frame once Core is up.
-        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-        if let Some(core) = self.core.as_mut() {
-            if let Some(w) = core.web_audio.as_mut() {
-                w.pump();
-            }
-        }
-
         // Drive the VM web worker (§4d). Spawn it once; once its wasm is ready,
         // send Init + an initial Load; then post a Loop each iteration and drain
         // whatever VmToHost it produced. For now the drained messages are just
@@ -709,6 +706,33 @@ impl ApplicationHandler for App {
                     ),
                 }
             }
+            // Settle how the worker's sound commands travel, once. Either it gets
+            // the worklet's command lane (a note goes straight from Lua to the audio
+            // thread) or it's told none is coming, so it stops holding commands back
+            // and routes them here for the fallback scheduler. Until one of the two
+            // arrives the worker buffers — see web/worker.js for why switching
+            // mid-stream would reorder `instr`/`smpl` against the notes using them.
+            #[cfg(feature = "audio")]
+            if !self.sound_lane_settled {
+                if let (Some(w), Some(core)) = (&self.worker, self.core.as_mut()) {
+                    if w.is_ready() {
+                        if let Some(out) = core.web_audio.as_mut() {
+                            if let Some(port) = out.take_command_port() {
+                                w.give_sound_port(port);
+                                self.sound_lane_settled = true;
+                                ::log::info!(
+                                    "web audio: VM worker owns the command lane (notes bypass \
+                                     the main thread)"
+                                );
+                            } else if out.is_fallback() {
+                                w.tell_no_sound_lane();
+                                self.sound_lane_settled = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             let mut drained: Vec<crate::worker_protocol::VmToHost> = Vec::new();
             if let Some(w) = &self.worker {
                 if w.is_ready() {
@@ -814,6 +838,23 @@ impl ApplicationHandler for App {
             for m in drained {
                 if let Some(core) = self.core.as_mut() {
                     core.apply_vm_message(m);
+                }
+            }
+
+            // Keep the web audio queue filled ahead of the audio clock (glitch-free
+            // through render jank). Runs every frame once Core is up.
+            //
+            // *After* the worker's messages are applied, deliberately. The VM's
+            // notes arrive as `VmToHost::Sound` in the loop above and land in the
+            // command channel; pumping before that meant every note sat in the
+            // channel until the *next* frame — a full frame of latency (~16ms at
+            // 60fps) handed away for free, which is a lot next to the worklet's
+            // 2.7ms render quantum. Costs the fallback scheduler nothing: it
+            // schedules ~90ms ahead regardless of where in the frame it runs.
+            #[cfg(feature = "audio")]
+            if let Some(core) = self.core.as_mut() {
+                if let Some(w) = core.web_audio.as_mut() {
+                    w.pump();
                 }
             }
             // Consume per-frame input deltas so they don't persist to next frame.

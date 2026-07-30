@@ -128,12 +128,41 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
         }
     });
 
-    // Envelope: `{ msgs, ents? }`. Structured messages go via serde; the
+    // Sound commands leave in their own field, already in the worklet's MessagePack
+    // wire format. They have a private lane to the audio thread (see web/worker.js
+    // and `WebOut::open_command_lane`) so a note doesn't wait for the main thread to
+    // receive it, apply it on one frame and forward it on the next — up to two
+    // frames of latency in front of a synth that renders in 2.7ms blocks. Encoded
+    // here rather than in JS because the format is the synth crate's, and because
+    // these can carry PCM: as a serde-wasm-bindgen array that would be one boxed
+    // JS number per sample.
+    #[cfg(feature = "audio")]
+    let (out, sounds) = {
+        let sounds = js_sys::Array::new();
+        let mut rest = Vec::with_capacity(out.len());
+        for m in out {
+            match m {
+                VmToHost::Sound(cmd) => {
+                    if let Some(bytes) = crate::sound::encode_command(&cmd) {
+                        sounds.push(&js_sys::Uint8Array::from(bytes.as_slice()).into());
+                    }
+                }
+                other => rest.push(other),
+            }
+        }
+        (rest, sounds)
+    };
+
+    // Envelope: `{ msgs, ents?, sounds? }`. Structured messages go via serde; the
     // per-frame entity buffer rides as a Uint8Array the JS glue transfers
     // zero-copy (no SharedArrayBuffer / isolation headers required).
     let obj = js_sys::Object::new();
     let msgs = serde_wasm_bindgen::to_value(&out).unwrap_or_else(|_| js_sys::Array::new().into());
     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("msgs"), &msgs);
+    #[cfg(feature = "audio")]
+    if sounds.length() > 0 {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("sounds"), &sounds);
+    }
     if !ent_bytes.is_empty() {
         let arr = js_sys::Uint8Array::from(ent_bytes.as_slice());
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("ents"), &arr);
