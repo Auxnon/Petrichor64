@@ -64,6 +64,11 @@ function loop()
 	-- Edges only: printing every frame at 60fps floods the log.
 	if down ~= was_down then
 		was_down = down
+		-- Audio smoke test: a note on the press edge. Pitch tracks the horizontal
+		-- position so repeated taps are distinguishable by ear.
+		if down then
+			note(220. + m.x * 660., 0.4)
+		end
 		local state = "up"
 		if down then
 			state = "down"

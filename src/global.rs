@@ -47,6 +47,11 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
+    /// Last frame's view/projection, kept so the cursor ray can be re-traced at the
+    /// *start* of a frame — before Lua reads it — rather than only during render,
+    /// which left `cursor_projected_pos` a frame behind the pointer. See
+    /// `Core::refresh_cursor_ray`. `None` until the first frame is rendered.
+    pub last_cam_matrices: Option<(glam::Mat4, glam::Mat4)>,
     pub aliases: HashMap<String, String>,
     #[cfg(feature = "headed")]
     pub gui_params: GuiParams,
@@ -84,6 +89,7 @@ impl Global {
             smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
+            last_cam_matrices: None,
             debug: false,
             fps: 0.,
             fullscreen: false,
