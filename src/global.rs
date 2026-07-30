@@ -140,6 +140,20 @@ impl Global {
         }
         // self.boot_state = false;
         self.pending_load = None;
+        self.clean_app_attrs();
+    }
+
+    /// Reset the `attr` state an app *declares* for itself and must never inherit
+    /// from whatever ran before it. Called on every app load as well as on reset —
+    /// the same discipline as `SoundCommand::Reset` for the synth.
+    ///
+    /// The console lock is the one that bites: the boot fallback (`nil`) locks the
+    /// console, so without this every game loaded afterwards inherited the lock and
+    /// the console stayed unreachable. Note this only clears the flags; the load
+    /// path re-enables the console widget itself (see `command.rs::load_app`).
+    pub fn clean_app_attrs(&mut self) {
+        self.locked = false;
+        self.console = true;
     }
 
     // pub fn set(&mut self, key: String, v: f32) {

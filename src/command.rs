@@ -2518,6 +2518,14 @@ async fn async_load_app(
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
 
+    // App (re)load: drop the `attr` state the previous app declared, so a new game
+    // starts from defaults instead of inheriting it. The console lock is the one
+    // that bites — the boot fallback (`nil`) locks the console, so every game
+    // loaded after it used to inherit the lock and stay unreachable.
+    core.global.clean_app_attrs();
+    #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+    core.gui.enable_console(&core.loggy);
+
     // App (re)load: clear any instruments/samples a previous run registered so
     // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
     #[cfg(feature = "audio")]
