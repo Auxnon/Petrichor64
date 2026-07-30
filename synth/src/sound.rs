@@ -1428,3 +1428,106 @@ fn normalize_pcm(pcm: &mut [f32]) {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pull `n` samples from a fresh mixer and return the peak amplitude.
+    fn peak_of(cmds: Vec<SoundCommand>, n: usize) -> f32 {
+        let (tx, rx) = channel::<SoundCommand>();
+        for c in cmds {
+            tx.send(c).unwrap();
+        }
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        let mut peak = 0.0f32;
+        for _ in 0..n {
+            peak = peak.max(mixer().abs());
+        }
+        peak
+    }
+
+    /// The most basic contract there is: `note()` must make sound. Guards the
+    /// whole chain (channel/lane allocation, envelope, oscillator, effect chain,
+    /// master limiter) against silent regressions.
+    #[test]
+    fn plain_note_makes_sound() {
+        let peak = peak_of(
+            vec![SoundCommand::PlayNote(
+                Note::new(0, 440.0, 1.0, 1.0),
+                None,
+            )],
+            4800, // 100ms
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// Explicit channels must sound too (the default is channel 0).
+    #[test]
+    fn note_on_explicit_channel_makes_sound() {
+        let peak = peak_of(
+            vec![SoundCommand::PlayNote(
+                Note::new(0, 440.0, 1.0, 1.0),
+                Some(3),
+            )],
+            4800,
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// A decaying sine, standing in for a loaded ogg.
+    fn fake_pcm(n: usize) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / n as f32;
+                (i as f32 * 0.06).sin() * (1.0 - t)
+            })
+            .collect()
+    }
+
+    /// What the `sounder` piano actually does: bind a loaded sound into a slot and
+    /// play notes through it on an explicit channel. Covers the sampler path, which
+    /// the oscillator tests above don't touch.
+    #[test]
+    fn bound_sample_makes_sound() {
+        let peak = peak_of(
+            vec![
+                SoundCommand::LoadSample("tone".into(), fake_pcm(22050), 44100.0),
+                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default()),
+                SoundCommand::PlayNote(Note::new(2, 440.0, 0.5, 1.0), Some(2)),
+            ],
+            4800,
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// Same, but with the bitcrush the piano applies to that channel. Extreme
+    /// settings must still pass signal, not mute it.
+    #[test]
+    fn crushed_channel_still_makes_sound() {
+        let peak = peak_of(
+            vec![
+                SoundCommand::LoadSample("tone".into(), fake_pcm(22050), 44100.0),
+                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default()),
+                SoundCommand::CrushChannel(2, 4.0, 600.0),
+                SoundCommand::PlayNote(Note::new(2, 440.0, 0.5, 1.0), Some(2)),
+            ],
+            4800,
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// A reload sends Reset before the new app configures anything; notes after it
+    /// must still sound.
+    #[test]
+    fn note_after_reset_makes_sound() {
+        let peak = peak_of(
+            vec![
+                SoundCommand::Reset,
+                SoundCommand::PlayNote(Note::new(0, 440.0, 1.0, 1.0), Some(2)),
+            ],
+            4800,
+        );
+        assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+}
