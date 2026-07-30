@@ -446,11 +446,13 @@ gestures should get their own Lua command rather than being smuggled through `mu
    `/game.game.png` or falls back to an embedded bundle. An APK has neither — the
    game wants reading out of APK assets via `AndroidApp::asset_manager()`. The
    embedded-bundle path is wasm-only today because it goes through `fetch`.
-2. **Surface lifecycle.** Android destroys the native window when backgrounded, and
-   `resumed` fires again on return. `resumed` only builds a window when there isn't
-   one, so the wgpu surface would be stale — the surface needs recreating *without*
-   rebuilding `Core` and losing the running game. Expect a black screen or a crash
-   on the first background/foreground cycle until this is done.
+2. ~~**Surface lifecycle.**~~ ✅ fixed. Android destroys the native window whenever the
+   app leaves the foreground (a screen lock is enough) and supplies a new one on
+   return; `resumed` had an early `return` when a window already existed, so the
+   surface kept pointing at the dead one and the app came back black — exactly as
+   predicted. `Gfx` now keeps the `wgpu::Instance` so `recreate_surface()` can rebuild
+   just the surface, keeping the device, pipelines and running game; `suspended()`
+   stops drawing until then. Verified by sleep/wake and by minimising.
 3. **APK packaging.** The `.so` is done (`just android` / `just android release`)
    but nothing wraps it into an installable APK yet. Options: `cargo-apk`
    (simplest for `native-activity`, but unmaintained and untested against NDK 30 /
@@ -492,9 +494,11 @@ boolean (not 0/1); `fill()` on the gui layer is *opaque* and hides the 3D scene,
 use `clr()`; and the cube mesh is corner-anchored and untextured by default, so it
 needs `tex`/`offset` to show up where you expect.
 
-The inner (unfolded) display is 1812x2176 and the app survived being moved to it, but
-a deliberate background/foreground cycle is still untested — see the surface
-lifecycle gap above.
+Sleep/wake and minimise/restore both come back drawing correctly (`suspended —
+surface released` / `surface rebuilt after resume` in logcat). The inner (unfolded)
+display is 1812x2176 and the app survives being moved to it — the resume path takes
+its size from the window rather than the stale config, so a fold or rotation
+re-derives the render targets.
 
 ### Verified so far
 

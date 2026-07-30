@@ -33,6 +33,11 @@ pub struct Gfx<'w> {
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
     pub surface: wgpu::Surface<'w>,
+    /// Kept so the surface can be rebuilt without tearing down the device, the
+    /// pipelines, or the running game — Android destroys the native window when the
+    /// app is backgrounded (screen sleep) and hands back a *new* one on resume, at
+    /// which point the old surface is dead. See `recreate_surface`.
+    instance: wgpu::Instance,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -580,6 +585,7 @@ impl<'w> Gfx<'w> {
         (
             Self {
                 surface,
+                instance,
                 device,
                 queue,
                 size,
@@ -647,6 +653,41 @@ impl<'w> Gfx<'w> {
         self.size = winit::dpi::PhysicalSize::new(w, h);
         self.config.width = w;
         self.config.height = h;
+    }
+
+    /// Rebuild the surface against the window's *current* native handle, keeping the
+    /// device, pipelines, textures and the running game intact.
+    ///
+    /// Android destroys the native window whenever the app leaves the foreground (a
+    /// screen sleep is enough) and supplies a new one on resume. The old surface
+    /// refers to the window that no longer exists, so every frame after that draws
+    /// nowhere — the app comes back black. Only the surface is stale, which is why
+    /// this exists instead of rebuilding `Core` and losing the game's state.
+    pub fn recreate_surface(&mut self) -> bool {
+        match self.instance.create_surface(self.win_ref.clone()) {
+            Ok(surface) => {
+                // The new window can be a different size (rotation, a fold opening),
+                // so trust it over the config we were holding.
+                let s = self.win_ref.inner_size();
+                if s.width > 0 && s.height > 0 {
+                    self.size = s;
+                    self.config.width = s.width;
+                    self.config.height = s.height;
+                }
+                surface.configure(&self.device, &self.config);
+                self.surface = surface;
+                let d = create_depth_texture(&self.config, &self.device);
+                self.depth_texture = d.1;
+                true
+            }
+            Err(e) => {
+                // Not fatal: without a surface we simply don't draw, and the next
+                // resume gets another go. Aborting here would kill a running game
+                // over a transient window handle.
+                ::log::error!("could not recreate the surface: {}", e);
+                false
+            }
+        }
     }
 
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
