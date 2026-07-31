@@ -559,6 +559,45 @@ architectural.
 5. **No sample read-back** for a sound editor (the `DumpSample` ping-pong noted under
    Sound System is precisely this).
 
+### Trust boundary: who may summon an overlay
+
+An overlay is the **privileged** surface — it reaches the filesystem and edits another
+bundle's contents. So the edit target must never be able to summon one, hand it code,
+or borrow its reach. That gives two *orthogonal* axes, and keeping them separate is
+what makes the model tractable:
+
+- **Immersion (app-controlled, may only ever subtract).** `attr{lock}` is an app
+  saying "don't edit me" — it suppresses the engine's own surfaces. That's a
+  deliberate tradeoff, not a hole: a locked app gives *itself* less editability and
+  gains nothing. Worth noting it can't wedge the tools permanently either, because
+  `clean_app_attrs()` clears `locked` on every load — the lock dies with the app, so
+  loading anything else gets you back in.
+- **Privilege (engine-controlled, absolute).** Only the engine may create a
+  privileged bundle. Nothing in Lua can, at any privilege level.
+
+Concretely:
+
+1. **Trigger lives in `controls_evaluate`.** That runs before `call_loop`, on the
+   engine's own snapshot of input, so the chord can't be observed or swallowed by the
+   app. (No keyboard on a phone, so mobile needs a reserved gesture handled at the
+   same level — an open question, and a chance to reserve something a game would
+   never use.)
+2. **Capability by construction, not by check.** Each bundle's Lua context is built
+   separately (`init_lua_sys`), so the privileged API — the `app.*` handle and
+   target-scoped `io` — is simply *not installed* in an ordinary app's globals.
+   There's no flag to get wrong at a call site and nothing to forge: an unprivileged
+   bundle has no name to call.
+3. **Provenance: an overlay's code never comes from the edited app.** Embedded in the
+   engine, or from a tools directory the user controls — never the game's bundle,
+   or a game could ship its own "editor" and inherit its reach.
+4. **`MainCommmand::Load(_) => todo!()` must not become the escalation path.** It's
+   the obvious place to add Lua-driven bundle loading; if that ever happens, a child
+   inherits *at most* its parent's capabilities, and privileged is never among them.
+
+The unprivileged leg of this was not theoretical: `io.get`/`io.set` could read and
+write anywhere on disk via an absolute path (fixed in `65b2420`) — the game sandbox
+has to actually hold before an elevated surface above it means anything.
+
 ### Shape
 
 An overlay is a **child bundle bound to a gui layer**. The app keeps running on
