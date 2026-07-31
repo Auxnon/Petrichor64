@@ -117,13 +117,24 @@ pub fn get_file_string_from_path(path: PathBuf) -> Result<String, P64Error> {
     }
 }
 
-/** Scrub path to not go higher than dir */
+/// Resolve a game-supplied path inside `dir`, refusing anything that could leave it.
+///
+/// Only *plain relative* components are allowed. Checking for `..` alone was not
+/// enough: `Path::join` **discards the base** when the argument is absolute, so
+/// `io.get("/etc/passwd")` produced `/etc/passwd` — it contains no `ParentDir`
+/// component, so it passed the old check and read straight out of the sandbox. A
+/// Windows `Prefix` (`C:`, `\\?\`, UNC) does the same thing.
+///
+/// Still trusts the filesystem not to point out of `dir` on our behalf: a symlink
+/// inside the game folder is followed. Closing that means canonicalising, which is
+/// awkward for writes to files that don't exist yet, so it's left as a known limit
+/// rather than half-done.
 fn scrub_path(dir: &str, path: &str) -> Result<PathBuf, P64Error> {
     let p = PathBuf::new().join(path);
-    if p.components()
-        .into_iter()
-        .any(|x| x == Component::ParentDir)
-    {
+    let ok = p
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    if !ok || path.is_empty() {
         return Err(P64Error::PermPathTraversal);
     }
     Ok(PathBuf::new().join(dir).join(path))
@@ -518,3 +529,41 @@ pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
 //     //     _ => {}
 //     // }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A game's `io.get`/`io.set` path must stay inside its own folder. The absolute
+    /// case is the one that actually escaped: it carries no `..`, so a traversal
+    /// check alone waved it through while `Path::join` threw the sandbox root away.
+    #[test]
+    fn scrub_path_confines_to_dir() {
+        let dir = "/games/mygame";
+        assert_eq!(
+            scrub_path(dir, "notes.txt").unwrap(),
+            PathBuf::from("/games/mygame/notes.txt")
+        );
+        assert_eq!(
+            scrub_path(dir, "sub/ok.txt").unwrap(),
+            PathBuf::from("/games/mygame/sub/ok.txt")
+        );
+        assert_eq!(
+            scrub_path(dir, "./here.txt").unwrap(),
+            PathBuf::from("/games/mygame/./here.txt")
+        );
+
+        for bad in [
+            "/etc/passwd",     // absolute: replaces the base entirely
+            "../secret",       // classic traversal
+            "sub/../../secret",// traversal after a valid component
+            "",                // nothing to resolve
+        ] {
+            assert!(
+                scrub_path(dir, bad).is_err(),
+                "expected {:?} to be refused",
+                bad
+            );
+        }
+    }
+}
