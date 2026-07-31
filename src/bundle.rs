@@ -267,6 +267,23 @@ impl BundleManager {
         out
     }
 
+    /// Is this bundle an overlay? Asked on the main thread before honouring anything
+    /// that only an overlay may do, so a stray packet from an app can't pass for one.
+    pub fn is_overlay(&self, id: u8) -> bool {
+        self.bundles.get(&id).map_or(false, |b| b.overlay)
+    }
+
+    /// The bundle an overlay edits: the app underneath it.
+    ///
+    /// Never another overlay — a source editor must not be able to rewrite the image
+    /// editor sitting next to it, only the app they were both opened to work on.
+    pub fn edit_target(&self) -> Option<u8> {
+        self.call_order
+            .iter()
+            .copied()
+            .find(|id| self.bundles.get(id).map_or(false, |b| !b.overlay))
+    }
+
     /// Mark a bundle as an overlay. Engine-only by construction: this is not reachable
     /// from Lua.
     pub fn mark_overlay(&mut self, id: u8) {
@@ -584,6 +601,34 @@ mod tests {
         assert_eq!(bm.input_owner(), game, "input returns to the app");
         assert_eq!(bm.layer_order(), vec![game]);
         assert_eq!(bm.close_overlays(), 0, "closing again is a no-op");
+    }
+
+    /// An overlay edits the app, never a fellow tool. Two editors open at once must
+    /// both aim at the game — a source editor that could rewrite the image editor
+    /// beside it is a different and much worse capability than the one intended.
+    #[test]
+    fn overlays_edit_the_app_never_each_other() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let src = app(&mut bm, "src-editor");
+        bm.mark_overlay(src);
+        let img = app(&mut bm, "img-editor");
+        bm.mark_overlay(img);
+
+        assert_eq!(bm.edit_target(), Some(game));
+        assert!(!bm.is_overlay(game), "the app is not privileged");
+        assert!(bm.is_overlay(src) && bm.is_overlay(img));
+    }
+
+    /// With nothing but overlays there is no target, and the `app.*` handlers get
+    /// `None` rather than falling back to editing an overlay.
+    #[test]
+    fn an_overlay_alone_has_nothing_to_edit() {
+        let mut bm = BundleManager::new();
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.edit_target(), None);
     }
 
     /// Drive `call_loop` for `frames`, pretending Lua reports its loop complete before

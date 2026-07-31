@@ -386,6 +386,22 @@ impl<'core> Core {
         self.send_notification(msg);
     }
 
+    /// Which bundle `id` is allowed to edit, and the directory it lives in — `None`
+    /// unless `id` is an overlay the *engine* marked, and there's a real app under it.
+    ///
+    /// The `app.*` natives are only built for overlay VMs, so an app has nothing to
+    /// call. This is the second lock: it means a packet claiming to be from an overlay
+    /// gets nowhere, and it's the single place the edit target is decided, so no
+    /// handler can quietly resolve a different one.
+    pub fn overlay_edit_target(&self, id: u8) -> Option<(u8, String)> {
+        if !self.bundle_manager.is_overlay(id) {
+            return None;
+        }
+        let target = self.bundle_manager.edit_target()?;
+        let dir = self.bundle_manager.get(target)?.get_directory()?;
+        Some((target, dir.to_string()))
+    }
+
     pub fn log_channel_error(&mut self) {
         self.log(LogType::LuaSysError, "!!Channel error");
     }

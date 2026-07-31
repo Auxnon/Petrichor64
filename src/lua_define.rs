@@ -188,7 +188,9 @@ impl<'lt> LuaCore {
         loggy: Sender<(LogType, String)>,
         #[cfg(feature = "audio")] singer: SoundSender,
         debug: bool,
-        _dangerous: bool,
+        /* Engine-marked overlay? Gates the `app.*` table on the VM being built below,
+        so it must arrive before the first line of Lua runs. */
+        privileged: bool,
     ) -> LuaHandle {
         //     let receiver = self.get_receiver();
         //     Self::_start(
@@ -342,6 +344,7 @@ impl<'lt> LuaCore {
                         vm,
                         mc,
                         bundle_id,
+                        privileged,
                         pitcher.clone(),
                         world_sender.clone(),
                         Rc::clone(&gui_handle),

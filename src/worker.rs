@@ -416,6 +416,9 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             vm,
             mc,
             bundle_id,
+            // Never privileged: overlays are a native-only tool for now. The `app.*`
+            // table edits files on disk, and a browser worker has no disk to edit.
+            false,
             pitcher.clone(),
             world_tx.clone(),
             Rc::clone(&gui_handle),

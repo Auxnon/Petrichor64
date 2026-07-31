@@ -851,12 +851,8 @@ impl ApplicationHandler for App {
         if self.deferred_load.is_none() {
             if let Some(path) = self.deferred_overlay.take() {
                 if let Some(core) = self.core.as_mut() {
-                    let id = core.bundle_manager.bundle_counter;
-                    match crate::command::load_app(core, Some(&path), None, None, None) {
-                        Ok(()) => {
-                            core.bundle_manager.mark_overlay(id);
-                            ::log::info!("overlay '{}' up as bundle {}", path, id);
-                        }
+                    match crate::command::load_overlay(core, &path) {
+                        Ok(id) => ::log::info!("overlay '{}' up as bundle {}", path, id),
                         Err(e) => ::log::error!("overlay '{}' failed: {}", path, e),
                     }
                 }
@@ -2165,6 +2161,78 @@ impl Core {
                         }
                         None => {
                             self.log(LogType::IoError, &format!("!! No relative path access"));
+                            false
+                        }
+                    };
+                    self.log_check(tx.send(res));
+                }
+                // The `app.*` family: an overlay reaching into the app beneath it.
+                //
+                // Every arm resolves the target through `overlay_edit_target`, which
+                // returns nothing unless the sender is an engine-marked overlay. The
+                // natives don't exist in a game's VM to begin with, but this is the
+                // door to another app's files, so the main thread checks the caller
+                // itself rather than trusting that the door was never installed.
+                MainCommmand::AppRead(path, tx) => {
+                    let out = match self.overlay_edit_target(id) {
+                        Some((_, dir)) => {
+                            match crate::file_util::get_file_string_scrubbed(&dir, &path) {
+                                Ok(s) => Some(s),
+                                Err(e) => {
+                                    self.log(LogType::IoError, &format!("!!{}", e));
+                                    None
+                                }
+                            }
+                        }
+                        None => {
+                            self.log(LogType::IoError, "!!app.read: not an overlay");
+                            None
+                        }
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppWrite(file, contents, tx) => {
+                    let res = match self.overlay_edit_target(id) {
+                        Some((_, dir)) => match crate::file_util::write_file_string_scrubbed(
+                            &dir, &file, &contents,
+                        ) {
+                            Ok(()) => true,
+                            Err(e) => {
+                                self.log(LogType::IoError, &format!("!!{}", e));
+                                false
+                            }
+                        },
+                        None => {
+                            self.log(LogType::IoError, "!!app.write: not an overlay");
+                            false
+                        }
+                    };
+                    self.log_check(tx.send(res));
+                }
+                MainCommmand::AppList(tx) => {
+                    let out = match self.overlay_edit_target(id) {
+                        Some((_, dir)) => match crate::file_util::list_files_scrubbed(&dir) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                self.log(LogType::IoError, &format!("!!{}", e));
+                                vec![]
+                            }
+                        },
+                        None => {
+                            self.log(LogType::IoError, "!!app.list: not an overlay");
+                            vec![]
+                        }
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppReload(tx) => {
+                    let res = match self.overlay_edit_target(id) {
+                        Some((target, _)) => {
+                            crate::command::reload(self, target);
+                            true
+                        }
+                        None => {
+                            self.log(LogType::IoError, "!!app.reload: not an overlay");
                             false
                         }
                     };
