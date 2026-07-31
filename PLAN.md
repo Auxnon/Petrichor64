@@ -523,3 +523,90 @@ same "type-checks" state cheaply. What differs: entry point (winit has an iOS
 rather than an AssetManager, audio is CoreAudio via cpal (already supported), and
 signing/provisioning is a whole separate problem. The `midi` feature could actually
 work there (CoreMIDI), unlike Android.
+
+## Overlay apps (the tool suite): editing a running app from on top of it
+
+The goal: a source editor, image editor, sound/sample editor and model editor that
+run *over* a live app and edit it in place. The encouraging finding is how much of
+this the engine already has — the missing pieces are small and specific, not
+architectural.
+
+### What already exists (verified in code, not assumed)
+
+| piece | state |
+|-------|-------|
+| Bundles with parent/child relations | ✅ `make_bundle(.., bundle_relations: Option<(u8, bool)>)`; the comment at `command.rs:2469` already calls it "a sub or **overlay**" |
+| Per-bundle Lua pool, each with its own `gui`/`sky` raster | ✅ `bundle_manager.get_pool(id)` |
+| Four gui layers composited on the GPU | ✅ `shader.wgsl:gui_fs_main` samples system/primary/secondary/trinary |
+| Per-layer bundle selection | ✅ the field exists: `ScreenLayer.bundle_target` |
+| Call order that runs children with parents | ✅ `rebuild_call_order()` |
+| Input capture precedent | ✅ with the console open the app is fed a *neutral* ControlState, so its keys go to the console instead |
+
+### What's missing (all of it small)
+
+1. **`bundle_target` is never assigned** — every layer is hardcoded to bundle 0, and
+   `check_render` has an explicit early-out for Secondary/Trinary (`self.dirty =
+   false`) so they never source a pool at all. Wiring these two is what makes an
+   overlay visible; nothing else in the render path needs to change.
+2. **Input focus isn't generalized.** The console's "app gets a neutral snapshot"
+   trick is exactly the mechanism an overlay needs; it just needs to become
+   `focus: Option<u8>` rather than a console special case.
+3. **Lua can't load a bundle**: `MainCommmand::Load(_) => todo!()`. Overlays have to
+   be spawned from the console or the engine until that's filled in.
+4. **No cross-bundle access.** This is the actual substance of the editors — an
+   overlay can currently only see its own scripts and textures. `io.get`/`io.set` are
+   scoped to the calling bundle's directory, and `tex`/`gimg` to its own assets.
+5. **No sample read-back** for a sound editor (the `DumpSample` ping-pong noted under
+   Sound System is precisely this).
+
+### Shape
+
+An overlay is a **child bundle bound to a gui layer**. The app keeps running on
+`primary`; the overlay draws to `secondary` and takes input focus. Because the layers
+composite by alpha, the overlay's transparent pixels show the app straight through,
+which is what an editor wants.
+
+The editors then differ only in what they reach for in the target, so the enabling
+work is one shared **target handle** rather than four bespoke bridges:
+
+```lua
+-- inside an overlay bundle
+app.scripts()            -- names
+app.read("main.lua")     -- source
+app.write("main.lua", s)
+app.reload()             -- hot-reload the target, overlay stays up
+app.tex_names()
+app.get_tex(name)        -- image userdata, editable with the usual im: methods
+app.set_tex(name, im)
+app.samples()            -- ids + PCM (needs DumpSample)
+app.set_sample(id, pcm)
+```
+
+### Two constraints worth knowing before designing UI
+
+- **Compositing is alpha-*tested*, not blended**: `if (system.a < 0.1)` picks the
+  topmost opaque-enough layer. So an editor cannot dim the app behind it — a scrim
+  needs a real `mix()` in `gui_fs_main`. One line, but a deliberate decision, since
+  it changes how every existing layer combines.
+- **Only four layers**, one of which is the console. So at most three concurrent
+  app+overlay surfaces.
+
+### Phases
+
+Each is independently useful, and phase 0 is what unlocks the rest.
+
+| phase | work | deliverable |
+|-------|------|-------------|
+| **0** | assign `bundle_target`, drop the Secondary/Trinary early-out, generalize input focus | a "hello overlay" drawing over a running app and taking input — the unlock |
+| **1** | target handle: scripts read/write + reload | **source editor**: edit the running game's Lua, hot-reload without losing the overlay |
+| **2** | target handle: texture get/set | **image editor** — Fresco's brush engine pointed at the target's texture instead of its own canvas |
+| **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
+| **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
+
+### A mobile wrinkle for the source editor
+
+Text editing needs a keyboard, and the Android build uses `native-activity`, which
+has no soft-keyboard plumbing. Either switch to `game-activity` (a feature swap plus
+a Gradle project, see the Android section) or have the overlay **draw its own
+keyboard** — which is cheap here, fits a fantasy console, and works identically on
+desktop and phone. The second option is more in keeping with the engine.
