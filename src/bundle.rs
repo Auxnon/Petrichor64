@@ -28,7 +28,7 @@ pub struct Bundle {
     /** acts as a counter for for a frame skipped due to performance or intentionally */
     pub skips: u16,
     pub skipped_control_state: Option<ControlState>,
-    /** How many frames do we want to intentionally skip to bring our fps down? Not great */
+    /** Run the loop once every N frames, to bring a bundle's tick rate down. 1 is every frame. */
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
     pub pool: Option<SharedPool>,
@@ -143,7 +143,11 @@ impl BundleManager {
             let bits = if *id == owner { bits } else { &quiet };
             if !if let Some(updated) = updated_bundles.get_mut(id) {
                 if *updated {
-                    if bundle.skips >= bundle.frame_split {
+                    // frame_split is a divisor, so 1 means "every frame" — that needs
+                    // zero skipped frames, not one. Comparing bare `skips >= frame_split`
+                    // demanded a skip before *every* run, halving every bundle's tick
+                    // rate to ~30Hz against a 60fps render.
+                    if bundle.skips >= bundle.frame_split.saturating_sub(1) {
                         *updated = false;
                         bundle.skips = 0;
                         if (match bundle.skipped_control_state {
@@ -580,5 +584,45 @@ mod tests {
         assert_eq!(bm.input_owner(), game, "input returns to the app");
         assert_eq!(bm.layer_order(), vec![game]);
         assert_eq!(bm.close_overlays(), 0, "closing again is a no-op");
+    }
+
+    /// Drive `call_loop` for `frames`, pretending Lua reports its loop complete before
+    /// each one, and count how many frames actually ran. A run is visible as the
+    /// updated flag being consumed.
+    fn ticks_over(bm: &mut BundleManager, id: u8, frames: usize) -> usize {
+        let bits = ControlState::default();
+        let mut ran = 0;
+        for _ in 0..frames {
+            let mut updated = FxHashMap::default();
+            updated.insert(id, true);
+            bm.call_loop(&mut updated, &bits);
+            if !updated[&id] {
+                ran += 1;
+            }
+        }
+        ran
+    }
+
+    /// `frame_split` is a divisor, so the default of 1 has to tick on every frame.
+    /// The gate used to read `skips >= frame_split`, which demanded a skipped frame
+    /// before *every* run and quietly halved every bundle to ~30Hz under a 60fps
+    /// render — including overlays, where an editor tick that slow is very visible.
+    #[test]
+    fn frame_split_of_one_ticks_every_frame() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        assert_eq!(bm.get(game).unwrap().frame_split, 1, "the default");
+
+        assert_eq!(ticks_over(&mut bm, game, 10), 10);
+    }
+
+    /// Splitting still works: it's the only reason the counter exists.
+    #[test]
+    fn frame_split_of_two_ticks_every_other_frame() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        bm.bundles.get_mut(&game).unwrap().frame_split = 2;
+
+        assert_eq!(ticks_over(&mut bm, game, 10), 5);
     }
 }
