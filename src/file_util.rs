@@ -152,6 +152,47 @@ pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Resu
     write_file_string(p, contents)
 }
 
+/// Every file under `dir`, as slash-separated paths relative to it
+/// (`scripts/main.lua`) and sorted, so an editor can list what it's allowed to open.
+///
+/// Symlinks are skipped rather than followed: a link planted inside an app folder
+/// would otherwise read or overwrite anything on the machine, which is the same
+/// escape [`scrub_path`] exists to close. Dotfiles are skipped too — `.git` in a
+/// game folder is noise an editor shouldn't offer to edit.
+pub fn list_files_scrubbed(dir: &str) -> Result<Vec<String>, P64Error> {
+    let root = PathBuf::new().join(dir);
+    let mut out = vec![];
+    // Depth is bounded because a game folder is shallow by nature, and because
+    // symlinks are skipped there's no cycle to guard against.
+    let mut stack = vec![(root.clone(), String::new())];
+    while let Some((path, prefix)) = stack.pop() {
+        let entries = match std::fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(e) => return Err(P64Error::IoError(e)),
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                name
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            // `file_type` here comes from the directory entry, so it reports a
+            // symlink as a symlink instead of what it points at.
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push((entry.path(), rel)),
+                Ok(t) if t.is_file() => out.push(rel),
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 fn handle_zip_error(err: ZipError) -> P64Error {
     match err {
         ZipError::UpstreamReadError(i) => P64Error::IoError(i),
@@ -565,5 +606,17 @@ mod tests {
                 bad
             );
         }
+    }
+
+    /// What an overlay's file list looks like. `test/target` is a fixture app kept
+    /// deliberately tiny, so this also pins the shape of the paths handed to Lua:
+    /// relative to the app folder, slash-separated, sorted, subfolders included.
+    #[test]
+    fn list_files_scrubbed_walks_and_relativizes() {
+        let files = list_files_scrubbed("test/target").unwrap();
+        assert_eq!(
+            files,
+            vec!["assets/example.png", "icon.png", "scripts/main.lua"]
+        );
     }
 }

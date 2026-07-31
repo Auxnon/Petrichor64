@@ -141,10 +141,8 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             } else {
                 // Loaded as its own bundle, not a child of the app: reloading the app
                 // shouldn't tear the editor down with it.
-                let id = core.bundle_manager.bundle_counter;
-                match load_app(core, Some(segments[1]), None, None, None) {
-                    Ok(()) => {
-                        core.bundle_manager.mark_overlay(id);
+                match load_overlay(core, segments[1]) {
+                    Ok(id) => {
                         core.loggy.log(
                             LogType::Config,
                             &format!("overlay '{}' up as bundle {}", segments[1], id),
@@ -489,6 +487,10 @@ pub fn init_lua_sys<'a, 'gc>(
     mc_in: &Mutation<'gc>,
     // executor: &Executor<'gc>,
     bundle_id: u8,
+    // Is this bundle an engine-marked overlay? Decides whether the privileged `app.*`
+    // table gets built at all, so it has to be known before the VM runs a line —
+    // which is why overlays are marked as they load rather than afterwards.
+    is_overlay: bool,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
@@ -2351,6 +2353,102 @@ function help() end",
     //     return Err(context_err("Failed to set io lib"));
     // }
 
+    // An overlay's reach into the app it edits — read a source file, write it back,
+    // list what's there, and make the app pick the change up.
+    //
+    // This table is built only for a bundle the *engine* marked as an overlay, so in
+    // game Lua it doesn't exist at all: there's no native to hide behind a flag and
+    // no way for an app to ask for one, because an app cannot create an overlay (its
+    // `over()` makes a child bundle, and only the console and `--overlay` mark the
+    // real thing). The main thread checks the sender is an overlay a second time when
+    // these arrive — see `MainCommmand::AppRead`. Editing someone's files deserves
+    // both locks.
+    if is_overlay {
+        let mut app = vm_init.raw_table();
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "read",
+            move |_, _, file: String| {
+                let (tx, rx) = sync_channel::<Option<String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppRead(file, tx))));
+                match rx.recv() {
+                    Ok(Some(s)) => Ok(Value::String(s)),
+                    _ => Ok(Value::Nil),
+                }
+            },
+            "overlay only: read a file out of the app being edited",
+            "
+---@param path string
+---@return string|nil
+function app.read(path) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "write",
+            move |_, _, (file, contents): (String, String)| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppWrite(file, contents, tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "overlay only: write a file into the app being edited",
+            "
+---@param path string
+---@param contents string
+---@return boolean
+function app.write(path, contents) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "list",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Vec<String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppList(tx))));
+                let files = rx.recv().unwrap_or_default();
+                let mut t = vm.raw_table();
+                for (i, f) in files.iter().enumerate() {
+                    t.set(i as i64 + 1, f.to_string());
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: every file in the app being edited",
+            "
+---@return table
+function app.list() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "reload",
+            move |_, _, (): ()| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppReload(tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "overlay only: reload the app being edited, so a written file takes effect",
+            "
+---@return boolean
+function app.reload() end",
+            &mut app
+        );
+
+        vm_init
+            .globals
+            .borrow_mut(mc_in)
+            .set("app", vm_init.wrap_table(mc_in, app));
+    }
+
     vm_init.build_and_run(
         mc_in,
         Some("patch"),
@@ -2509,7 +2607,20 @@ pub fn load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations).block_on()
+    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false).block_on()
+}
+
+/// Bring an app up as an **overlay**: an editing surface over the running app, which
+/// owns input, draws on its own gui layer, and gets the privileged `app.*` table.
+///
+/// The only way to make one, and reachable only from the console and `--overlay` — an
+/// app's own Lua has no path here (its `over()` makes a plain child bundle). Keeping
+/// the whole sequence in one function is the point: the mark has to be set before the
+/// VM is built, and two call sites hand-rolling that is how it drifts.
+pub fn load_overlay(core: &mut Core, path: &str) -> Result<u8, P64Error> {
+    let id = core.bundle_manager.bundle_counter;
+    async_load_app(core, Some(path), None, None, None, true).block_on()?;
+    Ok(id)
 }
 pub async fn load_app_and_log(
     core: &mut Core,
@@ -2530,6 +2641,7 @@ async fn async_load_app(
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
+    as_overlay: bool,
 ) -> Result<(), P64Error> {
     println!(
         "{} {}",
@@ -2547,6 +2659,15 @@ async fn async_load_app(
     };
 
     bundle.pool = Some(core.gui.make_shared_pool());
+
+    // Marked here, before the Lua thread starts, because the `app.*` table is decided
+    // at VM build time — marking after the load (as the console command used to) left
+    // an overlay's first frames running without the tools it was opened for. A reload
+    // of an already-marked overlay keeps its mark, and nothing else ever sets one.
+    if as_overlay {
+        bundle.overlay = true;
+    }
+    let privileged = bundle.overlay;
 
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
@@ -2580,7 +2701,7 @@ async fn async_load_app(
         #[cfg(feature = "audio")]
         core.singer.clone(),
         core.global.debug,
-        false,
+        privileged,
     ));
 
     let debug = core.global.debug;
@@ -3034,6 +3155,14 @@ pub enum MainCommmand {
     Stats(),
     Read(String, SyncSender<Option<String>>),
     Write(String, String, SyncSender<bool>),
+    /// The `app.*` family: an overlay reaching into the app it edits. The main thread
+    /// re-checks that the sender really is an engine-marked overlay before acting on
+    /// any of these — the natives are only installed into overlay VMs, but a
+    /// permission this sharp shouldn't rest on that alone.
+    AppRead(String, SyncSender<Option<String>>),
+    AppWrite(String, String, SyncSender<bool>),
+    AppList(SyncSender<Vec<String>>),
+    AppReload(SyncSender<bool>),
     Copy(String),
     LuaClose(),
     //for testing

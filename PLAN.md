@@ -598,6 +598,16 @@ The unprivileged leg of this was not theoretical: `io.get`/`io.set` could read a
 write anywhere on disk via an absolute path (fixed in `65b2420`) — the game sandbox
 has to actually hold before an elevated surface above it means anything.
 
+**How it ended up enforced** (phase 1, `app.*`): the privileged table is *built* only
+for a bundle the engine marked as an overlay, so in a game's VM the natives don't
+exist to be called — and the mark is set before the VM starts, which is why overlays
+load through `command::load_overlay` instead of `load_app` + `mark_overlay` after the
+fact. Nothing in Lua can mark one: an app's `over()` passes its bool as `is_parent`
+and makes an ordinary child bundle. On arrival, each `app.*` packet is checked again
+against the sender's id (`Core::overlay_edit_target`), which is also the only place
+the edit target is resolved — the first *non-overlay* bundle, so two open editors
+both aim at the game and never at each other.
+
 ### Shape
 
 An overlay is a **child bundle bound to a gui layer**. The app keeps running on
@@ -610,10 +620,10 @@ work is one shared **target handle** rather than four bespoke bridges:
 
 ```lua
 -- inside an overlay bundle
-app.scripts()            -- names
-app.read("main.lua")     -- source
-app.write("main.lua", s)
-app.reload()             -- hot-reload the target, overlay stays up
+app.list()               -- ✅ every file in the target, relative + sorted
+app.read("scripts/main.lua")   -- ✅ source
+app.write("scripts/main.lua", s) -- ✅
+app.reload()             -- ✅ hot-reload the target, overlay stays up
 app.tex_names()
 app.get_tex(name)        -- image userdata, editable with the usual im: methods
 app.set_tex(name, im)
@@ -637,7 +647,7 @@ Each is independently useful, and phase 0 is what unlocks the rest.
 | phase | work | deliverable |
 |-------|------|-------------|
 | **0** | assign `bundle_target`, drop the Secondary/Trinary early-out, generalize input focus | a "hello overlay" drawing over a running app and taking input — the unlock |
-| **1** | target handle: scripts read/write + reload | **source editor**: edit the running game's Lua, hot-reload without losing the overlay |
+| **1** | ✅ target handle: `app.list`/`read`/`write`/`reload` | the engine half is in; the **source editor** UI on top of it is next |
 | **2** | target handle: texture get/set | **image editor** — Fresco's brush engine pointed at the target's texture instead of its own canvas |
 | **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
 | **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
