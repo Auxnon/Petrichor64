@@ -43,7 +43,13 @@ impl Display for ScreenIndex {
 struct ScreenLayer {
     pub texture: TexTuple,
     pub image: Arc<AtomicCell<RgbaImage>>,
-    pub bundle_target: u8,
+    /// Which bundle's raster this layer shows, or `None` when no bundle occupies it.
+    ///
+    /// Was a bare `u8` hardcoded to 0 on every layer, which is why Secondary and
+    /// Trinary existed in the shader but never showed anything. `None` matters: a
+    /// closed overlay has to leave its layer *cleared*, or its last frame would hang
+    /// over the app forever.
+    pub bundle_target: Option<u8>,
     pub index: ScreenIndex,
     pub dirty: bool,
 }
@@ -56,7 +62,7 @@ impl ScreenLayer {
         queue: &wgpu::Queue,
         size: &[u32; 2],
     ) {
-        match bundle_manager.get_pool(self.bundle_target) {
+        match self.bundle_target.and_then(|id| bundle_manager.get_pool(id)) {
             Some(pool) => {
                 // Get the weak ref for this screen index
                 let weak_ref = match self.index {
@@ -118,15 +124,27 @@ impl ScreenLayer {
             // dirty and the LuaImg is available. The dirty flag is only cleared
             // after a successful upload so that the attempt is retried if the
             // pool or weak-ref is not yet ready.
-            // Primary is the Lua `gui` raster; Sky is the Lua `sky` raster. Secondary
-            // and Trinary have no data source wired up — they must NOT source from
-            // pool.gui (that froze a stale white snapshot of the gui over the sky).
-            // Leave them at their transparent init so the shader composite skips them.
-            ScreenIndex::Secondary | ScreenIndex::Trinary => {
-                self.dirty = false;
-            }
+            // Every Lua-driven layer sources its own bundle's `gui` raster (or `sky`
+            // for the sky layer). Secondary and Trinary used to bail out here with no
+            // data source, which is why they existed in the shader and never showed
+            // anything; they source exactly like Primary now, the only difference
+            // being which bundle they point at.
             _ => {
-                if let Some(pool) = bundle_manager.get_pool(self.bundle_target) {
+                // Unoccupied layer — an overlay that closed, or one never used. Clear
+                // it once, or its last frame hangs over the app indefinitely (the
+                // earlier hazard here was the opposite mistake: sourcing pool.gui
+                // regardless, which froze a stale white gui over the sky).
+                let target = match self.bundle_target {
+                    Some(t) => t,
+                    None => {
+                        let blank =
+                            RgbaImage::new(self.texture.texture.width(), self.texture.texture.height());
+                        crate::texture::write_tex(queue, &self.texture.texture, &blank);
+                        self.dirty = false;
+                        return;
+                    }
+                };
+                if let Some(pool) = bundle_manager.get_pool(target) {
                     let weak_ref = match self.index {
                         ScreenIndex::Sky => pool.sky.as_ref(),
                         _ => pool.gui.as_ref(),
@@ -251,7 +269,7 @@ impl Gui {
                 texture: system_texture,
                 image: Arc::new(AtomicCell::new(system_image)),
                 index: ScreenIndex::System,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
             primary_layer: ScreenLayer {
@@ -259,7 +277,7 @@ impl Gui {
                 texture: primary_texture,
                 image: Arc::new(AtomicCell::new(primary_image)),
                 index: ScreenIndex::Primary,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
             secondary_layer: ScreenLayer {
@@ -267,7 +285,8 @@ impl Gui {
                 texture: secondary_texture,
                 image: Arc::new(AtomicCell::new(secondary_image)),
                 index: ScreenIndex::Secondary,
-                bundle_target: 0,
+                // Assigned by `sync_layer_targets` when an overlay is up.
+                bundle_target: None,
                 dirty: true,
             },
             trinary_layer: ScreenLayer {
@@ -275,7 +294,7 @@ impl Gui {
                 texture: trinary_texture,
                 image: Arc::new(AtomicCell::new(trinary_image)),
                 index: ScreenIndex::Trinary,
-                bundle_target: 0,
+                bundle_target: None,
                 dirty: true,
             },
             sky_layer: ScreenLayer {
@@ -283,7 +302,7 @@ impl Gui {
                 texture: sky_bundle,
                 image: Arc::new(AtomicCell::new(sky_image)),
                 index: ScreenIndex::Sky,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
 
@@ -488,23 +507,23 @@ impl Gui {
         match index {
             ScreenIndex::System => {
                 self.system_layer.dirty = true;
-                self.system_layer.bundle_target = bundle_id;
+                self.system_layer.bundle_target = Some(bundle_id);
             }
             ScreenIndex::Primary => {
                 self.primary_layer.dirty = true;
-                self.primary_layer.bundle_target = bundle_id;
+                self.primary_layer.bundle_target = Some(bundle_id);
             }
             ScreenIndex::Secondary => {
                 self.secondary_layer.dirty = true;
-                self.secondary_layer.bundle_target = bundle_id;
+                self.secondary_layer.bundle_target = Some(bundle_id);
             }
             ScreenIndex::Trinary => {
                 self.trinary_layer.dirty = true;
-                self.trinary_layer.bundle_target = bundle_id;
+                self.trinary_layer.bundle_target = Some(bundle_id);
             }
             ScreenIndex::Sky => {
                 self.sky_layer.dirty = true;
-                self.sky_layer.bundle_target = bundle_id;
+                self.sky_layer.bundle_target = Some(bundle_id);
             }
         }
     }
@@ -548,8 +567,44 @@ impl Gui {
     // }
 
     #[cfg(feature = "headed")]
+    /// Point each Lua-driven layer at the bundle that should be drawing it.
+    ///
+    /// Derived from the bundle manager every frame rather than assigned when a bundle
+    /// loads: there's no wiring to keep in step, and a layer can't be left pointing at
+    /// a bundle that has gone away. The app takes Primary, overlays stack above it on
+    /// Secondary then Trinary, and anything left over is cleared.
+    ///
+    /// Sky stays with the app deliberately — an overlay is a surface *in front of* the
+    /// scene, and letting it replace the sky would blank the world behind it.
+    #[cfg(feature = "headed")]
+    fn sync_layer_targets(&mut self, bm: &BundleManager) {
+        let order = bm.layer_order();
+        let pick = |i: usize| order.get(i).copied();
+        let want = [pick(0), pick(1), pick(2)];
+        let layers = [
+            &mut self.primary_layer,
+            &mut self.secondary_layer,
+            &mut self.trinary_layer,
+        ];
+        for (layer, target) in layers.into_iter().zip(want) {
+            if layer.bundle_target != target {
+                layer.bundle_target = target;
+                // Force an upload: either new content to show, or a clear to do.
+                layer.dirty = true;
+            }
+        }
+        if let Some(app) = pick(0) {
+            if self.sky_layer.bundle_target != Some(app) {
+                self.sky_layer.bundle_target = Some(app);
+                self.sky_layer.dirty = true;
+            }
+        }
+    }
+
     pub fn render(&mut self, bm: &mut BundleManager, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
+        #[cfg(feature = "headed")]
+        self.sync_layer_targets(bm);
         if loggy.is_dirty_and_listen() && self.output_console {
             self.console_string = loggy.get();
             self.apply_console_out_text();

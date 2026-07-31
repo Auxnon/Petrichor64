@@ -1115,8 +1115,17 @@ impl ApplicationHandler for App {
             core.global.scroll_delta = (0., 0.);
 
             // Send the Lua loop message (~60 Hz).
+            //
+            // Nothing gets input while the console is open — the keys are being typed
+            // into the console, and they must not also drive the game. The wasm path
+            // already did this; native didn't, so on desktop typing a command was
+            // simultaneously playing the game. Same rule as an overlay taking input,
+            // just with the console as the surface on top.
+            let console_open = core.global.console;
+            let quiet = ControlState::default();
+            let feed = if console_open { &quiet } else { &self.bits };
             core.bundle_manager
-                .call_loop(&mut core.completed_bundles, &self.bits);
+                .call_loop(&mut core.completed_bundles, feed);
 
             // Save current key state for next frame's pressed/released detection.
             self.bits_prev = self.bits.0;

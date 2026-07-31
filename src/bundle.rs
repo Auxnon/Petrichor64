@@ -32,6 +32,15 @@ pub struct Bundle {
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
     pub pool: Option<SharedPool>,
+    /// An editing surface drawn *over* the app rather than part of it.
+    ///
+    /// Marked explicitly instead of inferred from "isn't bundle 0", because bundles
+    /// will legitimately have non-overlay children one day (composition), and those
+    /// must not silently start stealing input or a gui layer.
+    ///
+    /// Only the engine ever sets this — nothing in Lua can create a bundle, let alone
+    /// an overlay. See PLAN.md's overlay trust boundary.
+    pub overlay: bool,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -50,6 +59,7 @@ impl Bundle {
             frame_split: 1,
             lua_ctx_handle: None,
             pool: None,
+            overlay: false,
         }
     }
 
@@ -122,7 +132,15 @@ impl BundleManager {
     }
 
     pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: &ControlState) {
+        // An overlay takes input outright: it's an editor sitting on top of the app,
+        // and letting keystrokes reach the game underneath would be both confusing
+        // and destructive (typing into a source editor would also be driving the
+        // game). Everyone else runs on a neutral snapshot, which is the same trick
+        // the console already uses to keep its typing out of the game.
+        let owner = self.input_owner();
+        let quiet = ControlState::default();
         for (id, bundle) in &mut self.bundles.iter_mut() {
+            let bits = if *id == owner { bits } else { &quiet };
             if !if let Some(updated) = updated_bundles.get_mut(id) {
                 if *updated {
                     if bundle.skips >= bundle.frame_split {
@@ -210,8 +228,60 @@ impl BundleManager {
         self.bundles.get_mut(&id).unwrap()
     }
 
+    /// Which bundle receives real input this frame: the topmost overlay if any is up,
+    /// otherwise the app itself.
+    ///
+    /// "Topmost" follows `call_order`, so it matches what the gui layers show — the
+    /// surface you can see on top is the one you're typing into.
+    pub fn input_owner(&self) -> u8 {
+        for id in self.call_order.iter().rev() {
+            if self.bundles.get(id).map_or(false, |b| b.overlay) {
+                return *id;
+            }
+        }
+        *self.call_order.first().unwrap_or(&0)
+    }
+
+    /// Bundles in gui-layer order: the app first, then overlays above it.
+    ///
+    /// The renderer reads this every frame rather than being told when to rewire, so
+    /// loading or closing an overlay needs no bookkeeping and can't leave a layer
+    /// pointing at a bundle that no longer exists.
+    pub fn layer_order(&self) -> Vec<u8> {
+        let mut out: Vec<u8> = self
+            .call_order
+            .iter()
+            .copied()
+            .filter(|id| self.bundles.get(id).map_or(false, |b| !b.overlay))
+            .collect();
+        out.extend(
+            self.call_order
+                .iter()
+                .copied()
+                .filter(|id| self.bundles.get(id).map_or(false, |b| b.overlay)),
+        );
+        out
+    }
+
+    /// Mark a bundle as an overlay. Engine-only by construction: this is not reachable
+    /// from Lua.
+    pub fn mark_overlay(&mut self, id: u8) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            b.overlay = true;
+        }
+    }
+
     pub fn rebuild_call_order(&mut self) {
-        self.call_order = self.bundles.keys().copied().collect();
+        // Sorted, because this was seeded straight from `FxHashMap::keys()` — whose
+        // order is arbitrary. That decided the order bundles run their Lua loops in,
+        // and now also which gui layer each one draws to and which one owns input, so
+        // an overlay could land on a different layer or miss input between runs with
+        // nothing in the code having changed. Ids increase with creation, so ascending
+        // order means the app comes first and overlays stack in the order they were
+        // opened — the newest on top, which is what "topmost" should mean.
+        let mut seed: Vec<u8> = self.bundles.keys().copied().collect();
+        seed.sort_unstable();
+        self.call_order = seed;
 
         for (bi, (k, b)) in self.bundles.iter().enumerate() {
             if !b.children.is_empty() {
@@ -368,6 +438,31 @@ impl BundleManager {
         }
     }
 
+    /// Shut down and drop every overlay, leaving the app running.
+    ///
+    /// Separate from `soft_reset`, which resets a bundle *and its children*: an
+    /// overlay is deliberately not a child of the app it edits, so reloading the app
+    /// doesn't take the editor down with it.
+    pub fn close_overlays(&mut self) -> usize {
+        let ids: Vec<u8> = self
+            .bundles
+            .iter()
+            .filter(|(_, b)| b.overlay)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ids {
+            if let Some(mut b) = self.bundles.remove(id) {
+                if let Err(e) = b.shutdown() {
+                    eprintln!("failed to shut down overlay {}: {}", id, e);
+                }
+            }
+        }
+        if !ids.is_empty() {
+            self.rebuild_call_order();
+        }
+        ids.len()
+    }
+
     pub fn hard_reset(&mut self) {
         for (id, mut bundle) in self.bundles.drain() {
             if let Err(e) = bundle.shutdown() {
@@ -418,5 +513,72 @@ impl BundleMutations {
             gui: true,
             sky: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bundle with no Lua context attached. `LuaCore::new()` allocates nothing and
+    /// starts no thread, so the ordering rules can be tested for real rather than
+    /// reimplemented in the test.
+    fn app(bm: &mut BundleManager, name: &str) -> u8 {
+        bm.make_bundle(Some(name), None, None).id
+    }
+
+    /// The surface on top owns input. With nothing overlaid that's the app; once an
+    /// overlay is up it takes input outright, and the app must not also receive it —
+    /// otherwise typing into an editor would simultaneously drive the game.
+    #[test]
+    fn input_goes_to_the_topmost_overlay() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        assert_eq!(bm.input_owner(), game, "no overlay: the app owns input");
+
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+        assert_eq!(bm.input_owner(), tool);
+
+        // A second overlay stacks above the first and takes over.
+        let tool2 = app(&mut bm, "tool2");
+        bm.mark_overlay(tool2);
+        assert_eq!(bm.input_owner(), tool2);
+    }
+
+    /// Layer assignment: the app draws to primary, overlays stack above it. Order
+    /// matters — it's what decides which surface you see, and therefore which one
+    /// `input_owner` hands input to.
+    #[test]
+    fn layer_order_puts_app_first_then_overlays() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.layer_order(), vec![game, tool]);
+
+        // Even though this one has a lower id than an existing overlay would suggest,
+        // non-overlays always come first: the app can't be pushed off primary.
+        let tool2 = app(&mut bm, "tool2");
+        bm.mark_overlay(tool2);
+        assert_eq!(bm.layer_order(), vec![game, tool, tool2]);
+    }
+
+    /// Closing overlays leaves the app alone. They're deliberately not children of
+    /// the app, so neither teardown direction should take the other with it.
+    #[test]
+    fn close_overlays_leaves_the_app_running() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.close_overlays(), 1);
+        assert!(bm.get(game).is_some(), "the app must survive");
+        assert!(bm.get(tool).is_none(), "the overlay must be gone");
+        assert_eq!(bm.input_owner(), game, "input returns to the app");
+        assert_eq!(bm.layer_order(), vec![game]);
+        assert_eq!(bm.close_overlays(), 0, "closing again is a no-op");
     }
 }
