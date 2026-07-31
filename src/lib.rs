@@ -172,6 +172,11 @@ pub struct App {
     /// The VM web worker (wasm only). Spawned once; drives the Lua VM off-thread.
     #[cfg(target_arch = "wasm32")]
     worker: Option<crate::web_worker::WorkerHandle>,
+    /// `--overlay <path>` from the command line: bring a tool up once the app is
+    /// running. Engine-level by nature (whoever launched the binary is trusted), and
+    /// deliberately not reachable from the app — same rule as the console command.
+    #[cfg(not(target_arch = "wasm32"))]
+    deferred_overlay: Option<String>,
     /// Set while the native window (and therefore the surface) is gone — Android
     /// tears it down whenever the app leaves the foreground. Named for what it means
     /// rather than "suspended", which is already a method on this type.
@@ -230,6 +235,8 @@ impl Default for App {
             worker: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
             deferred_auto: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            deferred_overlay: None,
             surface_lost: false,
             primary_touch: None,
             touch_last: None,
@@ -446,6 +453,15 @@ impl ApplicationHandler for App {
             // the following config state change fires.
             core.global.state_delay = 8;
             core.global.is_state_changed = true;
+
+            // `--overlay <path>`: applied after the app loads, on the first frame.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let args: Vec<String> = env::args().collect();
+                if let Some(i) = args.iter().position(|a| a == "--overlay") {
+                    self.deferred_overlay = args.get(i + 1).cloned();
+                }
+            }
 
             // --- Auto-load or command-line file ---
             let maybe_load = if env::args().count() > 1 {
@@ -826,6 +842,23 @@ impl ApplicationHandler for App {
                 if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
                     core.loggy
                         .log(LogType::CoreError, &format!("failed to load {}: {}", path, e));
+                }
+            }
+        }
+
+        // Bring up a `--overlay` tool, once the app it edits is in place.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.deferred_load.is_none() {
+            if let Some(path) = self.deferred_overlay.take() {
+                if let Some(core) = self.core.as_mut() {
+                    let id = core.bundle_manager.bundle_counter;
+                    match crate::command::load_app(core, Some(&path), None, None, None) {
+                        Ok(()) => {
+                            core.bundle_manager.mark_overlay(id);
+                            ::log::info!("overlay '{}' up as bundle {}", path, id);
+                        }
+                        Err(e) => ::log::error!("overlay '{}' failed: {}", path, e),
+                    }
                 }
             }
         }
