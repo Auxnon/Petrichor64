@@ -122,6 +122,40 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             core.loggy
                 .log(LogType::Config, &core.bundle_manager.list_bundles());
         }
+        // Spawn or dismiss an editing overlay: `overlay apps/mytool` / `overlay off`.
+        //
+        // Deliberately a *console* command and nothing else. Overlays are the
+        // privileged surface — they reach the filesystem and edit another bundle — so
+        // the app being edited must have no way to summon one. There is no Lua path
+        // here to find, which is the point (see PLAN.md, overlay trust boundary).
+        "overlay" => {
+            if segments.len() < 2 {
+                core.loggy.log(
+                    LogType::Config,
+                    "usage: overlay <app path> | overlay off",
+                );
+            } else if segments[1] == "off" || segments[1] == "close" {
+                let n = core.bundle_manager.close_overlays();
+                core.loggy
+                    .log(LogType::Config, &format!("closed {} overlay(s)", n));
+            } else {
+                // Loaded as its own bundle, not a child of the app: reloading the app
+                // shouldn't tear the editor down with it.
+                let id = core.bundle_manager.bundle_counter;
+                match load_app(core, Some(segments[1]), None, None, None) {
+                    Ok(()) => {
+                        core.bundle_manager.mark_overlay(id);
+                        core.loggy.log(
+                            LogType::Config,
+                            &format!("overlay '{}' up as bundle {}", segments[1], id),
+                        );
+                    }
+                    Err(e) => core
+                        .loggy
+                        .log(LogType::ConfigError, &format!("overlay failed: {}", e)),
+                }
+            }
+        }
         "pack" => {
             // new: path? name?
             // name, path, cartridge pic
