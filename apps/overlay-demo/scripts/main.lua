@@ -31,7 +31,6 @@ end
 
 function loop()
 	local m = mus()
-	local i = 0
 
 	-- Count keypresses to show input is arriving here and not at the app.
 	for i = 1, #KEYS do
@@ -54,8 +53,18 @@ function loop()
 	gui:rect(0.06, 0.06, 0.88, 0.012, "5CF")
 	gui:text("OVERLAY  bundle 1 / secondary layer", 0.09, 0.11, "DEF")
 	gui:text("input owner: this overlay", 0.09, 0.16, "9CE")
-	gui:text("presses: " .. tostring(presses) .. "   last: " .. last_key, 0.09, 0.21, "FE9")
-	gui:text("pointer: " .. tostring(flr(m.x * 100)) .. "," .. tostring(flr(m.y * 100)), 0.09, 0.26, "9E9")
+	-- Built two operands at a time on purpose. A chain that mixes a *call* with a
+	-- *global* — e.g. `"a" .. tostring(n) .. "b" .. some_global` — miscompiles in silt
+	-- and makes an unrelated global call in the same function fail with
+	-- "Value 'Value: userdata' is not callable". test/silt-scope has the minimal case.
+	local msg = "presses: " .. tostring(presses)
+	msg = msg .. "   last: "
+	msg = msg .. last_key
+	gui:text(msg, 0.09, 0.21, "FE9")
+	local pos = "pointer: " .. tostring(flr(m.x * 100))
+	pos = pos .. ","
+	pos = pos .. tostring(flr(m.y * 100))
+	gui:text(pos, 0.09, 0.26, "9E9")
 	gui:text("` for console, then: overlay off", 0.09, 0.31, "888")
 
 	-- A pointer mark, to show the overlay tracks input while the app cannot.
