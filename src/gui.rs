@@ -503,27 +503,35 @@ impl Gui {
     // }
 
     #[cfg(feature = "headed")]
-    pub fn mark_dirty(&mut self, index: ScreenIndex, bundle_id: u8) {
-        match index {
-            ScreenIndex::System => {
-                self.system_layer.dirty = true;
-                self.system_layer.bundle_target = Some(bundle_id);
-            }
-            ScreenIndex::Primary => {
-                self.primary_layer.dirty = true;
-                self.primary_layer.bundle_target = Some(bundle_id);
-            }
-            ScreenIndex::Secondary => {
-                self.secondary_layer.dirty = true;
-                self.secondary_layer.bundle_target = Some(bundle_id);
-            }
-            ScreenIndex::Trinary => {
-                self.trinary_layer.dirty = true;
-                self.trinary_layer.bundle_target = Some(bundle_id);
-            }
-            ScreenIndex::Sky => {
+    /// A bundle finished a loop having drawn: mark whichever layer it actually owns.
+    ///
+    /// It used to be told the layer, and every caller said `Primary` — so an overlay
+    /// drawing to `secondary` never marked anything and its texture was only ever
+    /// re-uploaded when something else forced it (resizing the window, which rebuilds
+    /// every layer). The cursor moved in the raster and never reached the GPU.
+    ///
+    /// It also used to *assign* `bundle_target` from the reporting bundle, which put
+    /// two writers on that field: an overlay's report re-pointed `primary` at the
+    /// overlay, and `sync_layer_targets` pointed it back at the app on the next
+    /// frame. Assignment belongs to `sync_layer_targets` alone — it derives the whole
+    /// mapping from `layer_order()` every frame — so this only sets the dirty bit.
+    /// A bundle with no layer yet needs no mark: the frame that assigns it one marks
+    /// it dirty as part of the assignment.
+    pub fn mark_bundle_dirty(&mut self, bundle_id: u8, sky: bool) {
+        if sky {
+            if self.sky_layer.bundle_target == Some(bundle_id) {
                 self.sky_layer.dirty = true;
-                self.sky_layer.bundle_target = Some(bundle_id);
+            }
+            return;
+        }
+        let layers = [
+            &mut self.primary_layer,
+            &mut self.secondary_layer,
+            &mut self.trinary_layer,
+        ];
+        for layer in layers {
+            if layer.bundle_target == Some(bundle_id) {
+                layer.dirty = true;
             }
         }
     }
