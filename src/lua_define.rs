@@ -17,7 +17,7 @@ use gilrs::{Axis, Button, Event, EventType};
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Lua, Value};
 use parking_lot::Mutex;
-use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, ExVal};
+use silt_lua::{gc_arena::Mutation, lua::VM, prelude::Compiler, userdata::WeakWrapper, ExVal};
 // use piccolo::{
 //     compiler::{self as Compiler, interning::BasicInterner},
 //     error::{LuaError, StaticLuaError},
@@ -336,6 +336,12 @@ impl<'lt> LuaCore {
                     globals.set("gui", main_val);
                     globals.set("sky", sky_val);
                     drop(globals);
+                    // Clone before handing the refs to the main thread: the loop needs
+                    // them to publish each finished frame (see LuaImg::publish).
+                    let gui_ref_local = main_ref
+                        .upgrade()
+                        .map(|w| WeakWrapper::from_wrapper(&w));
+                    let sky_ref_local = sky_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
                     let pong = Box::new((main_ref, sky_ref));
 
                     async_sender.send((bundle_id, MainCommmand::InitBack(pong)))?;
@@ -398,6 +404,8 @@ impl<'lt> LuaCore {
                         diff_keys_mutex,
                         mice_mutex,
                         async_sender,
+                        gui_ref: gui_ref_local,
+                        sky_ref: sky_ref_local,
                     };
 
                     for m in &receiver {
@@ -726,6 +734,24 @@ pub(crate) struct LuaContext {
     pub(crate) mice_mutex: Rc<RefCell<[f32; 13]>>,
     /// VM→host sink (the pitcher). On wasm this becomes a postMessage sink (§4b).
     pub(crate) async_sender: Sender<MainPacket>,
+    /// Handles to this bundle's `gui` and `sky` rasters, used at the end of every
+    /// loop to publish the finished frame for the renderer.
+    pub(crate) gui_ref: Option<WeakWrapper>,
+    pub(crate) sky_ref: Option<WeakWrapper>,
+}
+
+/// Publish a raster's finished frame, reporting whether it had anything new.
+/// Runs on the owning Lua thread, so the copy can't race its own draw calls.
+fn publish_raster(r: &Option<WeakWrapper>) -> bool {
+    match r {
+        Some(w) => match w.upgrade() {
+            Some(mut ud) => ud
+                .downcast_mut(|img: &mut crate::lua_img::LuaImg| Ok(img.publish()))
+                .unwrap_or(false),
+            None => false,
+        },
+        None => false,
+    }
 }
 
 /// Dispatch a single `LuaTalk` message against the VM. Shared by the native
@@ -856,9 +882,13 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
 
             local_pool.check_lock(shared);
 
-            // BundleMutations defaults gui/sky to true so mark_dirty runs after
-            // every loop, uploading the latest LuaImg content to the GPU textures.
-            let mutations = BundleMutations::new();
+            // Publish whatever this loop drew, and report only what actually
+            // changed. This used to hand back a hardcoded `true` for both, so a
+            // still screen re-uploaded the same megabyte every frame per layer.
+            let mutations = BundleMutations {
+                gui: publish_raster(&ctx.gui_ref),
+                sky: publish_raster(&ctx.sky_ref),
+            };
             ctx.async_sender
                 .send((ctx.bundle_id, MainCommmand::LoopComplete(mutations)))?;
             local_pool.drop();
