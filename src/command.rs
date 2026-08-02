@@ -128,6 +128,25 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         // privileged surface — they reach the filesystem and edit another bundle — so
         // the app being edited must have no way to summon one. There is no Lua path
         // here to find, which is the point (see PLAN.md, overlay trust boundary).
+        // Shorthand for the tool you reach for most: `edit` is `overlay apps/edit`,
+        // and `edit off` closes it like any other overlay.
+        "edit" => {
+            let sub = if segments.len() > 1 { segments[1] } else { "" };
+            if sub == "off" || sub == "close" {
+                let n = core.bundle_manager.close_overlays();
+                core.loggy
+                    .log(LogType::Config, &format!("closed {} overlay(s)", n));
+            } else {
+                match load_overlay(core, "apps/edit") {
+                    Ok(id) => core
+                        .loggy
+                        .log(LogType::Config, &format!("editor up as bundle {}", id)),
+                    Err(e) => core
+                        .loggy
+                        .log(LogType::ConfigError, &format!("editor failed: {}", e)),
+                }
+            }
+        }
         "overlay" => {
             if segments.len() < 2 {
                 core.loggy.log(

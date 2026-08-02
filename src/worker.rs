@@ -451,6 +451,10 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             diff_keys_mutex,
             mice_mutex,
             async_sender: pitcher.clone(),
+            // The worker owns its pixels and posts SetImg when they change, so it
+            // has no raster to publish for a renderer in this process.
+            gui_ref: None,
+            sky_ref: None,
         })
     })?;
 

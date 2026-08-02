@@ -21,6 +21,19 @@ pub struct LuaImg {
     pub width: u32,
     pub height: u32,
     pub image: RgbaImage,
+    /// The last *completed* frame, and whether it still needs uploading.
+    ///
+    /// `image` is written a draw call at a time by the Lua thread, so reading it
+    /// from the renderer catches half-drawn frames — after a `clr()` and before
+    /// anything is drawn back, the screen flashes empty. `publish` copies a whole
+    /// frame here at the end of a loop, under the same lock the renderer takes, so
+    /// the renderer only ever sees frames that were finished.
+    ///
+    /// `None` until something publishes: only the gui and sky rasters are ever
+    /// presented, and an image the game made with `nimg` shouldn't pay for a second
+    /// buffer it never uses.
+    presented: Option<RgbaImage>,
+    presented_dirty: bool,
     letters: Arc<RgbaImage>,
 }
 
@@ -38,6 +51,8 @@ impl LuaImg {
             image,
             width,
             height,
+            presented: None,
+            presented_dirty: false,
             letters,
         }
     }
@@ -48,6 +63,8 @@ impl LuaImg {
             image: RgbaImage::new(1, 1),
             width: 1,
             height: 1,
+            presented: None,
+            presented_dirty: false,
             letters: Arc::new(RgbaImage::new(1, 1)),
         }
     }
@@ -58,6 +75,8 @@ impl LuaImg {
             image: self.image.clone(),
             width: self.width,
             height: self.height,
+            presented: None,
+            presented_dirty: false,
             letters: self.letters.clone(),
         }
     }
@@ -65,7 +84,39 @@ impl LuaImg {
         self.width = width;
         self.height = height;
         crate::gui::resizer(&mut self.image, width, height);
+        // Drop the presented copy rather than resize it: it belongs to the old
+        // dimensions, and uploading it against the new texture would be an
+        // out-of-bounds copy. The next publish rebuilds it at the right size.
+        self.presented = None;
+        self.presented_dirty = false;
         self.dirty = true;
+    }
+
+    /// Called by the owning Lua thread once its loop has finished drawing: take a
+    /// copy of the completed frame for the renderer. Returns whether there was
+    /// anything new to publish.
+    pub fn publish(&mut self) -> bool {
+        if !self.dirty {
+            return false;
+        }
+        match self.presented.as_mut() {
+            Some(p) if p.dimensions() == self.image.dimensions() => {
+                p.copy_from_slice(&self.image);
+            }
+            _ => self.presented = Some(self.image.clone()),
+        }
+        self.dirty = false;
+        self.presented_dirty = true;
+        true
+    }
+
+    /// Renderer side: hand over the completed frame if one is waiting.
+    pub fn take_presented(&mut self) -> Option<&RgbaImage> {
+        if !self.presented_dirty {
+            return None;
+        }
+        self.presented_dirty = false;
+        self.presented.as_ref()
     }
 }
 

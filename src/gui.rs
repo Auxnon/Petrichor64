@@ -150,11 +150,28 @@ impl ScreenLayer {
                         _ => pool.gui.as_ref(),
                     };
                     if let Some(weak) = weak_ref {
-                        if let Some(lua_img) = weak.upgrade() {
-                            if let Err(e) = lua_img.downcast_ref::<crate::lua_img::LuaImg, _, _>(|img| {
-                                crate::texture::write_tex(queue, &self.texture.texture, &img.image);
-                                Ok(())
-                            }) {
+                        if let Some(mut lua_img) = weak.upgrade() {
+                            // Upload the frame the Lua thread *finished*, never the one
+                            // it is drawing into. Reading `image` directly caught the
+                            // repaint in progress — about 10% of uploads landed after
+                            // a clr() and before anything was drawn back, flashing an
+                            // empty panel. Publishing happens under this same lock, so
+                            // a frame is either wholly old or wholly new.
+                            //
+                            // Nothing to take means nothing changed, so a still screen
+                            // costs one lock instead of re-uploading a megabyte.
+                            if let Err(e) =
+                                lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
+                                    if let Some(frame) = img.take_presented() {
+                                        crate::texture::write_tex(
+                                            queue,
+                                            &self.texture.texture,
+                                            frame,
+                                        );
+                                    }
+                                    Ok(())
+                                })
+                            {
                                 eprintln!("image downcast err: {}", e);
                             };
                             self.dirty = false;
