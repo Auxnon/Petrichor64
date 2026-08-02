@@ -21,7 +21,6 @@ use colored::Colorize;
 use ent_manager::InstanceBuffer;
 use glam::vec2;
 use global::StateChange;
-use gui::ScreenIndex;
 use image::GenericImageView;
 use itertools::Itertools;
 use lua_define::{LuaResponse, MainPacket};
@@ -2299,11 +2298,11 @@ impl Core {
                 MainCommmand::LoopComplete(mutations) => {
                     if mutations.gui {
                         #[cfg(feature = "headed")]
-                        self.gui.mark_dirty(ScreenIndex::Primary, id);
+                        self.gui.mark_bundle_dirty(id, false);
                     }
                     if mutations.sky {
                         #[cfg(feature = "headed")]
-                        self.gui.mark_dirty(ScreenIndex::Sky, id);
+                        self.gui.mark_bundle_dirty(id, true);
                     }
                     self.completed_bundles.insert(id, true);
                     loop_complete = true;
