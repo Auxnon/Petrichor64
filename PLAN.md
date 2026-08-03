@@ -640,6 +640,56 @@ app.set_sample(id, pcm)
 - **Only four layers**, one of which is the console. So at most three concurrent
   app+overlay surfaces.
 
+### 3D in an overlay: the camera is the switch
+
+An overlay is a 2D surface today. To let one own 3D content — a model editor, gizmos,
+a floating inspector — it needs a camera of its own, and that immediately forces a
+decision about depth. The two things worth wanting turn out to be mutually exclusive:
+
+- **Its own camera** means its geometry cannot be depth-compared against the app's.
+  Two cameras give two unrelated world→depth mappings, so "in front of" stops meaning
+  anything and the answer changes as either camera moves.
+- **Interleaving with the app's geometry** (the focus effect: an outline that occludes
+  correctly among the game's blocks) is only coherent while both are looking through
+  the *same* camera.
+
+So rather than a depth flag that can be set to an incoherent combination, the mode
+falls out of whether the overlay ever calls `cam`:
+
+| overlay | camera | depth | cost |
+|---|---|---|---|
+| never calls `cam` | the app's | the app's — interleaved (focus mode) | **nothing**: no extra pass, no extra uniforms |
+| calls `cam` | its own | its own, cleared — drawn over the scene | one extra pass |
+
+A gui-only overlay is the common case and pays nothing, which is the point.
+`BundleManager::has_camera` is that switch, and it is only ever true because the
+bundle asked.
+
+**An overlay that wants 3D should set a camera in `main()`.** Sharing the app's camera
+and depth buffer is legal and free, but interleaving two apps' geometry is inherently
+unpredictable — that is the tradeoff, deliberately taken.
+
+**Done:** the camera is per bundle (`Bundle.cam`), and `MainCommmand::Cam` routes to
+the sender. This was a live bug on its own: every bundle wrote the single global
+camera, so an overlay calling `cam` swung the app's view out from under it. The app's
+camera still drives the scene; an overlay's is recorded and ignored by the view.
+
+**Remaining, for the separate pass:**
+
+1. **Group instance buffers by bundle.** `EntManager::render_ents` builds them from
+   `render_hash`, keyed by model name, flattening every bundle together — so there is
+   currently no way to draw "just the overlay's entities". `LuaEnt` already carries
+   `bundle_id`, so this is a keying change, not new bookkeeping.
+2. **A second camera in the uniforms.** `render.rs` writes one view/persp pair into
+   `gfx.uniform_buf` at offsets 0/64 and binds one `main_bind_group`. The second pass
+   needs either a second slice + bind group or a dynamic offset.
+3. **The pass itself**, in `render_loop` between the app's 3D and the gui composite —
+   the gui layers must stay on top — with `depth_ops` clearing so the overlay's
+   geometry can't be swallowed by the scene. Skipped entirely when no overlay
+   `has_camera`, so the default costs one bool check per frame.
+4. **World chunks are per-bundle already** (`world.destroy(bundle_id)`), so an overlay
+   with tiles comes along for free once (1) and (3) exist.
+
 ### Phases
 
 Each is independently useful, and phase 0 is what unlocks the rest.

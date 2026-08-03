@@ -1862,11 +1862,21 @@ impl Core {
             // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
             match p {
                 MainCommmand::Cam(p, r) => {
-                    if let Some(pos) = p {
-                        self.global.cam_pos = pos;
-                    }
-                    if let Some(rot) = r {
-                        self.global.simple_cam_rot = rot;
+                    // A camera belongs to the bundle that set it. This used to write
+                    // straight into the one global camera, so an overlay calling `cam`
+                    // swung the app's view out from under it — and an overlay wanting
+                    // its own 3D space has to call `cam` by definition.
+                    self.bundle_manager.set_camera(id, p, r);
+                    // The scene is still drawn from the app's camera; an overlay's is
+                    // recorded for its own pass (see PLAN.md, overlay 3D) and does not
+                    // touch the view.
+                    if !self.bundle_manager.is_overlay(id) {
+                        if let Some(pos) = p {
+                            self.global.cam_pos = pos;
+                        }
+                        if let Some(rot) = r {
+                            self.global.simple_cam_rot = rot;
+                        }
                     }
                 }
                 MainCommmand::Light(dir, color, ambient, sky, ground) => {
