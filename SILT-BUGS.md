@@ -1,5 +1,10 @@
 # silt bugs found writing the editor overlay
 
+> **All fixed** in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
+> along with them (the stack accounting it depended on). `test/silt-callarg` now
+> reports `done, failures: 0` with no `is not callable` lines, and 60 top-level
+> globals no longer panics. Kept for the reproductions and the diagnosis trail.
+
 Three reproducible miscompiles, hit while building `apps/edit` (a source editor that
 runs as an overlay). Each one is a silent wrong answer rather than a parse error,
 which is what made them expensive to find — the reported line number points at
@@ -173,7 +178,7 @@ end
 
 ---
 
-## What the workarounds cost
+## What the workarounds cost (now removed)
 
 `apps/edit` currently works around all three, and the workarounds are marked with
 comments pointing back here, so they can be reverted once these are fixed:

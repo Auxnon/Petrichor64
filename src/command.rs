@@ -2910,7 +2910,7 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
 // "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
 // "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
 // "f10", "f11", "f12", "f13","f14","f15", "snap","snapshot","dele"];
-fn key_match(key: String) -> usize {
+pub(crate) fn key_match(key: String) -> usize {
     // KeyCode::from_str(&key).unwrap() as usize
     match key.to_lowercase().as_str() {
         "1" => 0,
@@ -3006,11 +3006,7 @@ fn key_match(key: String) -> usize {
         "`" => 112,
         "kana" => 113,
         "kanji" => 114,
-        "lalt" => 115,
         "lbracket" => 116,
-        "lctrl" => 117,
-        "lshift" => 118,
-        "lwin" => 119,
         "mail" => 120,
         "mediaselect" => 121,
         "mediastop" => 122,
@@ -3027,11 +3023,7 @@ fn key_match(key: String) -> usize {
         "+" => 133,
         "power" => 134,
         "prevtrack" => 135,
-        "ralt" => 136,
         "rbracket" => 137,
-        "rctrl" => 138,
-        "rshift" => 139,
-        "rwin" => 140,
         ";" => 141,
         "/" => 142,
         "sleep" => 143,
@@ -3058,10 +3050,14 @@ fn key_match(key: String) -> usize {
         // "space" => KeyCode::Space,
         // "lctrl" => KeyCode::LControl,
         // "rctrl" => KeyCode::RControl,
-        "alt" => 247,
-        "ctrl" | "control" => 248,
-        "shift" => 249,
-        "super" | "win" => 250,
+        // Left/right modifier names collapse onto the same slots as the bare ones.
+        // `bit_check` never distinguishes sides, so these used to name indices that
+        // nothing on any code path ever wrote: `key("lctrl")` was permanently false,
+        // silently, which is a worse answer than "no such key".
+        "alt" | "lalt" | "ralt" => 247,
+        "ctrl" | "control" | "lctrl" | "rctrl" => 248,
+        "shift" | "lshift" | "rshift" => 249,
+        "super" | "win" | "lwin" | "rwin" => 250,
 
         _ => 255,
     }

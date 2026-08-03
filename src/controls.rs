@@ -250,3 +250,38 @@ pub fn bit_check(state: &ElementState, keycode: KeyCode, bits: &mut ControlState
 fn bundle_missing(bm: &BundleManager) -> String {
     format!("please switch to target {} instead", bm.list_bundles())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The slot a key name resolves to and the slot the input path writes have to be
+    /// the same number. They drifted for the modifiers: `bit_check` folds left/right
+    /// onto 247-250 while `key_match` handed out per-side indices nothing ever wrote,
+    /// so `key("lctrl")` was permanently, silently false.
+    #[test]
+    fn modifier_names_resolve_to_the_slot_input_writes() {
+        use winit::keyboard::KeyCode::*;
+        let cases: [(winit::keyboard::KeyCode, &[&str]); 8] = [
+            (ControlLeft, &["ctrl", "control", "lctrl", "rctrl"]),
+            (ControlRight, &["ctrl", "control", "lctrl", "rctrl"]),
+            (ShiftLeft, &["shift", "lshift", "rshift"]),
+            (ShiftRight, &["shift", "lshift", "rshift"]),
+            (SuperLeft, &["super", "win", "lwin", "rwin"]),
+            (SuperRight, &["super", "win", "lwin", "rwin"]),
+            (AltLeft, &["alt", "lalt", "ralt"]),
+            (AltRight, &["alt", "lalt", "ralt"]),
+        ];
+        for (kc, names) in cases {
+            let slot = keycode_to_index(kc).expect("modifier must map to a slot");
+            for name in names {
+                assert_eq!(
+                    crate::command::key_match(name.to_string()),
+                    slot,
+                    "key(\"{}\") must read the slot the input path writes",
+                    name
+                );
+            }
+        }
+    }
+}
