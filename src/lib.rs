@@ -774,20 +774,20 @@ impl ApplicationHandler for App {
             // (a stuck Cmd would otherwise turn every Enter into Cmd+Enter →
             // fullscreen, etc.).
             WindowEvent::ModifiersChanged(mods) => {
+                // Only the four collapsed modifier slots. Indexing by `KeyCode as
+                // usize` (as this did) writes winit's *discriminant* into the
+                // engine's own key-index space, where the numbers mean something
+                // else entirely: ControlLeft is 55, which is f19 — and f19 is a
+                // typeable character to `cin`, so merely holding Ctrl typed an "e".
+                // Shift landed on f24, Cmd on f22. `bit_check` already collapses
+                // left/right to these same slots, which is why modifiers otherwise
+                // worked at all.
                 let s = mods.state();
                 let b = &mut self.bits.0;
-                b[KeyCode::ShiftLeft as usize] = s.shift_key();
-                b[KeyCode::ShiftRight as usize] = s.shift_key();
-                b[249] = s.shift_key();
-                b[KeyCode::ControlLeft as usize] = s.control_key();
-                b[KeyCode::ControlRight as usize] = s.control_key();
-                b[248] = s.control_key();
-                b[KeyCode::SuperLeft as usize] = s.super_key();
-                b[KeyCode::SuperRight as usize] = s.super_key();
-                b[250] = s.super_key();
-                b[KeyCode::AltLeft as usize] = s.alt_key();
-                b[KeyCode::AltRight as usize] = s.alt_key();
                 b[247] = s.alt_key();
+                b[248] = s.control_key();
+                b[249] = s.shift_key();
+                b[250] = s.super_key();
             }
 
             // ----------------------------------------------------------------

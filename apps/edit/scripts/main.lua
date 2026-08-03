@@ -13,7 +13,7 @@
 --   browse: up/down pick, enter opens, f5 re-lists
 --   edit:   arrows/pgup/pgdn move, ctrl+left|right jump to line ends, end = line end
 --           enter splits (keeping indent), back/del, tab inserts a tab
---           click to place the cursor, ctrl+s writes and reloads the app, esc = browse
+--           click to place the cursor, ctrl+s (or cmd+s) writes and reloads, esc = browse
 --
 -- Layout is a character grid: glyphs are 8x8 with 2px of leading (LETTER_SIZE in
 -- gui.rs), and the gui raster boots at 320x240 — 40 columns by 24 rows. Grid
@@ -205,34 +205,6 @@ function disp_col(s, col)
 	return d
 end
 
--- The line buffer is rebuilt rather than shifted in place. On a table grown with
--- t[#t+1] — which is what split() produces — silt's table.insert(t, pos, v)
--- overwrites position `pos` instead of shifting (losing a line, with # unchanged),
--- and table.remove leaves a nil hole behind. test/silt-callarg carries the case.
-function ins_at(t, at, v)
-	local out = {}
-	for i = 1, #t do
-		if i == at then
-			out[#out + 1] = v
-		end
-		out[#out + 1] = t[i]
-	end
-	if at > #t then
-		out[#out + 1] = v
-	end
-	return out
-end
-
-function del_at(t, at)
-	local out = {}
-	for i = 1, #t do
-		if i ~= at then
-			out[#out + 1] = t[i]
-		end
-	end
-	return out
-end
-
 function insert(s)
 	local l = lines[cy]
 	lines[cy] = l:sub(1, cx - 1) .. s .. l:sub(cx)
@@ -251,7 +223,7 @@ function backspace()
 		local prev = lines[cy - 1]
 		cx = #prev + 1
 		lines[cy - 1] = prev .. lines[cy]
-		lines = del_at(lines, cy)
+		table.remove(lines, cy)
 		cy = cy - 1
 	else
 		return
@@ -267,7 +239,7 @@ function del_fwd()
 		lines[cy] = l:sub(1, cx - 1) .. l:sub(cx + 1)
 	elseif cy < #lines then
 		lines[cy] = l .. lines[cy + 1]
-		lines = del_at(lines, cy + 1)
+		table.remove(lines, cy + 1)
 	else
 		return
 	end
@@ -284,7 +256,7 @@ function newline()
 		indent = ""
 	end
 	lines[cy] = head
-	lines = ins_at(lines, cy + 1, indent .. tail)
+	table.insert(lines, cy + 1, indent .. tail)
 	cy = cy + 1
 	cx = #indent + 1
 	touched = true
@@ -429,8 +401,11 @@ function browse_input()
 end
 
 function edit_input()
-	local ctrl = key("lctrl") or key("rctrl")
-	local shift = key("lshift") or key("rshift")
+	-- "ctrl"/"shift"/"win" are the names that actually resolve; the engine folds
+	-- left and right onto one slot each. "win" is Cmd on macOS, so both the
+	-- desktop and mac chords work.
+	local ctrl = key("ctrl") or key("win")
+	local shift = key("shift")
 
 	if ctrl then
 		-- cin() reports the character whether or not ctrl is down, so chorded keys
@@ -550,8 +525,6 @@ end
 
 function render_browse()
 	rect(0, 0, COLS * CW, CH, C_BAR)
-	-- Built two operands at a time: a longer chain still miscompiles in silt and
-	-- surfaces as "userdata is not callable" on whichever line drew next.
 	local head = "EDIT  " .. #files
 	head = head .. " file(s) in the app below"
 	text(head, 2, 1, C_TEXT)
@@ -571,11 +544,6 @@ function render_browse()
 			rect(0, y, COLS * CW, 8, C_BAR)
 			col = C_PICK
 		end
-		-- Every computed argument is hoisted into a local first. A call in an
-		-- argument list followed by a local argument miscompiles in silt: the
-		-- callee register is clobbered and the call invokes its own first
-		-- argument instead ("<first arg> is not callable"). test/silt-callarg
-		-- has the minimal case.
 		local gx = flr(CW)
 		text(files[i], gx, y, col)
 	end
