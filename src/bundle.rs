@@ -15,6 +15,15 @@ use crate::{
     types::ControlState,
 };
 
+/// A bundle's own camera. Grouped into a type rather than left as a tuple because
+/// `cam` will grow fov and clip planes, and because `Option<BundleCam>` says what a
+/// bare `Option<(Vec3, Vec2)>` doesn't.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BundleCam {
+    pub pos: glam::Vec3,
+    pub rot: glam::Vec2,
+}
+
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
  */
@@ -41,6 +50,13 @@ pub struct Bundle {
     /// Only the engine ever sets this — nothing in Lua can create a bundle, let alone
     /// an overlay. See PLAN.md's overlay trust boundary.
     pub overlay: bool,
+    /// This bundle's camera, once it has set one — position and rotation, as `cam`
+    /// takes them. `None` means it never called `cam`, which is the signal that it
+    /// has no 3D space of its own and inherits the app's.
+    ///
+    /// Overlays used to share one global camera with the app, so an editor calling
+    /// `cam` swung the game's view out from under it.
+    pub cam: Option<BundleCam>,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -60,6 +76,7 @@ impl Bundle {
             lua_ctx_handle: None,
             pool: None,
             overlay: false,
+            cam: None,
         }
     }
 
@@ -265,6 +282,41 @@ impl BundleManager {
                 .filter(|id| self.bundles.get(id).map_or(false, |b| b.overlay)),
         );
         out
+    }
+
+    /// Record the camera a bundle set. The first call is also what marks it as having
+    /// a 3D space of its own: see `has_camera`.
+    pub fn set_camera(&mut self, id: u8, pos: Option<glam::Vec3>, rot: Option<glam::Vec2>) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            let mut c = b.cam.unwrap_or(BundleCam {
+                pos: glam::Vec3::ZERO,
+                rot: glam::Vec2::ZERO,
+            });
+            if let Some(pos) = pos {
+                c.pos = pos;
+            }
+            if let Some(rot) = rot {
+                c.rot = rot;
+            }
+            b.cam = Some(c);
+        }
+    }
+
+    /// Has this bundle ever set a camera?
+    ///
+    /// This is the whole switch between the two overlay modes. An overlay that never
+    /// calls `cam` costs nothing extra to draw: it has no camera, so there is no
+    /// second pass, and any 3D it does own is drawn by the app's camera into the
+    /// app's depth buffer — interleaved with the scene, which is either the focus
+    /// effect you wanted or a mess, depending on the geometry. Setting a camera opts
+    /// into a pass of its own instead.
+    pub fn has_camera(&self, id: u8) -> bool {
+        self.bundles.get(&id).map_or(false, |b| b.cam.is_some())
+    }
+
+    /// The camera a bundle set, if any.
+    pub fn camera(&self, id: u8) -> Option<BundleCam> {
+        self.bundles.get(&id).and_then(|b| b.cam)
     }
 
     /// Is this bundle an overlay? Asked on the main thread before honouring anything
@@ -629,6 +681,40 @@ mod tests {
         bm.mark_overlay(tool);
 
         assert_eq!(bm.edit_target(), None);
+    }
+
+    /// The camera switch between the two overlay modes: untouched until a bundle sets
+    /// one, and per-bundle so an overlay's camera can't move the app's view.
+    #[test]
+    fn a_camera_belongs_to_the_bundle_that_set_it() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert!(!bm.has_camera(game), "nobody has a camera until they ask");
+        assert!(!bm.has_camera(tool), "so a gui-only overlay stays in the cheap path");
+
+        bm.set_camera(tool, Some(glam::vec3(1., 2., 3.)), None);
+        assert!(bm.has_camera(tool), "setting one opts into its own 3D pass");
+        assert!(!bm.has_camera(game), "and says nothing about the app's");
+        assert_eq!(
+            bm.camera(tool),
+            Some(BundleCam {
+                pos: glam::vec3(1., 2., 3.),
+                rot: glam::Vec2::ZERO
+            })
+        );
+
+        // Rotation alone must not wipe the position it was given earlier.
+        bm.set_camera(tool, None, Some(glam::vec2(0.5, 0.25)));
+        assert_eq!(
+            bm.camera(tool),
+            Some(BundleCam {
+                pos: glam::vec3(1., 2., 3.),
+                rot: glam::vec2(0.5, 0.25)
+            })
+        );
     }
 
     /// Drive `call_loop` for `frames`, pretending Lua reports its loop complete before

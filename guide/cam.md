@@ -16,3 +16,17 @@ cam({rot={pi/2}}) -- look down positive Y
 cam {rot={0,-tau/8}} -- look down by 45 degrees
 cam {pos={-10,0,0},rot={0,tau/4}} -- move to -10 X and look straight up
 ```
+
+### In an overlay
+
+The camera belongs to the bundle that sets it, so an overlay calling `cam` moves its
+own view and never the app's underneath.
+
+It also decides how an overlay's 3D content is drawn. An overlay that never calls
+`cam` has no space of its own: it borrows the app's camera and depth buffer, so any
+3D it owns is interleaved with the game's geometry — sometimes the effect you want,
+often not. Calling `cam` opts into a separate pass drawn over the scene, which cannot
+be occluded by it.
+
+So **an overlay with 3D content should call `cam` in `main()`**, before it draws
+anything. A gui-only overlay should not call it at all, and costs nothing extra.
