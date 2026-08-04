@@ -1,5 +1,5 @@
--- silt repro harness: three miscompiles found while writing the editor overlay
--- (apps/edit). Run it and read the console — every check prints ok or FAIL, and a
+-- silt repro harness: miscompiles found while writing the editor overlay (apps/edit)
+-- and the modeller (apps/model). Run it and read the console — every check prints ok or FAIL, and a
 -- miscompile shows up as an "is not callable" error rather than a FAIL line.
 --
 --     Petrichor64 test/silt-callarg
@@ -24,10 +24,18 @@
 -- overflow" on `self.stack_count -= 1` with the stack already empty.
 -- To reproduce: append 60 blocks of `G<i> = "c"` + a small function to any app.
 --
+-- 5. A table CONSTRUCTOR holding a local, assigned straight into a
+--    length-computed index, corrupts the compiled chunk: "Invalid chunk due
+--    compilation corruption". Constants in the same position are fine, and
+--    hoisting the constructor into a local first (or using table.insert) works.
+--    Found building apps/model, where `q[#q + 1] = { a - LINE, -e, 0 }` in a mesh
+--    builder killed the whole file. STILL OPEN.
+--
 -- Full write-up, with the silt source locations for each: SILT-BUGS.md
 
 step = 0
 T = { "a.lua", "b.lua" }
+GRID = 8
 CW = 8
 C = "DDE"
 fails = 0
@@ -127,6 +135,23 @@ function loop()
 		ok("len drops to 18", #t, 18)
 		ok("no nil holes", holes(t), 0)
 		ok("line3 shifts down to index 2", t[2], "line3")
+	elseif step == 155 then
+		cout("--- k1 constructor with a local into t[#t+1] (EXPECTED CORRUPTION)")
+		local q = {}
+		local e = GRID
+		q[#q + 1] = { -e, 0, 0 }
+		ok("ctor with a local", #q, 1)
+	elseif step == 158 then
+		cout("--- k2 same, constants only (expected fine)")
+		local q = {}
+		q[#q + 1] = { 1, 2, 3 }
+		ok("ctor with constants", #q, 1)
+	elseif step == 159 then
+		cout("--- k3 same, via table.insert (the workaround)")
+		local q = {}
+		local e = GRID
+		table.insert(q, { -e, 0, 0 })
+		ok("table.insert with a local", #q, 1)
 	elseif step == 160 then
 		cout("--- t3 the same two through a rebuild (the workaround)")
 		local t = build(19)
