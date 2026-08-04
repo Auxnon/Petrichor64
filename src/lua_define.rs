@@ -658,11 +658,24 @@ impl<'lt> LuaCore {
             if res.is_err() {
                 Err(P64Error::LuaClosed)
             } else {
-                match rx.recv_timeout(Duration::from_millis(5000)) {
+                // A grace period, not a guarantee: every caller carries on regardless
+                // of what this returns, so a wedged thread must not be allowed to hold
+                // up a load. It used to wait five *seconds*, and one of those was on
+                // the startup path — booting with a game argument loads the logo app,
+                // whose Lua immediately blocks on a round trip to the main thread,
+                // and then hard_reset kills it from that same main thread. Neither
+                // side can move, so the wait always ran out in full: ~5s of every
+                // cold start, and up to 5s on every reload (an editor's ctrl+s).
+                //
+                // An idle thread acks in microseconds, so this only costs anything
+                // when the thread really is stuck — and a stuck one self-heals once
+                // its pending request is drained. The graceful fix is to service the
+                // main-thread queue while waiting, which needs the catcher down here.
+                match rx.recv_timeout(Duration::from_millis(250)) {
                     Ok(_) => Ok(()),
                     // Disconnected: the thread is already gone — die() succeeded in
-                    // spirit. Timeout: it's still alive but didn't ack the kill in 5s,
-                    // i.e. wedged mid-call; report that distinctly.
+                    // spirit. Timeout: still alive and mid-call; report that
+                    // distinctly and let the caller move on.
                     Err(RecvTimeoutError::Disconnected) => Ok(()),
                     Err(RecvTimeoutError::Timeout) => Err(P64Error::ChannelTimeoutError(2)),
                 }

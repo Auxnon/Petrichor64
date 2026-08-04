@@ -516,7 +516,11 @@ impl BundleManager {
     /// Separate from `soft_reset`, which resets a bundle *and its children*: an
     /// overlay is deliberately not a child of the app it edits, so reloading the app
     /// doesn't take the editor down with it.
-    pub fn close_overlays(&mut self) -> usize {
+    /// Shut down every overlay, returning their ids so the caller can also drop the
+    /// resources that live outside this manager — entities in particular. Closing an
+    /// overlay used to leave its entities in the entity manager forever, still drawn
+    /// and still walked every frame, because nothing purged them.
+    pub fn close_overlays(&mut self) -> Vec<u8> {
         let ids: Vec<u8> = self
             .bundles
             .iter()
@@ -533,7 +537,7 @@ impl BundleManager {
         if !ids.is_empty() {
             self.rebuild_call_order();
         }
-        ids.len()
+        ids
     }
 
     pub fn hard_reset(&mut self) {
@@ -647,12 +651,15 @@ mod tests {
         let tool = app(&mut bm, "tool");
         bm.mark_overlay(tool);
 
-        assert_eq!(bm.close_overlays(), 1);
+        assert_eq!(bm.close_overlays(), vec![tool]);
         assert!(bm.get(game).is_some(), "the app must survive");
         assert!(bm.get(tool).is_none(), "the overlay must be gone");
         assert_eq!(bm.input_owner(), game, "input returns to the app");
         assert_eq!(bm.layer_order(), vec![game]);
-        assert_eq!(bm.close_overlays(), 0, "closing again is a no-op");
+        assert!(
+            bm.close_overlays().is_empty(),
+            "closing again is a no-op"
+        );
     }
 
     /// An overlay edits the app, never a fellow tool. Two editors open at once must
