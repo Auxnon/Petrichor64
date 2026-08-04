@@ -1,6 +1,6 @@
 # silt bugs found writing the editor overlay
 
-> **All fixed** in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
+> **#5 is open** (found later, building `apps/model`). #1–#4 are fixed in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
 > along with them (the stack accounting it depended on). `test/silt-callarg` now
 > reports `done, failures: 0` with no `is not callable` lines, and 60 top-level
 > globals no longer panics. Kept for the reproductions and the diagnosis trail.
@@ -175,6 +175,43 @@ function filler1(a)
 	return "no"
 end
 ```
+
+---
+
+## 5. A table constructor holding a local, assigned into `t[#t + 1]`, corrupts the chunk
+
+**Open.** Symptom is a compile-time failure of the whole file, reported at the
+offending line:
+
+```lua
+local q = {}
+local e = 8
+q[#q + 1] = { -e, 0, 0 }   -- error: Invalid chunk due compilation corruption
+```
+
+The constructor has to contain a **local**; the same statement with constants is fine,
+which is why it survives small tests:
+
+| statement | result |
+|---|---|
+| `q[#q + 1] = { 1, 2, 3 }` | ok |
+| `q[#q + 1] = 7` | ok |
+| `q[1] = { -e, 0, 0 }` (constant index) | ok |
+| `local n = #q + 1; q[n] = { -e, 0, 0 }` (index hoisted) | ok |
+| `q[#q + 1] = { -e, 0, 0 }` | **corruption** |
+| `q[#q + 1] = { a, 0, 0 }` where `a` is any local | **corruption** |
+| `local r = { -e, 0, 0 }; q[#q + 1] = r` | ok |
+| `table.insert(q, { -e, 0, 0 })` | ok |
+
+It does not need a loop, and it is not about unary minus — `local n = -GRID` on its own
+compiles fine. It is the combination of a constructor containing a local with the
+`#t + 1` index expression. Both workarounds (hoist the constructor, or `table.insert`)
+produce correct code, so the two operand paths clearly disagree about a register.
+
+Found in a mesh builder — `q[#q + 1] = { a - LINE, -e, 0 }` in a loop appending quad
+corners — which is about the most natural way to write that code, so it is worth
+fixing rather than documenting. `apps/model` uses `table.insert` throughout with a
+comment pointing here.
 
 ---
 
