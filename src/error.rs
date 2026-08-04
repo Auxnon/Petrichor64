@@ -28,6 +28,10 @@ pub enum P64Error {
     LuaGenericError,
     MissingAssets,
     MissingScripts,
+    /// Every bundle slot is occupied. Ids are u8 and one live bundle means one live
+    /// Lua thread, so this is unreachable in practice — but it beats handing out an
+    /// id that is already in use.
+    BundleSlotsFull,
     ChannelTimeoutError(u8),
     ChannelDisconnectedError,
 }
@@ -62,6 +66,7 @@ impl Display for P64Error {
                     "Lua thread alive but did not reply to '{op}' in time (stuck mid-call)"
                 )
             }
+            P64Error::BundleSlotsFull => write!(f, "No free bundle slot (256 in use)"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
             P64Error::LuaRunError(err, _) => {

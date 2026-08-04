@@ -110,7 +110,6 @@ impl Bundle {
 
 pub struct BundleManager {
     pub console_bundle_target: u8,
-    pub bundle_counter: u8,
     pub bundles: FxHashMap<u8, Bundle>,
     // #[cfg(feature = "headed")]
     // pub open_tex_managers: Vec<TexManager>,
@@ -124,7 +123,6 @@ impl BundleManager {
     pub fn new() -> Self {
         Self {
             console_bundle_target: 0,
-            bundle_counter: 0,
             bundles: FxHashMap::default(),
             // #[cfg(feature = "headed")]
             // open_tex_managers: Vec::new(),
@@ -133,6 +131,18 @@ impl BundleManager {
             main_rasters: Vec::new(),
             sky_rasters: Vec::new(),
         }
+    }
+
+    /// The lowest id no live bundle is using.
+    ///
+    /// Ids used to come from a monotonic `u8` counter that never reused a slot, so
+    /// opening and closing throwaway overlays climbed 0, 1, 2, … and **wrapped after
+    /// 256**, at which point a new bundle would be handed the id of the running app
+    /// and quietly take its place. Reusing the lowest free slot keeps ids inside the
+    /// range they are stored in, and keeps the app at 0 as long as it is alive —
+    /// which `edit_target`, `layer_order` and the console target all read as "first".
+    pub fn next_free_id(&self) -> Option<u8> {
+        (0..=u8::MAX).find(|i| !self.bundles.contains_key(i))
     }
 
     pub fn is_single(&self) -> bool {
@@ -216,8 +226,13 @@ impl BundleManager {
         bundle_relations: Option<(u8, bool)>,
         game_path: Option<&str>,
     ) -> &mut Bundle {
-        let id = self.bundle_counter;
-        self.bundle_counter += 1;
+        let id = match self.next_free_id() {
+            Some(i) => i,
+            None => {
+                eprintln!("no free bundle slot; reusing 0");
+                0
+            }
+        };
         // let gui = core.gui.make_morsel();
         // let tex_manager = crate::texture::TexManager::new();
         let lua = crate::lua_define::LuaCore::new();
@@ -546,7 +561,6 @@ impl BundleManager {
                 eprintln!("failed to shutdown bundle  {} due to: {}", id, e);
             }
         }
-        self.bundle_counter = 0;
         self.console_bundle_target = 0;
     }
     pub fn reclaim_resources(&mut self, _lua_returns: BundleResources) {}
@@ -688,6 +702,34 @@ mod tests {
         bm.mark_overlay(tool);
 
         assert_eq!(bm.edit_target(), None);
+    }
+
+    /// Ids come from the lowest free slot, so opening and closing throwaway overlays
+    /// cannot climb past the `u8` they are stored in and wrap onto the running app.
+    #[test]
+    fn bundle_ids_reuse_the_lowest_free_slot() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let first = app(&mut bm, "tool");
+        bm.mark_overlay(first);
+        assert_eq!((game, first), (0, 1));
+
+        // Close it and open another: the freed slot comes back rather than the
+        // counter marching on.
+        assert_eq!(bm.close_overlays(), vec![first]);
+        let second = app(&mut bm, "tool2");
+        assert_eq!(second, 1, "the freed id is reused");
+
+        // With a gap in the middle, the gap is filled before anything higher.
+        let third = app(&mut bm, "tool3");
+        assert_eq!(third, 2);
+        bm.bundles.remove(&1);
+        assert_eq!(bm.next_free_id(), Some(1), "the hole, not the end");
+        let fourth = app(&mut bm, "tool4");
+        assert_eq!(fourth, 1);
+
+        // The app keeps slot 0 while it lives, which everything treats as "first".
+        assert_eq!(bm.edit_target(), Some(0));
     }
 
     /// The camera switch between the two overlay modes: untouched until a bundle sets

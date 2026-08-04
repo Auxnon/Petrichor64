@@ -2626,7 +2626,9 @@ pub fn load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false).block_on()
+    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false)
+        .block_on()
+        .map(|_id| ())
 }
 
 /// Close every overlay and drop what they owned outside the bundle manager.
@@ -2651,9 +2653,10 @@ pub fn close_overlays(core: &mut Core) -> usize {
 /// the whole sequence in one function is the point: the mark has to be set before the
 /// VM is built, and two call sites hand-rolling that is how it drifts.
 pub fn load_overlay(core: &mut Core, path: &str) -> Result<u8, P64Error> {
-    let id = core.bundle_manager.bundle_counter;
-    async_load_app(core, Some(path), None, None, None, true).block_on()?;
-    Ok(id)
+    // The id comes back from the load. It used to be predicted by reading the id
+    // counter beforehand, which only held while ids were handed out in order and
+    // never reused; they are now allocated from the lowest free slot.
+    async_load_app(core, Some(path), None, None, None, true).block_on()
 }
 pub async fn load_app_and_log(
     core: &mut Core,
@@ -2675,7 +2678,7 @@ async fn async_load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
     as_overlay: bool,
-) -> Result<(), P64Error> {
+) -> Result<u8, P64Error> {
     println!(
         "{} {}",
         "loading from script".on_green(),
@@ -2889,7 +2892,7 @@ async fn async_load_app(
     core.loggy.log(LogType::Config, "calling main method");
     // core.bundle_manager.call_main(bundle_id);
     bundle.call_main()?;
-    Ok(())
+    Ok(bundle_id)
 }
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
