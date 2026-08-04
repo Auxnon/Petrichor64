@@ -15,7 +15,7 @@ use crate::{
 use glam::{vec3, vec4};
 #[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
-#[cfg(feature = "headed")]
+// Needed by the per-bundle entity map in both builds, headed or not.
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::UserDataWrapper;
 #[cfg(feature = "headed")]
@@ -74,21 +74,68 @@ pub struct EntManager {
     #[cfg(feature = "headed")]
     pub specks: Vec<Ent>,
     // pub create: Vec<LuaEnt>,
-    #[cfg(feature = "headed")]
-    pub ent_array: Vec<(EntRef, Ent, Rc<RefCell<EntityUniforms>>)>,
-    // Headless keeps just the Lua-side entity userdata (no GPU Ent/uniforms).
-    #[cfg(not(feature = "headed"))]
-    pub ent_array: Vec<UserDataWrapper>,
+    /// Entities, owned per bundle. Keyed rather than held on `Bundle` itself so the
+    /// entity types stay in this module; behaviourally it is the same ownership.
+    pub bundles: FxHashMap<u8, BundleEnts>,
     pub uniform_alignment: u32,
     #[cfg(feature = "headed")]
     pub instances: Vec<Instance>,
     #[cfg(feature = "headed")]
     pub instance_buffer: Buffer,
     pub id_counter: u64,
+    // pub render_pairs: Vec<(Arc<Mutex<LuaEnt>>, Rc<RefCell<Ent>>)>,
+}
+
+/// One bundle's entities and the render batches built from them.
+///
+/// Entities used to live in a single flat `Vec` shared by every bundle, which made
+/// unloading an overlay a linear scan-and-filter over every entity in the engine, and
+/// made one bundle spawning an entity rebuild *everyone's* batches. It also left no
+/// way to draw "just this bundle", which an overlay with its own camera needs.
+#[derive(Default)]
+pub struct BundleEnts {
+    #[cfg(feature = "headed")]
+    pub array: Vec<(EntRef, Ent, Rc<RefCell<EntityUniforms>>)>,
+    #[cfg(not(feature = "headed"))]
+    pub array: Vec<UserDataWrapper>,
     #[cfg(feature = "headed")]
     pub render_hash: FxHashMap<String, (Rc<Model>, Vec<Rc<RefCell<EntityUniforms>>>)>,
-    // pub render_pairs: Vec<(Arc<Mutex<LuaEnt>>, Rc<RefCell<Ent>>)>,
     pub hash_dirty: bool,
+}
+
+#[cfg(feature = "headed")]
+impl BundleEnts {
+    fn rebuild_render_hash(&mut self) {
+        self.render_hash.clear();
+        for (_lent, ent, uni_ref) in self.array.iter() {
+            match self.render_hash.get_mut(&ent.model.name) {
+                Some((_, vec)) => {
+                    vec.push(Rc::clone(uni_ref));
+                }
+                _ => {
+                    self.render_hash.insert(
+                        ent.model.name.clone(),
+                        (Rc::clone(&ent.model), vec![Rc::clone(uni_ref)]),
+                    );
+                }
+            }
+        }
+    }
+
+    fn instance_buffers(&self, device: &wgpu::Device) -> InstanceBuffer {
+        self.render_hash
+            .iter()
+            .map(|(_name, (m, unis))| {
+                let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
+                let sz = u.len();
+                (
+                    Rc::clone(m),
+                    EntManager::build_instance_buffer(&u, device),
+                    sz,
+                )
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 // (lua, ent)
@@ -97,17 +144,14 @@ impl EntManager {
         EntManager {
             #[cfg(feature = "headed")]
             specks: vec![],
-            ent_array: vec![],
+            bundles: FxHashMap::default(),
             #[cfg(feature = "headed")]
             instances: vec![],
             #[cfg(feature = "headed")]
             instance_buffer: EntManager::build_buffer(&vec![], device),
             uniform_alignment: 0,
             id_counter: 2,
-            #[cfg(feature = "headed")]
-            render_hash: FxHashMap::default(),
             // render_pairs: vec![],
-            hash_dirty: false,
         }
     }
 
@@ -140,10 +184,17 @@ impl EntManager {
 
     // Native: the VM lives in-process, so we get the shared UserDataWrapper.
     #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+    /// `bundle_id` comes from the packet the VM sent, not from the entity: `LuaEnt`
+    /// hardcodes 0 and nothing ever set it, so every entity in the engine claimed to
+    /// belong to bundle 0. That silently broke `reset_by_bundle` long before this map
+    /// existed — unloading bundle 0 purged *every* bundle's entities and unloading any
+    /// other purged none. Stamping it here makes the owner authoritative (the sender's
+    /// id) rather than something Lua could get wrong or lie about.
     pub fn create_from_lua(
         &mut self,
         tex_manager: &TexManager,
         model_manager: &ModelManager,
+        bundle_id: u8,
         wrapped_lua: UserDataWrapper,
     ) {
         let (ent, uni) = wrapped_lua
@@ -152,8 +203,14 @@ impl EntManager {
             })
             .unwrap(); // should be safe since no errors within our closure
 
-        self.ent_array.push((EntRef(wrapped_lua), ent, uni));
-        self.hash_dirty = true
+        let mut stamped = wrapped_lua;
+        let _ = stamped.downcast_mut(|l: &mut LuaEnt| {
+            l.bundle_id = bundle_id;
+            Ok(())
+        });
+        let b = self.bundles.entry(bundle_id).or_default();
+        b.array.push((EntRef(stamped), ent, uni));
+        b.hash_dirty = true
     }
 
     // wasm: the VM is in a web worker; a Spawn message delivers a LuaEnt mirror
@@ -166,8 +223,9 @@ impl EntManager {
         lent: LuaEnt,
     ) {
         let (ent, uni) = Self::build_ent(tex_manager, model_manager, &lent, self.uniform_alignment);
-        self.ent_array.push((EntRef(lent), ent, uni));
-        self.hash_dirty = true
+        let b = self.bundles.entry(lent.bundle_id).or_default();
+        b.array.push((EntRef(lent), ent, uni));
+        b.hash_dirty = true
     }
 
     /// Build the render `Ent` + its uniform cell from a `LuaEnt`. Shared by the
@@ -200,9 +258,14 @@ impl EntManager {
     }
 
     #[cfg(not(feature = "headed"))]
-    pub fn create_from_lua(&mut self, wrapped_lua: UserDataWrapper) {
-        self.ent_array.push(wrapped_lua);
-        self.hash_dirty = true
+    pub fn create_from_lua(&mut self, bundle_id: u8, mut wrapped_lua: UserDataWrapper) {
+        let _ = wrapped_lua.downcast_mut(|l: &mut LuaEnt| {
+            l.bundle_id = bundle_id;
+            Ok(())
+        });
+        let b = self.bundles.entry(bundle_id).or_default();
+        b.array.push(wrapped_lua);
+        b.hash_dirty = true
     }
 
     /** Set child as having parent.
@@ -210,202 +273,107 @@ impl EntManager {
      *  Will reorder by placing the parent earlier on the array, just before the child.
      * Any existing children of that parent will still process correctly as they should already be further down the array having checked the order before.
      * It is possible to get some bad ordering if a user decides not to group in some sensible hiearchical order */
-    pub fn group(&mut self, targetId: u64, childId: u64) {
-        let mut parentIndex = -1;
-        let mut childIndex: i64 = -1;
-        // The headed array stores (wrapper, Ent, uni); headless stores the wrapper
-        // directly — reach the Lua-side userdata the same way for both.
-        #[cfg(feature = "headed")]
-        let tt = self.ent_array[childId as usize].0.with_mut(|e| {
-            if e.get_id() == childId {
-                childIndex = childId as i64;
-                parentIndex = targetId as i64;
-                e.parent = Some(targetId)
-            }
-            Ok(())
-        });
-        #[cfg(not(feature = "headed"))]
-        let tt = self.ent_array[childId as usize].downcast_mut::<LuaEnt, _, _>(|e| {
-            if e.get_id() == childId {
-                childIndex = childId as i64;
-                parentIndex = targetId as i64;
-                e.parent = Some(targetId)
-            }
-            Ok(())
-        });
-        // TODO headed?
-        //
-        // for (i, lent) in self.ent_array.iter().enumerate() {
-        //     #[cfg(feature = "headed")]
-        //     let mut ll = lent.0;
-        //     #[cfg(not(feature = "headed"))]
-        //     let mut ll = lent;
-        //
-        //     if ll
-        //         .downcast_mut::<LuaEnt, _, _>(|l| {
-        //             let id = l.get_id();
-        //             if id == childId {
-        //                 childIndex = i as i64;
-        //                 if parentIndex != -1 {
-        //                     l.parent = Some(targetId);
-        //                     return Ok(true);
-        //                 }
-        //             } else if id == targetId {
-        //                 parentIndex = i as i64;
-        //                 if childIndex != -1 {
-        //                     #[cfg(feature = "headed")]
-        //                     let mut t = self.ent_array[childIndex as usize].0;
-        //                     #[cfg(not(feature = "headed"))]
-        //                     let mut t = self.ent_array[childIndex as usize];
-        //                     t.downcast_mut::<LuaEnt, _, _>(|c| {
-        //                         c.parent = Some(targetId);
-        //                         Ok(())
-        //                     });
-        //                     return Ok(true);
-        //                 }
-        //             }
-        //             Ok(false)
-        //         })
-        //         .unwrap()
-        //     {
-        //         break;
-        //     }
-        // }
-
-        if childIndex != -1 {
-            if childIndex < parentIndex {
-                let parent = self.ent_array.remove(parentIndex as usize);
-                self.ent_array.insert(childIndex as usize, parent);
-            }
-        }
-    }
-
-    #[cfg(feature = "headed")]
-    fn rebuild_render_hash(&mut self) {
-        self.render_hash.clear();
-        for (lent, ent, uni_ref) in &mut self.ent_array.iter() {
-            match self.render_hash.get_mut(&ent.model.name) {
-                Some((_, vec)) => {
-                    vec.push(Rc::clone(uni_ref));
-                }
-                _ => {
-                    self.render_hash.insert(
-                        ent.model.name.clone(),
-                        (Rc::clone(&ent.model), vec![Rc::clone(uni_ref)]),
-                    );
+    /// Set child as having parent, and make sure the parent is processed first.
+    ///
+    /// Scoped to the bundle that owns the child: parent matrices are resolved during
+    /// that bundle's own pass, so a parent in another bundle could never be found
+    /// anyway. Cross-bundle attachment is meant to go through `app.*` instead (an
+    /// overlay reads the target's transform and positions its own entity).
+    pub fn group(&mut self, target_id: u64, child_id: u64) {
+        for b in self.bundles.values_mut() {
+            let mut child_index: i64 = -1;
+            let mut parent_index: i64 = -1;
+            for (i, e) in b.array.iter().enumerate() {
+                #[cfg(feature = "headed")]
+                let id = e.0.with_ref(|l: &LuaEnt| Ok(l.get_id())).unwrap_or(u64::MAX);
+                #[cfg(not(feature = "headed"))]
+                let id = e
+                    .downcast_ref::<LuaEnt, _, _>(|l| Ok(l.get_id()))
+                    .unwrap_or(u64::MAX);
+                if id == child_id {
+                    child_index = i as i64;
+                } else if id == target_id {
+                    parent_index = i as i64;
                 }
             }
-        }
-    }
+            if child_index < 0 {
+                continue;
+            }
 
-    //
-
-    #[cfg(feature = "headed")]
-    pub fn tick_update_ents(
-        &self,
-        iteration: u64,
-        device: &wgpu::Device,
-    ) -> Vec<(Rc<Model>, Buffer, usize)> {
-        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
-        for (alent, ent, uni_ref) in self.ent_array.iter() {
-            alent.with_ref(|lent: &LuaEnt| {
-                let parent = match lent.parent {
-                    Some(u) => mats.get(&u),
-                    None => None,
-                };
-
-                let mat = ent.build_meta(&lent, parent);
-                let uni = ent.get_uniforms_with_mat(&lent, iteration, mat);
-                uni_ref.replace(uni);
-                mats.insert(lent.get_id(), mat);
+            #[cfg(feature = "headed")]
+            let _ = b.array[child_index as usize].0.with_mut(|e| {
+                e.parent = Some(target_id);
                 Ok(())
             });
-        }
+            #[cfg(not(feature = "headed"))]
+            let _ = b.array[child_index as usize].downcast_mut::<LuaEnt, _, _>(|e| {
+                e.parent = Some(target_id);
+                Ok(())
+            });
 
-        let instance_buffers = self
-            .render_hash
-            .iter()
-            .map(|(name, (m, unis))| {
-                let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
-                let sz = u.len();
-                (
-                    Rc::clone(m),
-                    crate::ent_manager::EntManager::build_instance_buffer(&u, device),
-                    sz,
-                )
-            })
-            .collect::<Vec<_>>();
-        instance_buffers
+            // The parent's matrix has to exist before the child reads it, and that is
+            // decided by position in this vec.
+            if parent_index > child_index {
+                let parent = b.array.remove(parent_index as usize);
+                b.array.insert(child_index as usize, parent);
+            }
+            return;
+        }
     }
 
-    // pub fn awful_test(&mut self, tex_manager: &TexManager, model_manager: &ModelManager) {
-    //     let first = self.ent_table.len() as u64;
-    //     for i in 0..100000 {
-    //         let id = first + i;
-    //         let p = vec3(
-    //             -50. + rand::random::<f32>() * 100.,
-    //             -50. + rand::random::<f32>() * 100.,
-    //             -5. + rand::random::<f32>() * 10.,
-    //         );
-    //         let mut ent = Ent::new_dynamic(
-    //             tex_manager,
-    //             model_manager,
-    //             p,
-    //             0.,
-    //             1.,
-    //             0.,
-    //             "zom".to_string(),
-    //             self.uniform_alignment * (id + 1) as u32,
-    //         );
-    //         ent.pos = Some(p);
-    //         self.specks.push(ent);
-    //     }
-    //     println!("awful test run {}", self.entities.len());
-    // }
-
     pub fn reset(&mut self) {
-        self.ent_array.clear();
+        self.bundles.clear();
         #[cfg(feature = "headed")]
         self.specks.clear();
     }
 
+    /// Unloading a bundle is now dropping its entities, where it used to be a
+    /// scan-and-filter of every entity in the engine.
     pub fn reset_by_bundle(&mut self, bundle_id: u8) {
-        println!(
-            "looking for {}, ent count before bundle purge {}",
-            bundle_id,
-            self.ent_array.len()
-        );
-        #[cfg(feature = "headed")]
-        self.ent_array.retain(|(le, _, _)| {
-            le.with_ref(|lent: &LuaEnt| {
-                Ok(if lent.bundle_id == bundle_id {
-                    false
-                } else {
-                    true
-                })
-            })
-            .unwrap()
-        });
-        #[cfg(not(feature = "headed"))]
-        self.ent_array.retain(|le| {
-            le.downcast_ref(|lent: &LuaEnt| {
-                Ok(if lent.bundle_id == bundle_id {
-                    false
-                } else {
-                    true
-                })
-            })
-            .unwrap()
-        });
+        if let Some(b) = self.bundles.remove(&bundle_id) {
+            println!("purged {} ents with bundle {}", b.array.len(), bundle_id);
+        }
+    }
 
-        println!("ent count after bundle purge {}", self.ent_array.len());
+    /// Visit every entity in every bundle. For the wasm paths, which address
+    /// entities by id and don't care which bundle they came from.
+    #[cfg(feature = "headed")]
+    pub fn each_ent<F: FnMut(&mut EntRef)>(&mut self, mut f: F) {
+        for b in self.bundles.values_mut() {
+            for (eref, _ent, _uni) in b.array.iter_mut() {
+                f(eref);
+            }
+        }
+    }
+
+    /// Drop entities whose id the predicate rejects, marking only the bundles that
+    /// actually lost one as needing a batch rebuild.
+    #[cfg(feature = "headed")]
+    pub fn retain_ents<F: Fn(u64) -> bool>(&mut self, keep: F) {
+        for b in self.bundles.values_mut() {
+            let before = b.array.len();
+            b.array.retain(|(eref, _ent, _uni)| {
+                let mut k = true;
+                let _ = eref.with_ref(|l| {
+                    if !keep(l.get_id()) {
+                        k = false;
+                    }
+                    Ok(())
+                });
+                k
+            });
+            if b.array.len() != before {
+                b.hash_dirty = true;
+            }
+        }
     }
 
     #[cfg(not(feature = "headed"))]
     pub fn check_ents(&mut self, _iteration: u64) {
         // Headless has no GPU instances to build; just reap dead entities and
         // clear their dirty flags so per-frame Lua mutations settle.
-        self.ent_array.retain_mut(|lent| {
+        for b in self.bundles.values_mut() {
+        b.array.retain_mut(|lent| {
             let mut alive = true;
             let _ = lent.downcast_mut::<LuaEnt, _, _>(|l| {
                 if l.is_dirty() {
@@ -418,20 +386,24 @@ impl EntManager {
             });
             alive
         });
+        }
     }
 
     #[cfg(feature = "headed")]
-    pub fn check_ents(
+    /// Advance and rebuild one bundle's entities. Takes the bundle out of the map so
+    /// the retain closure can still touch `self` for the shared managers.
+    fn check_bundle_ents(
         &mut self,
+        b: &mut BundleEnts,
         device: &wgpu::Device,
         tm: &TexManager,
         mm: &ModelManager,
         iteration: u64,
-    ) -> Vec<(Rc<Model>, Buffer, usize)> {
+    ) -> InstanceBuffer {
         let mut failed = 0;
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
-        self.ent_array.retain_mut(|(lent, ent, uni_ref)| {
+        b.array.retain_mut(|(lent, ent, uni_ref)| {
             if let Err(_) = lent.with_mut(|l: &mut LuaEnt| {
                 let parent = match l.parent {
                     Some(u) => mats.get(&u),
@@ -441,7 +413,7 @@ impl EntManager {
                     let flags = l.get_flags();
 
                     if flags & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
-                        self.hash_dirty = true;
+                        b.hash_dirty = true;
                         return Ok(false);
                     }
                     l.clear_dirt();
@@ -467,7 +439,7 @@ impl EntManager {
                                 &mm.CUBE
                             }
                         });
-                        self.hash_dirty = true;
+                        b.hash_dirty = true;
                     }
 
                     if flags & lua_ent_flags::TEX == lua_ent_flags::TEX {
@@ -498,33 +470,46 @@ impl EntManager {
             return true;
         });
 
-        #[cfg(feature = "headed")]
-        let instance_buffers = self
-            .render_hash
-            .iter()
-            .map(|(name, (m, unis))| {
-                let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
-                let sz = u.len();
-                (
-                    Rc::clone(m),
-                    crate::ent_manager::EntManager::build_instance_buffer(&u, device),
-                    sz,
-                )
-            })
-            .collect::<Vec<_>>();
-
         if failed > 0 {
             println!("failed to lock {} ents", failed);
         }
 
-        #[cfg(feature = "headed")]
-        if self.hash_dirty {
-            self.rebuild_render_hash();
-            self.hash_dirty = false;
+        // Rebuild the batches *before* reading them. This used to build the buffers
+        // from `render_hash` and only then rebuild it, so the frame an entity spawned
+        // or died drew the previous frame's set.
+        if b.hash_dirty {
+            b.rebuild_render_hash();
+            b.hash_dirty = false;
         }
-        #[cfg(feature = "headed")]
-        instance_buffers
+        b.instance_buffers(device)
+    }
 
+    /// Advance every bundle's entities and hand back one batch set per bundle, for
+    /// the renderer to walk in `layer_order()`.
+    #[cfg(feature = "headed")]
+    pub fn check_ents(
+        &mut self,
+        device: &wgpu::Device,
+        tm: &TexManager,
+        mm: &ModelManager,
+        iteration: u64,
+    ) -> FxHashMap<u8, InstanceBuffer> {
+        let ids: Vec<u8> = self.bundles.keys().copied().collect();
+        let mut out = FxHashMap::default();
+        for id in ids {
+            // Taken out and put back so the per-bundle pass can hold `&mut self` for
+            // the texture/model managers without aliasing the map.
+            if let Some(mut b) = self.bundles.remove(&id) {
+                let buffers = self.check_bundle_ents(&mut b, device, tm, mm, iteration);
+                out.insert(id, buffers);
+                self.bundles.insert(id, b);
+            }
+        }
+        out
+    }
+
+    #[allow(dead_code)]
+    fn _unused_specks_note(&self) {
         // if (self.specks.len() == 0 && self.specks.len() < 10000) {
         //     self.awful_test(tm, mm);
         // } else {
@@ -540,16 +525,20 @@ impl EntManager {
     }
 
     #[cfg(feature = "headed")]
+    /// A model was reloaded: repoint every entity using it, and mark only the bundles
+    /// that actually had one so the others keep their batches.
     pub fn check_for_model_change(&mut self, model_manager: &ModelManager, model: &str) {
-        let mut change = false;
-        for (_, e, _) in self.ent_array.iter_mut() {
-            if e.model.base_name == model {
-                e.model = model_manager.get_model(model);
-                change = true;
+        for b in self.bundles.values_mut() {
+            let mut change = false;
+            for (_, e, _) in b.array.iter_mut() {
+                if e.model.base_name == model {
+                    e.model = model_manager.get_model(model);
+                    change = true;
+                }
             }
-        }
-        if change {
-            self.hash_dirty = true;
+            if change {
+                b.hash_dirty = true;
+            }
         }
     }
 }

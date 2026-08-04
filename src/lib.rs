@@ -141,7 +141,7 @@ const FPS: f32 = 60.;
 /// Per-loop output of `Core::update`: the freshly-built entity instance buffers
 /// under `headed`, nothing headless.
 #[cfg(feature = "headed")]
-type UpdateOut = InstanceBuffer;
+type UpdateOut = rustc_hash::FxHashMap<u8, InstanceBuffer>;
 #[cfg(not(feature = "headed"))]
 type UpdateOut = ();
 
@@ -1747,8 +1747,7 @@ impl Core {
                 // so updating them here moves the rendered entity.
                 #[cfg(feature = "headed")]
                 for xf in xforms {
-                    for (eref, _ent, _uni) in self.ent_manager.ent_array.iter_mut() {
-                        let mut matched = false;
+                    self.ent_manager.each_ent(|eref| {
                         let _ = eref.with_mut(|l| {
                             if l.get_id() == xf.id {
                                 l.x = xf.x as f64;
@@ -1758,38 +1757,17 @@ impl Core {
                                 l.rot_y = xf.ry as f64;
                                 l.rot_z = xf.rz as f64;
                                 l.scale = xf.scale as f64;
-                                matched = true;
                             }
                             Ok(())
                         });
-                        if matched {
-                            break;
-                        }
-                    }
+                    });
                 }
             }
             VmToHost::EntRemove(ids) => {
-                // Drop the render mirrors of entities that died in the VM.
+                // Drop the render mirrors of entities that died in the VM. Only the
+                // bundles that lost one get their batches rebuilt.
                 #[cfg(feature = "headed")]
-                {
-                    let before = self.ent_manager.ent_array.len();
-                    self.ent_manager.ent_array.retain(|(eref, _ent, _uni)| {
-                        let mut keep = true;
-                        let _ = eref.with_ref(|l| {
-                            if ids.contains(&l.get_id()) {
-                                keep = false;
-                            }
-                            Ok(())
-                        });
-                        keep
-                    });
-                    // The drawn instances come from render_hash, not ent_array
-                    // directly — mark it dirty so check_ents rebuilds it without
-                    // the removed entities on the next loop.
-                    if self.ent_manager.ent_array.len() != before {
-                        self.ent_manager.hash_dirty = true;
-                    }
-                }
+                self.ent_manager.retain_ents(|id| !ids.contains(&id));
             }
             VmToHost::WorldSync { chunks, dropped } => {
                 // Worker sent dirty tile chunks; mesh them into GPU chunk models.
@@ -2014,6 +1992,7 @@ impl Core {
                         &self.tex_manager,
                         #[cfg(feature = "headed")]
                         &self.model_manager,
+                        id,
                         lent,
                     );
                     #[cfg(target_arch = "wasm32")]

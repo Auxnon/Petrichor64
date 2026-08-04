@@ -32,8 +32,10 @@ use rustc_hash::FxHashMap;
 #[cfg(feature = "headed")]
 use winit::window::Window;
 
+/// Entity batches to draw, per bundle. Keyed so the renderer can walk them in
+/// `layer_order()` — the app's first, then any overlay above it.
 #[cfg(feature = "headed")]
-type IB = InstanceBuffer;
+type IB = FxHashMap<u8, InstanceBuffer>;
 #[cfg(not(feature = "headed"))]
 type IB = ();
 
@@ -182,7 +184,7 @@ impl<'core> Core {
             gfx,
             completed_bundles: FxHashMap::default(),
             #[cfg(feature = "headed")]
-            instance_buffers: vec![],
+            instance_buffers: FxHashMap::default(),
             #[cfg(not(feature = "headed"))]
             instance_buffers: (),
         };
