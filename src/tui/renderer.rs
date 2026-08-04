@@ -87,7 +87,12 @@ impl TuiRenderer {
         }
 
         if let Some((cube_verts, cube_inds)) = &core.model_manager.CUBE.data {
-            for wrapper in core.ent_manager.ent_array.iter() {
+            for wrapper in core
+                .ent_manager
+                .bundles
+                .values()
+                .flat_map(|b| b.array.iter())
+            {
                 let _ = wrapper.downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|lent| {
                     if lent.get_flags() & crate::lua_ent::lua_ent_flags::DEAD
                         == crate::lua_ent::lua_ent_flags::DEAD

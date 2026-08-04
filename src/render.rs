@@ -103,6 +103,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // unprojected cursor one frame stale.
     core.global.last_cam_matrices = Some((mx_persp, mx_view));
     crate::ray::trace(core, mx_persp, mx_view);
+    // Before `gfx` is borrowed for the pass: app first, then overlays.
+    let draw_order = core.bundle_manager.layer_order();
     let gfx = &core.gfx;
 
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
@@ -225,12 +227,22 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
                 }
             }
 
-            for (model, instance_buffer, size) in core.instance_buffers.iter() {
-                render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-
-                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+            // Entities, one bundle at a time in layer order: the app first, then
+            // anything overlaid on it. Batches within a bundle are still grouped by
+            // model and iterated in hash order, so their relative order is arbitrary
+            // — as it always was — but the app/overlay split above it is now stable,
+            // which is what makes an overlay's translucent helpers land on top of a
+            // finished scene instead of at a hash-dependent moment inside it.
+            for id in draw_order.iter() {
+                if let Some(batches) = core.instance_buffers.get(id) {
+                    for (model, instance_buffer, size) in batches.iter() {
+                        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                        render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                        render_pass
+                            .set_index_buffer(model.index_buf.slice(..), model.index_format);
+                        render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                    }
+                }
             }
 
             if core.ent_manager.specks.len() > 0 {
