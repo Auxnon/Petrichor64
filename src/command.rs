@@ -133,7 +133,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         "edit" => {
             let sub = if segments.len() > 1 { segments[1] } else { "" };
             if sub == "off" || sub == "close" {
-                let n = core.bundle_manager.close_overlays();
+                let n = close_overlays(core);
                 core.loggy
                     .log(LogType::Config, &format!("closed {} overlay(s)", n));
             } else {
@@ -154,7 +154,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                     "usage: overlay <app path> | overlay off",
                 );
             } else if segments[1] == "off" || segments[1] == "close" {
-                let n = core.bundle_manager.close_overlays();
+                let n = close_overlays(core);
                 core.loggy
                     .log(LogType::Config, &format!("closed {} overlay(s)", n));
             } else {
@@ -2627,6 +2627,20 @@ pub fn load_app(
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
     async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false).block_on()
+}
+
+/// Close every overlay and drop what they owned outside the bundle manager.
+///
+/// Entities are the reason this exists rather than calling `close_overlays` directly:
+/// they live in `EntManager`, so tearing the bundle down alone left them behind — kept
+/// alive, kept drawn, and walked every frame by a bundle that no longer existed.
+pub fn close_overlays(core: &mut Core) -> usize {
+    let ids = core.bundle_manager.close_overlays();
+    for id in &ids {
+        core.ent_manager.reset_by_bundle(*id);
+        core.world.destroy(*id);
+    }
+    ids.len()
 }
 
 /// Bring an app up as an **overlay**: an editing surface over the running app, which
