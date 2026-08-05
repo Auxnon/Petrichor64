@@ -49,10 +49,15 @@ function loop()
 		local e = make("example", p.x, p.y, p.z)
 		ok("spawn from components", e ~= nil, true)
 	elseif step == 50 then
-		-- mod() builds a mesh from Lua: the quad form needs no texture, the
-		-- vertex/index form requires `t`.
-		mod("probequad", { q = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 } } })
+		-- mod() builds a mesh from Lua; both forms require a texture at `t`.
+		-- `t` is required for the quad form too; without it nothing is built (it used
+		-- to fail silently and report success).
+		mod("probequad", {
+			q = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 } },
+			t = { "example" },
+		})
 		ok("quad mesh", make("probequad", 0, 6, 0) ~= nil, true)
+		ok("quad mesh exists", #gmod("probequad"), 1)
 		mod("probetri", {
 			v = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 } },
 			i = { 0, 1, 2 },

@@ -1941,7 +1941,15 @@ function nimg(w, h) end"
                                 }
                             }
                             _ => {
-                                Err::<(), &str>("This type of model requires a texture");
+                                // This used to build an Err as a bare expression and
+                                // drop it on the floor, then fall through to Ok — so a
+                                // quad model missing its texture silently built nothing
+                                // at all and reported success. The mesh simply never
+                                // existed, which looks exactly like a camera pointing
+                                // the wrong way.
+                                return Err(static_err(
+                                    "quad model requires a texture at index \"t\", e.g. t={'example'}",
+                                ));
                             }
                         }
                         Ok("Building model in quad mode")

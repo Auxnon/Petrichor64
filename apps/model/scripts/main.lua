@@ -17,7 +17,8 @@
 --   s           save to scripts/out.lua as a mod() call you can paste anywhere
 --
 -- Geometry is built with mod(): the quad form for the grid and the faces, which
--- takes 4 verts per quad and works out indices and UVs itself. Vectors are silt's
+-- takes 4 verts per quad and works out indices and UVs itself. It needs a texture at
+-- `t` like every other form — without one it builds nothing at all. Vectors are silt's
 -- real vec3 (the `vector` feature), so normals and extrusion are cross/normalize
 -- rather than hand-rolled component arithmetic.
 
@@ -85,7 +86,7 @@ function build_grid()
 		table.insert(q, { -e, a + LINE, 0 })
 		n = n + 1
 	end
-	mod("chisel_grid", { q = q })
+	mod("chisel_grid", { q = q, t = { "example" } })
 	if grid_ent == nil then
 		grid_ent = make("chisel_grid", 0, 0, 0)
 	end
@@ -95,6 +96,7 @@ function build_cursor()
 	-- A small flat quad marks the cursor; it sits a hair above the grid so it is
 	-- never hidden inside it.
 	mod("chisel_cursor", {
+		t = { "example" },
 		q = {
 			{ -0.4, -0.4, 0.02 },
 			{ 0.4,  -0.4, 0.02 },
@@ -265,7 +267,7 @@ function rebuild_faces()
 			table.insert(q, { p.x, p.y, p.z })
 		end
 	end
-	mod("chisel_faces", { q = q })
+	mod("chisel_faces", { q = q, t = { "example" } })
 	if face_ent == nil then
 		face_ent = make("chisel_faces", 0, 0, 0)
 	end

@@ -25,8 +25,11 @@ mod("card", {
 **The quad method** is done by passing a data with a q field set and is considerably simpler if not less predictable. A quad is 4 vertices, so by passing in 8 vertices we create 8 quad faces. Indices are automatic. UVs are estimated based on right hand rule, aligning the top edge to the 1st and 2nd vertices. The UV is uniformly applied and always fit rather then clipped. Estimations may not be perfect. Expect bugs. The mechanism may change in the future. The following creates a plane that's 1 wide on the X axis, and 1 tall on the Z axis.
 
 ````lua
+A texture at `t` is required, as with the standard method — without one no model is
+built at all.
+
 ```lua
-mod("flat", {q={{0,0,0}, {1,0,0},{1,0,1},{0,0,1}}})
+mod("flat", {q={{0,0,0}, {1,0,0},{1,0,1},{0,0,1}}, t={"example"}})
 ````
 
 **The cube method** is the simplest of all as it's literally just re-texturing a cube by passing in texture assets directly. the texture array can be 6 in length for each face in order of Z+, X+, Y+, X-, Y-, Z-. Any omitted asset will default to the first
