@@ -22,6 +22,32 @@ const SLASH: char = '/';
 const MAX_WIDTH: u32 = 2048;
 const MAX_HEIGHT: u32 = 2048;
 
+/// The engine's fallback texture, occupying the first slot of the atlas.
+///
+/// A model built without a texture gets this instead of not being built, so
+/// `mod("flat", {q={...}})` is a complete call and a texture can be attached later
+/// through the entity's setter. An app is free to ship its own `default` image, which
+/// simply lands in the dictionary under the same name and wins.
+pub const DEFAULT_TEX: &str = "default";
+const DEFAULT_TEX_SIZE: u32 = 16;
+
+/// A neutral grey checker, opaque so it can't be mistaken for a hole — the 3D shader
+/// discards fragments under 0.1 alpha, and an invisible fallback would be no better
+/// than the missing model it replaces. Generated rather than shipped as a file: it has
+/// to exist before any app loads, and it must not be something an app can delete.
+fn default_tex_image() -> RgbaImage {
+    let mut img = RgbaImage::new(DEFAULT_TEX_SIZE, DEFAULT_TEX_SIZE);
+    let half = DEFAULT_TEX_SIZE / 2;
+    for y in 0..DEFAULT_TEX_SIZE {
+        for x in 0..DEFAULT_TEX_SIZE {
+            let dark = ((x < half) as u8) ^ ((y < half) as u8) == 1;
+            let v = if dark { 90 } else { 170 };
+            img.put_pixel(x, y, image::Rgba([v, v, v, 255]));
+        }
+    }
+    img
+}
+
 #[cfg(feature = "headed")]
 pub struct TexTuple {
     pub view: TextureView,
@@ -77,14 +103,17 @@ impl Clone for Anim {
 
 impl TexManager {
     pub fn new() -> TexManager {
-        TexManager {
+        let mut t = TexManager {
             atlas: ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT),
             atlas_pos: UVec4::new(0, 0, 0, 0),
             atlas_dim: UVec2::new(MAX_WIDTH, MAX_HEIGHT),
             dictionary: HashMap::new(),
             animations: HashMap::default(),
             bundle_lookup: FxHashMap::default(),
-        }
+        };
+        // Through reset so there is one place that installs the fallback.
+        t.reset();
+        t
     }
     pub fn reset(&mut self) {
         let img: RgbaImage = ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT);
@@ -100,6 +129,12 @@ impl TexManager {
         self.atlas_pos.w = 0;
         self.dictionary.clear();
         image::imageops::replace(&mut self.atlas, &img, 0, 0);
+
+        // The fallback takes the first slot, before any app texture is packed, so it
+        // survives an app load and every `rebuild_atlas` (which resets and re-sorts).
+        // It is not registered per-bundle, so unloading an app cannot take it away.
+        let pos = self.locate(default_tex_image());
+        self.dictionary.insert(DEFAULT_TEX.to_string(), pos);
     }
 
     pub fn save_atlas(&mut self, loggy: &mut Loggy) {
@@ -750,4 +785,38 @@ pub fn make_render_tex(
         ..Default::default()
     });
     (diffuse_texture_view, diffuse_sampler, tex)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fallback has to be present before any app loads and has to occupy the first
+    /// slot, so app textures pack after it and can never displace it. `rebuild_atlas`
+    /// goes through `reset`, so covering `reset` covers the repack too.
+    #[test]
+    fn the_fallback_texture_owns_the_first_atlas_slot() {
+        let mut tm = TexManager::new();
+        let pos = *tm
+            .dictionary
+            .get(DEFAULT_TEX)
+            .expect("fallback must exist on a fresh manager");
+        assert_eq!((pos.x, pos.y), (0., 0.), "must be the first slot");
+        assert_eq!(pos.z, DEFAULT_TEX_SIZE as f32 / MAX_WIDTH as f32);
+        assert_eq!(pos.w, DEFAULT_TEX_SIZE as f32 / MAX_HEIGHT as f32);
+
+        // An app load resets the atlas; the fallback is not a bundle's asset and must
+        // come back rather than vanish with it.
+        tm.dictionary.insert("game_art".to_string(), vec4(0.5, 0.5, 0.1, 0.1));
+        tm.reset();
+        assert!(tm.dictionary.contains_key(DEFAULT_TEX), "survives a reset");
+        assert!(!tm.dictionary.contains_key("game_art"), "app art does not");
+
+        // Opaque: the 3D shader discards under 0.1 alpha, so a transparent fallback
+        // would be as invisible as the missing model it stands in for.
+        let img = default_tex_image();
+        for p in img.pixels() {
+            assert_eq!(p.0[3], 255, "every pixel opaque");
+        }
+    }
 }
