@@ -1941,15 +1941,29 @@ function nimg(w, h) end"
                                 }
                             }
                             _ => {
-                                // This used to build an Err as a bare expression and
-                                // drop it on the floor, then fall through to Ok — so a
-                                // quad model missing its texture silently built nothing
-                                // at all and reported success. The mesh simply never
-                                // existed, which looks exactly like a camera pointing
-                                // the wrong way.
-                                return Err(static_err(
-                                    "quad model requires a texture at index \"t\", e.g. t={'example'}",
-                                ));
+                                // No texture given: build with the engine's fallback
+                                // rather than refusing. A model is a mesh; its texture
+                                // can be set afterwards through the entity. This branch
+                                // used to construct an Err as a bare expression and drop
+                                // it, then fall through to Ok — so the model was never
+                                // built and Lua was told it had been, which looks
+                                // exactly like a camera pointing the wrong way.
+                                lua_err!(pitcher.send((
+                                    bundle_id,
+                                    MainCommmand::Model(Box::new(ModelPacket {
+                                        asset,
+                                        textures: vec![crate::texture::DEFAULT_TEX.to_string()],
+                                        vecs: v,
+                                        norms: n,
+                                        inds: i,
+                                        uvs: uv,
+                                        style: TextureStyle::Quad,
+                                        sender: tx,
+                                    }))
+                                )));
+                                if let Err(err) = rx.recv() {
+                                    return Err(LuaError::Custom(err.to_string()));
+                                }
                             }
                         }
                         Ok("Building model in quad mode")
@@ -1985,8 +1999,25 @@ function nimg(w, h) end"
                                             return Ok("Building model in vert mode")
                                         }
                                         _ => {
-                                            return Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
-                                            // return Ok(());
+                                            // Same fallback as the quad form: a mesh
+                                            // without a texture is still a mesh.
+                                            lua_err!(pitcher.send((
+                                                bundle_id,
+                                                MainCommmand::Model(Box::new(ModelPacket{
+                                                    asset,
+                                                    textures: vec![crate::texture::DEFAULT_TEX.to_string()],
+                                                    vecs,
+                                                    norms,
+                                                    inds,
+                                                    uvs,
+                                                    style: TextureStyle::Tri,
+                                                    sender: tx})
+                                                ),
+                                            )));
+                                            if let Err(err) = rx.recv() {
+                                                return Err(LuaError::Custom(err.to_string()));
+                                            }
+                                            return Ok("Building model in vert mode")
                                         }
                                     }
                                 }

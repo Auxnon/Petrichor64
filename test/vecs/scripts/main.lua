@@ -49,22 +49,19 @@ function loop()
 		local e = make("example", p.x, p.y, p.z)
 		ok("spawn from components", e ~= nil, true)
 	elseif step == 50 then
-		-- mod() builds a mesh from Lua; both forms require a texture at `t`.
-		-- `t` is required for the quad form too; without it nothing is built (it used
-		-- to fail silently and report success).
-		mod("probequad", {
-			q = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 } },
-			t = { "example" },
-		})
+		-- mod() builds a mesh from Lua; `t` is optional in both forms.
+		-- No `t`: the engine's fallback checker is used, and the model is built. This
+		-- used to build nothing at all while reporting success.
+		mod("probequad", { q = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 } } })
 		ok("quad mesh", make("probequad", 0, 6, 0) ~= nil, true)
 		ok("quad mesh exists", #gmod("probequad"), 1)
 		mod("probetri", {
 			v = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 } },
 			i = { 0, 1, 2 },
 			u = { { 0, 0 }, { 1, 0 }, { 0, 1 } },
-			t = { "example" },
 		})
 		ok("vertex mesh", make("probetri", 2, 6, 0) ~= nil, true)
+		ok("vertex mesh exists", #gmod("probetri"), 1)
 	elseif step == 60 then
 		cout("done, failures:", fails)
 	end
