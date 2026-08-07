@@ -161,8 +161,24 @@ impl Global {
     /// currently *open*, and an open console swallows all keyboard input (see
     /// `controls.rs`) — forcing it true here left games unplayable, keys and all.
     /// Clearing `locked` is enough: backtick can toggle the console again.
+    /// Reset the `attr` state an app can set, so none of it leaks into the next one.
+    ///
+    /// This only cleared the console lock, which meant every *screen effect* survived
+    /// an app load. The boot logo sets `attr{fog=200}` on its first line, so every app
+    /// loaded after it inherited a fog deep enough to swallow the scene — in an app
+    /// that never mentions fog. Curvature, bleed, glitch and the rest leaked the same
+    /// way; fog was simply the one you could not miss.
+    ///
+    /// `ScreenBinds::new()` is the same default a cold boot starts from, so this is
+    /// "as if nothing had been loaded yet" rather than a second list of values to keep
+    /// in step.
     pub fn clean_app_attrs(&mut self) {
         self.locked = false;
+        // Screen effects only exist in a headed build.
+        #[cfg(feature = "headed")]
+        {
+            self.screen_effects = ScreenBinds::new();
+        }
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
@@ -218,5 +234,35 @@ impl GuiParams {
             layout: (0, -1),
             scaling: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Loading an app must not inherit the previous app's `attr` state. The boot logo
+    /// sets `attr{fog=200}` on its first line, and only the console lock was being
+    /// cleared, so every app after it ran with a fog deep enough to hide the scene —
+    /// including apps that never mention fog.
+    #[test]
+    #[cfg(feature = "headed")]
+    fn app_attrs_do_not_leak_into_the_next_app() {
+        let fresh = ScreenBinds::new();
+        let mut g = Global::new();
+
+        // Stand in for what the logo (or any app) leaves behind.
+        g.screen_effects.fog = 200.;
+        g.screen_effects.crt_resolution = 999.;
+        g.locked = true;
+
+        g.clean_app_attrs();
+
+        assert_eq!(g.screen_effects.fog, fresh.fog, "fog must not carry over");
+        assert_eq!(
+            g.screen_effects.crt_resolution, fresh.crt_resolution,
+            "nor any other screen effect"
+        );
+        assert!(!g.locked, "and the console lock still clears");
     }
 }
