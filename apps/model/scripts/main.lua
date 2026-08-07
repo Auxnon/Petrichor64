@@ -26,6 +26,14 @@ GRID = 8 -- cells from origin to edge, so the plane is 2*GRID across
 CELL = 1.0
 LINE = 0.03 -- grid line half-thickness
 
+-- The grid sits just under the working plane, and its two line directions sit on
+-- slightly different levels. Coplanar quads that cross — which is every intersection
+-- of a grid — fight for the same depth and shimmer; so does a face built at z=0
+-- directly on top of the grid. A hair of separation is cheaper than any depth-bias
+-- machinery and invisible at this scale.
+GRID_Z_X = -0.02 -- lines running along X
+GRID_Z_Y = -0.01 -- lines running along Y
+
 C_BG = "112"
 C_HUD = "CDE"
 C_DIM = "889"
