@@ -116,10 +116,11 @@ impl TexManager {
         t
     }
     pub fn reset(&mut self) {
-        let img: RgbaImage = ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT);
-
-        // TODO tex debug
-        // crate::gui::direct_fill(&mut img, MAX_WIDTH, MAX_HEIGHT, vec4(1., 0., 1., 0.5));
+        // Replace the buffer rather than allocating a second 2048x2048 image and
+        // copying it over the first. `imageops::replace` walked 4.2M pixels to
+        // achieve "all zeroes", which a fresh allocation already is — 121ms of a cold
+        // start once `new` began going through here to install the fallback texture.
+        self.atlas = ImageBuffer::new(MAX_WIDTH, MAX_HEIGHT);
 
         self.atlas_dim.x = MAX_WIDTH;
         self.atlas_dim.y = MAX_HEIGHT;
@@ -128,7 +129,6 @@ impl TexManager {
         self.atlas_pos.z = 0;
         self.atlas_pos.w = 0;
         self.dictionary.clear();
-        image::imageops::replace(&mut self.atlas, &img, 0, 0);
 
         // The fallback takes the first slot, before any app texture is packed, so it
         // survives an app load and every `rebuild_atlas` (which resets and re-sorts).

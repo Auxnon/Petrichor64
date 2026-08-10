@@ -83,15 +83,15 @@ function build_grid()
 		local a = n * CELL
 		local e = GRID * CELL
 		-- a line along Y at x = a
-		table.insert(q, { a - LINE, -e, 0 })
-		table.insert(q, { a + LINE, -e, 0 })
-		table.insert(q, { a + LINE, e, 0 })
-		table.insert(q, { a - LINE, e, 0 })
-		-- and a line along X at y = a
-		table.insert(q, { -e, a - LINE, 0 })
-		table.insert(q, { e, a - LINE, 0 })
-		table.insert(q, { e, a + LINE, 0 })
-		table.insert(q, { -e, a + LINE, 0 })
+		table.insert(q, { a - LINE, -e, GRID_Z_Y })
+		table.insert(q, { a + LINE, -e, GRID_Z_Y })
+		table.insert(q, { a + LINE, e, GRID_Z_Y })
+		table.insert(q, { a - LINE, e, GRID_Z_Y })
+		-- and a line along X at y = a, a hair below it
+		table.insert(q, { -e, a - LINE, GRID_Z_X })
+		table.insert(q, { e, a - LINE, GRID_Z_X })
+		table.insert(q, { e, a + LINE, GRID_Z_X })
+		table.insert(q, { -e, a + LINE, GRID_Z_X })
 		n = n + 1
 	end
 	mod("chisel_grid", { q = q })
