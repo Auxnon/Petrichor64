@@ -328,12 +328,53 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
         .map(|_| Channel::new(DEFAULT_LANES, sample_rate))
         .collect();
 
+    // The transport: a monotonic frame counter and the tempo it is read against.
+    // `Note.duration` was already counted in samples, so a chain never drifted from
+    // itself — what was missing was a *start* time, which left every trigger
+    // quantised to whichever 60Hz Lua frame sent it.
+    let mut frames: u64 = 0;
+    let mut bpm: f32 = 120.0;
+    // Scheduled notes waiting for their frame. A fixed array because the audio
+    // thread must not allocate or free; `Note` is Copy, so this costs nothing to
+    // fill. Overflow drops the newest and says so rather than growing.
+    const MAX_SCHEDULED: usize = 64;
+    let mut pending: [Option<(u64, Note, usize)>; MAX_SCHEDULED] = [None; MAX_SCHEDULED];
+    // The earliest frame anything is due, so the common case is one comparison per
+    // sample instead of a scan of all 64 slots.
+    let mut next_due: u64 = u64::MAX;
+
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
         // sample-accurate (the old code polled once per ~2000 samples, which
         // quantised note timing and could drop/merge fast notes).
         while let Ok(cmd) = audience.try_recv() {
             match cmd {
+                SoundCommand::SetBpm(b) => {
+                    if b > 0.0 {
+                        bpm = b;
+                    }
+                }
+                SoundCommand::PlayAt(note, ch, at_beat, quant) => {
+                    let c = ch.unwrap_or(0).min(channels.len() - 1);
+                    let fpb = 60.0 / bpm * sample_rate;
+                    let now_beat = frames as f32 / fpb;
+                    let mut target = at_beat.max(now_beat);
+                    if let Some(g) = quant {
+                        if g > 0.0 {
+                            target = (target / g).ceil() * g;
+                        }
+                    }
+                    let at = (target * fpb) as u64;
+                    match pending.iter_mut().find(|slot| slot.is_none()) {
+                        Some(slot) => {
+                            *slot = Some((at, note, c));
+                            if at < next_due {
+                                next_due = at;
+                            }
+                        }
+                        None => eprintln!("sound: schedule queue full, note dropped"),
+                    }
+                }
                 SoundCommand::PlayNote(note, ch) => {
                     let c = ch.unwrap_or(0).min(channels.len() - 1);
                     let l = channels[c].pick_lane();
@@ -401,6 +442,13 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     for chan in channels.iter_mut() {
                         chan.reset();
                     }
+                    // The transport is persistent audio-thread state like the rest:
+                    // a new app must not inherit the old one's tempo, and notes it
+                    // never scheduled must not fire into it.
+                    bpm = 120.0;
+                    pending = [None; MAX_SCHEDULED];
+                    next_due = u64::MAX;
+                    frames = 0;
                 }
                 SoundCommand::Stop(ch) => match ch {
                     Some(c) => {
@@ -488,6 +536,29 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
             }
         }
+
+        // Fire anything the transport has reached. Guarded by `next_due` so a quiet
+        // stretch costs one comparison per sample rather than a scan of every slot.
+        if frames >= next_due {
+            next_due = u64::MAX;
+            for slot in pending.iter_mut() {
+                match slot {
+                    Some((at, note, c)) if *at <= frames => {
+                        let (note, c) = (*note, *c);
+                        *slot = None;
+                        let l = channels[c].pick_lane();
+                        channels[c].queues[l].push_back(note);
+                    }
+                    Some((at, _, _)) => {
+                        if *at < next_due {
+                            next_due = *at;
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        frames += 1;
 
         let mut mix = 0.0f32;
         for chan in channels.iter_mut() {
@@ -1351,6 +1422,20 @@ impl Instrument {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SoundCommand {
+    /// Transport tempo, shared by every channel. One clock with per-channel
+    /// subdivisions is what gives polyrhythm; independent tempos per channel would
+    /// only give drift (see PLAN.md, sound clock).
+    SetBpm(f32),
+    /// Play a note at a point on the transport rather than on arrival.
+    ///
+    /// `at_beat` is an absolute transport beat, clamped forward to now — a command
+    /// cannot land in the past. `quant`, if set, snaps that up to the next multiple
+    /// of itself (1.0 = next beat, 0.25 = next sixteenth), which is what makes a
+    /// trigger fired from a jittery 60Hz Lua frame land exactly on the grid.
+    ///
+    /// Beats are converted to frames *here*, on the audio thread, so tempo has one
+    /// owner and a bpm change cannot race a scheduled note.
+    PlayAt(Note, Option<usize>, f32, Option<f32>),
     MakeInstrument(Instrument),
     /// Store a PCM sample (id, mono samples -1..1, base pitch, envelope) and
     /// register a same-id instrument that plays it.
@@ -1447,6 +1532,89 @@ mod tests {
             peak = peak.max(mixer().abs());
         }
         peak
+    }
+
+    /// Step the mixer and report the first sample index at which it makes sound.
+    /// The point of the transport is *when* a note starts, so a peak test cannot
+    /// check it — this can.
+    fn first_sound_at(cmds: Vec<SoundCommand>, n: usize) -> Option<usize> {
+        let (tx, rx) = channel::<SoundCommand>();
+        for c in cmds {
+            tx.send(c).unwrap();
+        }
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        (0..n).find(|_| mixer().abs() > 0.001)
+    }
+
+    /// A scheduled note starts on the frame its beat lands on, not when the command
+    /// arrived. At 120bpm a beat is 24000 frames, so beat 1 is frame 24000.
+    #[test]
+    fn a_scheduled_note_starts_on_its_beat() {
+        let at = first_sound_at(
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::PlayAt(Note::new(0, 440.0, 0.5, 1.0), None, 1.0, None),
+            ],
+            48000,
+        )
+        .expect("scheduled note never sounded");
+        // Allowing a few frames: the voice's attack ramp has to clear the threshold.
+        assert!(
+            (23_990..=24_100).contains(&at),
+            "expected the note at ~frame 24000 (beat 1 at 120bpm), got {}",
+            at
+        );
+    }
+
+    /// Tempo is read on the audio thread, so the same beat means a different frame
+    /// at a different bpm — 240bpm halves it.
+    #[test]
+    fn tempo_scales_the_schedule() {
+        let at = first_sound_at(
+            vec![
+                SoundCommand::SetBpm(240.0),
+                SoundCommand::PlayAt(Note::new(0, 440.0, 0.5, 1.0), None, 1.0, None),
+            ],
+            48000,
+        )
+        .expect("scheduled note never sounded");
+        assert!(
+            (11_990..=12_100).contains(&at),
+            "expected ~frame 12000 (beat 1 at 240bpm), got {}",
+            at
+        );
+    }
+
+    /// Quantising is the point of the whole thing: a trigger fired at an arbitrary
+    /// moment — as a 60Hz game loop does — must still land on the grid. Beat 0 with a
+    /// one-beat grid snaps to the next whole beat.
+    #[test]
+    fn quantise_snaps_a_late_trigger_onto_the_grid() {
+        let at = first_sound_at(
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::PlayAt(Note::new(0, 440.0, 0.5, 1.0), None, 0.0, Some(1.0)),
+            ],
+            48000,
+        )
+        .expect("scheduled note never sounded");
+        // Frame 0 is exactly on the grid, so "next beat" is beat 0 itself.
+        assert!(at < 100, "expected an immediate start on the grid, got {}", at);
+    }
+
+    /// A note scheduled for a beat already gone must not be dropped or fire in the
+    /// past — it plays now.
+    #[test]
+    fn a_past_beat_plays_immediately() {
+        let at = first_sound_at(
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::PlayAt(Note::new(0, 440.0, 0.5, 1.0), None, -5.0, None),
+            ],
+            4800,
+        )
+        .expect("a past-dated note was dropped");
+        assert!(at < 100, "expected an immediate start, got {}", at);
     }
 
     /// The most basic contract there is: `note()` must make sound. Guards the
