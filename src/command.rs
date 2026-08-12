@@ -1197,6 +1197,63 @@ function mgrab(on) end"
     );
 
     #[cfg(feature = "audio")]
+    let sing_bpm = singer.clone();
+    lua!(
+        "bpm",
+        move |_, _, tempo: f32| {
+            #[cfg(feature = "audio")]
+            {
+                let _ = sing_bpm.send(SoundCommand::SetBpm(tempo));
+            }
+            Ok(())
+        },
+        "Set the transport tempo, shared by every channel",
+        "
+---@param tempo number beats per minute
+function bpm(tempo) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing_cue = singer.clone();
+    lua!(
+        "cue",
+        move |_,
+              _,
+              (freq, length, channel, instrument, at, grid): (
+            f32,
+            Option<f32>,
+            Option<usize>,
+            Option<usize>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            #[cfg(feature = "audio")]
+            {
+                let len = length.unwrap_or(1.);
+                let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
+                // Beats go to the audio thread unconverted: it owns the tempo and the
+                // frame counter, so a bpm change can't race a scheduled note.
+                let _ = sing_cue.send(SoundCommand::PlayAt(
+                    note,
+                    channel,
+                    at.unwrap_or(0.),
+                    grid,
+                ));
+            }
+            Ok(())
+        },
+        "Play a note on the transport: at a beat, or quantized to a grid",
+        "
+---@param freq number
+---@param length number?
+---@param channel integer?
+---@param instrument integer?
+---@param at number? absolute transport beat (default: as soon as possible)
+---@param grid number? snap up to the next multiple of this many beats
+function cue(freq, length, channel, instrument, at, grid) end"
+    );
+
+    #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "note",
