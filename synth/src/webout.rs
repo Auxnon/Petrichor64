@@ -1,0 +1,588 @@
+//! The browser's audio output, with the low-latency AudioWorklet path and the
+//! main-thread scheduler as a fallback.
+//!
+//! Two ways to get sound out of a browser:
+//!
+//! - **AudioWorklet** (preferred): the synth runs *inside* the browser's audio
+//!   rendering thread, filling 128-frame blocks (~2.7 ms at 48 kHz). Latency is
+//!   just the browser's output floor. Setup is asynchronous (a module script must
+//!   load and the wasm must be compiled and handed over), so it can't be finished
+//!   inside a synchronous constructor.
+//! - **`WebAudioOut`** (fallback, in `sound.rs`): generates audio on the *main*
+//!   thread and schedules it ahead on the AudioContext clock. Glitch-free through
+//!   frame jank, but it needs ~90 ms of lookahead to be so — fine for playback,
+//!   too laggy to play music with.
+//!
+//! [`WebOut`] hides that: it's built synchronously, immediately hands the engine a
+//! `Sender<SoundCommand>`, and loads the worklet in the background. Commands sent
+//! during setup are held and flushed once the node exists, so nothing is lost at
+//! boot. If setup fails, it degrades to the scheduler rather than going silent.
+//!
+//! **Startup order matters more than it looks.** An `AudioWorkletProcessor` is
+//! constructed on the audio *rendering* thread, and a suspended AudioContext never
+//! starts that thread — browsers keep it suspended until the page has a user
+//! gesture. Creating the node and posting it the wasm module while suspended left
+//! the processor unconstructed, so it never received the module, never reported
+//! back, and never produced a sample: silence with a completely clean log. So the
+//! module is loaded and compiled eagerly (that part is fine while suspended) but
+//! the node is not created until [`WebOut::pump`] sees the context actually running.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::{spawn_local, JsFuture};
+
+use crate::sound::SoundCommand;
+#[cfg(feature = "web-fallback")]
+use crate::sound::WebAudioOut;
+
+/// Where the worklet's module script and the synth's wasm are served from. Both
+/// are copied into the dist root by Trunk (see `web/index.html`); the glue JS is
+/// imported *by the worklet*, which is why it must sit beside it.
+const WORKLET_JS: &str = "synth-worklet.js";
+const SYNTH_WASM: &str = "petrichor_synth_bg.wasm";
+/// Registered name in `web/synth-worklet.js`.
+const PROCESSOR: &str = "petrichor-synth";
+
+/// How far worklet setup has got. Shared between the async loader and `pump`.
+enum Stage {
+    /// Loading the processor module and compiling the synth's wasm.
+    Loading,
+    /// The wasm bytes are fetched and the processor module registered; waiting for
+    /// the context to run before creating the node (see the module docs — a node
+    /// created while suspended may never come alive).
+    ///
+    /// Bytes, not a compiled `WebAssembly.Module`. Posting the module would be the
+    /// cheaper handover (browsers share compiled code, so the audio thread would
+    /// compile nothing), but Chrome will not *deserialize* one inside an
+    /// `AudioWorkletGlobalScope` — cloning a module is only defined within an agent
+    /// cluster, and the audio thread is its own. It fails on arrival, which fires
+    /// `messageerror` and drops the entire message; there is no partial delivery,
+    /// so a module and bytes in one envelope both die together. An ArrayBuffer
+    /// always clones.
+    Loaded(JsValue),
+    /// The worklet is live — commands go straight to its port.
+    Worklet(web_sys::AudioWorkletNode),
+    /// Setup failed; the main-thread scheduler took over.
+    Fallback,
+}
+
+/// The browser audio output.
+pub struct WebOut {
+    ctx: web_sys::AudioContext,
+    stage: Rc<RefCell<Stage>>,
+    /// Commands from the engine, drained by `pump`.
+    audience: Receiver<SoundCommand>,
+    /// Buffered until there's somewhere to send them.
+    pending: Vec<SoundCommand>,
+    /// Built only if we end up on the fallback path, along with the sender that
+    /// feeds its mixer the commands the engine is already producing.
+    #[cfg(feature = "web-fallback")]
+    fallback: Option<WebAudioOut>,
+    #[cfg(feature = "web-fallback")]
+    fallback_tx: Option<Sender<SoundCommand>>,
+    /// Set if constructing the fallback failed, so we don't retry every frame.
+    #[cfg(feature = "web-fallback")]
+    fallback_failed: bool,
+    /// Without a fallback compiled in there is nothing to fall back *to*, so say so
+    /// once rather than discarding commands in silence.
+    #[cfg(not(feature = "web-fallback"))]
+    warned_no_fallback: bool,
+    /// Frames until the next resume() attempt (see pump).
+    resume_wait: u32,
+    /// Logged once, so a suspended context doesn't spam every frame.
+    warned_suspended: bool,
+    /// Set when the worklet reports its synth is live. Watched so a worklet that
+    /// starts but never becomes usable falls back instead of playing silence.
+    ready: Rc<std::cell::Cell<bool>>,
+    /// Frames since the node was created, for that timeout.
+    worklet_frames: u32,
+    /// Our end of a private command lane to the worklet, created once the synth is
+    /// live and waiting to be handed to whoever actually produces commands (on wasm
+    /// that's the VM worker — see [`WebOut::take_command_port`]).
+    cmd_port: Option<web_sys::MessagePort>,
+    /// Set once the lane has been given away, so we don't mint a second one.
+    cmd_port_handed: bool,
+    /// Warned once if a command shows up here *after* the lane left, since ordering
+    /// against the lane's traffic is then no longer guaranteed.
+    warned_late_send: bool,
+}
+
+impl WebOut {
+    /// Build the output and start (but don't await) loading the worklet.
+    pub fn new(audience: Receiver<SoundCommand>) -> Result<Self, JsValue> {
+        let ctx = web_sys::AudioContext::new()?;
+        let stage = Rc::new(RefCell::new(Stage::Loading));
+        log::info!(
+            "web audio: {} Hz, loading AudioWorklet ({})",
+            ctx.sample_rate(),
+            PROCESSOR
+        );
+        spawn_local(load(ctx.clone(), stage.clone()));
+        Ok(Self {
+            ctx,
+            stage,
+            audience,
+            pending: Vec::new(),
+            #[cfg(feature = "web-fallback")]
+            fallback: None,
+            #[cfg(feature = "web-fallback")]
+            fallback_tx: None,
+            #[cfg(feature = "web-fallback")]
+            fallback_failed: false,
+            #[cfg(not(feature = "web-fallback"))]
+            warned_no_fallback: false,
+            resume_wait: 1,
+            warned_suspended: false,
+            ready: Rc::new(std::cell::Cell::new(false)),
+            worklet_frames: 0,
+            cmd_port: None,
+            cmd_port_handed: false,
+            warned_late_send: false,
+        })
+    }
+
+    /// A clone of the AudioContext (a JS reference) so a gesture handler can
+    /// resume it — browsers start it suspended until the first user interaction.
+    pub fn context(&self) -> web_sys::AudioContext {
+        self.ctx.clone()
+    }
+
+    /// Move audio forward. Call once per frame.
+    ///
+    /// On the worklet path this only *forwards commands* — the audio itself is
+    /// generated on the audio thread, so a slow frame no longer costs us samples.
+    /// On the fallback path it also runs the chunk scheduler.
+    pub fn pump(&mut self) {
+        let running = self.ctx.state() == web_sys::AudioContextState::Running;
+        if !running {
+            // Belt and braces alongside the engine's gesture handlers. Retried
+            // sparsely, not every frame: before the page has user activation the
+            // browser both rejects this *and* logs a warning, so per-frame retries
+            // bury the console in "AudioContext was not allowed to start".
+            self.resume_wait = self.resume_wait.saturating_sub(1);
+            if self.resume_wait == 0 {
+                self.resume_wait = 60;
+                let _ = self.ctx.resume();
+            }
+            if !self.warned_suspended {
+                self.warned_suspended = true;
+                log::info!("web audio: context suspended, waiting for a user gesture");
+            }
+        }
+
+        // Create the worklet node the moment the context is genuinely running —
+        // not before. The processor is constructed on the audio rendering thread,
+        // which a suspended context never starts.
+        if running {
+            let loaded = match &*self.stage.borrow() {
+                Stage::Loaded(bytes) => Some(bytes.clone()),
+                _ => None,
+            };
+            if let Some(bytes) = loaded {
+                match self.start_worklet(&bytes) {
+                    Ok(node) => {
+                        log::info!("web audio: AudioWorklet started (low latency path)");
+                        *self.stage.borrow_mut() = Stage::Worklet(node);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "web audio: could not start the worklet node ({:?}); \
+                             falling back to the main-thread scheduler",
+                            e
+                        );
+                        *self.stage.borrow_mut() = Stage::Fallback;
+                    }
+                }
+            }
+        }
+
+        // Collect whatever the engine has queued since the last frame.
+        for cmd in self.audience.try_iter() {
+            self.pending.push(cmd);
+        }
+
+        let stage_is = match &*self.stage.borrow() {
+            Stage::Loading | Stage::Loaded(_) => 0,
+            Stage::Worklet(_) => 1,
+            Stage::Fallback => 2,
+        };
+
+        match stage_is {
+            // Still starting up: hold commands (bounded, so a stalled setup can't
+            // grow without limit — oldest go first, as with any dropped queue).
+            0 => {
+                const MAX_PENDING: usize = 4096;
+                if self.pending.len() > MAX_PENDING {
+                    let excess = self.pending.len() - MAX_PENDING;
+                    self.pending.drain(..excess);
+                }
+            }
+            1 => {
+                // A worklet that started but never reported a live synth would
+                // play silence forever. Give the handshake a few seconds, then
+                // take the scheduler instead — degraded beats mute.
+                if !self.ready.get() {
+                    self.worklet_frames += 1;
+                    if self.worklet_frames > 240 {
+                        log::error!(
+                            "web audio: worklet never reported a ready synth; \
+                             falling back to the main-thread scheduler"
+                        );
+                        *self.stage.borrow_mut() = Stage::Fallback;
+                        return;
+                    }
+                    // Hold commands until the synth confirms it exists. A worklet
+                    // with no synth silently discards them, and the ones sent at
+                    // boot are the `instr`/`smpl` definitions — so forwarding them
+                    // into a dead worklet meant the fallback later started with no
+                    // instruments and no samples, and every note came out as the
+                    // default beep. Ready arrives within a frame or two of `hello`,
+                    // so this costs nothing when the handover works.
+                    return;
+                }
+                // The synth is live. Mint the private command lane (once) and flush
+                // anything buffered onto it *before* handing it over, so the boot's
+                // setup commands are queued ahead of whatever the new owner sends.
+                if self.cmd_port.is_none() && !self.cmd_port_handed {
+                    match self.open_command_lane() {
+                        Ok(port) => self.cmd_port = Some(port),
+                        Err(e) => {
+                            // Mark it handed so this isn't retried (and re-logged)
+                            // every frame. Commands keep flowing over the node port
+                            // — a frame slower, but working.
+                            self.cmd_port_handed = true;
+                            log::error!(
+                                "web audio: could not open the command lane ({:?}); commands \
+                                 will keep going through the main thread",
+                                e
+                            );
+                        }
+                    }
+                }
+
+                if !self.pending.is_empty() {
+                    // Prefer the lane while we still hold it; once it's handed over,
+                    // its owner sends directly and anything arriving here is a
+                    // latecomer we can only put on the node port.
+                    if let Some(port) = self.cmd_port.clone() {
+                        for cmd in self.pending.drain(..) {
+                            post_command(&port, &cmd);
+                        }
+                    } else if let Stage::Worklet(node) = &*self.stage.borrow() {
+                        if self.cmd_port_handed && !self.warned_late_send {
+                            self.warned_late_send = true;
+                            log::warn!(
+                                "web audio: a sound command was sent from the main thread after \
+                                 the command lane was handed to the VM worker — it will play, but \
+                                 its order against the worker's commands isn't guaranteed"
+                            );
+                        }
+                        if let Ok(port) = node.port() {
+                            for cmd in self.pending.drain(..) {
+                                post_command(&port, &cmd);
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(feature = "web-fallback")]
+            _ => {
+                // Fallback: build the scheduler on first use, then feed it the
+                // same command stream and let it generate audio here.
+                if self.fallback.is_none() && !self.fallback_failed {
+                    let (tx, rx) = channel::<SoundCommand>();
+                    // Share our AudioContext: it's the one the engine's gesture
+                    // handler resumes, and a suspended context stays silent.
+                    match WebAudioOut::with_context(self.ctx.clone(), rx) {
+                        Ok(out) => {
+                            self.fallback = Some(out);
+                            self.fallback_tx = Some(tx);
+                        }
+                        Err(e) => {
+                            log::error!("web audio fallback failed: {:?}", e);
+                            self.fallback_failed = true;
+                        }
+                    }
+                }
+                if let Some(tx) = &self.fallback_tx {
+                    for cmd in self.pending.drain(..) {
+                        let _ = tx.send(cmd);
+                    }
+                } else {
+                    self.pending.clear(); // nowhere to send; don't grow forever
+                }
+                if let Some(out) = self.fallback.as_mut() {
+                    out.pump();
+                }
+            }
+            // Built without `web-fallback`: the worklet is the only way to make a
+            // sound, and it didn't start. Say so once, then keep draining the queue
+            // so it can't grow without bound.
+            #[cfg(not(feature = "web-fallback"))]
+            _ => {
+                if !self.warned_no_fallback {
+                    self.warned_no_fallback = true;
+                    log::error!(
+                        "web audio: the AudioWorklet could not start and this build has no \
+                         main-thread fallback (feature `web-fallback` is off) — no sound"
+                    );
+                }
+                self.pending.clear();
+            }
+        }
+    }
+
+    /// Open a private one-way command lane to the worklet: a `MessageChannel` whose
+    /// far end is handed to the processor, and whose near end this returns.
+    ///
+    /// Why a second port at all, when the node already has one: the node's port
+    /// carries the handshake and the worklet's diagnostics, and it belongs to the
+    /// main thread. Commands are produced somewhere else entirely (the VM worker),
+    /// and a `MessagePort` is transferable — so giving the worker its own port lets
+    /// a note go straight from Lua to the audio thread, instead of being posted to
+    /// the main thread, applied on its next frame, and forwarded on the one after.
+    fn open_command_lane(&self) -> Result<web_sys::MessagePort, JsValue> {
+        let node_port = match &*self.stage.borrow() {
+            Stage::Worklet(node) => node.port()?,
+            _ => return Err(JsValue::from_str("no worklet node")),
+        };
+        let channel = web_sys::MessageChannel::new()?;
+        let near = channel.port1();
+        let far = channel.port2();
+
+        // Hand the far end over the node port, transferring it (a port must be
+        // transferred, never cloned).
+        let msg = js_sys::Object::new();
+        js_sys::Reflect::set(&msg, &"type".into(), &"cmd-port".into())?;
+        js_sys::Reflect::set(&msg, &"port".into(), &far)?;
+        let transfer = js_sys::Array::new();
+        transfer.push(&far);
+        node_port.post_message_with_transferable(&msg, &transfer)?;
+        log::info!("web audio: command lane open");
+        Ok(near)
+    }
+
+    /// True once we've given up on the worklet. Whoever produces commands needs to
+    /// know: no lane is ever coming, so they should stop waiting for one.
+    pub fn is_fallback(&self) -> bool {
+        matches!(&*self.stage.borrow(), Stage::Fallback)
+    }
+
+    /// Take the command lane, to be transferred to whoever produces commands.
+    ///
+    /// Returns `Some` exactly once, and only after the worklet's synth is live —
+    /// before that there is nothing on the far end to receive anything. The caller
+    /// must actually transfer it; a `MessagePort` left un-transferred is inert.
+    pub fn take_command_port(&mut self) -> Option<web_sys::MessagePort> {
+        let port = self.cmd_port.take()?;
+        self.cmd_port_handed = true;
+        Some(port)
+    }
+
+    /// Create the node, wire it to the speakers, listen for its reports, and hand
+    /// it the compiled module. Called from `pump` once the context is running.
+    fn start_worklet(&self, bytes: &JsValue) -> Result<web_sys::AudioWorkletNode, JsValue> {
+        let node = web_sys::AudioWorkletNode::new(&self.ctx, PROCESSOR)?;
+        node.connect_with_audio_node(&self.ctx.destination())?;
+        let port = node.port()?;
+
+        // Listen before handing over the module. The processor reports its own
+        // failures (e.g. the wasm not instantiating inside the worklet) — without
+        // this, such a failure is a silent page with no fallback and no message.
+        let watched = self.stage.clone();
+        let ready_flag = self.ready.clone();
+        // Captured so the handshake below can hand the wasm over.
+        let pending_bytes = bytes.clone();
+        let handshake_port = port.clone();
+        let rate = self.ctx.sample_rate() as f64;
+        let on_msg =
+            Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |e: web_sys::MessageEvent| {
+                let data = e.data();
+                let field = |k: &str| {
+                    js_sys::Reflect::get(&data, &k.into())
+                        .ok()
+                        .and_then(|v| v.as_string())
+                        .unwrap_or_default()
+                };
+                let num = |k: &str| {
+                    js_sys::Reflect::get(&data, &k.into())
+                        .ok()
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(f64::NAN)
+                };
+                match field("type").as_str() {
+                    // Posted from the processor's constructor. This is the
+                    // handshake: only now does a processor exist to receive the
+                    // module. Posting it at node-creation time raced construction
+                    // on the audio thread and the message was silently dropped —
+                    // the processor came up and then sat there with no synth.
+                    "hello" => {
+                        log::info!("web audio: worklet processor constructed, sending synth wasm");
+                        let msg = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"wasm".into());
+                        // Raw bytes — a compiled module does not survive the hop to
+                        // the audio thread (see Stage::Loaded).
+                        let _ = js_sys::Reflect::set(&msg, &"bytes".into(), &pending_bytes);
+                        // Pass the rate we measured rather than trusting the
+                        // worklet scope's global: a non-finite rate there would make
+                        // every phase increment NaN — silence with no error at all.
+                        let _ = js_sys::Reflect::set(
+                            &msg,
+                            &"sampleRate".into(),
+                            &JsValue::from_f64(rate),
+                        );
+                        // Checked, not ignored: a clone the browser refuses throws
+                        // here, and swallowing that left exactly the symptom this
+                        // path was debugged through — "sending synth wasm" logged,
+                        // no reply ever, nothing in the console.
+                        if let Err(e) = handshake_port.post_message(&msg) {
+                            log::error!(
+                                "web audio: could not post the synth wasm to the worklet \
+                                 ({:?}); falling back to the main-thread scheduler",
+                                e
+                            );
+                            *watched.borrow_mut() = Stage::Fallback;
+                        }
+                    }
+                    // The worklet says the message arrived and which form of the
+                    // wasm it could actually use. Distinguishes "never arrived"
+                    // from "arrived and failed to instantiate".
+                    "got" => log::info!("web audio: worklet received the wasm as {}", field("via")),
+                    // The private command lane is attached at the far end. Notes now
+                    // reach the audio thread without the main thread in the path.
+                    "lane" => log::info!("web audio: worklet attached the command lane"),
+                    "ready" => {
+                        ready_flag.set(true);
+                        log::info!("web audio: AudioWorklet synth ready @ {} Hz", num("rate"))
+                    }
+                    // Says which link is broken when there's no sound and no error:
+                    // cmds 0 => commands aren't arriving; peak 0 => the mixer is
+                    // producing silence.
+                    "stats" => log::info!(
+                        "web audio: blocks={} cmds={} peak={:.4} channels={} frames={}",
+                        num("blocks"),
+                        num("cmds"),
+                        num("peak"),
+                        num("channels"),
+                        num("frames"),
+                    ),
+                    "error" => {
+                        log::error!(
+                            "web audio: worklet failed ({}); falling back to the \
+                             main-thread scheduler (higher latency)",
+                            field("message")
+                        );
+                        *watched.borrow_mut() = Stage::Fallback;
+                    }
+                    _ => {}
+                }
+            });
+        port.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
+        // Setting onmessage also starts the port, so anything the processor already
+        // queued arrives.
+        on_msg.forget();
+
+        // Fires when a message *arrives* but cannot be deserialized — the one
+        // failure mode that produces no error on either side and no message. Worth
+        // a handler purely so it can never again look like nothing happened.
+        let on_err = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(|_: web_sys::MessageEvent| {
+            log::error!("web audio: a message from the worklet could not be deserialized");
+        });
+        port.set_onmessageerror(Some(on_err.as_ref().unchecked_ref()));
+        on_err.forget();
+
+        // The module is deliberately NOT posted here — see the "hello" arm above.
+        Ok(node)
+    }
+}
+
+/// Encode one command in the worklet's wire format (MessagePack).
+///
+/// Public because commands reach the worklet from two places — the main thread and
+/// the VM worker, which owns the command lane — and both must speak the same
+/// format. A binary codec matters here: a command can carry a whole decoded ogg as
+/// `Vec<f32>`, which as a JS array would be one boxed number per sample.
+pub fn encode_command(cmd: &SoundCommand) -> Option<Vec<u8>> {
+    match rmp_serde::to_vec(cmd) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            log::error!("sound command encode failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Decode a command in that format — for the route back through the main thread,
+/// used when there's no worklet and the fallback scheduler has to play it instead.
+pub fn decode_command(bytes: &[u8]) -> Option<SoundCommand> {
+    match rmp_serde::from_slice(bytes) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            log::error!("sound command decode failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Serialize one command and post it to the worklet.
+fn post_command(port: &web_sys::MessagePort, cmd: &SoundCommand) {
+    let bytes = match encode_command(cmd) {
+        Some(b) => b,
+        None => return,
+    };
+    let msg = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&msg, &"type".into(), &"cmd".into());
+    let _ = js_sys::Reflect::set(
+        &msg,
+        &"bytes".into(),
+        &js_sys::Uint8Array::from(&bytes[..]).into(),
+    );
+    let _ = port.post_message(&msg);
+}
+
+/// Register the processor module and compile the synth's wasm. Both are safe to do
+/// while the context is suspended; creating the *node* is not, so that waits for
+/// `pump`.
+async fn load(ctx: web_sys::AudioContext, stage: Rc<RefCell<Stage>>) {
+    match try_load(&ctx).await {
+        Ok(bytes) => {
+            log::info!("web audio: worklet module + synth wasm loaded");
+            *stage.borrow_mut() = Stage::Loaded(bytes);
+        }
+        Err(e) => {
+            log::warn!(
+                "web audio: AudioWorklet unavailable ({:?}); falling back to the \
+                 main-thread scheduler (higher latency)",
+                e
+            );
+            *stage.borrow_mut() = Stage::Fallback;
+        }
+    }
+}
+
+/// `AudioWorkletGlobalScope` has no `fetch`, so the worklet cannot load its own
+/// wasm — the main thread fetches the bytes here and hands them over the port, and
+/// the worklet compiles them itself (see `Stage::Loaded` for why not a module).
+///
+/// The buffer is *not* transferred: the copy is ~289 KB once, and keeping ours
+/// means a retry is still possible instead of the bytes being gone.
+async fn try_load(ctx: &web_sys::AudioContext) -> Result<JsValue, JsValue> {
+    let worklet = ctx.audio_worklet()?;
+    JsFuture::from(worklet.add_module(WORKLET_JS)?).await?;
+
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+    let resp = JsFuture::from(window.fetch_with_str(SYNTH_WASM)).await?;
+    let resp: web_sys::Response = resp.dyn_into()?;
+    JsFuture::from(resp.array_buffer()?).await
+}
+
+/// Create the browser audio driver + the command sender the engine sends notes on.
+pub fn init_web() -> (Result<WebOut, JsValue>, Sender<SoundCommand>) {
+    let (singer, audience) = channel::<SoundCommand>();
+    (WebOut::new(audience), singer)
+}

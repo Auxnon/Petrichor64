@@ -8,7 +8,6 @@ use std::{
 
 use image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::draw_filled_rect_mut;
-use itertools::Itertools;
 use regex::Regex;
 #[cfg(feature = "headed")]
 use wgpu::Device;
@@ -62,27 +61,12 @@ pub async fn pack(
     };
     let path = determine_path(dir);
 
-    let name = match com_hash.get("n") {
-        Some(name) => name,
-        None => {
-            let p = path.file_stem();
-            // println!("p: {:?}", p);
-            match p {
-                Some(pp) => pp.to_str().unwrap_or("unknown"),
-                None => "unknown",
-            }
-        }
-    };
-    println!("name: {}", name);
-    let pack_name = if name.contains(".") {
-        name.to_owned()
-    } else {
-        format!("{}.game.png", name)
-    };
+    let pack_name = bundle_output_name(com_hash.get("n").map(|s| s.as_str()), &path);
     println!("pack name: {}", pack_name);
 
     let asset_items = get_asset_items(&path, loggy)?;
     let script_items = get_script_items(&path, loggy)?;
+    let sound_items = get_sound_items(&path);
 
     let sources = walk_files(
         #[cfg(feature = "headed")]
@@ -96,6 +80,7 @@ pub async fn pack(
         lua_master,
         &asset_items,
         &script_items,
+        &sound_items,
         loggy,
         debug,
     );
@@ -106,6 +91,39 @@ pub async fn pack(
     });
     crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
 }
+
+/// Lightweight, engine-free CLI bundler. Zips a folder's `assets/` and
+/// `scripts/` files with `icon.png` as the PNG header into `<name>.game.png`,
+/// producing the same entry layout the runtime unpacker expects (entries keyed
+/// by their parent dir, e.g. `<dir>/assets/foo.png`, `<dir>/scripts/main.lua`).
+/// Unlike [`pack`], it needs no running Core/GPU — it enumerates files and calls
+/// `pack_zip` directly, so it can run from a plain CLI invocation.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Result<(), P64Error> {
+    let path = PathBuf::from(dir);
+    let asset_items = get_asset_items(&path, loggy)?;
+    let script_items = get_script_items(&path, loggy)?;
+    let sound_items = get_sound_items(&path);
+
+    // Same file set the engine's walk_files bundles, via the shared collector.
+    let sources = collect_packable_sources(&asset_items, &script_items, &sound_items);
+    if sources.is_empty() {
+        loggy.log(
+            LogType::ConfigError,
+            "no packable assets/scripts found (expected assets/ and scripts/ subfolders)",
+        );
+        return Err(P64Error::MissingAssets);
+    }
+
+    let pack_name = bundle_output_name(out, &path);
+    let icon = path.join("icon.png");
+    loggy.log(
+        LogType::Config,
+        &format!("packing {} files -> {}", sources.len(), pack_name),
+    );
+    crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
+}
+
 pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     // let sources = walk_files(None);
     // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
@@ -122,6 +140,7 @@ pub async fn unpack(
     lua_master: &LuaCore,
     name: &str,
     file: Vec<u8>,
+    #[cfg(feature = "audio")] singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
     loggy: &mut Loggy,
     debug: bool,
 ) {
@@ -139,7 +158,7 @@ pub async fn unpack(
         }
     };
     let map =
-        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts"], loggy)
+        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts", "sounds"], loggy)
             .await
         {
             Ok(a) => a,
@@ -233,6 +252,18 @@ pub async fn unpack(
                 _ => {}
             }
         }
+    }
+
+    // Decode any bundled sounds/*.ogg into the audio name bank (mirror of the
+    // directory path's load_sounds_from_dir).
+    #[cfg(feature = "audio")]
+    if let Some(dir) = map.get("sounds") {
+        let sounds: Vec<(String, Vec<u8>)> = dir
+            .iter()
+            .filter(|(item_name, _)| item_name.ends_with(".ogg"))
+            .map(|(item_name, buf)| (item_name.clone(), buf.clone()))
+            .collect();
+        load_sounds_from_buffers(sounds, singer, loggy);
     }
 }
 
@@ -363,7 +394,75 @@ pub fn is_valid_type(s: &str) -> bool {
     s == "gltf" || s == "glb" || s == "png" || s == "ron" || s == "json"
 }
 
+/// Derive a bundle output filename: an explicit name is used verbatim if it
+/// already carries an extension, otherwise `.game.png` is appended; with no
+/// name the source directory's own name is used. Shared by `pack` (console) and
+/// `pack_folder` (CLI) so both name bundles identically.
+pub fn bundle_output_name(name: Option<&str>, path: &Path) -> String {
+    match name {
+        Some(n) if n.contains('.') => n.to_string(),
+        Some(n) => format!("{}.game.png", n),
+        None => {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            format!("{}.game.png", stem)
+        }
+    }
+}
+
+/// The set of files that go into a bundle zip: every recognised asset
+/// (`is_valid_type`) plus every `.lua` script except `*ignore.lua`, plus every
+/// `.ogg` under `sounds/`. Shared by the engine's `walk_files` and the CLI
+/// `pack_folder` so both bundle exactly the same files. Paths are returned
+/// verbatim — the parent dir stays `assets`/`scripts`/`sounds`, which the
+/// unpacker keys on. Only `.ogg` sounds are bundled: the engine can't decode
+/// raw wav/mp3, so those must be converted first (see the `oggify` tool).
+pub fn collect_packable_sources<'a>(
+    asset_items: &'a [PathBuf],
+    script_items: &'a [PathBuf],
+    sound_items: &'a [PathBuf],
+) -> Vec<&'a str> {
+    let mut sources: Vec<&str> = Vec::new();
+    for entry in asset_items {
+        let ext = entry.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if is_valid_type(ext) {
+            if let Some(p) = entry.to_str() {
+                sources.push(p);
+            }
+        }
+    }
+    for entry in script_items {
+        let is_lua = entry
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("lua"))
+            .unwrap_or(false);
+        if is_lua {
+            if let Some(p) = entry.to_str() {
+                if !p.ends_with("ignore.lua") {
+                    sources.push(p);
+                }
+            }
+        }
+    }
+    for entry in sound_items {
+        let is_ogg = entry
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("ogg"))
+            .unwrap_or(false);
+        if is_ogg {
+            if let Some(p) = entry.to_str() {
+                sources.push(p);
+            }
+        }
+    }
+    sources
+}
+
 pub fn check_for_auto() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    let mut p;
+    #[cfg(not(target_os = "macos"))]
     let p;
     #[cfg(target_os = "macos")]
     {
@@ -522,6 +621,18 @@ pub fn get_asset_items(
     }
 }
 
+/// List files under `<path>/sounds`. Unlike assets/scripts this folder is
+/// optional, so a missing one is not an error — it just yields an empty list.
+pub fn get_sound_items(current_path: &Path) -> Vec<PathBuf> {
+    match read_dir(current_path.join("sounds")) {
+        Ok(dir) => dir
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 pub fn get_script_items(
     current_path: &PathBuf,
     loggy: &mut Loggy,
@@ -549,6 +660,106 @@ pub fn get_script_items(
     }
 }
 
+/// Decode an OGG/Vorbis buffer to mono f32 PCM (-1..1). Multi-channel files are
+/// downmixed by averaging. Returns None on a malformed/unsupported stream.
+/// Runtime decode only ever needs ogg — everything else is converted to ogg by
+/// the separate `oggify` tool, so the engine carries just the tiny `lewton`
+/// pure-Rust decoder (no C deps).
+#[cfg(feature = "audio")]
+fn decode_ogg(bytes: Vec<u8>) -> Option<(Vec<f32>, f32)> {
+    use lewton::inside_ogg::OggStreamReader;
+    let mut reader = match OggStreamReader::new(std::io::Cursor::new(bytes)) {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+    let channels = reader.ident_hdr.audio_channels.max(1) as usize;
+    let source_rate = reader.ident_hdr.audio_sample_rate as f32;
+    let mut pcm: Vec<f32> = Vec::new();
+    // read_dec_packet_itl yields interleaved i16 frames until the stream ends.
+    while let Ok(Some(frame)) = reader.read_dec_packet_itl() {
+        for chunk in frame.chunks(channels) {
+            let sum: i32 = chunk.iter().map(|&s| s as i32).sum();
+            pcm.push(sum as f32 / channels as f32 / 32768.0);
+        }
+    }
+    if pcm.is_empty() {
+        None
+    } else {
+        Some((pcm, source_rate))
+    }
+}
+
+/// Decode each `sounds/*.ogg` under `dir` and stash it in the audio thread's
+/// name bank (keyed by the file stem). A later `smpl(id, 'stem')` binds it into
+/// an integer instrument slot — the mixer never sees the name. Missing `sounds/`
+/// folder is fine (most games have none).
+#[cfg(feature = "audio")]
+pub fn load_sounds_from_dir(
+    dir: &Path,
+    singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
+    loggy: &mut Loggy,
+) {
+    let sounds_path = dir.join("sounds");
+    let entries = match read_dir(&sounds_path) {
+        Ok(d) => d,
+        Err(_) => return, // no sounds/ folder — nothing to do
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("ogg") {
+            continue;
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        match fs::read(&path).ok().and_then(decode_ogg) {
+            Some((pcm, rate)) => {
+                loggy.log(
+                    LogType::Config,
+                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
+                );
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
+            }
+            None => loggy.log(
+                LogType::ConfigError,
+                &format!("failed to decode sound {}", path.display()),
+            ),
+        }
+    }
+}
+
+/// Decode already-extracted `sounds/` buffers (name -> ogg bytes) from a packed
+/// game into the audio thread's name bank. Mirror of `load_sounds_from_dir` for
+/// the bundled path.
+#[cfg(feature = "audio")]
+pub fn load_sounds_from_buffers(
+    sounds: Vec<(String, Vec<u8>)>,
+    singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
+    loggy: &mut Loggy,
+) {
+    for (name, bytes) in sounds {
+        let stem = Path::new(&name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&name)
+            .to_string();
+        match decode_ogg(bytes) {
+            Some((pcm, rate)) => {
+                loggy.log(
+                    LogType::Config,
+                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
+                );
+                let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
+            }
+            None => loggy.log(
+                LogType::ConfigError,
+                &format!("failed to decode packed sound {}", stem),
+            ),
+        }
+    }
+}
+
 pub fn walk_files<'a>(
     #[cfg(feature = "headed")] device: Option<&Device>,
     #[cfg(feature = "headed")] tex_manager: &mut TexManager,
@@ -559,6 +770,7 @@ pub fn walk_files<'a>(
     lua_master: &LuaCore,
     asset_items: &'a Vec<PathBuf>,
     script_items: &'a Vec<PathBuf>,
+    sound_items: &'a [PathBuf],
     loggy: &mut Loggy,
     debug: bool,
 ) -> Vec<&'a str> {
@@ -569,7 +781,6 @@ pub fn walk_files<'a>(
 
     let mut sources: SourceMap = HashMap::new();
     let mut configs = vec![];
-    let mut paths = vec![];
     let mut version = [0; 3];
 
     for entry in asset_items.iter() {
@@ -595,7 +806,6 @@ pub fn walk_files<'a>(
                             } else {
                                 sources.insert(file_name, chonk);
                             }
-                            paths.push(path);
                         }
                     }
                     _ => {}
@@ -655,7 +865,6 @@ pub fn walk_files<'a>(
                                 version = ver;
                             }
                         }
-                        paths.push(file_name);
                     }
                 } else {
                     loggy.log(
@@ -672,7 +881,9 @@ pub fn walk_files<'a>(
 
     loggy.log(LogType::Config, &format!("app version is {:?}", version));
     //.expect("Scripts directory failed to load")
-    paths
+    // The zip source list is exactly the shared collector's output — the loops
+    // above only bake assets/scripts into the live instance (when activate).
+    collect_packable_sources(asset_items, script_items, sound_items)
 }
 
 #[cfg(feature = "headed")]

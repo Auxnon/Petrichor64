@@ -1,27 +1,21 @@
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager, error_window, global::GuiParams, gui::ScreenIndex,
-    lua_define::MainPacket, render, texture::TexManager,
+    error_window, global::GuiParams, render, texture::TexManager,
 };
-use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
-use crate::{gui::Gui, log::LogType};
+use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
-use itertools::Itertools;
-use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
 use std::sync::mpsc::channel;
 use std::sync::Arc;
-use std::{mem, rc::Rc};
+use std::mem;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
-use wgpu::{BackendOptions, Features, SurfaceTarget};
+use wgpu::{BackendOptions, ExperimentalFeatures, Features, Trace};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
-    window::{CursorGrabMode, Window, WindowBuilder},
+    window::Window,
 };
 
 const MAX_ENTS: u64 = 10000;
@@ -39,6 +33,11 @@ pub struct Gfx<'w> {
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
     pub surface: wgpu::Surface<'w>,
+    /// Kept so the surface can be rebuilt without tearing down the device, the
+    /// pipelines, or the running game — Android destroys the native window when the
+    /// app is backgrounded (screen sleep) and hands back a *new* one on resume, at
+    /// which point the old surface is dead. See `recreate_surface`.
+    instance: wgpu::Instance,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -53,6 +52,14 @@ struct GlobalUniforms {
     persp: [[f32; 4]; 4],
     adjustments: [[f32; 4]; 4],
     specs: [f32; 4],
+    // L0 retro lighting: directional sun. `light_color.w` carries ambient.
+    light_dir: [f32; 4],
+    light_color: [f32; 4],
+    // L2 distance fog: rgb + w = far distance (w=0 disables).
+    fog_color: [f32; 4],
+    // L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb.
+    amb_sky: [f32; 4],
+    amb_ground: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -84,7 +91,7 @@ fn create_depth_texture(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         compare: Some(wgpu::CompareFunction::LessEqual), // 5.
         lod_min_clamp: 0.0,
         lod_max_clamp: 100.0,
@@ -104,17 +111,30 @@ impl<'w> Gfx<'w> {
         // let b=Box::new(*rwindow);
         // let window = &*rwindow;
         // let ww= SurfaceTarget::Window(Box::new(*rwindow));
-        let size = rwindow.inner_size();
+        // On the web the canvas often isn't laid out yet at init, so
+        // inner_size() reports 0x0 — which makes the surface config and every
+        // texture derived from it 0x0 and Dawn/WebGPU rejects them. Start from a
+        // sane default; the first Resized event reconfigures to the real size.
+        let size = {
+            let s = rwindow.inner_size();
+            if s.width == 0 || s.height == 0 {
+                winit::dpi::PhysicalSize::new(640, 548)
+            } else {
+                s
+            }
+        };
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            // label: Some("instance"),
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
+                for_resource_creation: None,
+                for_device_loss: None,
+            },
             backend_options: BackendOptions::from_env_or_default(),
-            // dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            // gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
-            flags: wgpu::InstanceFlags::empty(), // TODO is it worth discarding debug info
+            flags: wgpu::InstanceFlags::empty(),
+            display: None,
         });
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
@@ -134,21 +154,20 @@ impl<'w> Gfx<'w> {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect("Failed to request adapter");
 
         let (device, queue) = match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: Features::empty(),
-                    required_limits: wgpu::Limits {
-                        max_storage_textures_per_shader_stage: 8,
-                        ..wgpu::Limits::default()
-                    },
-                    memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            .request_device(&wgpu::DeviceDescriptor {
+                trace: Trace::Off, // TODO make this on, where should it save?
+                experimental_features: ExperimentalFeatures::disabled(),
+                label: None,
+                required_features: Features::empty(),
+                required_limits: wgpu::Limits {
+                    max_storage_textures_per_shader_stage: 8,
+                    ..wgpu::Limits::default()
                 },
-                None,
-            )
+                memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            })
             .await
         {
             Ok((device, queue)) => (device, queue),
@@ -157,7 +176,7 @@ impl<'w> Gfx<'w> {
                 std::process::exit(1);
             }
         };
-        device.on_uncaptured_error(Box::new(|e| {
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
             error_window(Box::new(e));
             std::process::exit(1);
         }));
@@ -170,16 +189,38 @@ impl<'w> Gfx<'w> {
             texture: diff_tex,
         } = tex_manager.finalize(&device, &queue);
 
+        let surface_caps = surface.get_capabilities(&adapter);
+        // Prefer sRGB surface formats; fall back to first available
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             desired_maximum_frame_latency: 1,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
+            format: surface_format,
             width: size.width,
             height: size.height,
             // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
             // lost? can we check if immediate is better?
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: CompositeAlphaMode::Opaque,
+            // Ask for what the surface actually supports. `Opaque` was hardcoded,
+            // which is fine on desktop and the web but fatal on Android, where the
+            // surface reports only `[Inherit]` — `Surface::configure` fails
+            // validation and the app dies before drawing a frame. Opaque is still
+            // preferred where it exists (the engine draws a full-screen opaque
+            // image, and letting the compositor blend costs work for nothing).
+            alpha_mode: if surface_caps
+                .alpha_modes
+                .contains(&CompositeAlphaMode::Opaque)
+            {
+                CompositeAlphaMode::Opaque
+            } else {
+                surface_caps.alpha_modes[0]
+            },
             view_formats: vec![],
         };
 
@@ -314,7 +355,11 @@ impl<'w> Gfx<'w> {
             persp: mx_persp.to_cols_array_2d(),
             adjustments: Mat4::ZERO.to_cols_array_2d(),
             specs: [0.0, 0.0, 0.0, 0.0],
-            //num_lights: [lights.len() as u32, 0, 0, 0],
+            light_dir: [0.0, 0.0, -1.0, 0.0],
+            light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
+            fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
+            amb_sky: [0.0, 0.0, 0.0, 0.0],   // w=0 => flat ambient
+            amb_ground: [0.0, 0.0, 0.0, 0.0],
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -326,8 +371,8 @@ impl<'w> Gfx<'w> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&main_layout, &entity_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout)],
+                ..Default::default()
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -380,9 +425,9 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less), // 1.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -390,7 +435,7 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         let depth = create_depth_texture(&config, &device);
@@ -423,8 +468,8 @@ impl<'w> Gfx<'w> {
 
         let gui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Gui Render Pipeline Layout"),
-            bind_group_layouts: &[&main_layout, &gui_aux_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&main_layout), Some(&gui_aux_layout)],
+            ..Default::default()
         });
 
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -463,9 +508,9 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less), // 1.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -473,15 +518,15 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         // =================== Sky Pipeline ===================
 
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sky Render Pipeline Layout"),
-            bind_group_layouts: &[&main_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&main_layout)],
+            ..Default::default()
         });
 
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -515,8 +560,8 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -525,7 +570,7 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         let post = Post::new(
@@ -540,6 +585,7 @@ impl<'w> Gfx<'w> {
         (
             Self {
                 surface,
+                instance,
                 device,
                 queue,
                 size,
@@ -596,9 +642,52 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_config_size(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
+        // Clamp to the device's max 2D texture dimension. On the web a canvas can
+        // enter a client-size <-> backing-buffer×DPR feedback loop and request a
+        // surface larger than the GPU allows, which aborts the wasm module
+        // ("Texture size exceeded maximum"). Clamping keeps it alive; the canvas
+        // CSS pin (attach_canvas_to_dom) is what actually stops the growth.
+        let max = self.device.limits().max_texture_dimension_2d;
+        let w = new_size.width.clamp(1, max);
+        let h = new_size.height.clamp(1, max);
+        self.size = winit::dpi::PhysicalSize::new(w, h);
+        self.config.width = w;
+        self.config.height = h;
+    }
+
+    /// Rebuild the surface against the window's *current* native handle, keeping the
+    /// device, pipelines, textures and the running game intact.
+    ///
+    /// Android destroys the native window whenever the app leaves the foreground (a
+    /// screen sleep is enough) and supplies a new one on resume. The old surface
+    /// refers to the window that no longer exists, so every frame after that draws
+    /// nowhere — the app comes back black. Only the surface is stale, which is why
+    /// this exists instead of rebuilding `Core` and losing the game's state.
+    pub fn recreate_surface(&mut self) -> bool {
+        match self.instance.create_surface(self.win_ref.clone()) {
+            Ok(surface) => {
+                // The new window can be a different size (rotation, a fold opening),
+                // so trust it over the config we were holding.
+                let s = self.win_ref.inner_size();
+                if s.width > 0 && s.height > 0 {
+                    self.size = s;
+                    self.config.width = s.width;
+                    self.config.height = s.height;
+                }
+                surface.configure(&self.device, &self.config);
+                self.surface = surface;
+                let d = create_depth_texture(&self.config, &self.device);
+                self.depth_texture = d.1;
+                true
+            }
+            Err(e) => {
+                // Not fatal: without a surface we simply don't draw, and the next
+                // resume gets another go. Aborting here would kill a running game
+                // over a transient window handle.
+                ::log::error!("could not recreate the surface: {}", e);
+                false
+            }
+        }
     }
 
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
@@ -622,7 +711,7 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        let _=self.win_ref.request_inner_size(LogicalSize::new(
+        let _ = self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))

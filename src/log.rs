@@ -64,6 +64,7 @@ impl Loggy {
         // let mut s = str.lines().map(|l| l.to_string()).collect::<Vec<String>>();
         // let last=s.last();
         // s.truncate(s.len()-1);
+        println!("#{str}#");
 
         self.current_line.push_str(str);
 
@@ -106,7 +107,7 @@ impl Loggy {
         if it > self.history_buffer.len() {
             it = self.history_buffer.len();
         }
-        let s = self.history_buffer[(self.history_buffer.len() - it)].clone();
+        let s = self.history_buffer[self.history_buffer.len() - it].clone();
         println!("up com {} len {} it {}", s, self.history_buffer.len(), it);
         self.history_it = it;
         self.current_line = s.clone();
@@ -121,7 +122,7 @@ impl Loggy {
         }
 
         if it > 0 {
-            let s = self.history_buffer[(self.history_buffer.len() - it)].clone();
+            let s = self.history_buffer[self.history_buffer.len() - it].clone();
             self.current_line = s.clone();
             self.log_dirty = true;
         } else {
@@ -152,6 +153,10 @@ impl Loggy {
         #[cfg(feature = "headed")]
         self._print(str, false);
         println!("~{}", str);
+        // println! is a no-op on wasm; mirror engine logs to the browser console
+        // so they're visible (and copy-pasteable) during development.
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("~{}", str).into());
     }
 
     /** SYS: Well this looks dumb, just take my word for it*/

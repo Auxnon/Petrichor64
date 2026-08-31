@@ -1,4 +1,4 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::HashMap;
 
 #[cfg(feature = "headed")]
 use crate::post::ScreenBinds;
@@ -24,6 +24,20 @@ pub struct Global {
     pub game_controller: bool,
     pub console: bool,
     pub cam_pos: Vec3,
+    /// Directional "sun" for the 3D pass (L0 retro lighting). Defaults leave the
+    /// scene fullbright (color 0 + ambient 1 => unchanged) so apps opt in via
+    /// the `light` native.
+    pub light_dir: Vec3,
+    pub light_color: Vec3,
+    pub light_ambient: f32,
+    /// Hemisphere ambient (L2). amb_sky.w > 0 switches ambient from the flat
+    /// `light_ambient` scalar to `mix(ground, sky, up)`: sky rgb from above,
+    /// ground rgb from below, by surface normal.z.
+    pub amb_sky: Vec4,
+    pub amb_ground: Vec4,
+    /// Distance fog (L2). xyz = fog rgb, w = far distance in world units where
+    /// geometry is fully fogged. w = 0 disables it (default).
+    pub fog_color: Vec4,
     pub debug_camera_pos: Vec3,
     pub background: Vec4,
     pub fps: f64,
@@ -33,6 +47,11 @@ pub struct Global {
     pub screen_effects: ScreenBinds,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
+    /// Last frame's view/projection, kept so the cursor ray can be re-traced at the
+    /// *start* of a frame — before Lua reads it — rather than only during render,
+    /// which left `cursor_projected_pos` a frame behind the pointer. See
+    /// `Core::refresh_cursor_ray`. `None` until the first frame is rendered.
+    pub last_cam_matrices: Option<(glam::Mat4, glam::Mat4)>,
     pub aliases: HashMap<String, String>,
     #[cfg(feature = "headed")]
     pub gui_params: GuiParams,
@@ -59,9 +78,18 @@ impl Global {
             mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
             cam_pos: vec3(0., 0., 0.),
+            // Fullbright by default: color 0 + ambient 1 => shade stays 1.
+            light_dir: vec3(-0.3, -0.5, -0.8),
+            light_color: vec3(0., 0., 0.),
+            light_ambient: 1.,
+            amb_sky: glam::vec4(0., 0., 0., 0.), // w=0 => flat ambient
+            amb_ground: glam::vec4(0., 0., 0., 0.),
+            fog_color: glam::vec4(0., 0., 0., 0.), // w=0 => fog off
+
             smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
             cursor_projected_pos: vec3(0., 0., 0.),
+            last_cam_matrices: None,
             debug: false,
             fps: 0.,
             fullscreen: false,
@@ -104,12 +132,53 @@ impl Global {
         self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
+        // Reset lighting/fog to defaults so state doesn't leak between apps
+        // (fog off, fullbright): an app that never calls lamp/fog looks unlit.
+        self.light_dir = vec3(-0.3, -0.5, -0.8);
+        self.light_color = vec3(0., 0., 0.);
+        self.light_ambient = 1.;
+        self.amb_sky = glam::vec4(0., 0., 0., 0.);
+        self.amb_ground = glam::vec4(0., 0., 0., 0.);
+        self.fog_color = glam::vec4(0., 0., 0., 0.);
         #[cfg(feature = "headed")]
         {
             self.screen_effects = ScreenBinds::new();
         }
         // self.boot_state = false;
         self.pending_load = None;
+        self.clean_app_attrs();
+    }
+
+    /// Reset the `attr` state an app *declares* for itself and must never inherit
+    /// from whatever ran before it. Called on every app load as well as on reset —
+    /// the same discipline as `SoundCommand::Reset` for the synth.
+    ///
+    /// The console lock is the one that bites: the boot fallback (`nil`) locks the
+    /// console, so without this every game loaded afterwards inherited the lock and
+    /// the console stayed unreachable.
+    ///
+    /// Deliberately does NOT touch `console`. That flag is whether the console is
+    /// currently *open*, and an open console swallows all keyboard input (see
+    /// `controls.rs`) — forcing it true here left games unplayable, keys and all.
+    /// Clearing `locked` is enough: backtick can toggle the console again.
+    /// Reset the `attr` state an app can set, so none of it leaks into the next one.
+    ///
+    /// This only cleared the console lock, which meant every *screen effect* survived
+    /// an app load. The boot logo sets `attr{fog=200}` on its first line, so every app
+    /// loaded after it inherited a fog deep enough to swallow the scene — in an app
+    /// that never mentions fog. Curvature, bleed, glitch and the rest leaked the same
+    /// way; fog was simply the one you could not miss.
+    ///
+    /// `ScreenBinds::new()` is the same default a cold boot starts from, so this is
+    /// "as if nothing had been loaded yet" rather than a second list of values to keep
+    /// in step.
+    pub fn clean_app_attrs(&mut self) {
+        self.locked = false;
+        // Screen effects only exist in a headed build.
+        #[cfg(feature = "headed")]
+        {
+            self.screen_effects = ScreenBinds::new();
+        }
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
@@ -165,5 +234,35 @@ impl GuiParams {
             layout: (0, -1),
             scaling: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Loading an app must not inherit the previous app's `attr` state. The boot logo
+    /// sets `attr{fog=200}` on its first line, and only the console lock was being
+    /// cleared, so every app after it ran with a fog deep enough to hide the scene —
+    /// including apps that never mention fog.
+    #[test]
+    #[cfg(feature = "headed")]
+    fn app_attrs_do_not_leak_into_the_next_app() {
+        let fresh = ScreenBinds::new();
+        let mut g = Global::new();
+
+        // Stand in for what the logo (or any app) leaves behind.
+        g.screen_effects.fog = 200.;
+        g.screen_effects.crt_resolution = 999.;
+        g.locked = true;
+
+        g.clean_app_attrs();
+
+        assert_eq!(g.screen_effects.fog, fresh.fog, "fog must not carry over");
+        assert_eq!(
+            g.screen_effects.crt_resolution, fresh.crt_resolution,
+            "nor any other screen effect"
+        );
+        assert!(!g.locked, "and the console lock still clears");
     }
 }

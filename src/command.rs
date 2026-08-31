@@ -1,9 +1,10 @@
-#[cfg(feature = "headed")]
 use crate::root::Core;
-#[cfg(not(feature = "headed"))]
-use crate::root_headless::Core;
 #[cfg(feature = "audio")]
-use crate::sound::{Instrument, Note, SoundCommand};
+use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
+#[cfg(feature = "audio")]
+use crate::fx::{DriveShape, FilterKind};
+#[cfg(feature = "audio")]
+use crate::lua_define::SoundSender;
 use crate::{
     bundle::{BundleMutations, BundleResources},
     error::P64Error,
@@ -11,27 +12,31 @@ use crate::{
     log::LogType,
     lua_define::{LuaResponse, MainPacket},
     lua_ent::LuaEnt,
-    lua_img::{ dehex, LuaImg},
+    lua_img::{dehex, LuaImg},
     model::{ModelPacket, TextureStyle},
     pad::Pad,
-    pool::{LocalPool},
+    pool::LocalPool,
     tile::Chunk,
     types::{GlobalMap, ValueMap},
     world::{TileCommand, TileResponse, World},
 };
+use colored::Colorize;
 
 #[cfg(feature = "online_capable")]
 use online::Online;
 
-use image::{RgbaImage };
+use image::RgbaImage;
 use itertools::Itertools;
-use pollster::FutureExt;
+use pollster::{block_on, FutureExt};
 use silt_lua::{
-    Compiler, gc_arena::{Gc, Mutation, lock::RefLock}, lua::VM, userdata::{UserDataWrapper, WeakWrapper}, value::Variadic
+    gc_arena::{lock::RefLock, Gc, Mutation},
+    lua::VM,
+    userdata::{UserDataWrapper, WeakWrapper},
+    value::Variadic,
+    Compiler,
 };
 
 use parking_lot::Mutex;
-
 
 #[cfg(feature = "puc_lua")]
 use mlua::{
@@ -68,7 +73,7 @@ macro_rules! lua_err {
     };
 }
 
-static com_list: [&str; 20] = [
+static COM_LIST: [&str; 20] = [
     "new - creates a new game directory",
     "load - loads an app file",
     "pack - packs a directory into an app file",
@@ -98,6 +103,7 @@ static com_list: [&str; 20] = [
 pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let main_bundle = core.bundle_manager.get_main_bundle();
+    println!(" ({s})");
     if s.is_empty() {
         return Ok(false);
     }
@@ -108,13 +114,64 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             // this chunk could probably be passed directly to lua core but being it's significance it felt important to pass into our pre-system check for commands
             core.loggy.log(
                 LogType::Config,
-                &format!("killing lua instance {}", bundle_id),
+                &format!("killing lua instance {bundle_id}"),
             );
             main_bundle.lua.die();
         }
         "bundles" => {
             core.loggy
                 .log(LogType::Config, &core.bundle_manager.list_bundles());
+        }
+        // Spawn or dismiss an editing overlay: `overlay apps/mytool` / `overlay off`.
+        //
+        // Deliberately a *console* command and nothing else. Overlays are the
+        // privileged surface — they reach the filesystem and edit another bundle — so
+        // the app being edited must have no way to summon one. There is no Lua path
+        // here to find, which is the point (see PLAN.md, overlay trust boundary).
+        // Shorthand for the tool you reach for most: `edit` is `overlay apps/edit`,
+        // and `edit off` closes it like any other overlay.
+        "edit" => {
+            let sub = if segments.len() > 1 { segments[1] } else { "" };
+            if sub == "off" || sub == "close" {
+                let n = close_overlays(core);
+                core.loggy
+                    .log(LogType::Config, &format!("closed {} overlay(s)", n));
+            } else {
+                match load_overlay(core, "apps/edit") {
+                    Ok(id) => core
+                        .loggy
+                        .log(LogType::Config, &format!("editor up as bundle {}", id)),
+                    Err(e) => core
+                        .loggy
+                        .log(LogType::ConfigError, &format!("editor failed: {}", e)),
+                }
+            }
+        }
+        "overlay" => {
+            if segments.len() < 2 {
+                core.loggy.log(
+                    LogType::Config,
+                    "usage: overlay <app path> | overlay off",
+                );
+            } else if segments[1] == "off" || segments[1] == "close" {
+                let n = close_overlays(core);
+                core.loggy
+                    .log(LogType::Config, &format!("closed {} overlay(s)", n));
+            } else {
+                // Loaded as its own bundle, not a child of the app: reloading the app
+                // shouldn't tear the editor down with it.
+                match load_overlay(core, segments[1]) {
+                    Ok(id) => {
+                        core.loggy.log(
+                            LogType::Config,
+                            &format!("overlay '{}' up as bundle {}", segments[1], id),
+                        );
+                    }
+                    Err(e) => core
+                        .loggy
+                        .log(LogType::ConfigError, &format!("overlay failed: {}", e)),
+                }
+            }
         }
         "pack" => {
             // new: path? name?
@@ -153,7 +210,8 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 // },
                 &mut core.loggy,
                 core.global.debug,
-            ).block_on()?;
+            )
+            .block_on()?;
         }
         "superpack" => {
             core.loggy.log(
@@ -231,12 +289,17 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                 }
                 Err(er) => {
                     core.loggy
-                        .log(LogType::ConfigError, &format!("read error: {}", er));
+                        .log(LogType::ConfigError, &format!("read error: {er}"));
                 }
             }
         }
         "ugh" => {
-            core.loggy.log(LogType::Sys, "heh, ya");
+            if segments.len() > 1 {
+                core.loggy
+                    .log(LogType::Sys, &format!("heh, ya {}", segments[1]));
+            } else {
+                core.loggy.log(LogType::Sys, "heh, ya");
+            }
         }
         "clear" => core.loggy.clear(),
         "cls" => core.loggy.clear(),
@@ -254,40 +317,50 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
             if segments.len() > 1 {
                 let name = segments[1];
 
+                eprintln!(
+                    "[ new ] targeting bundle id {} (console_target {}) for help(true)",
+                    main_bundle.id, bundle_id
+                );
                 let tout = main_bundle.lua.func("help(true)");
-                if let Ok(LuaResponse::Table(t)) = tout {
-                    let mut mapper = HashMap::new();
-                    for (k, c) in t.into_iter() {
-                        let d: String = k.into();
-                        let tup: (String, String) = c.into();
-                        println!("### {}::{}::{}", d, tup.0, tup.1);
-                        mapper.insert(d, tup);
+                match tout {
+                    Ok(LuaResponse::Table(t)) => {
+                        println!("ok in");
+                        let mut mapper = HashMap::new();
+                        for (k, c) in t.into_iter() {
+                            let d: String = k.into();
+                            let tup: (String, String) = c.into();
+                            println!("### {}::{}::{}", d, tup.0, tup.1);
+                            mapper.insert(d, tup);
+                        }
+                        // let mut com = vec![];
+                        // let mut cur_com = "";
+                        // let mut cur_desc = "";
+                        // let mut alt = false;
+                        // for (k, c) in t.iter() {
+                        //     if !alt {
+                        //         cur_com = k;
+                        //         cur_desc = c;
+                        //         alt = true;
+                        //     } else {
+                        //         com.push((cur_com.to_string(), (cur_desc.to_string(), c.to_owned())));
+                        //         alt = false;
+                        //     }
+                        // }
+                        crate::asset::make_directory(name, Some(&mapper), &mut core.loggy);
+                        core.loggy
+                            .log(LogType::Config, &format!("created directory {}", name));
+                        hard_reset(core);
+                        load_app(core, Some(name), None, None, None)?;
                     }
-                    // let mut com = vec![];
-                    // let mut cur_com = "";
-                    // let mut cur_desc = "";
-                    // let mut alt = false;
-                    // for (k, c) in t.iter() {
-                    //     if !alt {
-                    //         cur_com = k;
-                    //         cur_desc = c;
-                    //         alt = true;
-                    //     } else {
-                    //         com.push((cur_com.to_string(), (cur_desc.to_string(), c.to_owned())));
-                    //         alt = false;
-                    //     }
-                    // }
-                    crate::asset::make_directory(name, Some(&mapper), &mut core.loggy);
-                    core.loggy
-                        .log(LogType::Config, &format!("created directory {}", name));
-                    hard_reset(core);
-                    load_app(core, Some(name), None, None, None)?;
-                } else {
-                    core.loggy.log(
+                    Ok(_t) => core.loggy.log(
                         LogType::ConfigError,
-                        "Problem making directory ( bad table)",
-                    );
-                }
+                        "Problem making directory (corrupt command table)",
+                    ),
+                    Err(e) => {
+                        let s = format!("Problem making directory due to thrown error:{}", e);
+                        core.loggy.log(LogType::ConfigError, &s);
+                    }
+                };
             } else {
                 core.loggy.log(LogType::Config, "new <name>");
             }
@@ -371,7 +444,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         }
         "stats" => core.world.stats(),
         "help" => {
-            for c in com_list {
+            for c in COM_LIST {
                 core.loggy.log(LogType::Config, c);
             }
         }
@@ -390,6 +463,42 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
     Ok(true)
 }
 
+/// Parse the trailing `cfg` argument shared by `instr`/`smpl`. Returns the
+/// ADSR envelope plus the command-specific scalar (`scalar_key` — "wid" for
+/// pulse duty, "base" for sample pitch). `cfg` may be:
+/// - a table `{ <scalar_key>=, atk=, dec=, sus=, rel= }` (any subset), or
+/// - a bare number (legacy: the scalar only — `instr(id,'pulse',0.25)`), or
+/// - nil/absent (defaults).
+#[cfg(feature = "audio")]
+fn parse_sound_cfg(cfg: Option<&Value>, scalar_key: &str) -> (Envelope, Option<f32>) {
+    let mut env = Envelope::default();
+    let mut scalar = None;
+    match cfg {
+        // legacy bare number = the type scalar only (e.g. instr(id,'pulse',0.25))
+        Some(v @ (Value::Number(_) | Value::Integer(_))) => scalar = Some(v.into()),
+        Some(Value::Table(t)) => {
+            let tb = t.borrow();
+            if let Some(v) = tb.get(scalar_key) {
+                scalar = Some(v.into());
+            }
+            if let Some(v) = tb.get("atk") {
+                env.attack = v.into();
+            }
+            if let Some(v) = tb.get("dec") {
+                env.decay = v.into();
+            }
+            if let Some(v) = tb.get("sus") {
+                env.sustain = v.into();
+            }
+            if let Some(v) = tb.get("rel") {
+                env.release = v.into();
+            }
+        }
+        _ => {}
+    }
+    (env, scalar)
+}
+
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
     #[cfg(feature = "silt")] vm_init: &mut VM<'gc>,
@@ -397,6 +506,10 @@ pub fn init_lua_sys<'a, 'gc>(
     mc_in: &Mutation<'gc>,
     // executor: &Executor<'gc>,
     bundle_id: u8,
+    // Is this bundle an engine-marked overlay? Decides whether the privileged `app.*`
+    // table gets built at all, so it has to be known before the VM runs a line —
+    // which is why overlays are marked as they load rather than afterwards.
+    is_overlay: bool,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
@@ -625,15 +738,11 @@ function gtile(x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "ftile",
-        move |l, _, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
+        move |l, mc, (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
             let tt = if t.len() == 0 { None } else { Some(t) };
             match World::first_tile(&sender, tt, x, y, z, dx, dy, dz, 100) {
-                Some(v) => vec![(0, v[0]), (1, v[1]), (2, v[2])],
-                None => {
-                    let f: Vec<(u8, i32)> = vec![];
-                    // l.create_table_from(f.into_iter())
-                    f
-                }
+                Some(v) => Ok(l.table_from_array(mc, vec![v[0], v[1], v[2]])),
+                None => Ok(l.new_table(mc)),
             }
         },
         "Find first occurence of a tile in a given direction",
@@ -702,7 +811,7 @@ function cin() end"
 
     lua!(
         "mus",
-        move |vm, _, (): ()| {
+        move |vm, mc, (): ()| {
             let mut t = vm.raw_table();
             let m = mice.borrow();
             t.set("x", m[0]);
@@ -722,7 +831,10 @@ function cin() end"
             t.set("vy", m[11]);
             t.set("vz", m[12]);
 
-            Ok(t)
+            drop(m);
+            // Return an explicit `Value::Table` rather than leaning on the
+            // implicit `ToLua for Table` boundary conversion.
+            Ok(vm.wrap_table(mc, t))
         },
         " Get mouse position, delta, button states, and unprojected vector",
         "
@@ -846,7 +958,7 @@ function make(asset, x, y, z, scale) end"
                     let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
                     match pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id, tx))) {
                         Ok(_) => {}
-                        Err(er) => {
+                        Err(_er) => {
                             return Err(static_err("Unable to group entity"));
                         }
                     };
@@ -890,7 +1002,7 @@ function kill(ent) end"
             // println!("hit reset");
             match pitcher.send((bundle_id, MainCommmand::Reload())) {
                 Ok(_) => {}
-                Err(er) => {}
+                Err(_er) => {}
             }
             Ok(())
         },
@@ -900,11 +1012,30 @@ function reload() end"
     );
 
     let pitcher = main_pitcher.clone();
+    #[cfg(feature = "audio")]
+    let attr_singer = singer.clone();
     lua!(
         "attr",
         move |lu, mc, table: Option<Value>| {
             match table {
                 Some(Value::Table(t)) => {
+                    // Audio: a `lanes = {4,3,5}` array sets per-channel polyphony
+                    // (entry i → channel i-1). Extracted here and pushed to the
+                    // synth; the rest of the table is app-state globals as usual.
+                    #[cfg(feature = "audio")]
+                    {
+                        if let Some(Value::Table(lanes_t)) = t.borrow().get("lanes") {
+                            let lt = lanes_t.borrow();
+                            let mut counts = Vec::new();
+                            let mut i = 1;
+                            while let Some(v) = lt.getn(i) {
+                                let n: f32 = v.into();
+                                counts.push(n.max(1.0) as usize);
+                                i += 1;
+                            }
+                            let _ = attr_singer.send(SoundCommand::SetLanes(counts));
+                        }
+                    }
                     let hash = table_hasher(&t.borrow());
                     lua_err!(pitcher.send((bundle_id, MainCommmand::Globals(hash))));
 
@@ -974,26 +1105,183 @@ function attr(attributes) end"
 function cam(params) end"
     );
 
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "lamp",
+        move |_, _, table_val: Value| {
+            if let Value::Table(t) = table_val {
+                let table = t.borrow();
+                // `dir` is a raw xyz vector (not a colour).
+                let dir = match table.get("dir") {
+                    Some(Value::Table(tbl)) => {
+                        let t = tbl.borrow();
+                        Some(glam::vec3(
+                            t.getn(1).unwrap_or(&Value::Nil).into(),
+                            t.getn(2).unwrap_or(&Value::Nil).into(),
+                            t.getn(3).unwrap_or(&Value::Nil).into(),
+                        ))
+                    }
+                    _ => None,
+                };
+                // Colours accept the usual forms: hex string ('ff0'), rgb table
+                // (0..1 or 0..255) — via the shared get_color helper.
+                let color_of = |key: &str| {
+                    table.get(key).map(|v| {
+                        let c = crate::lua_img::get_color(v.clone());
+                        glam::vec3(c.x, c.y, c.z)
+                    })
+                };
+                let color = color_of("color");
+                let sky = color_of("sky");
+                let ground = color_of("ground");
+                let ambient = match table.get("ambient") {
+                    Some(v) => Some(v.into()),
+                    _ => None,
+                };
+                lua_err!(pitcher.send((
+                    bundle_id,
+                    MainCommmand::Light(dir, color, ambient, sky, ground)
+                )));
+            }
+            Ok(())
+        },
+        "Set the directional sun: dir (xyz), color (rgb 0..1), ambient (0..1)",
+        "
+---@param params lamp_params
+function lamp(params) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "fog",
+        move |_, _, table_val: Value| {
+            if let Value::Table(t) = table_val {
+                let table = t.borrow();
+                // Colour accepts hex string ('9bd') or rgb table via get_color.
+                let (r, g, b) = match table.get("color") {
+                    Some(v) => {
+                        let c = crate::lua_img::get_color(v.clone());
+                        (c.x, c.y, c.z)
+                    }
+                    _ => (0., 0., 0.),
+                };
+                // `dist` is the far distance where geometry is fully fogged; 0 = off.
+                let dist: f32 = match table.get("dist") {
+                    Some(v) => v.into(),
+                    _ => 0.,
+                };
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Fog(glam::vec4(r, g, b, dist)))));
+            }
+            Ok(())
+        },
+        "Set distance fog: color (rgb 0..1) blended in by dist (far, world units; 0 = off)",
+        "
+---@param params fog_params
+function fog(params) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "mgrab",
+        move |_, _, on: Option<bool>| {
+            // Ask the host to capture the mouse (native: cursor grab; web:
+            // pointer-lock on the next canvas click). While grabbed, mus() dx/dy
+            // report raw movement for FPS-style look. Defaults to true.
+            lua_err!(pitcher.send((bundle_id, MainCommmand::MouseGrab(on.unwrap_or(true)))));
+            Ok(())
+        },
+        "Grab (capture) the mouse for relative look, or release it with mgrab(false)",
+        "
+---@param on boolean?
+function mgrab(on) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing_bpm = singer.clone();
+    lua!(
+        "bpm",
+        move |_, _, tempo: f32| {
+            #[cfg(feature = "audio")]
+            {
+                let _ = sing_bpm.send(SoundCommand::SetBpm(tempo));
+            }
+            Ok(())
+        },
+        "Set the transport tempo, shared by every channel",
+        "
+---@param tempo number beats per minute
+function bpm(tempo) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing_cue = singer.clone();
+    lua!(
+        "cue",
+        move |_,
+              _,
+              (freq, length, channel, instrument, at, grid): (
+            f32,
+            Option<f32>,
+            Option<usize>,
+            Option<usize>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            #[cfg(feature = "audio")]
+            {
+                let len = length.unwrap_or(1.);
+                let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
+                // Beats go to the audio thread unconverted: it owns the tempo and the
+                // frame counter, so a bpm change can't race a scheduled note.
+                let _ = sing_cue.send(SoundCommand::PlayAt(
+                    note,
+                    channel,
+                    at.unwrap_or(0.),
+                    grid,
+                ));
+            }
+            Ok(())
+        },
+        "Play a note on the transport: at a beat, or quantized to a grid",
+        "
+---@param freq number
+---@param length number?
+---@param channel integer?
+---@param instrument integer?
+---@param at number? absolute transport beat (default: as soon as possible)
+---@param grid number? snap up to the next multiple of this many beats
+function cue(freq, length, channel, instrument, at, grid) end"
+    );
+
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "note",
-        move |_, _, (freq, length): (f32, Option<f32>)| {
+        move |_,
+              _,
+              (freq, length, channel, instrument): (
+            f32,
+            Option<f32>,
+            Option<usize>,
+            Option<usize>
+        )| {
             #[cfg(feature = "audio")]
             {
-                let len = match length {
-                    Some(l) => l,
-                    None => 1.,
-                };
-                sing.send(SoundCommand::PlayNote(Note::new(0, freq, len, 1.), None));
+                let len = length.unwrap_or(1.);
+                let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
+                // `channel` None auto-allocates a free voice, so repeated note()
+                // calls in a frame stack into a chord.
+                let _ = sing.send(SoundCommand::PlayNote(note, channel));
             }
             Ok(())
         },
-        "Make a sound or note",
+        "Play a note; optional channel + instrument. Overlapping notes voice separately.",
         "
 ---@param freq number
 ---@param length number?
-function sound(freq, length) end"
+---@param channel integer?
+---@param instrument integer?
+function note(freq, length, channel, instrument) end"
     );
     #[cfg(feature = "audio")]
     let sing = singer.clone();
@@ -1006,15 +1294,18 @@ function sound(freq, length) end"
                     .iter()
                     .filter_map(|v| match v {
                         Value::Table(t) => {
-                            if t.raw_len() > 0 {
-                                Some(Note::new(
-                                    0,
-                                    t.get::<usize, f32>(1).unwrap_or(440.),
-                                    t.get::<usize, f32>(2).unwrap_or(1.),
-                                    1.,
-                                ))
-                            } else {
-                                None
+                            let tb = t.borrow();
+                            // {freq, len?, instrument?} — 1-indexed, matching the
+                            // `cam` native's table reads. Empty table ([1] absent)
+                            // is skipped.
+                            match tb.getn(1) {
+                                Some(f) => {
+                                    let freq: f32 = f.into();
+                                    let len: f32 = tb.getn(2).map(|v| v.into()).unwrap_or(1.);
+                                    let instr: f32 = tb.getn(3).map(|v| v.into()).unwrap_or(0.);
+                                    Some(Note::new(instr as usize, freq, len, 1.))
+                                }
+                                None => None,
                             }
                         }
                         Value::Number(n) => Some(Note::new(0, *n as f32, 1., 1.)),
@@ -1023,6 +1314,7 @@ function sound(freq, length) end"
                     })
                     .collect::<Vec<Note>>();
 
+                // A song is one sequential voice — auto-allocate a single channel.
                 lua_err!(sing.send(SoundCommand::Chain(converted, None)));
             }
             Ok(())
@@ -1036,39 +1328,529 @@ function song(notes) end"
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
+        "chord",
+        move |_, _, (freqs, length, instrument): (Vec<f32>, Option<f32>, Option<usize>)| {
+            #[cfg(feature = "audio")]
+            {
+                let len = length.unwrap_or(1.);
+                let instr = instrument.unwrap_or(0);
+                // Each freq auto-allocates its own free voice → they sound together.
+                for f in freqs {
+                    let _ = sing.send(SoundCommand::PlayNote(Note::new(instr, f, len, 1.), None));
+                }
+            }
+            Ok(())
+        },
+        "Play several frequencies at once as a chord",
+        "
+---@param freqs number[]
+---@param length number?
+---@param instrument integer?
+function chord(freqs, length, instrument) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
         "mute",
         move |_, _, channel: Option<usize>| {
             #[cfg(feature = "audio")]
-            sing.send(SoundCommand::Stop(channel.unwrap_or((0))));
+            // No channel = silence everything.
+            let _ = sing.send(SoundCommand::Stop(channel));
 
             Ok(())
         },
-        "Stop sounds on channel",
+        "Stop sounds on a channel, or all channels if omitted",
         "
----@param channel number
+---@param channel integer?
 function mute(channel) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "sing",
+        move |_, _, (lyrics, melody, length, channel): (String, Value, Option<f32>, Option<usize>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Formant-synth voice. `lyrics` is one syllable ("sa") or a
+                // space-separated phrase ("la la laa"); `melody` is a single
+                // pitch (all syllables) or a table of pitches / {freq,len} pairs
+                // (one per syllable, index-clamped). Multiple syllables sequence
+                // on one channel (like `song`); a single one plays immediately.
+                let default_len = length.unwrap_or(0.5);
+                // (freq, len) per melody step.
+                let steps: Vec<(f32, f32)> = match &melody {
+                    Value::Number(n) => vec![(*n as f32, default_len)],
+                    Value::Integer(n) => vec![(*n as f32, default_len)],
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut out = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            match v {
+                                // {freq, len?}
+                                Value::Table(pair) => {
+                                    let p = pair.borrow();
+                                    let f: f32 = p.getn(1).map(|x| x.into()).unwrap_or(440.0);
+                                    let l: f32 =
+                                        p.getn(2).map(|x| x.into()).unwrap_or(default_len);
+                                    out.push((f, l));
+                                }
+                                // bare freq
+                                other => out.push((other.into(), default_len)),
+                            }
+                            i += 1;
+                        }
+                        out
+                    }
+                    _ => vec![],
+                };
+                let syllables: Vec<&str> = lyrics.split_whitespace().collect();
+                if !syllables.is_empty() && !steps.is_empty() {
+                    let notes: Vec<Note> = syllables
+                        .iter()
+                        .enumerate()
+                        .map(|(i, syl)| {
+                            let (freq, len) = steps[i.min(steps.len() - 1)];
+                            let syllable = crate::vocaloid::parse_syllable(syl);
+                            Note::sung(freq, len, 1.0, &syllable)
+                        })
+                        .collect();
+                    if notes.len() == 1 {
+                        let _ = sing.send(SoundCommand::PlayNote(notes[0], channel));
+                    } else {
+                        // A phrase is one sequential voice on a single channel.
+                        let _ = sing.send(SoundCommand::Chain(notes, channel));
+                    }
+                }
+            }
+            Ok(())
+        },
+        "Sing a syllable or space-separated phrase over a melody (a pitch, or a table of pitches / {freq,len} pairs)",
+        "
+---@param lyrics string a syllable ('sa') or phrase ('la la laa'); vowels a/e/i/o/u + optional consonant
+---@param melody number|number[]|number[][] one pitch, or a pitch (or {freq,len}) per syllable
+---@param length number? default per-syllable length
+---@param channel integer?
+function sing(lyrics, melody, length, channel) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "fade",
+        move |_, _, (channel, secs, target): (usize, f32, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level effect: ramp a channel's output gain to `target`
+                // over `secs` (Crossfade). Fade out (default 0), fade in (1), or
+                // crossfade two channels with a pair of opposite fades.
+                let _ =
+                    sing.send(SoundCommand::FadeChannel(channel, secs, target.unwrap_or(0.0)));
+            }
+            Ok(())
+        },
+        "Fade a channel's volume to target (0..1, default 0) over secs — fade in/out or crossfade channels",
+        "
+---@param channel integer
+---@param secs number fade duration in seconds
+---@param target number? target gain 0..1 (default 0 = fade out)
+function fade(channel, secs, target) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "echo",
+        move |_, _, (channel, secs, feedback, mix): (usize, f32, Option<f32>, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level effect: a feedback delay. `secs` is the delay time
+                // between echoes, `feedback` how much each echo carries into the
+                // next (decay), `mix` the wet level. `secs <= 0` turns it off.
+                let _ = sing.send(SoundCommand::EchoChannel(
+                    channel,
+                    secs,
+                    feedback.unwrap_or(0.4),
+                    mix.unwrap_or(0.5),
+                ));
+            }
+            Ok(())
+        },
+        "Add a feedback-delay echo to a channel: (channel, secs, feedback 0..1, wet mix). secs<=0 disables it",
+        "
+---@param channel integer
+---@param secs number delay time between echoes (<=0 disables)
+---@param feedback number? echo decay per repeat 0..1 (default 0.4)
+---@param mix number? wet level, echo loudness (default 0.5)
+function echo(channel, secs, feedback, mix) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "filt",
+        move |_,
+              _,
+              (channel, kind, cutoff, q, secs): (
+            usize,
+            Option<String>,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>
+        )| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level resonant filter. `kind` picks the shape; `cutoff`
+                // the corner/center Hz; `q` the resonance (0.707 flat, higher =
+                // peak); `secs` optionally sweeps the cutoff there over time.
+                // An unknown/absent/"off" kind disables the filter.
+                let kind = match kind.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    Some(ref k) if k == "low" || k == "lp" || k == "lowpass" => Some(FilterKind::Low),
+                    Some(ref k) if k == "high" || k == "hp" || k == "highpass" => {
+                        Some(FilterKind::High)
+                    }
+                    Some(ref k) if k == "band" || k == "bp" || k == "bandpass" => {
+                        Some(FilterKind::Band)
+                    }
+                    Some(ref k) if k == "notch" || k == "reject" => Some(FilterKind::Notch),
+                    _ => None, // "off"/nil/unknown → disable
+                };
+                let _ = sing.send(SoundCommand::FilterChannel(
+                    channel,
+                    kind,
+                    cutoff.unwrap_or(1000.0),
+                    q.unwrap_or(0.707),
+                    secs.unwrap_or(0.0),
+                ));
+            }
+            Ok(())
+        },
+        "Resonant filter on a channel: (channel, kind 'low'|'high'|'band'|'notch', cutoff Hz, q, sweep secs). kind off/nil disables",
+        "
+---@param channel integer
+---@param kind string? 'low' | 'high' | 'band' | 'notch' (off/nil disables)
+---@param cutoff number? corner/center frequency Hz (default 1000)
+---@param q number? resonance: 0.707 flat, higher peaks at cutoff (default 0.707)
+---@param secs number? sweep the cutoff over this many seconds (default 0 = instant)
+function filt(channel, kind, cutoff, q, secs) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "verb",
+        move |_, _, (channel, room, damp, wet): (usize, f32, Option<f32>, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level reverb (a compact Freeverb). `room` is the tail
+                // length/decay 0..1, `damp` rolls off the tail's highs 0..1, `wet`
+                // the reverb level. `room <= 0` turns it off.
+                let _ = sing.send(SoundCommand::ReverbChannel(
+                    channel,
+                    room,
+                    damp.unwrap_or(0.5),
+                    wet.unwrap_or(0.3),
+                ));
+            }
+            Ok(())
+        },
+        "Add reverb to a channel: (channel, room/decay 0..1, damp 0..1, wet mix). room<=0 disables it",
+        "
+---@param channel integer
+---@param room number tail length/decay 0..1 (<=0 disables)
+---@param damp number? high-frequency damping of the tail 0..1 (default 0.5)
+---@param wet number? reverb level mixed over the dry signal (default 0.3)
+function verb(channel, room, damp, wet) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "mic",
+        move |_, _, (id, secs): (Option<usize>, Option<f32>)| {
+            // `mic(id, secs?)` records a snippet from the default input device
+            // into sample slot `id`; `mic()` reports whether one is in flight.
+            // Recording is always explicit — the engine never opens the mic on
+            // its own, and the stream is released as soon as the capture lands.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
+            // `None` id is a pure query (is a capture running?) and never opens
+            // the microphone; `Some(id)` starts one.
+            lua_err!(pitcher.send((
+                bundle_id,
+                MainCommmand::MicRecord(id, secs.unwrap_or(1.0), tx)
+            )));
+            Ok(Value::Bool(rx.recv().unwrap_or(false)))
+        },
+        "Record a microphone snippet into a sample slot: mic(id, secs?). mic() = is a capture running?",
+        "
+---@param id integer? sample/instrument slot to record into (omit to query)
+---@param secs number? capture length in seconds (default 1, max 10)
+---@return boolean started (or, with no args, whether a capture is running)
+function mic(id, secs) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "midi",
+        move |lu, mc, (action, name): (Option<String>, Option<String>)| {
+            #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+            {
+                // One native, selected by the (optional) first argument:
+                //   midi()          -> drain pending events (the per-frame call)
+                //   midi('ports')   -> list available input port names
+                //   midi('port')    -> the connected port's name, or nil
+                //   midi('open', n?)-> connect (n matches a port name substring)
+                //   midi('close')   -> disconnect
+                match action.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    None => {
+                        // Events as an array of {status, channel, data1, data2}.
+                        let mut out = lu.raw_table();
+                        for (i, (status, ch, d1, d2)) in
+                            crate::midi::drain().into_iter().enumerate()
+                        {
+                            let mut ev = lu.raw_table();
+                            ev.set(1, Value::Integer(status as i64));
+                            ev.set(2, Value::Integer(ch as i64));
+                            ev.set(3, Value::Integer(d1 as i64));
+                            ev.set(4, Value::Integer(d2 as i64));
+                            out.set(i as i64 + 1, lu.wrap_table(mc, ev));
+                        }
+                        return Ok(lu.wrap_table(mc, out));
+                    }
+                    Some(ref a) if a == "ports" => {
+                        let mut out = lu.raw_table();
+                        for (i, p) in crate::midi::ports().into_iter().enumerate() {
+                            out.set(i as i64 + 1, Value::String(p));
+                        }
+                        return Ok(lu.wrap_table(mc, out));
+                    }
+                    Some(ref a) if a == "port" => {
+                        return Ok(match crate::midi::connected() {
+                            Some(p) => Value::String(p),
+                            None => Value::Nil,
+                        });
+                    }
+                    Some(ref a) if a == "open" => {
+                        return Ok(
+                            match crate::midi::open(sing.clone(), name.as_deref()) {
+                                Ok(p) => Value::String(p),
+                                Err(_) => Value::Nil,
+                            },
+                        );
+                    }
+                    Some(ref a) if a == "close" => {
+                        crate::midi::close();
+                        return Ok(Value::Nil);
+                    }
+                    _ => return Ok(Value::Nil),
+                }
+            }
+            #[cfg(not(all(feature = "midi", not(target_arch = "wasm32"))))]
+            Ok(Value::Nil)
+        },
+        "MIDI in: midi() drains events, midi('ports'|'port'), midi('open', name?), midi('close')",
+        "
+---@param action string? nil = drain events; 'ports' | 'port' | 'open' | 'close'
+---@param name string? port name substring for 'open'
+---@return table|string|nil
+function midi(action, name) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "crsh",
+        move |_, _, (channel, bits, rate): (usize, f32, Option<f32>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level bitcrusher: quantize to `bits` of depth and
+                // (optionally) latch at a lower `rate` in Hz. `bits <= 0` disables.
+                let _ = sing.send(SoundCommand::CrushChannel(
+                    channel,
+                    bits,
+                    rate.unwrap_or(0.0),
+                ));
+            }
+            Ok(())
+        },
+        "Bitcrush a channel: (channel, bits 1..16, rate Hz). bits<=0 disables it",
+        "
+---@param channel integer
+---@param bits number target bit depth 1..16 (<=0 disables, 16 = no quantizing)
+---@param rate number? target sample rate in Hz for decimation (default 0 = none)
+function crsh(channel, bits, rate) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "grit",
+        move |_, _, (channel, amount, mode): (usize, f32, Option<String>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Channel-level drive/distortion: push the signal into a
+                // waveshaping curve. `amount <= 0` disables it.
+                let shape = match mode.as_deref().map(|s| s.to_ascii_lowercase()) {
+                    Some(ref m) if m == "hard" || m == "clip" => DriveShape::Hard,
+                    Some(ref m) if m == "fold" || m == "foldback" => DriveShape::Fold,
+                    _ => DriveShape::Soft, // default / 'soft'
+                };
+                let _ = sing.send(SoundCommand::DriveChannel(channel, amount, shape));
+            }
+            Ok(())
+        },
+        "Drive/distort a channel: (channel, amount 0..1, curve 'soft'|'hard'|'fold'). amount<=0 disables it",
+        "
+---@param channel integer
+---@param amount number drive amount 0..1 (<=0 disables)
+---@param mode string? curve: 'soft' (default, tanh) | 'hard' (clip) | 'fold' (foldback)
+function grit(channel, amount, mode) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "vox",
+        move |_, _, (a, b): (Value, Option<Value>)| {
+            #[cfg(feature = "audio")]
+            {
+                // Per-channel singing-voice character for that channel's later
+                // `sing` notes: breath (aspiration noise) + vibrato (pitch wobble).
+                // Channel-scoped like `fade`, so different channels = different
+                // singers. Accepts `vox(channel, cfg)` or `vox(cfg)` (channel 0):
+                // if the first arg is a number it's the channel and `b` is the cfg
+                // table; if it's a table it's the cfg for channel 0.
+                let (ch, cfg) = match &a {
+                    Value::Number(n) => (*n as usize, b.unwrap_or(Value::Nil)),
+                    Value::Integer(n) => (*n as usize, b.unwrap_or(Value::Nil)),
+                    _ => (0usize, a.clone()),
+                };
+                let mut breath = 0.0f32;
+                let mut vib = 0.0f32;
+                let mut hz = 5.5f32;
+                if let Value::Table(t) = &cfg {
+                    let tb = t.borrow();
+                    if let Some(v) = tb.get("breath") {
+                        breath = v.into();
+                    }
+                    if let Some(v) = tb.get("vib") {
+                        vib = v.into();
+                    }
+                    if let Some(v) = tb.get("hz") {
+                        hz = v.into();
+                    }
+                }
+                let _ = sing.send(SoundCommand::VoiceConfig(ch, breath, vib, hz));
+            }
+            Ok(())
+        },
+        "Set a channel's singing voice character for its later sing() notes: (channel, { breath, vib, hz })",
+        "
+---@param channel integer? channel to configure (default 0)
+---@param cfg { breath?: number, vib?: number, hz?: number } breath 0..1, vibrato depth (~0.03), rate Hz (~5.5)
+function vox(channel, cfg) end"
+    );
+
+    #[cfg(feature = "audio")]
+    let sing = singer.clone();
+    lua!(
+        "smpl",
+        move |_, _, (id, data, cfg): (usize, Value, Option<Value>)| {
+            #[cfg(feature = "audio")]
+            {
+                // cfg (optional): { base=, atk=, dec=, sus=, rel= }, or a bare
+                // number for legacy base pitch. `base` is the natural-playback Hz.
+                let (env, base) = parse_sound_cfg(cfg.as_ref(), "base");
+                match data {
+                    // A name binds a sound loaded from sounds/<name>.ogg into slot
+                    // `id`. The lookup happens once, here — the mixer stays purely
+                    // index-keyed.
+                    Value::String(name) => {
+                        lua_err!(sing.send(SoundCommand::BindSample(
+                            id,
+                            name.to_string(),
+                            base,
+                            env
+                        )));
+                    }
+                    // A table is raw PCM. Read it by index (getn loop) rather than
+                    // Vec<f32> FromLua so we don't hit silt's hash-order Table->Vec
+                    // bug — sample order is critical, a scrambled buffer is noise.
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut pcm: Vec<f32> = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            pcm.push(v.into());
+                            i += 1;
+                        }
+                        lua_err!(sing.send(SoundCommand::MakeSample(
+                            id,
+                            pcm,
+                            base.unwrap_or(440.0),
+                            env
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        },
+        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1); cfg = { base, atk, dec, sus, rel }",
+        "
+---@param id integer
+---@param data string|number[] a loaded sound name (sounds/<name>.ogg), or raw PCM samples in -1..1
+---@param cfg? { base?: number, atk?: number, dec?: number, sus?: number, rel?: number } base pitch (default 440) + ADSR envelope
+function smpl(id, data, cfg) end"
     );
 
     lua!(
         "instr",
-        move |_, _, (freqs, half): (Vec<f32>, Option<bool>)| {
+        move |_, _, (id, spec, cfg): (usize, Value, Option<Value>)| {
             #[cfg(feature = "audio")]
-            lua_err!(singer.send(SoundCommand::MakeInstrument(Instrument::new(
-                0,
-                freqs,
-                match half {
-                    Some(h) => h,
-                    None => false,
-                },
-            ))));
-
+            {
+                // cfg (optional): { wid=, atk=, dec=, sus=, rel= }, or a bare
+                // number for legacy pulse width. `wid` is the pulse duty.
+                let (env, wid) = parse_sound_cfg(cfg.as_ref(), "wid");
+                // spec is either a waveform name ('square', 'saw', 'tri', 'pulse',
+                // 'noise', 'sine') or a table of harmonic amplitudes (additive).
+                let inst = match spec {
+                    Value::String(s) => {
+                        let wave = match s.to_lowercase().as_str() {
+                            "sine" | "sin" => WaveType::Sine,
+                            "saw" => WaveType::Saw,
+                            "tri" | "triangle" => WaveType::Triangle,
+                            "pulse" => WaveType::Pulse(wid.unwrap_or(0.5)),
+                            "noise" => WaveType::Noise,
+                            _ => WaveType::Square, // 'square'/'sqr' and fallback
+                        };
+                        Instrument::oscillator(id, wave)
+                    }
+                    Value::Table(t) => {
+                        let tb = t.borrow();
+                        let mut amps = Vec::new();
+                        let mut i = 1;
+                        while let Some(v) = tb.getn(i) {
+                            amps.push(v.into());
+                            i += 1;
+                        }
+                        Instrument::additive(id, amps)
+                    }
+                    _ => Instrument::oscillator(id, WaveType::Square),
+                }
+                .with_env(env);
+                lua_err!(singer.send(SoundCommand::MakeInstrument(inst)));
+            }
             Ok(())
         },
-        "Make an instrument",
+        "Define instrument `id`: a waveform name (square/saw/tri/pulse/noise/sine) or a harmonic-amplitude table; cfg = { wid, atk, dec, sus, rel }",
         "
----@param freqs number[]
----@param half boolean? subsequent freqs are half the previous  
-function instr(freqs, half) end"
+---@param id integer
+---@param spec string|number[] waveform name, or harmonic amplitudes (additive)
+---@param cfg? { wid?: number, atk?: number, dec?: number, sus?: number, rel?: number } pulse duty + ADSR envelope
+function instr(id, spec, cfg) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1082,7 +1864,13 @@ function instr(freqs, half) end"
                         bundle_id,
                         MainCommmand::SetImg(name, limg.image.clone(), tx),
                     )));
+                    // Native waits for the upload ack; the wasm VM runs in a
+                    // worker that can't block on the main thread — it fires the
+                    // SetImg and moves on (uploaded a frame later).
+                    #[cfg(not(target_arch = "wasm32"))]
                     lua_err!(rx.recv());
+                    #[cfg(target_arch = "wasm32")]
+                    let _ = rx;
                     Ok(())
                 })?;
             };
@@ -1103,7 +1891,7 @@ function tex(asset, im) end"
         move |vm, mc, name: String| {
             let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, u32, RgbaImage)>(0);
             let limg = match pitcher.send((bundle_id, MainCommmand::GetImg(name, tx))) {
-                Ok(o) => match rx.recv() {
+                Ok(_o) => match rx.recv() {
                     Ok((w, h, im)) => {
                         let lua_img =
                             LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
@@ -1210,7 +1998,29 @@ function nimg(w, h) end"
                                 }
                             }
                             _ => {
-                                Err::<(), &str>("This type of model requires a texture");
+                                // No texture given: build with the engine's fallback
+                                // rather than refusing. A model is a mesh; its texture
+                                // can be set afterwards through the entity. This branch
+                                // used to construct an Err as a bare expression and drop
+                                // it, then fall through to Ok — so the model was never
+                                // built and Lua was told it had been, which looks
+                                // exactly like a camera pointing the wrong way.
+                                lua_err!(pitcher.send((
+                                    bundle_id,
+                                    MainCommmand::Model(Box::new(ModelPacket {
+                                        asset,
+                                        textures: vec![crate::texture::DEFAULT_TEX.to_string()],
+                                        vecs: v,
+                                        norms: n,
+                                        inds: i,
+                                        uvs: uv,
+                                        style: TextureStyle::Quad,
+                                        sender: tx,
+                                    }))
+                                )));
+                                if let Err(err) = rx.recv() {
+                                    return Err(LuaError::Custom(err.to_string()));
+                                }
                             }
                         }
                         Ok("Building model in quad mode")
@@ -1246,8 +2056,25 @@ function nimg(w, h) end"
                                             return Ok("Building model in vert mode")
                                         }
                                         _ => {
-                                            return Err(static_err("This type of model requires a texture at index \"t\" < t='name_of_image_without_extension' >"))
-                                            // return Ok(());
+                                            // Same fallback as the quad form: a mesh
+                                            // without a texture is still a mesh.
+                                            lua_err!(pitcher.send((
+                                                bundle_id,
+                                                MainCommmand::Model(Box::new(ModelPacket{
+                                                    asset,
+                                                    textures: vec![crate::texture::DEFAULT_TEX.to_string()],
+                                                    vecs,
+                                                    norms,
+                                                    inds,
+                                                    uvs,
+                                                    style: TextureStyle::Tri,
+                                                    sender: tx})
+                                                ),
+                                            )));
+                                            if let Err(err) = rx.recv() {
+                                                return Err(LuaError::Custom(err.to_string()));
+                                            }
+                                            return Ok("Building model in vert mode")
                                         }
                                     }
                                 }
@@ -1367,7 +2194,7 @@ function rnd(a, b) end"
         move |_, _, (a, b): (Option<i64>, Option<i64>)| {
             match a {
                 Some(fa) => match b {
-                    Some(fb) => Ok (fastrand::i64(fa..fb)),
+                    Some(fb) => Ok(fastrand::i64(fa..fb)),
                     _ => Ok(fastrand::i64(0..fa)),
                 },
                 _ => Ok(fastrand::i64(..)),
@@ -1547,6 +2374,7 @@ function quit(u) end"
     lua!(
         "help",
         move |vm, mc, b: bool| {
+            println!("we got inside help command");
             let mut t = vm.raw_table();
             t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
             for (k, (desc, examp)) in command_map_clone.iter() {
@@ -1559,6 +2387,7 @@ function quit(u) end"
                     t.set(k.to_string(), desc.to_string());
                 }
             }
+            println!("we made a help table");
             Ok(vm.wrap_table(mc, t))
         },
         "List all commands",
@@ -1639,13 +2468,109 @@ function help() end",
     //     return Err(context_err("Failed to set io lib"));
     // }
 
+    // An overlay's reach into the app it edits — read a source file, write it back,
+    // list what's there, and make the app pick the change up.
+    //
+    // This table is built only for a bundle the *engine* marked as an overlay, so in
+    // game Lua it doesn't exist at all: there's no native to hide behind a flag and
+    // no way for an app to ask for one, because an app cannot create an overlay (its
+    // `over()` makes a child bundle, and only the console and `--overlay` mark the
+    // real thing). The main thread checks the sender is an overlay a second time when
+    // these arrive — see `MainCommmand::AppRead`. Editing someone's files deserves
+    // both locks.
+    if is_overlay {
+        let mut app = vm_init.raw_table();
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "read",
+            move |_, _, file: String| {
+                let (tx, rx) = sync_channel::<Option<String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppRead(file, tx))));
+                match rx.recv() {
+                    Ok(Some(s)) => Ok(Value::String(s)),
+                    _ => Ok(Value::Nil),
+                }
+            },
+            "overlay only: read a file out of the app being edited",
+            "
+---@param path string
+---@return string|nil
+function app.read(path) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "write",
+            move |_, _, (file, contents): (String, String)| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppWrite(file, contents, tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "overlay only: write a file into the app being edited",
+            "
+---@param path string
+---@param contents string
+---@return boolean
+function app.write(path, contents) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "list",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Vec<String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppList(tx))));
+                let files = rx.recv().unwrap_or_default();
+                let mut t = vm.raw_table();
+                for (i, f) in files.iter().enumerate() {
+                    t.set(i as i64 + 1, f.to_string());
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: every file in the app being edited",
+            "
+---@return table
+function app.list() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "reload",
+            move |_, _, (): ()| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppReload(tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "overlay only: reload the app being edited, so a written file takes effect",
+            "
+---@return boolean
+function app.reload() end",
+            &mut app
+        );
+
+        vm_init
+            .globals
+            .borrow_mut(mc_in)
+            .set("app", vm_init.wrap_table(mc_in, app));
+    }
+
     vm_init.build_and_run(
         mc_in,
         Some("patch"),
         "
         add=table.insert 
         del=table.remove 
-        print=cout 
+        --print=cout 
         fill = function(...) gui:fill(...) end
         rect = function(...) gui:rect(...) end
         rrect = function(...) gui:rrect(...) end
@@ -1656,6 +2581,7 @@ function help() end",
         pixel = function(...) gui:pixel(...) end
         main = function() end
         loop = function() end
+        print('it works?')
         ",
         &mut compiler,
     )?;
@@ -1684,6 +2610,7 @@ where
 
 /** core game reset, drop all resources including lua */
 pub fn hard_reset(core: &mut Core) {
+    println!("{} {} ", "[ reset ]".on_bright_blue(), "hard reset");
     core.bundle_manager.hard_reset();
 
     #[cfg(feature = "headed")]
@@ -1700,6 +2627,7 @@ pub fn hard_reset(core: &mut Core) {
 
 /** purge resources related to a specific bundle by id, returns true if the bundle existed */
 pub fn soft_reset(core: &mut Core, bundle_id: u8) -> bool {
+    println!("{} {} ", "[ reset ]".on_bright_blue(), "soft reset");
     let (exists, children) = core.bundle_manager.soft_reset(bundle_id);
     if exists {
         #[cfg(feature = "headed")]
@@ -1750,7 +2678,7 @@ pub fn load_empty(core: &mut Core) {
     #[cfg(feature = "headed")]
     {
         let payload = crate::asset::get_logo();
-        crate::asset::unpack(
+        block_on(crate::asset::unpack(
             #[cfg(feature = "headed")]
             &core.gfx.device,
             #[cfg(feature = "headed")]
@@ -1761,9 +2689,11 @@ pub fn load_empty(core: &mut Core) {
             &bundle.lua,
             "empty",
             payload,
+            #[cfg(feature = "audio")]
+            &core.singer,
             &mut core.loggy,
             core.global.debug,
-        );
+        ));
     }
 
     #[cfg(feature = "headed")]
@@ -1785,24 +2715,56 @@ pub fn load_empty(core: &mut Core) {
  * @param [bundle_in]: optional, if based on an existing bundle, reuse it's resources and game_path. Will ignore the game_path param
  * @param [bundle_relations]: optional, if it's attached to another bundle, either as a a sub or overlay
  */
-pub fn load_app( core: &mut Core,
+pub fn load_app(
+    core: &mut Core,
     game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations).block_on()
+    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false)
+        .block_on()
+        .map(|_id| ())
 }
-pub async fn load_app_and_log( core: &mut Core,
+
+/// Close every overlay and drop what they owned outside the bundle manager.
+///
+/// Entities are the reason this exists rather than calling `close_overlays` directly:
+/// they live in `EntManager`, so tearing the bundle down alone left them behind — kept
+/// alive, kept drawn, and walked every frame by a bundle that no longer existed.
+pub fn close_overlays(core: &mut Core) -> usize {
+    let ids = core.bundle_manager.close_overlays();
+    for id in &ids {
+        core.ent_manager.reset_by_bundle(*id);
+        core.world.destroy(*id);
+    }
+    ids.len()
+}
+
+/// Bring an app up as an **overlay**: an editing surface over the running app, which
+/// owns input, draws on its own gui layer, and gets the privileged `app.*` table.
+///
+/// The only way to make one, and reachable only from the console and `--overlay` — an
+/// app's own Lua has no path here (its `over()` makes a plain child bundle). Keeping
+/// the whole sequence in one function is the point: the mark has to be set before the
+/// VM is built, and two call sites hand-rolling that is how it drifts.
+pub fn load_overlay(core: &mut Core, path: &str) -> Result<u8, P64Error> {
+    // The id comes back from the load. It used to be predicted by reading the id
+    // counter beforehand, which only held while ids were handed out in order and
+    // never reused; they are now allocated from the lowest free slot.
+    async_load_app(core, Some(path), None, None, None, true).block_on()
+}
+pub async fn load_app_and_log(
+    core: &mut Core,
     game_path_in: Option<&str>,
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) {
-   if let Err(e)= load_app(core, game_path_in, payload, bundle_in, bundle_relations){
- let res: String=format!("{}",e);
-                core.loggy.log(LogType::LuaError, &res);
-   }
+    if let Err(e) = load_app(core, game_path_in, payload, bundle_in, bundle_relations) {
+        let res: String = format!("{}", e);
+        core.loggy.log(LogType::LuaError, &res);
+    }
 }
 
 async fn async_load_app(
@@ -1811,7 +2773,13 @@ async fn async_load_app(
     payload: Option<Vec<u8>>,
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
-) -> Result<(), P64Error> {
+    as_overlay: bool,
+) -> Result<u8, P64Error> {
+    println!(
+        "{} {}",
+        "loading from script".on_green(),
+        game_path_in.unwrap_or("~")
+    );
     let bundle = match bundle_in {
         Some(b) => {
             let bun = core.bundle_manager.bundles.get_mut(&b).unwrap();
@@ -1824,9 +2792,35 @@ async fn async_load_app(
 
     bundle.pool = Some(core.gui.make_shared_pool());
 
+    // Marked here, before the Lua thread starts, because the `app.*` table is decided
+    // at VM build time — marking after the load (as the console command used to) left
+    // an overlay's first frames running without the tools it was opened for. A reload
+    // of an already-marked overlay keeps its mark, and nothing else ever sets one.
+    if as_overlay {
+        bundle.overlay = true;
+    }
+    let privileged = bundle.overlay;
+
     let bundle_id = bundle.id;
     let resources = core.gui.make_morsel();
     let world_sender = core.world.make(bundle.id, core.pitcher.clone());
+
+    // App (re)load: drop the `attr` state the previous app declared, so a new game
+    // starts from defaults instead of inheriting it. The console lock is the one
+    // that bites — the boot fallback (`nil`) locks the console, so every game
+    // loaded after it used to inherit the lock and stay unreachable. This only
+    // clears the lock; whether the console is *open* is left exactly as it was
+    // (an open console captures all keyboard input).
+    core.global.clean_app_attrs();
+
+    // App (re)load: clear any instruments/samples a previous run registered so
+    // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
+    #[cfg(feature = "audio")]
+    let _ = core.singer.send(SoundCommand::Reset);
+    // MIDI hardware outlives a reload (like the audio stream), but the new app
+    // shouldn't inherit the old one's queued events or held notes.
+    #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+    crate::midi::reset(&core.singer);
 
     let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(
@@ -1839,7 +2833,7 @@ async fn async_load_app(
         #[cfg(feature = "audio")]
         core.singer.clone(),
         core.global.debug,
-        false,
+        privileged,
     ));
 
     let debug = core.global.debug;
@@ -1862,9 +2856,12 @@ async fn async_load_app(
                     &bundle.lua,
                     &s,
                     p,
+                    #[cfg(feature = "audio")]
+                    &core.singer,
                     &mut core.loggy,
                     debug,
-                ).await;
+                )
+                .await;
                 // println!("unpacked");
             }
             None => {
@@ -1872,6 +2869,9 @@ async fn async_load_app(
                 if path.is_dir() {
                     let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
                     let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
+
+                    #[cfg(feature = "audio")]
+                    crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
 
                     crate::asset::walk_files(
                         #[cfg(feature = "headed")]
@@ -1885,6 +2885,9 @@ async fn async_load_app(
                         &bundle.lua,
                         &asset_items,
                         &script_items,
+                        // Sounds already loaded above via load_sounds_from_dir;
+                        // walk_files's packable-list return is unused on load.
+                        &[],
                         &mut core.loggy,
                         debug,
                     );
@@ -1915,9 +2918,12 @@ async fn async_load_app(
                                     &bundle.lua,
                                     &s,
                                     buff,
+                                    #[cfg(feature = "audio")]
+                                    &core.singer,
                                     &mut core.loggy,
                                     debug,
-                                ).await;
+                                )
+                                .await;
                             } else {
                                 return Err(P64Error::IoNotFileOrDir(s.into()));
                             }
@@ -1934,6 +2940,9 @@ async fn async_load_app(
             let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
             let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
 
+            #[cfg(feature = "audio")]
+            crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
+
             crate::asset::walk_files(
                 #[cfg(feature = "headed")]
                 Some(&core.gfx.device),
@@ -1946,6 +2955,7 @@ async fn async_load_app(
                 &bundle.lua,
                 &asset_items,
                 &script_items,
+                &[],
                 &mut core.loggy,
                 debug,
             );
@@ -1977,34 +2987,34 @@ async fn async_load_app(
     // core.update();
     core.loggy.log(LogType::Config, "calling main method");
     // core.bundle_manager.call_main(bundle_id);
-    bundle.call_main();
-    Ok(())
+    bundle.call_main()?;
+    Ok(bundle_id)
 }
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
 pub fn reload(core: &mut Core, bundle_id: u8) {
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
-        load_app_and_log(core, None, None, Some(bundle_id), None);
+        block_on(load_app_and_log(core, None, None, Some(bundle_id), None));
     } else {
         #[cfg(feature = "include_auto")]
         {
-
-            core.loggy.log(LogType::Config,"auto loading included bytes");
+            core.loggy
+                .log(LogType::Config, "auto loading included bytes");
             let payload = include_bytes!("../auto.game.png").to_vec();
             println!("auto load bin from reload command");
-           load_app_and_log(
+            block_on(load_app_and_log(
                 core,
                 Some("INCLUDE_AUTO"),
                 Some(payload),
                 None,
                 None,
-            );
+            ));
         }
         #[cfg(not(feature = "include_auto"))]
         {
             println!("reload into empty bundle");
-            load_app_and_log(core, None, None, None, None);
+            block_on(load_app_and_log(core, None, None, None, None));
         }
     }
 }
@@ -2013,7 +3023,7 @@ pub fn reload(core: &mut Core, bundle_id: u8) {
 // "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
 // "v", "w", "x", "y", "z", "escape", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9",
 // "f10", "f11", "f12", "f13","f14","f15", "snap","snapshot","dele"];
-fn key_match(key: String) -> usize {
+pub(crate) fn key_match(key: String) -> usize {
     // KeyCode::from_str(&key).unwrap() as usize
     match key.to_lowercase().as_str() {
         "1" => 0,
@@ -2109,11 +3119,7 @@ fn key_match(key: String) -> usize {
         "`" => 112,
         "kana" => 113,
         "kanji" => 114,
-        "lalt" => 115,
         "lbracket" => 116,
-        "lctrl" => 117,
-        "lshift" => 118,
-        "lwin" => 119,
         "mail" => 120,
         "mediaselect" => 121,
         "mediastop" => 122,
@@ -2130,11 +3136,7 @@ fn key_match(key: String) -> usize {
         "+" => 133,
         "power" => 134,
         "prevtrack" => 135,
-        "ralt" => 136,
         "rbracket" => 137,
-        "rctrl" => 138,
-        "rshift" => 139,
-        "rwin" => 140,
         ";" => 141,
         "/" => 142,
         "sleep" => 143,
@@ -2161,10 +3163,14 @@ fn key_match(key: String) -> usize {
         // "space" => KeyCode::Space,
         // "lctrl" => KeyCode::LControl,
         // "rctrl" => KeyCode::RControl,
-        "alt" => 247,
-        "ctrl" | "control" => 248,
-        "shift" => 249,
-        "super" | "win" => 250,
+        // Left/right modifier names collapse onto the same slots as the bare ones.
+        // `bit_check` never distinguishes sides, so these used to name indices that
+        // nothing on any code path ever wrote: `key("lctrl")` was permanently false,
+        // silently, which is a worse answer than "no such key".
+        "alt" | "lalt" | "ralt" => 247,
+        "ctrl" | "control" | "lctrl" | "rctrl" => 248,
+        "shift" | "lshift" | "rshift" => 249,
+        "super" | "win" | "lwin" | "rwin" => 250,
 
         _ => 255,
     }
@@ -2237,6 +3243,19 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
+    /// Directional sun + hemisphere ambient: (dir, sun rgb, flat ambient, sky
+    /// rgb, ground rgb) — each optional so `lamp{}` can set just one aspect.
+    /// sky+ground present => hemisphere ambient; else the flat scalar is used.
+    Light(
+        Option<glam::Vec3>,
+        Option<glam::Vec3>,
+        Option<f32>,
+        Option<glam::Vec3>,
+        Option<glam::Vec3>,
+    ),
+    /// Distance fog: rgb + w = far distance (w=0 disables).
+    Fog(glam::Vec4),
+    MouseGrab(bool),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
     // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
@@ -2253,15 +3272,86 @@ pub enum MainCommmand {
     Load(String),
     Subload(String, bool),
     WorldSync(Vec<Chunk>, bool),
+    /// Microphone capture. `Some(id)` starts a capture of `secs` seconds into
+    /// sample slot `id`, replying whether it actually started (false = no input
+    /// device, or one is already running). `None` is a **query only** — it never
+    /// opens the mic, and replies whether a capture is in flight. The input stream
+    /// has to be built and owned on the main thread (cpal streams aren't Send),
+    /// hence the round trip.
+    MicRecord(Option<usize>, f32, SyncSender<bool>),
     Null(),
     Stats(),
     Read(String, SyncSender<Option<String>>),
     Write(String, String, SyncSender<bool>),
+    /// The `app.*` family: an overlay reaching into the app it edits. The main thread
+    /// re-checks that the sender really is an engine-marked overlay before acting on
+    /// any of these — the natives are only installed into overlay VMs, but a
+    /// permission this sharp shouldn't rest on that alone.
+    AppRead(String, SyncSender<Option<String>>),
+    AppWrite(String, String, SyncSender<bool>),
+    AppList(SyncSender<Vec<String>>),
+    AppReload(SyncSender<bool>),
     Copy(String),
+    LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
-    InitBack(Box<(WeakWrapper,WeakWrapper)>),
+    InitBack(Box<(WeakWrapper, WeakWrapper)>),
     Quit(u8),
+}
+
+/// Translate a VM→host command into the serializable worker message for the
+/// wasm postMessage bridge (§4b). The worker drains its local MainPacket channel
+/// after each dispatched message and posts the results to the main thread.
+///
+/// Only the fire-and-forget subset is mapped: `Cam`, `Globals`, `LoopComplete`,
+/// `AsyncError`, `Spawn`. Blocking request/response commands (GetImg/SetImg/Make/
+/// Group/GetGlobal/Read/Write/Die — they carry a SyncSender) and host-internal
+/// ones return `None` and are handled in the read-back phase. Compiled on all
+/// targets so a new `MainCommmand` variant or `VmToHost` change is type-checked
+/// everywhere, not just on wasm.
+#[allow(dead_code)]
+pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol::VmToHost> {
+    use crate::worker_protocol::{ValueWire, VmToHost};
+    match cmd {
+        MainCommmand::Cam(pos, rot) => Some(VmToHost::Cam {
+            pos: pos.map(|v| [v.x, v.y, v.z]),
+            rot: rot.map(|v| [v.x, v.y]),
+        }),
+        MainCommmand::Light(dir, color, ambient, sky, ground) => Some(VmToHost::Light {
+            dir: dir.map(|v| [v.x, v.y, v.z]),
+            color: color.map(|v| [v.x, v.y, v.z]),
+            ambient,
+            sky: sky.map(|v| [v.x, v.y, v.z]),
+            ground: ground.map(|v| [v.x, v.y, v.z]),
+        }),
+        MainCommmand::Fog(v) => Some(VmToHost::Fog([v.x, v.y, v.z, v.w])),
+        MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
+        MainCommmand::Globals(table) => Some(VmToHost::Globals(
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), ValueWire::from(v)))
+                .collect(),
+        )),
+        MainCommmand::LoopComplete(m) => Some(VmToHost::LoopComplete {
+            gui: m.gui,
+            sky: m.sky,
+        }),
+        MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
+        MainCommmand::SetImg(name, img, _tx) => {
+            let (w, h) = img.dimensions();
+            Some(VmToHost::SetImg {
+                name,
+                w,
+                h,
+                px: img.into_raw(),
+            })
+        }
+        MainCommmand::Spawn(wrapper) => wrapper
+            .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|lent| Ok(lent.clone()))
+            .ok()
+            .map(VmToHost::Spawn),
+        _ => None,
+    }
 }
 
 pub fn num(x: Value) -> LuaResponse {

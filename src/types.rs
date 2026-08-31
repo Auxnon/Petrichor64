@@ -1,7 +1,7 @@
 #[cfg(feature = "silt")]
 use silt_lua::{
     gc_arena::Mutation,
-    prelude::{LuaError, Table},
+    prelude::Table,
     VM,
 };
 
@@ -22,7 +22,14 @@ pub enum ValueMap {
     Null(),
 }
 
-pub type ControlState = ([bool; 256], [f32; 11]);
+#[derive(Clone, Copy)]
+pub struct ControlState(pub [bool; 256], pub [f32; 11]);
+
+impl Default for ControlState {
+    fn default() -> Self {
+        Self([false; 256], [0.; 11])
+    }
+}
 
 pub struct GlobalMap {
     pub os: &'static str,
@@ -72,8 +79,7 @@ impl GlobalMap {
     }
 }
 
-
-pub struct Script{
+pub struct Script {
     pub name: String,
     pub content: String,
 }

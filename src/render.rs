@@ -1,18 +1,9 @@
+use crate::Core;
 use glam::{vec3, Mat4, Vec2, Vec3};
-use std::{iter, ops::Add, rc::Rc};
 use wgpu::{
     Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
 };
-// use tracy::frame;
-
-use crate::{
-    ent::{Ent, EntityUniforms},
-    ent_manager::InstanceBuffer,
-    model::Model,
-    Core,
-};
-
 /** create rotation matrix from camera position and simple rotation */
 pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
     let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
@@ -42,7 +33,7 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     let mx_view = Mat4::look_at_rh(
         //vec3(r.cos() * 128., r.sin() * 128., camera_pos.y),
         camera_pos,
-        c.add(camera_pos),
+        c + camera_pos,
         // vec3(10. + camera_pos.z, camera_pos.y, camera_pos.x), //+ camera_pos.z
         //vec3(camera_pos.x, camera_pos.z, camera_pos.y),
         //vec3(camera_pos.x, camera_pos.z - 16., camera_pos.y),
@@ -61,11 +52,12 @@ pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> 
     (mx_view, mx_projection, model_mat)
 }
 
-pub fn render_loop(
-    core: &mut Core,
-    iteration: u64,
-    instance_buffers: &InstanceBuffer,
-) -> Result<(), wgpu::SurfaceError> {
+pub enum DrawState {
+    Success,
+    Skip,
+    Resize,
+}
+pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
@@ -106,7 +98,13 @@ pub fn render_loop(
         core.global.smooth_cam_rot,
     );
 
+    // Cache these so the ray can be re-traced at the top of the next frame, before
+    // Lua reads it (see `Core::refresh_cursor_ray`). Tracing only here left the
+    // unprojected cursor one frame stale.
+    core.global.last_cam_matrices = Some((mx_persp, mx_view));
     crate::ray::trace(core, mx_persp, mx_view);
+    // Before `gfx` is borrowed for the pass: app first, then overlays.
+    let draw_order = core.bundle_manager.layer_order();
     let gfx = &core.gfx;
 
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
@@ -138,6 +136,18 @@ pub fn render_loop(
     ];
     // println!("specs: {:?}", specs);
 
+    let ld = core.global.light_dir;
+    let lc = core.global.light_color;
+    let light_dir: [f32; 4] = [ld.x, ld.y, ld.z, 0.];
+    // rgb = sun colour, w = ambient (fullbright when color 0 + ambient 1).
+    let light_color: [f32; 4] = [lc.x, lc.y, lc.z, core.global.light_ambient];
+    let fc = core.global.fog_color;
+    let fog_color: [f32; 4] = [fc.x, fc.y, fc.z, fc.w]; // rgb + far dist (w=0 off)
+    let ask = core.global.amb_sky;
+    let agr = core.global.amb_ground;
+    let amb_sky: [f32; 4] = [ask.x, ask.y, ask.z, ask.w]; // rgb + w=hemisphere enable
+    let amb_ground: [f32; 4] = [agr.x, agr.y, agr.z, agr.w];
+
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
     let size3 = bytemuck::cast_slice(&time_ref);
@@ -147,6 +157,16 @@ pub fn render_loop(
     gfx.queue.write_buffer(&gfx.uniform_buf, 64, size2);
     gfx.queue.write_buffer(&gfx.uniform_buf, 128, size3);
     gfx.queue.write_buffer(&gfx.uniform_buf, 192, size_specs);
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 208, bytemuck::cast_slice(&light_dir));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 224, bytemuck::cast_slice(&light_color));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 240, bytemuck::cast_slice(&fog_color));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 256, bytemuck::cast_slice(&amb_sky));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 272, bytemuck::cast_slice(&amb_ground));
 
     let mut encoder = gfx
         .device
@@ -159,13 +179,14 @@ pub fn render_loop(
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
+                depth_slice: None,
                 view: &gfx.post.post_texture_view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Clear(Color {
-                        r: 0.,
+                        r: 0.5,
                         g: 0.,
-                        b: 0.,
+                        b: 0.5,
                         a: 1.,
                     }),
                     store: StoreOp::Store,
@@ -186,7 +207,7 @@ pub fn render_loop(
         {
             render_pass.set_pipeline(&core.gui.sky_pipeline);
             render_pass.set_bind_group(0, &core.gui.sky_group, &[]);
-            render_pass.draw(0..4, 0..4);
+            render_pass.draw(0..4, 0..1);
         }
 
         //world space
@@ -206,12 +227,22 @@ pub fn render_loop(
                 }
             }
 
-            for (model, instance_buffer, size) in instance_buffers.iter() {
-                render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-
-                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+            // Entities, one bundle at a time in layer order: the app first, then
+            // anything overlaid on it. Batches within a bundle are still grouped by
+            // model and iterated in hash order, so their relative order is arbitrary
+            // — as it always was — but the app/overlay split above it is now stable,
+            // which is what makes an overlay's translucent helpers land on top of a
+            // finished scene instead of at a hash-dependent moment inside it.
+            for id in draw_order.iter() {
+                if let Some(batches) = core.instance_buffers.get(id) {
+                    for (model, instance_buffer, size) in batches.iter() {
+                        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                        render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                        render_pass
+                            .set_index_buffer(model.index_buf.slice(..), model.index_format);
+                        render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                    }
+                }
             }
 
             if core.ent_manager.specks.len() > 0 {
@@ -230,12 +261,7 @@ pub fn render_loop(
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
 
-            render_pass.draw(0..4, 0..4);
-
-            // frame!("render pass");
-            //render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
-            //render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-            //render_pass.draw_indexed(0..model.index_count as u32, 0, 0..1);
+            render_pass.draw(0..4, 0..1);
         }
     }
     // drop(render_pass);
@@ -255,7 +281,30 @@ pub fn render_loop(
     //     texture_extent,
     // );
 
-    let output = gfx.surface.get_current_texture()?;
+    let output = match gfx.surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(tex) => tex,
+        wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+            // Texture is usable but the surface should be reconfigured
+            texture
+        }
+        wgpu::CurrentSurfaceTexture::Outdated => {
+            // Reconfigure surface and skip this frame
+            return DrawState::Resize;
+        }
+        wgpu::CurrentSurfaceTexture::Lost => {
+            // Reconfigure surface and skip this frame
+            return DrawState::Resize;
+        }
+        wgpu::CurrentSurfaceTexture::Timeout => {
+            return DrawState::Skip;
+        }
+        wgpu::CurrentSurfaceTexture::Validation => {
+            return DrawState::Skip;
+        }
+        wgpu::CurrentSurfaceTexture::Occluded => {
+            return DrawState::Skip;
+        }
+    };
 
     let view = output
         .texture
@@ -265,6 +314,7 @@ pub fn render_loop(
         let mut post_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Post Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
+                depth_slice: None,
                 view: &view, //&core.post.post_texture_view,
                 resolve_target: None,
                 ops: Operations {
@@ -279,16 +329,13 @@ pub fn render_loop(
         {
             post_pass.set_pipeline(&gfx.post.post_pipeline);
             post_pass.set_bind_group(0, &gfx.post.post_bind_group, &[]);
-            post_pass.draw(0..4, 0..4);
-            // frame!("post pass");
+            post_pass.draw(0..4, 0..1);
         }
     }
+    encoder.pop_debug_group();
 
-    gfx.queue.submit(iter::once(encoder.finish()));
-    // frame!("encoder.finish()");
+    gfx.queue.submit(std::iter::once(encoder.finish()));
     output.present();
 
-    // frame!("END RENDER");
-
-    Ok(())
+    DrawState::Success
 }

@@ -1,10 +1,11 @@
-use std::{borrow::Borrow, sync::Arc};
+use std::{borrow::Borrow, fmt::Display, sync::Arc};
 
 use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
 
 use crate::{
-    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse, pool::SharedPool,
+    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse,
+    pool::SharedPool,
 };
 
 #[cfg(feature = "headed")]
@@ -26,11 +27,29 @@ pub enum ScreenIndex {
     Sky = 4,
 }
 
+impl Display for ScreenIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScreenIndex::Sky => write!(f, "SkyIndex"),
+            ScreenIndex::Primary => write!(f, "PrimaryIndex"),
+            ScreenIndex::Secondary => write!(f, "SecondaryIndex"),
+            ScreenIndex::Trinary => write!(f, "TrinaryIndex"),
+            ScreenIndex::System => write!(f, "SystemIndex"),
+        }
+    }
+}
+
 #[cfg(feature = "headed")]
 struct ScreenLayer {
     pub texture: TexTuple,
     pub image: Arc<AtomicCell<RgbaImage>>,
-    pub bundle_target: u8,
+    /// Which bundle's raster this layer shows, or `None` when no bundle occupies it.
+    ///
+    /// Was a bare `u8` hardcoded to 0 on every layer, which is why Secondary and
+    /// Trinary existed in the shader but never showed anything. `None` matters: a
+    /// closed overlay has to leave its layer *cleared*, or its last frame would hang
+    /// over the app forever.
+    pub bundle_target: Option<u8>,
     pub index: ScreenIndex,
     pub dirty: bool,
 }
@@ -43,13 +62,14 @@ impl ScreenLayer {
         queue: &wgpu::Queue,
         size: &[u32; 2],
     ) {
-        match bundle_manager.get_pool(self.bundle_target) {
+        match self.bundle_target.and_then(|id| bundle_manager.get_pool(id)) {
             Some(pool) => {
                 // Get the weak ref for this screen index
                 let weak_ref = match self.index {
-                    ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
-                        pool.gui.as_ref()
-                    }
+                    ScreenIndex::Primary
+                    | ScreenIndex::Secondary
+                    | ScreenIndex::Trinary
+                    | ScreenIndex::System => pool.gui.as_ref(),
                     ScreenIndex::Sky => pool.sky.as_ref(),
                 };
 
@@ -67,46 +87,103 @@ impl ScreenLayer {
                 println!("no pool");
             }
         }
+
+        // The CPU-side image just grew/shrank; the GPU texture is a fixed-size
+        // allocation from make_tex, so it must be recreated to match. Otherwise
+        // check_render's write_tex copies the new (larger) image onto the old
+        // (smaller) texture and wgpu rejects it as an out-of-bounds copy.
+        self.texture = crate::texture::make_tex(device, queue, &RgbaImage::new(size[0], size[1]));
+
+        // Keep the Rust-owned buffer (used directly by the System/console layer)
+        // sized to the texture so its upload can't overrun either.
+        if let Some(mut im) = self.image.try_borrow_mut() {
+            *im = RgbaImage::new(size[0], size[1]);
+        }
+
         self.dirty = true;
     }
     pub fn check_render(&mut self, bundle_manager: &mut BundleManager, queue: &wgpu::Queue) {
-        if self.dirty {
-            match bundle_manager.get_pool(self.bundle_target) {
-                Some(pool) => {
-                    // Get the weak ref for this screen index
-                    let weak_ref = match self.index {
-                        ScreenIndex::Primary | ScreenIndex::Secondary | ScreenIndex::Trinary | ScreenIndex::System => {
-                            pool.gui.as_ref()
-                        }
-                        ScreenIndex::Sky => pool.sky.as_ref(),
-                    };
+        if !self.dirty {
+            return;
+        }
 
-                    // Try to upgrade and access the LuaImg
-                    if let Some(weak) = weak_ref {
-                        if let Some(lua_img) = weak.upgrade() {
-                            // Use downcast_mut to get access to LuaImg
-                            lua_img.downcast_ref(|img: &crate::lua_img::LuaImg| {
-                                // Check the appropriate dirty flag
-                                let is_dirty = match self.index {
-                                    ScreenIndex::Sky => pool.sky_dirty.take(),
-                                    _ => pool.gui_dirty.take()
-                                };
-                                
-                                if is_dirty {
-                                    crate::texture::write_tex(queue, &self.texture.texture, &img.image);
-                                }
-                                Ok(())
-                            });
-                        }
-                    }
-
+        match self.index {
+            // System/console layer: upload directly from the Rust-owned image
+            // (written by apply_console_out_text). Does not need the pool.
+            ScreenIndex::System => {
+                // try_borrow() fails only if apply_console_out_text holds a mutable
+                // borrow concurrently, which is impossible on the main thread.
+                // If it does fail we leave dirty=true to retry on the next frame.
+                if let Some(img) = self.image.try_borrow() {
+                    crate::texture::write_tex(queue, &self.texture.texture, &*img);
                     self.dirty = false;
                 }
-                None => {
-                    println!("no pool");
+            }
+            // Lua-driven layers: upload from the shared LuaImg.
+            // No pool.gui_dirty gate — we upload whenever the layer is marked
+            // dirty and the LuaImg is available. The dirty flag is only cleared
+            // after a successful upload so that the attempt is retried if the
+            // pool or weak-ref is not yet ready.
+            // Every Lua-driven layer sources its own bundle's `gui` raster (or `sky`
+            // for the sky layer). Secondary and Trinary used to bail out here with no
+            // data source, which is why they existed in the shader and never showed
+            // anything; they source exactly like Primary now, the only difference
+            // being which bundle they point at.
+            _ => {
+                // Unoccupied layer — an overlay that closed, or one never used. Clear
+                // it once, or its last frame hangs over the app indefinitely (the
+                // earlier hazard here was the opposite mistake: sourcing pool.gui
+                // regardless, which froze a stale white gui over the sky).
+                let target = match self.bundle_target {
+                    Some(t) => t,
+                    None => {
+                        let blank =
+                            RgbaImage::new(self.texture.texture.width(), self.texture.texture.height());
+                        crate::texture::write_tex(queue, &self.texture.texture, &blank);
+                        self.dirty = false;
+                        return;
+                    }
+                };
+                if let Some(pool) = bundle_manager.get_pool(target) {
+                    let weak_ref = match self.index {
+                        ScreenIndex::Sky => pool.sky.as_ref(),
+                        _ => pool.gui.as_ref(),
+                    };
+                    if let Some(weak) = weak_ref {
+                        if let Some(mut lua_img) = weak.upgrade() {
+                            // Upload the frame the Lua thread *finished*, never the one
+                            // it is drawing into. Reading `image` directly caught the
+                            // repaint in progress — about 10% of uploads landed after
+                            // a clr() and before anything was drawn back, flashing an
+                            // empty panel. Publishing happens under this same lock, so
+                            // a frame is either wholly old or wholly new.
+                            //
+                            // Nothing to take means nothing changed, so a still screen
+                            // costs one lock instead of re-uploading a megabyte.
+                            if let Err(e) =
+                                lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
+                                    if let Some(frame) = img.take_presented() {
+                                        crate::texture::write_tex(
+                                            queue,
+                                            &self.texture.texture,
+                                            frame,
+                                        );
+                                    }
+                                    Ok(())
+                                })
+                            {
+                                eprintln!("image downcast err: {}", e);
+                            };
+                            self.dirty = false;
+                        }
+                        // LuaImg not yet available — keep dirty for retry next frame
+                    }
+                    // No weak-ref yet (before InitBack) — keep dirty for retry
                 }
+                // Pool not ready yet — keep dirty for retry
             }
         }
+        // Ok(())
     }
 }
 
@@ -209,7 +286,7 @@ impl Gui {
                 texture: system_texture,
                 image: Arc::new(AtomicCell::new(system_image)),
                 index: ScreenIndex::System,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
             primary_layer: ScreenLayer {
@@ -217,7 +294,7 @@ impl Gui {
                 texture: primary_texture,
                 image: Arc::new(AtomicCell::new(primary_image)),
                 index: ScreenIndex::Primary,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
             secondary_layer: ScreenLayer {
@@ -225,7 +302,8 @@ impl Gui {
                 texture: secondary_texture,
                 image: Arc::new(AtomicCell::new(secondary_image)),
                 index: ScreenIndex::Secondary,
-                bundle_target: 0,
+                // Assigned by `sync_layer_targets` when an overlay is up.
+                bundle_target: None,
                 dirty: true,
             },
             trinary_layer: ScreenLayer {
@@ -233,7 +311,7 @@ impl Gui {
                 texture: trinary_texture,
                 image: Arc::new(AtomicCell::new(trinary_image)),
                 index: ScreenIndex::Trinary,
-                bundle_target: 0,
+                bundle_target: None,
                 dirty: true,
             },
             sky_layer: ScreenLayer {
@@ -241,7 +319,7 @@ impl Gui {
                 texture: sky_bundle,
                 image: Arc::new(AtomicCell::new(sky_image)),
                 index: ScreenIndex::Sky,
-                bundle_target: 0,
+                bundle_target: Some(0),
                 dirty: true,
             },
 
@@ -274,7 +352,7 @@ impl Gui {
         }
     }
 
-    fn letter_init(loggy: &mut Loggy) -> RgbaImage {
+    pub(crate) fn letter_init(loggy: &mut Loggy) -> RgbaImage {
         match crate::asset::load_img(&"6x6-8unicode.png".to_string(), loggy) {
             Ok(img) => img.into_rgba8(),
             Err(_) => {
@@ -442,27 +520,35 @@ impl Gui {
     // }
 
     #[cfg(feature = "headed")]
-    pub fn mark_dirty(&mut self, index: ScreenIndex, bundle_id: u8) {
-        match index {
-            ScreenIndex::System => {
-                self.system_layer.dirty = true;
-                self.system_layer.bundle_target = bundle_id;
-            }
-            ScreenIndex::Primary => {
-                self.primary_layer.dirty = true;
-                self.primary_layer.bundle_target = bundle_id;
-            }
-            ScreenIndex::Secondary => {
-                self.secondary_layer.dirty = true;
-                self.secondary_layer.bundle_target = bundle_id;
-            }
-            ScreenIndex::Trinary => {
-                self.trinary_layer.dirty = true;
-                self.trinary_layer.bundle_target = bundle_id;
-            }
-            ScreenIndex::Sky => {
+    /// A bundle finished a loop having drawn: mark whichever layer it actually owns.
+    ///
+    /// It used to be told the layer, and every caller said `Primary` — so an overlay
+    /// drawing to `secondary` never marked anything and its texture was only ever
+    /// re-uploaded when something else forced it (resizing the window, which rebuilds
+    /// every layer). The cursor moved in the raster and never reached the GPU.
+    ///
+    /// It also used to *assign* `bundle_target` from the reporting bundle, which put
+    /// two writers on that field: an overlay's report re-pointed `primary` at the
+    /// overlay, and `sync_layer_targets` pointed it back at the app on the next
+    /// frame. Assignment belongs to `sync_layer_targets` alone — it derives the whole
+    /// mapping from `layer_order()` every frame — so this only sets the dirty bit.
+    /// A bundle with no layer yet needs no mark: the frame that assigns it one marks
+    /// it dirty as part of the assignment.
+    pub fn mark_bundle_dirty(&mut self, bundle_id: u8, sky: bool) {
+        if sky {
+            if self.sky_layer.bundle_target == Some(bundle_id) {
                 self.sky_layer.dirty = true;
-                self.sky_layer.bundle_target = bundle_id;
+            }
+            return;
+        }
+        let layers = [
+            &mut self.primary_layer,
+            &mut self.secondary_layer,
+            &mut self.trinary_layer,
+        ];
+        for layer in layers {
+            if layer.bundle_target == Some(bundle_id) {
+                layer.dirty = true;
             }
         }
     }
@@ -506,8 +592,44 @@ impl Gui {
     // }
 
     #[cfg(feature = "headed")]
+    /// Point each Lua-driven layer at the bundle that should be drawing it.
+    ///
+    /// Derived from the bundle manager every frame rather than assigned when a bundle
+    /// loads: there's no wiring to keep in step, and a layer can't be left pointing at
+    /// a bundle that has gone away. The app takes Primary, overlays stack above it on
+    /// Secondary then Trinary, and anything left over is cleared.
+    ///
+    /// Sky stays with the app deliberately — an overlay is a surface *in front of* the
+    /// scene, and letting it replace the sky would blank the world behind it.
+    #[cfg(feature = "headed")]
+    fn sync_layer_targets(&mut self, bm: &BundleManager) {
+        let order = bm.layer_order();
+        let pick = |i: usize| order.get(i).copied();
+        let want = [pick(0), pick(1), pick(2)];
+        let layers = [
+            &mut self.primary_layer,
+            &mut self.secondary_layer,
+            &mut self.trinary_layer,
+        ];
+        for (layer, target) in layers.into_iter().zip(want) {
+            if layer.bundle_target != target {
+                layer.bundle_target = target;
+                // Force an upload: either new content to show, or a clear to do.
+                layer.dirty = true;
+            }
+        }
+        if let Some(app) = pick(0) {
+            if self.sky_layer.bundle_target != Some(app) {
+                self.sky_layer.bundle_target = Some(app);
+                self.sky_layer.dirty = true;
+            }
+        }
+    }
+
     pub fn render(&mut self, bm: &mut BundleManager, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
+        #[cfg(feature = "headed")]
+        self.sync_layer_targets(bm);
         if loggy.is_dirty_and_listen() && self.output_console {
             self.console_string = loggy.get();
             self.apply_console_out_text();
@@ -944,7 +1066,7 @@ fn adeval(st: &str, l: u32) -> i32 {
 #[cfg(feature = "headed")]
 pub fn init_image(device: &Device, queue: &Queue, size: (u32, u32)) -> (TexTuple, RgbaImage) {
     // println!("aspect {}", h);
-    let mut img: RgbaImage = ImageBuffer::new(size.0, size.1);
+    let img: RgbaImage = ImageBuffer::new(size.0, size.1);
     // img.put_pixel(1, 1, image::Rgba([0, 255, 0, 255]));
     let out = crate::texture::make_tex(device, queue, &img);
     (out, img)
@@ -1171,7 +1293,7 @@ pub fn direct_fill(target: &mut RgbaImage, width: u32, height: u32, c: Vec4, map
                 (mv.w * 255.).floor() as u8,
             ]);
             // println!("map {:?} to {:?}", mapper, mv);
-            imageproc::map::map_pixels_mut(target, | p| {
+            imageproc::map::map_pixels_mut(target, |p| {
                 if mapper == p {
                     color
                 } else {

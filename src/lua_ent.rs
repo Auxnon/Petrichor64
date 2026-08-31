@@ -10,6 +10,9 @@ use silt_lua::value::Value;
 use silt_lua::LuaError;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
+// Serialize/Deserialize let a LuaEnt cross the wasm web-worker postMessage
+// boundary (the Spawn message) — see worker_protocol.rs.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LuaEnt {
     pub x: f64,
     pub y: f64,
@@ -31,6 +34,9 @@ pub struct LuaEnt {
     pub flipped: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
+    /// Per-axis size multiplier on top of `scale`, so entities can be
+    /// rectangular prisms (a piano key, a wall) not just uniform cubes.
+    pub size: [f64; 3],
     pub offset: [f64; 3], // pub meta: mlua::Table,
                           // pub sender: Option<Sender<(u8, MainCommmand)>>,
                           // pub cloned: bool,
@@ -142,19 +148,19 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("z", |_, _, this| this.z);
         fields.add_field_method_set("z", |_, _, this, z: f64| this.z = z);
 
-        fields.add_field_method_get("rx", |_, _, this| (this.rot_x));
-        fields.add_field_method_get("ry", |_, _, this| (this.rot_y));
-        fields.add_field_method_get("rz", |_, _, this| (this.rot_z));
+        fields.add_field_method_get("rx", |_, _, this| this.rot_x);
+        fields.add_field_method_get("ry", |_, _, this| this.rot_y);
+        fields.add_field_method_get("rz", |_, _, this| this.rot_z);
 
-        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| (this.rot_z = rot_z));
-        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| (this.rot_y = rot_y));
-        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| (this.rot_x = rot_x));
+        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| this.rot_z = rot_z);
+        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| this.rot_y = rot_y);
+        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| this.rot_x = rot_x);
 
-        fields.add_field_method_get("vx", |_, _, this| (this.vx));
-        fields.add_field_method_set("vx", |_, _, this, vx: f64| (this.vx = vx));
-        fields.add_field_method_get("vy", |_, _, this| (this.vy));
-        fields.add_field_method_set("vy", |_, _, this, vy: f64| (this.vy = vy));
-        fields.add_field_method_get("vz", |_, _, this| (this.vz));
+        fields.add_field_method_get("vx", |_, _, this| this.vx);
+        fields.add_field_method_set("vx", |_, _, this, vx: f64| this.vx = vx);
+        fields.add_field_method_get("vy", |_, _, this| this.vy);
+        fields.add_field_method_set("vy", |_, _, this, vy: f64| this.vy = vy);
+        fields.add_field_method_get("vz", |_, _, this| this.vz);
         fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);
@@ -166,6 +172,10 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("offset", |_, _, this, offset: [f64; 3]| {
             Ok(this.offset = offset)
         });
+
+        // Per-axis size (x, y, z) for rectangular-prism entities.
+        fields.add_field_method_get("size", |_, _, this| Ok(this.size));
+        fields.add_field_method_set("size", |_, _, this, size: [f64; 3]| Ok(this.size = size));
 
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
@@ -266,6 +276,7 @@ impl LuaEnt {
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
+            size: [1., 1., 1.],
             offset: [0., 0., 0.], // meta: mlua::Table::new(),
             flags: 0,
             // cloned: false,
@@ -286,6 +297,9 @@ impl LuaEnt {
     }
     pub fn get_flags(&self) -> u8 {
         self.flags
+    }
+    pub fn is_dead(&self) -> bool {
+        self.flags & lua_ent_flags::DEAD != 0
     }
     pub fn is_dirty(&self) -> bool {
         self.dirty
@@ -329,6 +343,7 @@ impl Clone for LuaEnt {
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
+            size: self.size,
             offset: self.offset,
             flags: self.flags,
             // meta: self.meta.clone(),

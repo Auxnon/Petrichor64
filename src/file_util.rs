@@ -6,18 +6,15 @@ use std::{fs::File, path::Path};
 // use zip::result::ZipError;
 // use zip::write::FileOptions;
 
-use async_zip::base::read::WithoutEntry;
 // use async_zip::base::read::mem::ZipFileReader;
 // use async_zip::base::read::seek::ZipFileReader;
 use async_zip::base::write::ZipFileWriter;
 use async_zip::error::ZipError;
-use async_zip::tokio::read::ZipEntryReader;
 // use async_zip::tokio::read::ZipEntryReader;
 use async_zip::tokio::read::seek::ZipFileReader;
-use async_zip::{Compression, ZipEntryBuilder};
+use async_zip::ZipEntryBuilder;
 // use futures::TryFutureExt;
 // use futures_lite::io::Cursor;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 use crate::error::P64Error;
 use crate::log::{LogType, Loggy};
@@ -78,7 +75,7 @@ pub fn get_file_buffer(path_str: &str) -> Result<Vec<u8>, P64Error> {
 
 /** write a string to a file */
 pub fn write_file_string(path: PathBuf, contents: &str) -> Result<(), P64Error> {
-    let mut file = match File::create(&path) {
+    let file = match File::create(&path) {
         Ok(f) => f,
         Err(e) => return Err(P64Error::IoError(e)),
     };
@@ -116,17 +113,28 @@ pub fn get_file_string_from_path(path: PathBuf) -> Result<String, P64Error> {
     let v = get_file_buffer_from_path(path)?;
     match String::from_utf8(v) {
         Ok(s) => Ok(s),
-        Err(e) => Err(P64Error::IoUtf8Error),
+        Err(_e) => Err(P64Error::IoUtf8Error),
     }
 }
 
-/** Scrub path to not go higher than dir */
+/// Resolve a game-supplied path inside `dir`, refusing anything that could leave it.
+///
+/// Only *plain relative* components are allowed. Checking for `..` alone was not
+/// enough: `Path::join` **discards the base** when the argument is absolute, so
+/// `io.get("/etc/passwd")` produced `/etc/passwd` — it contains no `ParentDir`
+/// component, so it passed the old check and read straight out of the sandbox. A
+/// Windows `Prefix` (`C:`, `\\?\`, UNC) does the same thing.
+///
+/// Still trusts the filesystem not to point out of `dir` on our behalf: a symlink
+/// inside the game folder is followed. Closing that means canonicalising, which is
+/// awkward for writes to files that don't exist yet, so it's left as a known limit
+/// rather than half-done.
 fn scrub_path(dir: &str, path: &str) -> Result<PathBuf, P64Error> {
     let p = PathBuf::new().join(path);
-    if p.components()
-        .into_iter()
-        .any(|x| x == Component::ParentDir)
-    {
+    let ok = p
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    if !ok || path.is_empty() {
         return Err(P64Error::PermPathTraversal);
     }
     Ok(PathBuf::new().join(dir).join(path))
@@ -142,6 +150,47 @@ pub fn get_file_string_scrubbed(dir: &str, path: &str) -> Result<String, P64Erro
 pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Result<(), P64Error> {
     let p = scrub_path(dir, path)?;
     write_file_string(p, contents)
+}
+
+/// Every file under `dir`, as slash-separated paths relative to it
+/// (`scripts/main.lua`) and sorted, so an editor can list what it's allowed to open.
+///
+/// Symlinks are skipped rather than followed: a link planted inside an app folder
+/// would otherwise read or overwrite anything on the machine, which is the same
+/// escape [`scrub_path`] exists to close. Dotfiles are skipped too — `.git` in a
+/// game folder is noise an editor shouldn't offer to edit.
+pub fn list_files_scrubbed(dir: &str) -> Result<Vec<String>, P64Error> {
+    let root = PathBuf::new().join(dir);
+    let mut out = vec![];
+    // Depth is bounded because a game folder is shallow by nature, and because
+    // symlinks are skipped there's no cycle to guard against.
+    let mut stack = vec![(root.clone(), String::new())];
+    while let Some((path, prefix)) = stack.pop() {
+        let entries = match std::fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(e) => return Err(P64Error::IoError(e)),
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                name
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            // `file_type` here comes from the directory entry, so it reports a
+            // symlink as a symlink instead of what it points at.
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => stack.push((entry.path(), rel)),
+                Ok(t) if t.is_file() => out.push(rel),
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 fn handle_zip_error(err: ZipError) -> P64Error {
@@ -232,6 +281,23 @@ fn handle_zip_error(err: ZipError) -> P64Error {
 // }
 
 /** read provided source string paths into a zip file, and smash it on to the end of an image file (see squish for simple smash) */
+// Packing a game bundle writes a zip to disk via tokio::fs — there is no
+// filesystem on the web, so the wasm build gets a stub that reports the
+// operation as unsupported instead.
+#[cfg(target_arch = "wasm32")]
+pub async fn pack_zip(
+    _sources: Vec<&str>,
+    _thumb: PathBuf,
+    _out: &str,
+    _loggy: &mut Loggy,
+) -> Result<(), P64Error> {
+    Err(P64Error::IoError(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "bundle packing is not supported on the web",
+    )))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn pack_zip(
     sources: Vec<&str>,
     thumb: PathBuf,
@@ -240,7 +306,7 @@ pub async fn pack_zip(
 ) -> Result<(), P64Error> {
     // use tokio::io::AsyncWriteExt;
 
-    let mut bin = get_file_buffer_from_path(thumb)?;
+    let bin = get_file_buffer_from_path(thumb)?;
     if bin.is_empty() {
         loggy.log(
             LogType::ConfigError,
@@ -257,6 +323,15 @@ pub async fn pack_zip(
     let new_file = tokio::fs::File::create(&Path::new(out)).await;
 
     let mut new_file = new_file.map_err(|e| P64Error::IoError(e))?;
+    // Write the icon PNG first, then append the zip, so the output is a valid,
+    // viewable .game.png (image + trailing zip). unpack() strips back to the
+    // PNG's IEND to recover the zip. (This prepend was dropped in the async_zip
+    // migration, which quietly turned carts into raw zips.)
+    use tokio::io::AsyncWriteExt;
+    new_file
+        .write_all(&bin)
+        .await
+        .map_err(|e| P64Error::IoError(e))?;
     let mut writer = ZipFileWriter::with_tokio(&mut new_file);
 
     for source in sources {
@@ -354,17 +429,23 @@ pub async fn unpack_and_walk<'a>(
         println!("make {}", d); // TODO remove need for this
         map.insert(d, vec![]);
     }
-    let entries: Result<Vec<(usize,String)>,&'static str> =archive.file().entries().iter().enumerate().map(|(id,entry)|{
-let file_name = entry
-            .filename()
-            .as_str()
-            .map_err(|_| "non UTF8 zip asset")?.to_string();
-        Ok((id,file_name))
-    }).collect();
-    let entries=entries?;
+    let entries: Result<Vec<(usize, String)>, &'static str> = archive
+        .file()
+        .entries()
+        .iter()
+        .enumerate()
+        .map(|(id, entry)| {
+            let file_name = entry
+                .filename()
+                .as_str()
+                .map_err(|_| "non UTF8 zip asset")?
+                .to_string();
+            Ok((id, file_name))
+        })
+        .collect();
+    let entries = entries?;
 
     for (id, file_name) in entries {
-        
         let shorter = if file_name.starts_with("./") {
             &file_name[2..file_name.len()]
         } else {
@@ -389,7 +470,7 @@ let file_name = entry
 
             match map.get_mut(dir) {
                 Some(ar) => {
-                    let mut contents:Vec<u8> = Vec::new();
+                    let mut contents: Vec<u8> = Vec::new();
                     // println!("found file");
 
                     let mut data_reader = archive
@@ -400,7 +481,10 @@ let file_name = entry
                     //     Ok(_) => {}
                     //     _ => {}
                     // }
-                    data_reader.read_to_end_checked(&mut contents);
+                    data_reader
+                        .read_to_end_checked(&mut contents)
+                        .await
+                        .map_err(|_| "problem reading zip entry contents")?;
                     ar.push((shorter.to_owned(), contents));
                 }
                 _ => {}
@@ -417,7 +501,16 @@ pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
         loggy.log(LogType::ConfigError, &"file to unpack is 0 bytes!");
         return vec![];
     }
-    // println!("zip file found {}", gamefile.len());
+
+    // A bundle is either a raw zip (`PK\x03\x04`, what `pack` currently writes)
+    // or a viewable .game.png with the zip appended after the PNG's IEND chunk.
+    // Raw zip: hand it back untouched. PNG: strip up to IEND (the code below).
+    // (Without this, the IEND scan finds the marker *inside* an embedded PNG
+    // asset and returns a corrupted fragment — no entries load.)
+    if gamefile.len() >= 4 && gamefile[..4] == [0x50, 0x4B, 0x03, 0x04] {
+        loggy.log(LogType::Config, &format!("raw zip bundle, {} bytes", gamefile.len()));
+        return gamefile;
+    }
 
     let mut v = vec![];
     let mut toggle = false;
@@ -477,3 +570,53 @@ pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
 //     //     _ => {}
 //     // }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A game's `io.get`/`io.set` path must stay inside its own folder. The absolute
+    /// case is the one that actually escaped: it carries no `..`, so a traversal
+    /// check alone waved it through while `Path::join` threw the sandbox root away.
+    #[test]
+    fn scrub_path_confines_to_dir() {
+        let dir = "/games/mygame";
+        assert_eq!(
+            scrub_path(dir, "notes.txt").unwrap(),
+            PathBuf::from("/games/mygame/notes.txt")
+        );
+        assert_eq!(
+            scrub_path(dir, "sub/ok.txt").unwrap(),
+            PathBuf::from("/games/mygame/sub/ok.txt")
+        );
+        assert_eq!(
+            scrub_path(dir, "./here.txt").unwrap(),
+            PathBuf::from("/games/mygame/./here.txt")
+        );
+
+        for bad in [
+            "/etc/passwd",     // absolute: replaces the base entirely
+            "../secret",       // classic traversal
+            "sub/../../secret",// traversal after a valid component
+            "",                // nothing to resolve
+        ] {
+            assert!(
+                scrub_path(dir, bad).is_err(),
+                "expected {:?} to be refused",
+                bad
+            );
+        }
+    }
+
+    /// What an overlay's file list looks like. `test/target` is a fixture app kept
+    /// deliberately tiny, so this also pins the shape of the paths handed to Lua:
+    /// relative to the app folder, slash-separated, sorted, subfolders included.
+    #[test]
+    fn list_files_scrubbed_walks_and_relativizes() {
+        let files = list_files_scrubbed("test/target").unwrap();
+        assert_eq!(
+            files,
+            vec!["assets/example.png", "icon.png", "scripts/main.lua"]
+        );
+    }
+}

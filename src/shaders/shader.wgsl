@@ -23,7 +23,14 @@ struct Globals {
 	proj_mat: mat4x4<f32>,
 	adjustments: mat4x4<f32>,
 	specs: vec4<f32>,
-	//num_lights: vec4<u32>,
+	// L0 retro lighting: directional sun. light_color.w = ambient.
+	light_dir: vec4<f32>,
+	light_color: vec4<f32>,
+	// L2 distance fog: rgb + w = far distance (w=0 disables).
+	fog_color: vec4<f32>,
+	// L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb.
+	amb_sky: vec4<f32>,
+	amb_ground: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -148,16 +155,19 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	// in.world_position.xyz
 
 	let mutator=1.;//in.proj_position.w;
-	let t=in.time/2.;
-	let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
-	let light_color=vec3<f32>(1.,1.,1.);
+	// L0 retro lighting: one directional sun + ambient, applied per-fragment.
+	// shade = ambient(light_color.w) + max(dot(N, -L), 0) * sun_rgb.
+	// Defaults (sun_rgb = 0, ambient = 1) leave the scene fullbright/unchanged.
 	let norm = normalize(in.world_normal);
-	let light_dir = normalize(light_pos - in.world_position.xyz); 
-	let diff = max(dot(norm, light_dir), .1);
-	let diffuse = light_color;//diff *  
-	// vec3 result = (ambient + diffuse) * objectColor;
-// FragColor = vec4(result, 1.0);
-   
+	let ldir = normalize(globals.light_dir.xyz);
+	let ndl = max(dot(norm, -ldir), 0.0);
+	// Ambient: flat scalar, or L2 hemisphere (sky above, ground below by N.z).
+	var ambient = vec3<f32>(globals.light_color.w);
+	if (globals.amb_sky.w > 0.) {
+		ambient = mix(globals.amb_ground.rgb, globals.amb_sky.rgb, norm.z * 0.5 + 0.5);
+	}
+	let shade = ambient + ndl * globals.light_color.rgb;
+
 	f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
    
 	if( in.specs.w>0.){
@@ -176,7 +186,15 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		discard;
 	}
 
-	return FragmentOutput(e3*vec4<f32>(diffuse,1.));
+	var rgb = e3.rgb * shade;
+	// L2 distance fog: blend toward fog rgb as the fragment approaches the fog
+	// far distance (fog_color.w). specs.xyz is the camera's world position.
+	if (globals.fog_color.w > 0.) {
+		let fog_t = clamp(length(in.world_position.xyz - in.specs.xyz) / globals.fog_color.w, 0., 1.);
+		rgb = mix(rgb, globals.fog_color.rgb, fog_t);
+	}
+
+	return FragmentOutput(vec4<f32>(rgb, e3.a));
 }
 
 @vertex
@@ -200,7 +218,7 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 
 @fragment
 fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
-  
+
 	// let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
 	// if (e3.a < 0.5) {
 	//     discard;

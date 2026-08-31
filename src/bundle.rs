@@ -1,9 +1,6 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
-use image::{RgbaImage};
+use image::RgbaImage;
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::WeakWrapper;
@@ -11,11 +8,21 @@ use silt_lua::userdata::WeakWrapper;
 // #[cfg(feature = "headed")]
 // use crate::root::Core;
 use crate::{
+    error::P64Error,
     gui::PreGuiMorsel,
     lua_define::{LuaCore, LuaHandle},
     pool::SharedPool,
     types::ControlState,
 };
+
+/// A bundle's own camera. Grouped into a type rather than left as a tuple because
+/// `cam` will grow fov and clip planes, and because `Option<BundleCam>` says what a
+/// bare `Option<(Vec3, Vec2)>` doesn't.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BundleCam {
+    pub pos: glam::Vec3,
+    pub rot: glam::Vec2,
+}
 
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
@@ -30,10 +37,26 @@ pub struct Bundle {
     /** acts as a counter for for a frame skipped due to performance or intentionally */
     pub skips: u16,
     pub skipped_control_state: Option<ControlState>,
-    /** How many frames do we want to intentionally skip to bring our fps down? Not great */
+    /** Run the loop once every N frames, to bring a bundle's tick rate down. 1 is every frame. */
     pub frame_split: u16,
     pub lua_ctx_handle: Option<LuaHandle>,
     pub pool: Option<SharedPool>,
+    /// An editing surface drawn *over* the app rather than part of it.
+    ///
+    /// Marked explicitly instead of inferred from "isn't bundle 0", because bundles
+    /// will legitimately have non-overlay children one day (composition), and those
+    /// must not silently start stealing input or a gui layer.
+    ///
+    /// Only the engine ever sets this — nothing in Lua can create a bundle, let alone
+    /// an overlay. See PLAN.md's overlay trust boundary.
+    pub overlay: bool,
+    /// This bundle's camera, once it has set one — position and rotation, as `cam`
+    /// takes them. `None` means it never called `cam`, which is the signal that it
+    /// has no 3D space of its own and inherits the app's.
+    ///
+    /// Overlays used to share one global camera with the app, so an editor calling
+    /// `cam` swung the game's view out from under it.
+    pub cam: Option<BundleCam>,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -52,6 +75,8 @@ impl Bundle {
             frame_split: 1,
             lua_ctx_handle: None,
             pool: None,
+            overlay: false,
+            cam: None,
         }
     }
 
@@ -59,17 +84,23 @@ impl Bundle {
         self.directory.as_deref()
     }
 
-    pub fn call_loop(&self, bits: ControlState) {
-        self.lua.call_loop(bits);
+    pub fn call_loop(&self, bits: ControlState) -> Result<(), P64Error> {
+        self.lua.call_loop(bits)
     }
 
-    pub fn call_main(&self) {
-        self.lua.call_main();
-        self.lua.call_loop(([false; 256], [0.; 11]));
+    pub fn fail_instance(&mut self) {
+        println!("shutdown the instance {} because lua thread ended", self.id);
     }
 
-    pub fn shutdown(&self) {
-        self.lua.die();
+    pub fn call_main(&self) -> Result<(), P64Error> {
+        self.lua.call_main()?;
+        self.lua.call_loop(ControlState::default())
+    }
+
+    pub fn shutdown(&mut self) -> Result<(), P64Error> {
+        let res = self.lua.die();
+        self.lua.close();
+        res
     }
 
     pub fn resize(&self, width: u32, height: u32) {
@@ -79,7 +110,6 @@ impl Bundle {
 
 pub struct BundleManager {
     pub console_bundle_target: u8,
-    pub bundle_counter: u8,
     pub bundles: FxHashMap<u8, Bundle>,
     // #[cfg(feature = "headed")]
     // pub open_tex_managers: Vec<TexManager>,
@@ -93,7 +123,6 @@ impl BundleManager {
     pub fn new() -> Self {
         Self {
             console_bundle_target: 0,
-            bundle_counter: 0,
             bundles: FxHashMap::default(),
             // #[cfg(feature = "headed")]
             // open_tex_managers: Vec::new(),
@@ -102,6 +131,18 @@ impl BundleManager {
             main_rasters: Vec::new(),
             sky_rasters: Vec::new(),
         }
+    }
+
+    /// The lowest id no live bundle is using.
+    ///
+    /// Ids used to come from a monotonic `u8` counter that never reused a slot, so
+    /// opening and closing throwaway overlays climbed 0, 1, 2, … and **wrapped after
+    /// 256**, at which point a new bundle would be handed the id of the running app
+    /// and quietly take its place. Reusing the lowest free slot keeps ids inside the
+    /// range they are stored in, and keeps the app at 0 as long as it is alive —
+    /// which `edit_target`, `layer_order` and the console target all read as "first".
+    pub fn next_free_id(&self) -> Option<u8> {
+        (0..=u8::MAX).find(|i| !self.bundles.contains_key(i))
     }
 
     pub fn is_single(&self) -> bool {
@@ -117,23 +158,36 @@ impl BundleManager {
         self.rebuild_call_order();
     }
 
-    pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: ControlState) {
+    pub fn call_loop(&mut self, updated_bundles: &mut FxHashMap<u8, bool>, bits: &ControlState) {
+        // An overlay takes input outright: it's an editor sitting on top of the app,
+        // and letting keystrokes reach the game underneath would be both confusing
+        // and destructive (typing into a source editor would also be driving the
+        // game). Everyone else runs on a neutral snapshot, which is the same trick
+        // the console already uses to keep its typing out of the game.
+        let owner = self.input_owner();
+        let quiet = ControlState::default();
         for (id, bundle) in &mut self.bundles.iter_mut() {
+            let bits = if *id == owner { bits } else { &quiet };
             if !if let Some(updated) = updated_bundles.get_mut(id) {
                 if *updated {
-                    if bundle.skips >= bundle.frame_split {
+                    // frame_split is a divisor, so 1 means "every frame" — that needs
+                    // zero skipped frames, not one. Comparing bare `skips >= frame_split`
+                    // demanded a skip before *every* run, halving every bundle's tick
+                    // rate to ~30Hz against a 60fps render.
+                    if bundle.skips >= bundle.frame_split.saturating_sub(1) {
                         *updated = false;
                         bundle.skips = 0;
-                        match bundle.skipped_control_state {
+                        if (match bundle.skipped_control_state {
                             Some(old_bits) => {
-                                bundle.call_loop(combine_states(old_bits, bits));
                                 bundle.skipped_control_state = None;
+                                bundle.call_loop(combine_states(old_bits, *bits))
                             }
-                            None => {
-                                bundle.call_loop(bits);
-                            }
+                            None => bundle.call_loop(*bits),
+                        })
+                        .is_err()
+                        {
+                            bundle.fail_instance();
                         }
-                        bundle.call_loop(bits);
                         true
                     } else {
                         false
@@ -147,22 +201,23 @@ impl BundleManager {
                 //skip
                 match bundle.skipped_control_state {
                     Some(old_bits) => {
-                        bundle.skipped_control_state = Some(combine_states(old_bits, bits));
+                        bundle.skipped_control_state = Some(combine_states(old_bits, *bits));
                     }
                     None => {
-                        bundle.skipped_control_state = Some(bits);
+                        bundle.skipped_control_state = Some(*bits);
                     }
                 };
+                // TODO overflow if we go over u16!!!
                 bundle.skips += 1;
             }
         }
     }
 
-    pub fn call_main(&mut self, bundle_id: u8) {
-        match self.bundles.get(&bundle_id) {
-            Some(bundle) => bundle.call_main(),
-            None => {}
+    pub fn call_main(&mut self, bundle_id: u8) -> Result<(), P64Error> {
+        if let Some(bundle) = self.bundles.get(&bundle_id) {
+            return bundle.call_main();
         };
+        Ok(())
     }
 
     pub fn make_bundle(
@@ -171,8 +226,13 @@ impl BundleManager {
         bundle_relations: Option<(u8, bool)>,
         game_path: Option<&str>,
     ) -> &mut Bundle {
-        let id = self.bundle_counter;
-        self.bundle_counter += 1;
+        let id = match self.next_free_id() {
+            Some(i) => i,
+            None => {
+                eprintln!("no free bundle slot; reusing 0");
+                0
+            }
+        };
         // let gui = core.gui.make_morsel();
         // let tex_manager = crate::texture::TexManager::new();
         let lua = crate::lua_define::LuaCore::new();
@@ -204,8 +264,112 @@ impl BundleManager {
         self.bundles.get_mut(&id).unwrap()
     }
 
+    /// Which bundle receives real input this frame: the topmost overlay if any is up,
+    /// otherwise the app itself.
+    ///
+    /// "Topmost" follows `call_order`, so it matches what the gui layers show — the
+    /// surface you can see on top is the one you're typing into.
+    pub fn input_owner(&self) -> u8 {
+        for id in self.call_order.iter().rev() {
+            if self.bundles.get(id).map_or(false, |b| b.overlay) {
+                return *id;
+            }
+        }
+        *self.call_order.first().unwrap_or(&0)
+    }
+
+    /// Bundles in gui-layer order: the app first, then overlays above it.
+    ///
+    /// The renderer reads this every frame rather than being told when to rewire, so
+    /// loading or closing an overlay needs no bookkeeping and can't leave a layer
+    /// pointing at a bundle that no longer exists.
+    pub fn layer_order(&self) -> Vec<u8> {
+        let mut out: Vec<u8> = self
+            .call_order
+            .iter()
+            .copied()
+            .filter(|id| self.bundles.get(id).map_or(false, |b| !b.overlay))
+            .collect();
+        out.extend(
+            self.call_order
+                .iter()
+                .copied()
+                .filter(|id| self.bundles.get(id).map_or(false, |b| b.overlay)),
+        );
+        out
+    }
+
+    /// Record the camera a bundle set. The first call is also what marks it as having
+    /// a 3D space of its own: see `has_camera`.
+    pub fn set_camera(&mut self, id: u8, pos: Option<glam::Vec3>, rot: Option<glam::Vec2>) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            let mut c = b.cam.unwrap_or(BundleCam {
+                pos: glam::Vec3::ZERO,
+                rot: glam::Vec2::ZERO,
+            });
+            if let Some(pos) = pos {
+                c.pos = pos;
+            }
+            if let Some(rot) = rot {
+                c.rot = rot;
+            }
+            b.cam = Some(c);
+        }
+    }
+
+    /// Has this bundle ever set a camera?
+    ///
+    /// This is the whole switch between the two overlay modes. An overlay that never
+    /// calls `cam` costs nothing extra to draw: it has no camera, so there is no
+    /// second pass, and any 3D it does own is drawn by the app's camera into the
+    /// app's depth buffer — interleaved with the scene, which is either the focus
+    /// effect you wanted or a mess, depending on the geometry. Setting a camera opts
+    /// into a pass of its own instead.
+    pub fn has_camera(&self, id: u8) -> bool {
+        self.bundles.get(&id).map_or(false, |b| b.cam.is_some())
+    }
+
+    /// The camera a bundle set, if any.
+    pub fn camera(&self, id: u8) -> Option<BundleCam> {
+        self.bundles.get(&id).and_then(|b| b.cam)
+    }
+
+    /// Is this bundle an overlay? Asked on the main thread before honouring anything
+    /// that only an overlay may do, so a stray packet from an app can't pass for one.
+    pub fn is_overlay(&self, id: u8) -> bool {
+        self.bundles.get(&id).map_or(false, |b| b.overlay)
+    }
+
+    /// The bundle an overlay edits: the app underneath it.
+    ///
+    /// Never another overlay — a source editor must not be able to rewrite the image
+    /// editor sitting next to it, only the app they were both opened to work on.
+    pub fn edit_target(&self) -> Option<u8> {
+        self.call_order
+            .iter()
+            .copied()
+            .find(|id| self.bundles.get(id).map_or(false, |b| !b.overlay))
+    }
+
+    /// Mark a bundle as an overlay. Engine-only by construction: this is not reachable
+    /// from Lua.
+    pub fn mark_overlay(&mut self, id: u8) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            b.overlay = true;
+        }
+    }
+
     pub fn rebuild_call_order(&mut self) {
-        self.call_order = self.bundles.keys().copied().collect();
+        // Sorted, because this was seeded straight from `FxHashMap::keys()` — whose
+        // order is arbitrary. That decided the order bundles run their Lua loops in,
+        // and now also which gui layer each one draws to and which one owns input, so
+        // an overlay could land on a different layer or miss input between runs with
+        // nothing in the code having changed. Ids increase with creation, so ascending
+        // order means the app comes first and overlays stack in the order they were
+        // opened — the newest on top, which is what "topmost" should mean.
+        let mut seed: Vec<u8> = self.bundles.keys().copied().collect();
+        seed.sort_unstable();
+        self.call_order = seed;
 
         for (bi, (k, b)) in self.bundles.iter().enumerate() {
             if !b.children.is_empty() {
@@ -262,7 +426,7 @@ impl BundleManager {
         if raster_id == 0 {
             // println!("1main raster {}", self.main_rasters.len());
             if self.main_rasters.len() > 0 {
-                let mut im = self.main_rasters[0].borrow().clone();
+                let im = self.main_rasters[0].borrow().clone();
                 // TODO  raster overlay?
                 println!("build up main raster {:?}", im.dimensions());
                 // for r in self.main_rasters.iter().skip(1) {
@@ -275,7 +439,7 @@ impl BundleManager {
             }
         } else {
             if self.sky_rasters.len() > 0 {
-                let mut im = self.sky_rasters[0].borrow().clone();
+                let im = self.sky_rasters[0].borrow().clone();
                 // for r in self.sky_rasters.iter().skip(1) {
                 //     image::imageops::overlay(&mut im, &r.borrow().clone(), 0, 0);
                 // }
@@ -302,6 +466,13 @@ impl BundleManager {
         &self.get_main_bundle().lua
         // &self.bundles.get(&0).unwrap().lua
     }
+
+    /// True if any bundle (game) is loaded. Callers should check this before
+    /// routing input to `get_lua()`/`get_main_bundle()`, which panic when empty.
+    pub fn has_bundles(&self) -> bool {
+        !self.bundles.is_empty()
+    }
+
     pub fn get_main_bundle(&mut self) -> &Bundle {
         match self.bundles.get(&self.console_bundle_target) {
             Some(bundle) => &bundle,
@@ -325,8 +496,9 @@ impl BundleManager {
     }
 
     /** Reset a specific bundle, returns true if it exists, and returns any possible children instances */
-    pub fn soft_reset(&self, id: u8) -> (bool, Vec<u8>) {
-        match self.bundles.get(&id) {
+    pub fn soft_reset(&mut self, id: u8) -> (bool, Vec<u8>) {
+        println!("call soft reset");
+        match self.bundles.get_mut(&id) {
             Some(bundle) => {
                 bundle.shutdown();
                 (true, bundle.children.clone())
@@ -354,11 +526,41 @@ impl BundleManager {
         }
     }
 
-    pub fn hard_reset(&mut self) {
-        for (id, bundle) in self.bundles.drain() {
-            bundle.shutdown();
+    /// Shut down and drop every overlay, leaving the app running.
+    ///
+    /// Separate from `soft_reset`, which resets a bundle *and its children*: an
+    /// overlay is deliberately not a child of the app it edits, so reloading the app
+    /// doesn't take the editor down with it.
+    /// Shut down every overlay, returning their ids so the caller can also drop the
+    /// resources that live outside this manager — entities in particular. Closing an
+    /// overlay used to leave its entities in the entity manager forever, still drawn
+    /// and still walked every frame, because nothing purged them.
+    pub fn close_overlays(&mut self) -> Vec<u8> {
+        let ids: Vec<u8> = self
+            .bundles
+            .iter()
+            .filter(|(_, b)| b.overlay)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ids {
+            if let Some(mut b) = self.bundles.remove(id) {
+                if let Err(e) = b.shutdown() {
+                    eprintln!("failed to shut down overlay {}: {}", id, e);
+                }
+            }
         }
-        self.bundle_counter = 0;
+        if !ids.is_empty() {
+            self.rebuild_call_order();
+        }
+        ids
+    }
+
+    pub fn hard_reset(&mut self) {
+        for (id, mut bundle) in self.bundles.drain() {
+            if let Err(e) = bundle.shutdown() {
+                eprintln!("failed to shutdown bundle  {} due to: {}", id, e);
+            }
+        }
         self.console_bundle_target = 0;
     }
     pub fn reclaim_resources(&mut self, _lua_returns: BundleResources) {}
@@ -402,5 +604,205 @@ impl BundleMutations {
             gui: true,
             sky: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bundle with no Lua context attached. `LuaCore::new()` allocates nothing and
+    /// starts no thread, so the ordering rules can be tested for real rather than
+    /// reimplemented in the test.
+    fn app(bm: &mut BundleManager, name: &str) -> u8 {
+        bm.make_bundle(Some(name), None, None).id
+    }
+
+    /// The surface on top owns input. With nothing overlaid that's the app; once an
+    /// overlay is up it takes input outright, and the app must not also receive it —
+    /// otherwise typing into an editor would simultaneously drive the game.
+    #[test]
+    fn input_goes_to_the_topmost_overlay() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        assert_eq!(bm.input_owner(), game, "no overlay: the app owns input");
+
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+        assert_eq!(bm.input_owner(), tool);
+
+        // A second overlay stacks above the first and takes over.
+        let tool2 = app(&mut bm, "tool2");
+        bm.mark_overlay(tool2);
+        assert_eq!(bm.input_owner(), tool2);
+    }
+
+    /// Layer assignment: the app draws to primary, overlays stack above it. Order
+    /// matters — it's what decides which surface you see, and therefore which one
+    /// `input_owner` hands input to.
+    #[test]
+    fn layer_order_puts_app_first_then_overlays() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.layer_order(), vec![game, tool]);
+
+        // Even though this one has a lower id than an existing overlay would suggest,
+        // non-overlays always come first: the app can't be pushed off primary.
+        let tool2 = app(&mut bm, "tool2");
+        bm.mark_overlay(tool2);
+        assert_eq!(bm.layer_order(), vec![game, tool, tool2]);
+    }
+
+    /// Closing overlays leaves the app alone. They're deliberately not children of
+    /// the app, so neither teardown direction should take the other with it.
+    #[test]
+    fn close_overlays_leaves_the_app_running() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.close_overlays(), vec![tool]);
+        assert!(bm.get(game).is_some(), "the app must survive");
+        assert!(bm.get(tool).is_none(), "the overlay must be gone");
+        assert_eq!(bm.input_owner(), game, "input returns to the app");
+        assert_eq!(bm.layer_order(), vec![game]);
+        assert!(
+            bm.close_overlays().is_empty(),
+            "closing again is a no-op"
+        );
+    }
+
+    /// An overlay edits the app, never a fellow tool. Two editors open at once must
+    /// both aim at the game — a source editor that could rewrite the image editor
+    /// beside it is a different and much worse capability than the one intended.
+    #[test]
+    fn overlays_edit_the_app_never_each_other() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let src = app(&mut bm, "src-editor");
+        bm.mark_overlay(src);
+        let img = app(&mut bm, "img-editor");
+        bm.mark_overlay(img);
+
+        assert_eq!(bm.edit_target(), Some(game));
+        assert!(!bm.is_overlay(game), "the app is not privileged");
+        assert!(bm.is_overlay(src) && bm.is_overlay(img));
+    }
+
+    /// With nothing but overlays there is no target, and the `app.*` handlers get
+    /// `None` rather than falling back to editing an overlay.
+    #[test]
+    fn an_overlay_alone_has_nothing_to_edit() {
+        let mut bm = BundleManager::new();
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert_eq!(bm.edit_target(), None);
+    }
+
+    /// Ids come from the lowest free slot, so opening and closing throwaway overlays
+    /// cannot climb past the `u8` they are stored in and wrap onto the running app.
+    #[test]
+    fn bundle_ids_reuse_the_lowest_free_slot() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let first = app(&mut bm, "tool");
+        bm.mark_overlay(first);
+        assert_eq!((game, first), (0, 1));
+
+        // Close it and open another: the freed slot comes back rather than the
+        // counter marching on.
+        assert_eq!(bm.close_overlays(), vec![first]);
+        let second = app(&mut bm, "tool2");
+        assert_eq!(second, 1, "the freed id is reused");
+
+        // With a gap in the middle, the gap is filled before anything higher.
+        let third = app(&mut bm, "tool3");
+        assert_eq!(third, 2);
+        bm.bundles.remove(&1);
+        assert_eq!(bm.next_free_id(), Some(1), "the hole, not the end");
+        let fourth = app(&mut bm, "tool4");
+        assert_eq!(fourth, 1);
+
+        // The app keeps slot 0 while it lives, which everything treats as "first".
+        assert_eq!(bm.edit_target(), Some(0));
+    }
+
+    /// The camera switch between the two overlay modes: untouched until a bundle sets
+    /// one, and per-bundle so an overlay's camera can't move the app's view.
+    #[test]
+    fn a_camera_belongs_to_the_bundle_that_set_it() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        assert!(!bm.has_camera(game), "nobody has a camera until they ask");
+        assert!(!bm.has_camera(tool), "so a gui-only overlay stays in the cheap path");
+
+        bm.set_camera(tool, Some(glam::vec3(1., 2., 3.)), None);
+        assert!(bm.has_camera(tool), "setting one opts into its own 3D pass");
+        assert!(!bm.has_camera(game), "and says nothing about the app's");
+        assert_eq!(
+            bm.camera(tool),
+            Some(BundleCam {
+                pos: glam::vec3(1., 2., 3.),
+                rot: glam::Vec2::ZERO
+            })
+        );
+
+        // Rotation alone must not wipe the position it was given earlier.
+        bm.set_camera(tool, None, Some(glam::vec2(0.5, 0.25)));
+        assert_eq!(
+            bm.camera(tool),
+            Some(BundleCam {
+                pos: glam::vec3(1., 2., 3.),
+                rot: glam::vec2(0.5, 0.25)
+            })
+        );
+    }
+
+    /// Drive `call_loop` for `frames`, pretending Lua reports its loop complete before
+    /// each one, and count how many frames actually ran. A run is visible as the
+    /// updated flag being consumed.
+    fn ticks_over(bm: &mut BundleManager, id: u8, frames: usize) -> usize {
+        let bits = ControlState::default();
+        let mut ran = 0;
+        for _ in 0..frames {
+            let mut updated = FxHashMap::default();
+            updated.insert(id, true);
+            bm.call_loop(&mut updated, &bits);
+            if !updated[&id] {
+                ran += 1;
+            }
+        }
+        ran
+    }
+
+    /// `frame_split` is a divisor, so the default of 1 has to tick on every frame.
+    /// The gate used to read `skips >= frame_split`, which demanded a skipped frame
+    /// before *every* run and quietly halved every bundle to ~30Hz under a 60fps
+    /// render — including overlays, where an editor tick that slow is very visible.
+    #[test]
+    fn frame_split_of_one_ticks_every_frame() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        assert_eq!(bm.get(game).unwrap().frame_split, 1, "the default");
+
+        assert_eq!(ticks_over(&mut bm, game, 10), 10);
+    }
+
+    /// Splitting still works: it's the only reason the counter exists.
+    #[test]
+    fn frame_split_of_two_ticks_every_other_frame() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        bm.bundles.get_mut(&game).unwrap().frame_split = 2;
+
+        assert_eq!(ticks_over(&mut bm, game, 10), 5);
     }
 }

@@ -7,7 +7,7 @@ pub fn test(s: &String) {
             let mut reader = BufReader::new(f);
             let mut buf = String::new();
             match reader.read_to_string(&mut buf) {
-                Ok(o) => parser(&buf),
+                Ok(_o) => parser(&buf),
                 _ => {}
             };
         }

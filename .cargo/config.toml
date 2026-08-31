@@ -1,0 +1,6 @@
+# Larger wasm stack. World Chunks are ~256KB by value ([(u32,u8); 32^3]), and
+# reconstructing/meshing several at once overflows the default 1MB wasm stack
+# (native has a much bigger stack, so this only bites on wasm). 16MB gives ample
+# headroom. wasm-ld flag, so it only affects the wasm32 target.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=16777216"]

@@ -1,37 +1,61 @@
 #[cfg(feature = "audio")]
-use crate::sound::{sound, SoundCommand};
+use crate::sound::{self, SoundCommand};
+#[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+use crate::midi;
 use crate::{
     bundle::BundleManager,
-    ent_manager::{EntManager, InstanceBuffer},
-    gfx::Gfx,
-    global::{Global, StateChange},
-    gui::ScreenIndex,
+    ent_manager::EntManager,
+    global::Global,
     lua_define::MainPacket,
     model::ModelManager,
-    render,
     texture::TexManager,
     types::ValueMap,
 };
-
-use std::{
-    rc::Rc,
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc,
-    },
+#[cfg(feature = "headed")]
+use crate::{
+    ent_manager::InstanceBuffer,
+    gfx::Gfx,
+    global::StateChange,
+    render::{self, DrawState},
 };
+
+use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(feature = "headed")]
+use std::sync::Arc;
 
 // use tracy::frame;
 use crate::world::World;
 use crate::{gui::Gui, log::LogType};
+#[cfg(feature = "headed")]
+use colored::Colorize;
+use rustc_hash::FxHashMap;
+#[cfg(feature = "headed")]
 use winit::window::Window;
+
+/// Entity batches to draw, per bundle. Keyed so the renderer can walk them in
+/// `layer_order()` — the app's first, then any overlay above it.
+#[cfg(feature = "headed")]
+type IB = FxHashMap<u8, InstanceBuffer>;
+#[cfg(not(feature = "headed"))]
+type IB = ();
 
 /** All centralized engines and factories to be passed around in the main thread */
 pub struct Core {
     pub global: Global,
     /** despite it's unuse, this stream needs to persist or sound will not occur */
-    #[cfg(feature = "audio")]
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     _stream: Option<cpal::Stream>,
+    /// Live microphone capture, if one is in flight. Held only to keep the input
+    /// stream open; dropped as soon as `mic_done` flips, which releases the mic
+    /// (and clears the OS "in use" indicator) rather than holding it open.
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    pub mic_stream: Option<cpal::Stream>,
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    pub mic_done: Arc<std::sync::atomic::AtomicBool>,
+    /// Web audio output (wasm): schedules PCM chunks on the AudioContext clock.
+    /// Pumped once per frame; replaces the native cpal stream.
+    #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+    pub web_audio: Option<crate::sound::WebOut>,
     #[cfg(feature = "audio")]
     pub singer: Sender<SoundCommand>,
 
@@ -39,25 +63,37 @@ pub struct Core {
     pub pitcher: Sender<MainPacket>,
 
     pub gui: Gui,
+    #[cfg(feature = "headed")]
     pub gfx: Gfx<'static>,
+    /// Headless input: a background thread feeds stdin lines here.
+    #[cfg(not(feature = "headed"))]
+    pub cli_thread_receiver: Receiver<String>,
 
+    // spin_sleep uses std::time internally, which panics on wasm. On the web,
+    // frame pacing comes from requestAnimationFrame + ControlFlow::WaitUntil, so
+    // the LoopHelper is simply absent there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub loop_helper: spin_sleep::LoopHelper,
     pub tex_manager: TexManager,
     pub model_manager: ModelManager,
     pub ent_manager: EntManager,
     pub bundle_manager: BundleManager,
 
+    pub completed_bundles: FxHashMap<u8, bool>,
+
     pub loggy: crate::log::Loggy,
 
-    pub input_manager: winit_input_helper::WinitInputHelper,
+    pub instance_buffers: IB,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
 impl<'core> Core {
-    pub async fn new(rwindow: Arc<Window>, pitcher: Sender<MainPacket>) -> Self {
+    #[cfg(feature = "headed")]
+    pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
         let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
+        println!("{}", "== begin ==".on_green());
         let model_manager = ModelManager::init(&gfx.device);
         let mut ent_manager = EntManager::new(&gfx.device);
         let global = Global::new();
@@ -76,13 +112,17 @@ impl<'core> Core {
         }
 
         let world = World::new(loggy.make_sender());
+        #[cfg(not(target_arch = "wasm32"))]
         let loop_helper = spin_sleep::LoopHelper::builder()
             .report_interval_s(0.5) // report every half a second
             .build_with_target_rate(60.0); // limit to X FPS if possible
 
-        #[cfg(feature = "audio")]
+        // Native: a cpal output stream (own audio thread). Web: cpal's WebAudio
+        // backend crackles on the main thread, so we drive Web Audio ourselves
+        // (an AudioWorklet, or a scheduled-buffer fallback). Both share the same synth.
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         let (stream, singer) = sound::init();
-        #[cfg(feature = "audio")]
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
         let stream_result = match stream {
             Ok(stream) => Some(stream),
             Err(e) => {
@@ -93,28 +133,147 @@ impl<'core> Core {
                 None
             }
         };
-        ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
-        let input_manager = winit_input_helper::WinitInputHelper::new();
+        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+        let (web_audio_res, singer) = sound::init_web();
+        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+        let web_audio = match web_audio_res {
+            Ok(w) => Some(w),
+            Err(e) => {
+                loggy.log(
+                    LogType::CoreError,
+                    &format!("web audio init failed, continuing in silence!: {:?}", e),
+                );
+                None
+            }
+        };
+        // MIDI in: grab the first available input port at boot so a plugged-in
+        // (or OS-paired Bluetooth) controller just plays the synth. No device is
+        // the normal case, so a failure here is logged at most, never fatal. The
+        // connection lives in `midi`'s statics, so there's nothing to store.
+        #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+        match midi::open(singer.clone(), None) {
+            Ok(port) => loggy.log(LogType::Config, &format!("midi in: {}", port)),
+            Err(e) => loggy.log(LogType::Config, &format!("no midi in ({})", e)),
+        }
 
-        Self {
+        ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
+
+        let (pitcher, catcher) = channel::<MainPacket>();
+        let core = Self {
             global,
-            #[cfg(feature = "audio")]
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
             _stream: stream_result,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_stream: None,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+            web_audio,
             #[cfg(feature = "audio")]
             singer,
             world,
             pitcher,
             gui,
+            #[cfg(not(target_arch = "wasm32"))]
             loop_helper,
             tex_manager,
             model_manager,
             ent_manager,
             bundle_manager: BundleManager::new(),
             loggy,
-            input_manager,
             gfx,
+            completed_bundles: FxHashMap::default(),
+            #[cfg(feature = "headed")]
+            instance_buffers: FxHashMap::default(),
+            #[cfg(not(feature = "headed"))]
+            instance_buffers: (),
+        };
+        (core, catcher)
+    }
+
+    /// Headless Core: no GPU/window. Builds the same managers without a Gfx and
+    /// spins a stdin reader thread for CLI input.
+    #[cfg(not(feature = "headed"))]
+    pub async fn new() -> (Self, Receiver<MainPacket>) {
+        let tex_manager = crate::texture::TexManager::new();
+        let model_manager = ModelManager::init();
+        let ent_manager = EntManager::new();
+        let global = Global::new();
+        let mut loggy = crate::log::Loggy::new();
+        let mut gui = Gui::new((256, 256), &mut loggy);
+
+        let (w, h) = gui.get_console_size();
+        loggy.set_dimensions(w, h);
+        gui.add_text("initialized".to_string());
+
+        let world = World::new(loggy.make_sender());
+        let loop_helper = spin_sleep::LoopHelper::builder()
+            .report_interval_s(0.5)
+            .build_with_target_rate(60.0);
+
+        let (_cli_thread_sender, cli_thread_receiver) = channel::<String>();
+        // The TUI backend puts the terminal in raw mode and reads stdin itself
+        // via crossterm; a second blocking line-reader thread on the same fd
+        // would race it for bytes. Just leave the sender unused there so
+        // `cli_thread_receiver.try_recv()` harmlessly never yields anything.
+        #[cfg(not(feature = "render-tui"))]
+        std::thread::spawn(move || loop {
+            let mut line = String::new();
+            match std::io::stdin().read_line(&mut line) {
+                // 0 bytes == EOF (stdin closed / piped input exhausted): stop
+                // reading instead of spinning on empty lines forever.
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if cli_thread_sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let (pitcher, catcher) = channel::<MainPacket>();
+        let core = Self {
+            global,
+            #[cfg(feature = "audio")]
+            _stream: None,
+            #[cfg(feature = "audio")]
+            singer: channel().0,
+            world,
+            pitcher,
+            gui,
+            cli_thread_receiver,
+            loop_helper,
+            tex_manager,
+            model_manager,
+            ent_manager,
+            bundle_manager: BundleManager::new(),
+            loggy,
+            completed_bundles: FxHashMap::default(),
+            instance_buffers: (),
+        };
+        (core, catcher)
+    }
+
+    #[cfg(feature = "headed")]
+    /// Re-unproject the cursor against the *current* pointer position, using the
+    /// camera matrices cached by the last render.
+    ///
+    /// The ray was only ever computed inside `render`, which runs after Lua has
+    /// already read it for the frame — so `mus().vx/vy/vz` lagged the pointer by a
+    /// frame. Barely visible with a mouse, which you move toward a target and hold
+    /// still on; wrong with touch, where a finger appears at its destination and the
+    /// press-edge frame therefore carried a ray aimed at wherever the pointer was
+    /// before. Tapping one piano key straight after another played the old one.
+    ///
+    /// The camera matrices are a frame old, which costs nothing here: the pointer
+    /// position is what picking depends on, and a camera that moved slightly since
+    /// last frame shifts the ray far less than a stale cursor does.
+    pub fn refresh_cursor_ray(&mut self) {
+        if let Some((persp, view)) = self.global.last_cam_matrices {
+            crate::ray::trace(self, persp, view);
         }
     }
+
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.gfx.set_config_size(new_size);
@@ -127,6 +286,7 @@ impl<'core> Core {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn debounced_resize(&mut self) {
         let gui_scaled = self.gfx.resize(&self.global.gui_params);
         self.gui
@@ -188,7 +348,8 @@ impl<'core> Core {
         }
     }
 
-    pub fn render(&mut self, instance_buffers: &InstanceBuffer) -> Result<(), wgpu::SurfaceError> {
+    #[cfg(feature = "headed")]
+    pub fn render(&mut self) -> DrawState {
         self.global.delayed += 1;
         if self.global.delayed >= 128 {
             self.global.delayed = 0;
@@ -196,19 +357,22 @@ impl<'core> Core {
         }
         // self.loop_helper.loop_start();
 
-        let s = render::render_loop(self, self.global.iteration, instance_buffers);
+        let res = render::render_loop(self, self.global.iteration);
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(fps) = self.loop_helper.report_rate() {
             self.global.fps = fps;
         }
+        res
         // self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
-        s
     }
 
     pub fn toggle_fullscreen(&mut self) {
         self.global.fullscreen = !self.global.fullscreen;
+        #[cfg(feature = "headed")]
         self.check_fullscreen();
     }
 
+    #[cfg(feature = "headed")]
     pub fn check_fullscreen(&self) {
         if self.global.fullscreen != self.global.fullscreen_state {
             self.gfx.set_fullscreen(self.global.fullscreen);
@@ -222,6 +386,22 @@ impl<'core> Core {
     pub fn log(&mut self, kind: LogType, msg: &str) {
         self.loggy.log(kind, msg);
         self.send_notification(msg);
+    }
+
+    /// Which bundle `id` is allowed to edit, and the directory it lives in — `None`
+    /// unless `id` is an overlay the *engine* marked, and there's a real app under it.
+    ///
+    /// The `app.*` natives are only built for overlay VMs, so an app has nothing to
+    /// call. This is the second lock: it means a packet claiming to be from an overlay
+    /// gets nowhere, and it's the single place the edit target is decided, so no
+    /// handler can quietly resolve a different one.
+    pub fn overlay_edit_target(&self, id: u8) -> Option<(u8, String)> {
+        if !self.bundle_manager.is_overlay(id) {
+            return None;
+        }
+        let target = self.bundle_manager.edit_target()?;
+        let dir = self.bundle_manager.get(target)?.get_directory()?;
+        Some((target, dir.to_string()))
     }
 
     pub fn log_channel_error(&mut self) {
