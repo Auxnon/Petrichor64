@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[cfg(feature = "headed")]
-use glam::{vec3, vec4};
+use glam::vec4;
 #[cfg(feature = "puc_lua")]
 use mlua::{UserData, UserDataMethods};
 // Needed by the per-bundle entity map in both builds, headed or not.
@@ -21,8 +21,138 @@ use silt_lua::userdata::UserDataWrapper;
 #[cfg(feature = "headed")]
 use wgpu::{util::DeviceExt, Buffer};
 
+// Collision (guide/hit.md) is core simulation, not a render concern, so this
+// runs in both headed and headless builds.
+use glam::{vec3, Mat4, Quat, Vec3};
+
 #[cfg(feature = "headed")]
 pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize)>;
+
+/// One entity's world-space collider — the collision system's per-entity
+/// unit, snapshotted fresh each query (see `EntManager::hit_snapshot`).
+pub struct HitEnt {
+    pub id: u64,
+    pub collider: crate::collide::Collider,
+}
+
+/// One grid-owning entity's world transform + its tile grid — the input to
+/// `EntManager::hit_grid`'s 3-tier cascade. See `EntManager::grid_snapshot`.
+pub struct GridEnt {
+    pub id: u64,
+    pub transform: Mat4,
+    pub grid: Box<crate::tile_grid::TileGrid>,
+}
+
+/// Shared by both the headed and headless arms of `grid_snapshot` — pushes
+/// `l`'s grid (if it has one and is alive) as a `GridEnt`, with a
+/// translation * rotation transform (no `size`/`scale`: see `GridEnt`'s and
+/// `collide::test_grid`'s docs on why grids don't inherit it).
+fn push_grid_ent(out: &mut Vec<GridEnt>, l: &LuaEnt) {
+    if l.is_dead() {
+        return;
+    }
+    if let Some(grid) = &l.grid {
+        let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
+        let quat = Quat::from_euler(glam::EulerRot::XYZ, l.rot_x as f32, l.rot_y as f32, l.rot_z as f32);
+        let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
+        out.push(GridEnt {
+            id: l.get_id(),
+            transform,
+            grid: grid.clone(),
+        });
+    }
+}
+
+/// The tile-chunk bucket key for a world-space point — `tile::chunk_key`
+/// after converting world units to tile-integer units (world / `TILE_SIZE`).
+/// The ent-vs-ent broad phase's spatial hash; see `EntManager::hit_all`.
+fn bucket_key(p: Vec3) -> String {
+    crate::tile::chunk_key(
+        (p.x / crate::collide::TILE_SIZE).floor() as i32,
+        (p.y / crate::collide::TILE_SIZE).floor() as i32,
+        (p.z / crate::collide::TILE_SIZE).floor() as i32,
+    )
+}
+
+/// World-space collider for entity `l` — the collision system's default
+/// shape derivation, overrideable via `hit_shape`/`hit_size`/`hit_offset`
+/// (see `guide/hit.md`). Rotation is deliberately ignored (matches the
+/// agreed "AABB" shape in HANDOFF.md): only `ent::render_transform`'s
+/// position/offset/scale terms are applied, not its rotation.
+///
+/// Units: `pos`/`offset` (from `render_transform`) are already ×`TILE_SIZE`
+/// (the engine's tile-to-world scale), matching every packed `Vertex._pos`
+/// the vertex shader transforms directly (never divided down). Model bounds
+/// here are in real float local units (`Model::bounds_min/max` already
+/// divided that packing back out — see `compute_bounds` in `model.rs`), so
+/// composing them into a world-space collider needs that same ×`TILE_SIZE`
+/// reapplied — mirroring exactly what `w * vec4(position)` does in
+/// `shader.wgsl`'s `vs_main` for rendering.
+pub fn collider_for(
+    l: &LuaEnt,
+    model_manager: &crate::model::ModelManager,
+) -> crate::collide::Collider {
+    let (pos, offset, sz) = crate::lua_ent::render_transform(l);
+    let is_sprite = model_manager.get_model_or_not(&l.get_asset()).is_none();
+    let use_cyl = match l.hit_shape {
+        1 => false,
+        2 => true,
+        _ => is_sprite,
+    };
+    let has_override = l.hit_size != [0., 0., 0.];
+    let scale = crate::collide::TILE_SIZE;
+
+    if use_cyl {
+        let (local_radius, local_half_height, local_center) = if has_override {
+            (
+                l.hit_size[0] as f32,
+                l.hit_size[2] as f32,
+                Vec3::new(
+                    l.hit_offset[0] as f32,
+                    l.hit_offset[1] as f32,
+                    l.hit_offset[2] as f32,
+                ),
+            )
+        } else {
+            // No model data exists for a billboard plane to derive a size
+            // from; assume a roughly unit-sized sprite. First-pass default,
+            // not final art direction — override with hit_size as needed.
+            (0.5, 0.5, Vec3::ZERO)
+        };
+        let center = pos + sz * offset + sz * local_center * scale;
+        crate::collide::Collider::Cyl {
+            center,
+            radius: local_radius * sz.x.max(sz.y) * scale,
+            half_height: local_half_height * sz.z * scale,
+        }
+    } else {
+        let (local_half, local_center) = if has_override {
+            (
+                Vec3::new(
+                    l.hit_size[0] as f32,
+                    l.hit_size[1] as f32,
+                    l.hit_size[2] as f32,
+                ),
+                Vec3::new(
+                    l.hit_offset[0] as f32,
+                    l.hit_offset[1] as f32,
+                    l.hit_offset[2] as f32,
+                ),
+            )
+        } else {
+            let model = model_manager.get_model(&l.get_asset());
+            (
+                (model.bounds_max - model.bounds_min) * 0.5,
+                (model.bounds_max + model.bounds_min) * 0.5,
+            )
+        };
+        let center = pos + sz * offset + sz * local_center * scale;
+        crate::collide::Collider::Box {
+            center,
+            half: sz * local_half * scale,
+        }
+    }
+}
 
 /// The Lua-side entity a render slot points at. On native it's the VM's
 /// `UserDataWrapper` (shared with the Lua thread, so edits propagate for free).
@@ -84,6 +214,15 @@ pub struct EntManager {
     pub instance_buffer: Buffer,
     pub id_counter: u64,
     // pub render_pairs: Vec<(Arc<Mutex<LuaEnt>>, Rc<RefCell<Ent>>)>,
+    /// Render-only mesh cache for entity-owned tile grids (`LuaEnt.grid`,
+    /// `src/tile_grid.rs`): entity id -> chunk key -> its `ChunkModel`.
+    /// Rebuilt incrementally by `check_entity_grids` on the same per-chunk
+    /// dirty flag `TileGrid`/`GridChunk` already carry; not headed-gated
+    /// data itself lives on `LuaEnt` (headless-safe) — only this GPU-mesh
+    /// cache is render-only, mirroring the world grid's own
+    /// `Chunk`/`ChunkModel` split.
+    #[cfg(feature = "headed")]
+    pub entity_grid_models: FxHashMap<u64, FxHashMap<String, crate::tile::ChunkModel>>,
 }
 
 /// One bundle's entities and the render batches built from them.
@@ -152,6 +291,8 @@ impl EntManager {
             uniform_alignment: 0,
             id_counter: 2,
             // render_pairs: vec![],
+            #[cfg(feature = "headed")]
+            entity_grid_models: FxHashMap::default(),
         }
     }
 
@@ -335,6 +476,169 @@ impl EntManager {
         }
     }
 
+    /// Snapshot every live entity's collider for a bundle — the input to
+    /// `hit_all`/`hit_cell`. Not headed-gated: collision is core simulation,
+    /// not a render concern, so this works the same in a headless build (see
+    /// `guide/hit.md`).
+    pub fn hit_snapshot(
+        &self,
+        bundle_id: u8,
+        model_manager: &crate::model::ModelManager,
+    ) -> Vec<HitEnt> {
+        let mut out = Vec::new();
+        let Some(b) = self.bundles.get(&bundle_id) else {
+            return out;
+        };
+        #[cfg(feature = "headed")]
+        for (eref, _ent, _uni) in b.array.iter() {
+            let _ = eref.with_ref(|l: &LuaEnt| {
+                if !l.is_dead() {
+                    out.push(HitEnt {
+                        id: l.get_id(),
+                        collider: collider_for(l, model_manager),
+                    });
+                }
+                Ok(())
+            });
+        }
+        #[cfg(not(feature = "headed"))]
+        for w in b.array.iter() {
+            let _ = w.downcast_ref::<LuaEnt, _, _>(|l| {
+                if !l.is_dead() {
+                    out.push(HitEnt {
+                        id: l.get_id(),
+                        collider: collider_for(l, model_manager),
+                    });
+                }
+                Ok(())
+            });
+        }
+        out
+    }
+
+    /// Every grid-owning entity's world transform + a clone of its tile
+    /// grid — the input to `hit_grid`'s 3-tier cascade. Cloning the grid is
+    /// the same "own snapshot, no cross-thread state" tradeoff
+    /// `hit_snapshot` already makes for colliders; fine at the moving-
+    /// platform scale this feature targets (see `guide/hit.md`). Not
+    /// headed-gated, matching every other `hit.*` query — collision is core
+    /// simulation, not a render concern.
+    fn grid_snapshot(&self, bundle_id: u8) -> Vec<GridEnt> {
+        let mut out = Vec::new();
+        let Some(b) = self.bundles.get(&bundle_id) else {
+            return out;
+        };
+        #[cfg(feature = "headed")]
+        for (eref, _ent, _uni) in b.array.iter() {
+            let _ = eref.with_ref(|l: &LuaEnt| {
+                push_grid_ent(&mut out, l);
+                Ok(())
+            });
+        }
+        #[cfg(not(feature = "headed"))]
+        for w in b.array.iter() {
+            let _ = w.downcast_ref::<LuaEnt, _, _>(|l| {
+                push_grid_ent(&mut out, l);
+                Ok(())
+            });
+        }
+        out
+    }
+
+    /// Every hit between entity `id`'s collider and any *other* entity's
+    /// tile grid — backs `hit.grid(id)`. Runs the full 3-tier cascade
+    /// (`collide::test_grid`) as one call per grid owner; never exposes the
+    /// tiers to Lua individually (see the entity-grid plan).
+    pub fn hit_grid(
+        &self,
+        bundle_id: u8,
+        model_manager: &crate::model::ModelManager,
+        id: u64,
+    ) -> Vec<(u64, i32, i32, i32, crate::collide::Hit)> {
+        let ents = self.hit_snapshot(bundle_id, model_manager);
+        let Some(e) = ents.iter().find(|e| e.id == id) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for g in self.grid_snapshot(bundle_id) {
+            if g.id == id {
+                // An entity's own grid never collides with itself.
+                continue;
+            }
+            for (ix, iy, iz, hit) in crate::collide::test_grid(&e.collider, &g.transform, &g.grid) {
+                out.push((g.id, ix, iy, iz, hit));
+            }
+        }
+        out
+    }
+
+    /// Every currently-overlapping ent-vs-ent pair in a bundle — the O(n²)-
+    /// avoided batch query behind `hit.all()`. Broad phase: entities are
+    /// bucketed by the tile chunk their collider center falls in (the same
+    /// `tile::chunk_key` math the world grid already uses), and only pairs in
+    /// the same bucket are tested. A chunk is 32*16 = 512 world units per
+    /// axis — far larger than any collider likely to be in this engine — so
+    /// missing a same-frame collision only because two colliders straddle a
+    /// chunk boundary is an accepted v1 simplification, not a correctness
+    /// goal; see `guide/hit.md`.
+    pub fn hit_all(
+        &self,
+        bundle_id: u8,
+        model_manager: &crate::model::ModelManager,
+    ) -> Vec<(u64, u64, crate::collide::Hit)> {
+        let ents = self.hit_snapshot(bundle_id, model_manager);
+        let mut buckets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+        for (i, e) in ents.iter().enumerate() {
+            buckets.entry(bucket_key(e.collider.center())).or_default().push(i);
+        }
+        let mut out = Vec::new();
+        for idxs in buckets.values() {
+            for a in 0..idxs.len() {
+                for b in (a + 1)..idxs.len() {
+                    let ea = &ents[idxs[a]];
+                    let eb = &ents[idxs[b]];
+                    if let Some(hit) = crate::collide::test(&ea.collider, &eb.collider) {
+                        out.push((ea.id, eb.id, hit));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Every solid tile entity `id`'s collider currently overlaps — the
+    /// backing query behind `hit.cell(id)`. Reads `world`'s direct tile
+    /// mirror (`World::is_tile_local`), not the `TileCommand` channel.
+    pub fn hit_cell(
+        &self,
+        bundle_id: u8,
+        model_manager: &crate::model::ModelManager,
+        world: &crate::world::World,
+        id: u64,
+    ) -> Vec<(i32, i32, i32, crate::collide::Hit)> {
+        let ents = self.hit_snapshot(bundle_id, model_manager);
+        let Some(e) = ents.iter().find(|e| e.id == id) else {
+            return Vec::new();
+        };
+        let (min, max) = e.collider.aabb();
+        let tmin = (min / crate::collide::TILE_SIZE).floor();
+        let tmax = (max / crate::collide::TILE_SIZE).floor();
+        let mut out = Vec::new();
+        for ix in tmin.x as i32..=tmax.x as i32 {
+            for iy in tmin.y as i32..=tmax.y as i32 {
+                for iz in tmin.z as i32..=tmax.z as i32 {
+                    if world.is_tile_local(bundle_id, ix, iy, iz) {
+                        let tile = crate::collide::tile_box(ix, iy, iz);
+                        if let Some(hit) = crate::collide::test(&e.collider, &tile) {
+                            out.push((ix, iy, iz, hit));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Visit every entity in every bundle. For the wasm paths, which address
     /// entities by id and don't care which bundle they came from.
     #[cfg(feature = "headed")]
@@ -490,6 +794,7 @@ impl EntManager {
     pub fn check_ents(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         tm: &TexManager,
         mm: &ModelManager,
         iteration: u64,
@@ -505,7 +810,81 @@ impl EntManager {
                 self.bundles.insert(id, b);
             }
         }
+        self.check_entity_grids(device, queue, tm, mm);
         out
+    }
+
+    /// Keeps `entity_grid_models` in sync with every live `LuaEnt.grid`, and
+    /// pushes each grid-owning entity's *current* world transform into its
+    /// cached chunks' instance buffers every frame — mesh geometry only
+    /// rebuilds when a chunk is actually dirty (tile edit), but the
+    /// transform (translation + rotation, no `size`/`scale` — see
+    /// `push_grid_ent`) is cheap enough to refresh unconditionally, the same
+    /// split the world's own static chunks vs. per-frame entity transforms
+    /// already have.
+    #[cfg(feature = "headed")]
+    fn check_entity_grids(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tm: &TexManager, mm: &ModelManager) {
+        let mut rebuilds: Vec<(u64, String, crate::tile_grid::GridChunk)> = Vec::new();
+        let mut live: FxHashMap<u64, (Mat4, Vec<String>)> = FxHashMap::default();
+
+        for b in self.bundles.values_mut() {
+            for (eref, _ent, _uni) in b.array.iter_mut() {
+                let _ = eref.with_mut(|l: &mut LuaEnt| {
+                    if l.is_dead() {
+                        return Ok(());
+                    }
+                    let id = l.get_id();
+                    let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
+                    let quat = Quat::from_euler(glam::EulerRot::XYZ, l.rot_x as f32, l.rot_y as f32, l.rot_z as f32);
+                    let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
+                    let Some(grid) = l.grid.as_mut() else {
+                        return Ok(());
+                    };
+                    let keys: Vec<String> = grid.chunks.keys().cloned().collect();
+                    live.insert(id, (transform, keys));
+                    if grid.dirty {
+                        for chunk in grid.chunks.values_mut() {
+                            if chunk.dirty {
+                                rebuilds.push((id, chunk.key.clone(), chunk.clone()));
+                                chunk.dirty = false;
+                            }
+                        }
+                        grid.dirty = false;
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        // Drop cached meshes for entities that died or lost their grid, and
+        // cached chunks a `dtile`/`clear` removed from their owner's grid.
+        self.entity_grid_models.retain(|id, _| live.contains_key(id));
+        for (id, (_, keys)) in live.iter() {
+            if let Some(models) = self.entity_grid_models.get_mut(id) {
+                let keep: rustc_hash::FxHashSet<&String> = keys.iter().collect();
+                models.retain(|k, _| keep.contains(k));
+            }
+        }
+
+        for (id, key, chunk) in rebuilds {
+            let models = self.entity_grid_models.entry(id).or_default();
+            let model = models.entry(key.clone()).or_insert_with(|| {
+                crate::tile::ChunkModel::new(device, key, chunk.pos[0], chunk.pos[1], chunk.pos[2], true)
+            });
+            model.build_grid_chunk(tm, mm, &chunk);
+            model.cook(device);
+        }
+
+        for (id, (transform, _)) in live.iter() {
+            if let Some(models) = self.entity_grid_models.get_mut(id) {
+                for model in models.values_mut() {
+                    let chunk_offset = Mat4::from_translation(
+                        vec3(model.pos.x as f32, model.pos.y as f32, model.pos.z as f32) * crate::collide::TILE_SIZE,
+                    );
+                    model.update_transform(queue, *transform * chunk_offset);
+                }
+            }
+        }
     }
 
     #[allow(dead_code)]

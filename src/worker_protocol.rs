@@ -69,14 +69,19 @@ pub enum VmToHost {
         pos: Option<[f32; 3]>,
         rot: Option<[f32; 2]>,
     },
-    /// Directional sun (L0 lighting). Each field optional so a `light{}` call
-    /// can set just one aspect; `ambient` is flat fill.
+    /// The one light `lum{}` sets. Each field optional so a call can set just
+    /// one aspect; `ambient` is flat fill. `shape`: 0=sun (default), 1=cone,
+    /// 2=sphere. `pos`/`range`/`angle` are cone/sphere-only.
     Light {
         dir: Option<[f32; 3]>,
         color: Option<[f32; 3]>,
         ambient: Option<f32>,
         sky: Option<[f32; 3]>,
         ground: Option<[f32; 3]>,
+        shape: Option<u8>,
+        pos: Option<[f32; 3]>,
+        range: Option<f32>,
+        angle: Option<f32>,
     },
     /// Distance fog: rgb + w = far distance (w=0 disables).
     Fog([f32; 4]),

@@ -31,6 +31,7 @@ pub fn controls_evaluate(
     window_target: &ActiveEventLoop,
     bits: &ControlState,
     bits_prev: &[bool; 256],
+    catcher: Option<&std::sync::mpsc::Receiver<crate::lua_define::MainPacket>>,
 ) {
     // Helpers — detect edge transitions from the per-frame key snapshot.
     // Read through the same KeyCode->legacy-index map bit_check writes with, so
@@ -67,7 +68,7 @@ pub fn controls_evaluate(
         if key_released(KeyCode::Enter) {
             let command = core.loggy.carriage();
             if let Some(mut com) = command {
-                crate::core_console_command(core, &mut com);
+                crate::core_console_command(core, &mut com, catcher);
             }
         } else if key_pressed(KeyCode::ArrowUp) {
             core.loggy.history_up();

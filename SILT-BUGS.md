@@ -213,6 +213,32 @@ corners — which is about the most natural way to write that code, so it is wor
 fixing rather than documenting. `apps/model` uses `table.insert` throughout with a
 comment pointing here.
 
+**Not just bracket-indexing — same failure on a plain field assignment inside a
+loop.** Building `apps/art`, this also corrupted the chunk:
+
+```lua
+for i = 1, n do
+	local size = ...
+	ent.size = { size, 0.08, size }  -- ent is a userdata; .size is a field setter
+end
+```
+
+with the same symptom (`Invalid chunk due compilation corruption`, reported line
+number pointing at wherever execution happened to be next — in one repro, a
+totally unrelated arithmetic statement several functions away, since the whole
+chunk is one compiled unit and the report just names whatever ran into the
+corrupted state first). The trigger is the same shape as the table case above —
+a constructor holding a local, inside a loop — just via `obj.field = {...}`
+instead of `t[expr] = {...}`. Same workaround applies: hoist the constructor into
+a local first (`local sz = { size, 0.08, size }; ent.size = sz`). `apps/art`
+does this throughout `build_buttons()`/`update_selection_marks()` with a comment
+pointing here.
+
+This makes the bug's real scope "a table constructor containing a local, written
+inside a loop body, assigned anywhere" rather than specifically about `#t+1`
+indexing — worth keeping in mind when re-testing a fix, so the fix is checked
+against field assignment too, not just bracket indexing.
+
 ---
 
 ## What the workarounds cost (now removed)

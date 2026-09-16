@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use glam::{ivec3, vec4, IVec3, Vec4};
+use glam::{ivec3, vec4, IVec3, Vec3, Vec4};
 #[cfg(feature = "headed")]
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat};
 use itertools::izip;
 use std::{collections::HashMap, rc::Rc};
 #[cfg(feature = "headed")]
@@ -61,6 +61,10 @@ impl ModelManager {
             name: "plane".to_string(),
             index_count: plane_index_data.len(),
             data: None,
+            // PLANE is never used for model-collider bounds — sprite entities
+            // (asset == "plane") collide via a scale/size-derived cylinder.
+            bounds_min: Vec3::ZERO,
+            bounds_max: Vec3::ZERO,
             #[cfg(feature = "headed")]
             vertex_buf: plane_vertex_buf,
             #[cfg(feature = "headed")]
@@ -83,11 +87,14 @@ impl ModelManager {
             contents: bytemuck::cast_slice(&cube_index_data),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let (cube_bounds_min, cube_bounds_max) = compute_bounds(&cube_vertex_data);
         let cube_model = Model {
             base_name: "cube".to_string(),
             name: "cube".to_string(),
             index_count: cube_index_data.len(),
             data: Some((cube_vertex_data, cube_index_data)),
+            bounds_min: cube_bounds_min,
+            bounds_max: cube_bounds_max,
             #[cfg(feature = "headed")]
             vertex_buf: cube_vertex_buf,
             #[cfg(feature = "headed")]
@@ -308,11 +315,14 @@ impl ModelManager {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let (bounds_min, bounds_max) = compute_bounds(&vertices);
         let model = Model {
             base_name: base_name.to_string(),
             name: compound_name,
             index_count: indices.len(),
             data: Some((vertices, indices)),
+            bounds_min,
+            bounds_max,
             #[cfg(feature = "headed")]
             vertex_buf: mesh_vertex_buf,
             #[cfg(feature = "headed")]
@@ -583,11 +593,14 @@ impl ModelManager {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let (bounds_min, bounds_max) = compute_bounds(&verts2);
         let model = Model {
             base_name: name.clone(),
             name: name.clone(),
             index_count: inds.len(),
             data: Some((verts2, inds)),
+            bounds_min,
+            bounds_max,
             #[cfg(feature = "headed")]
             vertex_buf: mesh_vertex_buf,
             #[cfg(feature = "headed")]
@@ -931,6 +944,8 @@ fn build_model(
         name: name.to_string(),
         index_count: inds.len(),
         data: None,
+        bounds_min: Vec3::ZERO,
+        bounds_max: Vec3::ZERO,
         #[cfg(feature = "headed")]
         vertex_buf,
         #[cfg(feature = "headed")]
@@ -947,12 +962,38 @@ pub struct Model {
     pub name: String,
     pub index_count: usize,
     pub data: Option<(Vec<Vertex>, Vec<u32>)>,
+    /// Model-local-space AABB baked from `data`'s vertex positions at build
+    /// time (real float units — `Vertex._pos` is packed ×16, divided back out
+    /// here). `(Vec3::ZERO, Vec3::ZERO)` for a model with no vertex data
+    /// (`PLANE`), which never uses this — sprite entities collide via a
+    /// cylinder derived from `scale`/`size` instead. Used as the collision
+    /// system's default box collider for model entities; see `guide/hit.md`.
+    pub bounds_min: Vec3,
+    pub bounds_max: Vec3,
     #[cfg(feature = "headed")]
     pub vertex_buf: wgpu::Buffer,
     #[cfg(feature = "headed")]
     pub index_buf: wgpu::Buffer,
     #[cfg(feature = "headed")]
     pub index_format: wgpu::IndexFormat,
+}
+
+/// Model-local-space AABB from raw vertex positions — `Vertex._pos` is packed
+/// ×16 (see `vertexx`), so this divides back out to real float units.
+fn compute_bounds(verts: &[Vertex]) -> (Vec3, Vec3) {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for v in verts {
+        let p = v.pos();
+        let fp = Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32) / 16.;
+        min = min.min(fp);
+        max = max.max(fp);
+    }
+    if verts.is_empty() {
+        (Vec3::ZERO, Vec3::ZERO)
+    } else {
+        (min, max)
+    }
 }
 
 // fn log(str: String) {

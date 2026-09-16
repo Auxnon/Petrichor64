@@ -22,6 +22,10 @@ pub struct ScreenBinds {
     pub glitchiness: [f32; 3],
     pub lumen_threshold: f32,
     pub fog: f32,
+    /// R30 chip-only clip-space vertex snap grid size. 0 = off (R00/R43). When
+    /// >0, `vs_main` also gates affine texture mapping and dithering on this same
+    /// value — see `chip.md` for why the three are coupled.
+    pub vertex_snap: f32,
 }
 
 impl ScreenBinds {
@@ -37,6 +41,7 @@ impl ScreenBinds {
             glitchiness: [0.12, 0., 0.02],
             lumen_threshold: 0.2,
             fog: 0.0,
+            vertex_snap: 0.0,
         }
     }
 }

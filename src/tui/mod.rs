@@ -27,7 +27,21 @@ pub fn start() {
 
     crate::command::load_empty(&mut core);
     crate::command::hard_reset(&mut core);
-    if let Err(e) = crate::command::load_app(&mut core, Some("test/basic"), None, None, None) {
+    // See `crate::drain_stray_messages`: the boot logo's Lua thread can still
+    // be mid-flight on its `attr{fog=200}` write when hard_reset tears it
+    // down (`Lua::die` only waits up to 250ms, a grace period not a
+    // guarantee); left in the queue it lands on whatever bundle id gets
+    // reused next instead — the very app about to load below.
+    crate::drain_stray_messages(&catcher);
+    // Same "CLI arg, else auto-load" precedence the headed/headless `start()`
+    // paths use (`lib.rs`) — this used to hardcode "test/basic", silently
+    // ignoring whatever game path was actually passed on the command line.
+    let game_path = if std::env::args().count() > 1 {
+        Some(std::env::args().nth(1).unwrap())
+    } else {
+        crate::asset::check_for_auto()
+    };
+    if let Err(e) = crate::command::load_app(&mut core, game_path.as_deref(), None, None, None) {
         core.loggy.log(LogType::CoreError, &format!("{}", e));
     }
 
@@ -43,8 +57,15 @@ pub fn start() {
         let start = Instant::now();
 
         while let Ok(line) = core.cli_thread_receiver.try_recv() {
-            crate::core_console_command(&mut core, line.trim());
+            crate::core_console_command(&mut core, line.trim(), Some(&catcher));
         }
+
+        // Drain queued log messages (Lua runtime errors included) and print
+        // them. The headed backend only does this inside its gui console
+        // overlay (`Gui::render`, gated `#[cfg(feature = "headed")]`), so the
+        // TUI backend never saw them at all: a throwing loop() would render
+        // nothing and log nothing, silently.
+        core.loggy.listen();
 
         if tui_input.poll() {
             break;

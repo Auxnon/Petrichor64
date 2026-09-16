@@ -32,6 +32,12 @@ pub struct Gfx<'w> {
     pub main_layout: wgpu::BindGroupLayout,
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
+    /// The shadow map (guide/shdw.md): a small, fixed-size depth target
+    /// rendered from the lum{} light's POV, sampled by fs_main. Not resized
+    /// with the window.
+    pub shadow_view: wgpu::TextureView,
+    pub shadow_bind_group: wgpu::BindGroup,
+    pub shadow_pipeline: wgpu::RenderPipeline,
     pub surface: wgpu::Surface<'w>,
     /// Kept so the surface can be rebuilt without tearing down the device, the
     /// pipelines, or the running game — Android destroys the native window when the
@@ -57,9 +63,17 @@ struct GlobalUniforms {
     light_color: [f32; 4],
     // L2 distance fog: rgb + w = far distance (w=0 disables).
     fog_color: [f32; 4],
-    // L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb.
+    // L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb. Sun shape only.
     amb_sky: [f32; 4],
     amb_ground: [f32; 4],
+    // lum{} shape state: xyz = world pos (cone/sphere), w = falloff range.
+    light_pos: [f32; 4],
+    // x = shape (0=sun,1=cone,2=sphere), y = cone half-angle (radians).
+    light_shape: [f32; 4],
+    // Light-space view*proj for the shadow map.
+    light_view_proj: [[f32; 4]; 4],
+    // x = shdw() on/off.
+    shadow_on: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -360,6 +374,10 @@ impl<'w> Gfx<'w> {
             fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
             amb_sky: [0.0, 0.0, 0.0, 0.0],   // w=0 => flat ambient
             amb_ground: [0.0, 0.0, 0.0, 0.0],
+            light_pos: [0.0, 0.0, 0.0, 0.0],
+            light_shape: [0.0, 0.0, 0.0, 0.0], // shape=0 => sun
+            light_view_proj: Mat4::ZERO.to_cols_array_2d(),
+            shadow_on: [0.0, 0.0, 0.0, 0.0],
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -368,10 +386,124 @@ impl<'w> Gfx<'w> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        // ============ Shadow map (guide/shdw.md) ============
+        // A small, fixed-size, deliberately low-resolution depth target — not
+        // tied to the window size or resized with it — rendered from the
+        // lum{} light's point of view (shadow_vs_main) and sampled with a
+        // hardware comparison sampler in fs_main. Off by default (shdw());
+        // when off the pass still runs (a handful of triangles into an
+        // unsampled target) rather than branching pipeline setup itself.
+        const SHADOW_MAP_SIZE: u32 = 128;
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            label: Some("shadow depth"),
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 1.0,
+            ..Default::default()
+        });
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
+        });
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow bind group"),
+            layout: &shadow_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Shadow Pipeline Layout"),
+                bind_group_layouts: &[Some(&main_layout)],
+                ..Default::default()
+            });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
+            label: Some("Shadow Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("shadow_vs_main"),
+                buffers: &[
+                    crate::model::Vertex::desc(),
+                    crate::ent::EntityUniforms::desc(),
+                ],
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+                unclipped_depth: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout)],
+                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout), Some(&shadow_layout)],
                 ..Default::default()
             });
 
@@ -596,6 +728,9 @@ impl<'w> Gfx<'w> {
                 // view_matrix: mx_view,
                 // perspective_matrix: mx_persp,
                 render_pipeline,
+                shadow_view,
+                shadow_bind_group,
+                shadow_pipeline,
                 // switch_board: Arc::clone(&switch_board),
                 post,
                 main_bind_group,
@@ -721,5 +856,52 @@ impl<'w> Gfx<'w> {
 
     pub fn set_title(&self, title: &str) {
         self.win_ref.set_title(title);
+    }
+
+    /// Swap the main scene/GUI texture sampler's filter mode and rebuild the one
+    /// `main_bind_group` that every draw call reads — the whole engine has exactly
+    /// one sampler for the master texture (see `chip.md`), so a chip change only
+    /// costs this, not a pipeline rebuild. R00 (today's default) is
+    /// `mag_nearest=true, min_nearest=false`; R43 wants both `false` (full
+    /// bilinear, the characteristic N64 blur); R30 wants both `true` (PS1 had no
+    /// texture filtering at all).
+    pub fn set_filter_mode(&mut self, mag_nearest: bool, min_nearest: bool) {
+        let filter = |nearest: bool| {
+            if nearest {
+                wgpu::FilterMode::Nearest
+            } else {
+                wgpu::FilterMode::Linear
+            }
+        };
+        let view = self
+            .master_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: filter(mag_nearest),
+            min_filter: filter(min_nearest),
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        self.main_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.main_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: None,
+        });
     }
 }

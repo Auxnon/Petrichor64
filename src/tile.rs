@@ -324,6 +324,38 @@ impl Layer {
         });
     }
 }
+
+/// The chunk-grid key for tile index `(ix,iy,iz)` — the same
+/// `div_euclid(CHUNK_SIZE)`/`"{rx}:{ry}:{rz}"` convention every chunk lookup
+/// in this file uses (see e.g. `Layer::first_tile`).
+pub fn chunk_key(ix: i32, iy: i32, iz: i32) -> String {
+    format!(
+        "{}:{}:{}",
+        ix.div_euclid(CHUNK_SIZE),
+        iy.div_euclid(CHUNK_SIZE),
+        iz.div_euclid(CHUNK_SIZE)
+    )
+}
+
+/// Direct (non-channel) solid-tile query against an externally-held chunk
+/// map — identical logic to `Layer::is_tile`, but usable against any
+/// `FxHashMap<String, Chunk>` snapshot rather than `Layer`'s own private
+/// storage (which only exists on the world's dedicated thread). Used by the
+/// collision system's hot path (`ent_manager.rs`) to avoid a `TileCommand`
+/// channel round-trip per query — see `guide/hit.md`.
+pub fn is_tile_in(chunks: &FxHashMap<String, Chunk>, ix: i32, iy: i32, iz: i32) -> bool {
+    match chunks.get(&chunk_key(ix, iy, iz)) {
+        Some(c) => {
+            let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
+                + iy.rem_euclid(CHUNK_SIZE))
+                * CHUNK_SIZE)
+                + iz.rem_euclid(CHUNK_SIZE)) as usize;
+            c.cells[index].0 > 0
+        }
+        None => false,
+    }
+}
+
 pub struct Chunk {
     pub dirty: bool,
     pub cells: [(u32, u8); (CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) as usize],
@@ -445,6 +477,41 @@ impl LayerModel {
     }
 }
 
+#[cfg(test)]
+mod chunk_key_tests {
+    use super::*;
+
+    /// The collision system's `is_tile_in` reads an externally-held chunk
+    /// map keyed the same way `Layer`'s own `chunks` field is — this pins
+    /// that the key format and cell index formula haven't drifted apart.
+    #[test]
+    fn is_tile_in_matches_the_div_euclid_chunk_key_convention() {
+        let mut chunks: FxHashMap<String, Chunk> = FxHashMap::default();
+        // A tile well outside chunk 0 — CHUNK_SIZE (32) away plus a bit, so
+        // it lands in a different chunk than the origin.
+        let (ix, iy, iz) = (40, 3, -5);
+        let key = chunk_key(ix, iy, iz);
+        assert_eq!(key, "1:0:-1", "sanity check on the expected chunk coords");
+
+        let mut chunk = Chunk::new(key.clone(), 32, 0, -32);
+        let local_index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE) + iy.rem_euclid(CHUNK_SIZE))
+            * CHUNK_SIZE)
+            + iz.rem_euclid(CHUNK_SIZE)) as usize;
+        chunk.cells[local_index] = (7, 0);
+        chunks.insert(key, chunk);
+
+        assert!(is_tile_in(&chunks, ix, iy, iz), "the solid cell must be found");
+        assert!(
+            !is_tile_in(&chunks, ix + 1, iy, iz),
+            "a neighboring air cell must not be"
+        );
+        assert!(
+            !is_tile_in(&chunks, 0, 0, 0),
+            "a tile in an unloaded chunk must default to false, not panic"
+        );
+    }
+}
+
 pub struct ChunkModel {
     pub vert_data: Vec<Vertex>,
     pub ind_data: Vec<u32>,
@@ -457,12 +524,21 @@ pub struct ChunkModel {
 }
 
 impl ChunkModel {
+    /// `updatable` picks the instance buffer's usage flags: the world's own
+    /// chunks never move, so `false` (plain `VERTEX`, matches every chunk
+    /// before the entity-grid feature existed) is both correct and slightly
+    /// cheaper than a `COPY_DST` buffer. An entity-grid chunk's owner can
+    /// move/rotate every frame, so its chunks need `true` — `update_transform`
+    /// calls `queue.write_buffer` on it, which silently hangs the GPU queue
+    /// (not an error!) against a non-`COPY_DST` buffer; see `guide/hit.md`'s
+    /// grid section and `QA.md` for how that was found.
     pub fn new(
         #[cfg(feature = "headed")] device: &Device,
         key: String,
         x: i32,
         y: i32,
         z: i32,
+        #[cfg(feature = "headed")] updatable: bool,
     ) -> ChunkModel {
         let pos = ivec3(x, y, z);
         #[cfg(feature = "headed")]
@@ -472,6 +548,7 @@ impl ChunkModel {
             #[cfg(feature = "headed")]
             device,
             t,
+            updatable,
         );
 
         ChunkModel {
@@ -519,12 +596,44 @@ impl ChunkModel {
         }
     }
 
+    /// Builds this `ChunkModel`'s mesh from an entity-owned grid chunk
+    /// (`tile_grid::GridChunk`) instead of the static world's dense `Chunk`.
+    /// Grid cells are sparse and keyed by asset *name* (not the world's
+    /// index-registry `u32`), so each one is resolved straight against
+    /// `ModelManager`/`TexManager` — the same lookup `ent_manager.rs`'s
+    /// `check_bundle_ents` already does for a normal entity's own asset —
+    /// rather than through a `Mapper`'s `tex_map`/`model_map`. See
+    /// `tile_grid.rs`'s module doc for why this split exists.
+    pub fn build_grid_chunk(
+        &mut self,
+        tex_manager: &crate::texture::TexManager,
+        model_manager: &ModelManager,
+        chunk: &crate::tile_grid::GridChunk,
+    ) {
+        #[cfg(feature = "headed")]
+        {
+            self.buffers = None;
+        }
+        self.vert_data = vec![];
+        self.ind_data = vec![];
+
+        for (&idx, cell) in chunk.cells.iter() {
+            let (ix, iy, iz) = crate::tile_grid::unpack_local_index(idx);
+            _add_named_tile_model(tex_manager, model_manager, self, &cell.asset, cell.meta, ix, iy, iz);
+        }
+    }
+
     #[cfg(feature = "headed")]
-    fn create_buffer(device: &Device, e: EntityUniforms) -> Buffer {
+    fn create_buffer(device: &Device, e: EntityUniforms, updatable: bool) -> Buffer {
+        let usage = if updatable {
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST
+        } else {
+            wgpu::BufferUsages::VERTEX
+        };
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&[e]),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage,
         })
     }
     #[cfg(feature = "headed")]
@@ -539,11 +648,33 @@ impl ChunkModel {
         // let model = Mat4::IDENTITY;
 
         EntityUniforms {
-            color: [0.; 4],
+            // (1,1,1,1), not (0,0,0,0): `fs_main` multiplies the sampled texel by
+            // this as a vertex-colour tint (`rgb * shade * tint.rgb`), so a zero
+            // tint here rendered every world tile pitch black regardless of
+            // lighting the moment that multiply was added — see guide/entity.md.
+            color: [1., 1., 1., 1.],
             uv_mod: [0., 0., 1., 1.],
             effects: [0.; 4],
             model: model.to_cols_array_2d(),
         }
+    }
+
+    /// Overwrites this chunk's instance-buffer transform in place — no new
+    /// buffer, no mesh rebuild. The world's own chunks never move, so their
+    /// `create_transform` only ever runs once at `new()`; an entity-grid
+    /// chunk's owner can move/rotate every frame, so `EntManager::
+    /// check_entity_grids` calls this unconditionally each frame regardless
+    /// of whether the mesh itself is dirty.
+    #[cfg(feature = "headed")]
+    pub fn update_transform(&mut self, queue: &wgpu::Queue, mat: Mat4) {
+        let e = EntityUniforms {
+            // See `create_transform`: must stay a no-op (1,1,1,1) tint, not (0,0,0,0).
+            color: [1., 1., 1., 1.],
+            uv_mod: [0., 0., 1., 1.],
+            effects: [0.; 4],
+            model: mat.to_cols_array_2d(),
+        };
+        queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&[e]));
     }
 
     #[cfg(feature = "headed")]
@@ -669,6 +800,82 @@ fn _add_tile_model(
     c.vert_data.append(&mut verts);
 
     // let ind2 = i
+    c.ind_data.append(&mut inds);
+}
+
+/// `_add_tile_model`'s counterpart for an entity-owned grid chunk
+/// (`ChunkModel::build_grid_chunk`): resolves `asset` straight against
+/// `ModelManager`/`TexManager` by name instead of the world's `u32`
+/// index-registry maps — see `tile_grid.rs`'s module doc.
+fn _add_named_tile_model(
+    tex_manager: &crate::texture::TexManager,
+    model_manager: &ModelManager,
+    c: &mut ChunkModel,
+    asset: &str,
+    meta: u8,
+    ix: i32,
+    iy: i32,
+    iz: i32,
+) {
+    let current_count = c.vert_data.len() as u32;
+    let offset = ivec3(ix, iy, iz).mul(16) - ivec3(8, 8, 8);
+
+    let method = match meta {
+        1 => |v: &mut Vertex| v.rotp90(),
+        2 => |v: &mut Vertex| v.rotp180(),
+        3 => |v: &mut Vertex| v.rotp270(),
+        _ => |_: &mut Vertex| {},
+    };
+
+    let name = asset.to_string();
+    let (mut verts, mut inds) = match model_manager.get_model_or_not(&name) {
+        Some(m) => {
+            let modl = Rc::clone(m);
+            let data = modl.data.as_ref().unwrap().clone();
+            let verts = data
+                .0
+                .iter()
+                .map(|v| {
+                    let mut v2 = v.clone();
+                    method(&mut v2);
+                    v2.trans(offset);
+                    v2
+                })
+                .collect::<Vec<Vertex>>();
+            let inds = data
+                .1
+                .iter()
+                .map(|i| i.clone() + current_count)
+                .collect::<Vec<u32>>();
+            (verts, inds)
+        }
+        None => {
+            let uv = tex_manager
+                .get_tex_or_not(&name)
+                .unwrap_or(glam::vec4(1., 1., 0., 0.));
+            let cube = model_manager.cube_model();
+            let data = cube.data.as_ref().unwrap().clone();
+            let verts = data
+                .0
+                .iter()
+                .map(|v| {
+                    let mut v2 = v.clone();
+                    method(&mut v2);
+                    v2.trans(offset);
+                    v2.texture(uv);
+                    v2
+                })
+                .collect::<Vec<Vertex>>();
+            let inds = data
+                .1
+                .iter()
+                .map(|i| i.clone() + current_count)
+                .collect::<Vec<u32>>();
+            (verts, inds)
+        }
+    };
+
+    c.vert_data.append(&mut verts);
     c.ind_data.append(&mut inds);
 }
 

@@ -26,15 +26,36 @@ pub struct Global {
     pub cam_pos: Vec3,
     /// Directional "sun" for the 3D pass (L0 retro lighting). Defaults leave the
     /// scene fullbright (color 0 + ambient 1 => unchanged) so apps opt in via
-    /// the `light` native.
+    /// the `lum` native.
     pub light_dir: Vec3,
     pub light_color: Vec3,
     pub light_ambient: f32,
     /// Hemisphere ambient (L2). amb_sky.w > 0 switches ambient from the flat
     /// `light_ambient` scalar to `mix(ground, sky, up)`: sky rgb from above,
-    /// ground rgb from below, by surface normal.z.
+    /// ground rgb from below, by surface normal.z. Sun-only — a cone/sphere
+    /// light has a real position, so "above/below" doesn't apply to it.
     pub amb_sky: Vec4,
     pub amb_ground: Vec4,
+    /// Which shape `lum{}` currently is: 0=sun (today's directional
+    /// behavior, default), 1=cone (spot), 2=sphere (point). See guide/lum.md.
+    pub light_shape: u8,
+    /// Tile-space position for a cone/sphere light (unused for sun) — same
+    /// raw-until-render convention as `cam_pos` (scaled ×16 to world space at
+    /// the point of use, in `render.rs`, not stored here).
+    pub light_pos: Vec3,
+    /// Falloff distance for a cone/sphere light, tile units (unused for sun).
+    pub light_range: f32,
+    /// Half-angle in radians for a cone light (unused for sun/sphere).
+    pub light_angle: f32,
+    /// Whether the shadow pass (from the current `lum` light) is enabled —
+    /// see `shdw()`/`guide/shdw.md`. Off by default: zero behavior change for
+    /// apps that never call it, same discipline as the chip/mon work.
+    pub shadow_on: bool,
+    /// Whether shading is Gouraud (per-vertex, interpolated) instead of the
+    /// default per-fragment "smooth" path — see `gour()`/`guide/gour.md`. Off
+    /// by default, matching PLAN.md's original suggested default being
+    /// deliberately not flipped this session.
+    pub gouraud: bool,
     /// Distance fog (L2). xyz = fog rgb, w = far distance in world units where
     /// geometry is fully fogged. w = 0 disables it (default).
     pub fog_color: Vec4,
@@ -45,6 +66,16 @@ pub struct Global {
     pub iteration: u64,
     #[cfg(feature = "headed")]
     pub screen_effects: ScreenBinds,
+    /// Graphics "chip" preset: 0=R00 (modern), 1=R43 (N64-ish), 2=R30 (PS1-ish).
+    /// Drives `screen_effects.crt_resolution`/`vertex_snap`/`fog` and the main
+    /// texture sampler's filter mode — see `MainCommmand::SetChip`. Plain state,
+    /// not headed-gated (harmless to track headlessly), unlike `screen_effects`
+    /// itself which only exists in a headed build.
+    pub chip: u8,
+    /// Display "monitor" preset: 0=LCD, 1=Slot (slot-mask CRT), 2=Grille
+    /// (aperture-grille CRT). Drives the rest of `screen_effects` (the CRT
+    /// post-pass knobs) — see `MainCommmand::SetMonitor`.
+    pub monitor: u8,
     /** The cursor unprojected pos in world space set by the render pipeline*/
     pub cursor_projected_pos: Vec3,
     /// Last frame's view/projection, kept so the cursor ray can be re-traced at the
@@ -85,6 +116,12 @@ impl Global {
             amb_sky: glam::vec4(0., 0., 0., 0.), // w=0 => flat ambient
             amb_ground: glam::vec4(0., 0., 0., 0.),
             fog_color: glam::vec4(0., 0., 0., 0.), // w=0 => fog off
+            light_shape: 0,
+            light_pos: vec3(0., 0., 0.),
+            light_range: 0.,
+            light_angle: 0.,
+            shadow_on: false,
+            gouraud: false,
 
             smooth_cam_pos: vec3(0., 0., 0.),
             debug_camera_pos: vec3(0., 0., 0.),
@@ -102,6 +139,8 @@ impl Global {
             scroll_delta: (0., 0.),
             #[cfg(feature = "headed")]
             screen_effects: ScreenBinds::new(),
+            chip: 0,
+            monitor: 0,
             aliases: HashMap::new(),
             #[cfg(feature = "headed")]
             gui_params: GuiParams::new(),
@@ -132,14 +171,7 @@ impl Global {
         self.smooth_cam_pos.z = 0.;
         self.delayed = 0;
         self.iteration = 0;
-        // Reset lighting/fog to defaults so state doesn't leak between apps
-        // (fog off, fullbright): an app that never calls lamp/fog looks unlit.
-        self.light_dir = vec3(-0.3, -0.5, -0.8);
-        self.light_color = vec3(0., 0., 0.);
-        self.light_ambient = 1.;
-        self.amb_sky = glam::vec4(0., 0., 0., 0.);
-        self.amb_ground = glam::vec4(0., 0., 0., 0.);
-        self.fog_color = glam::vec4(0., 0., 0., 0.);
+        self.reset_lighting_and_fog();
         #[cfg(feature = "headed")]
         {
             self.screen_effects = ScreenBinds::new();
@@ -147,6 +179,30 @@ impl Global {
         // self.boot_state = false;
         self.pending_load = None;
         self.clean_app_attrs();
+    }
+
+    /// Reset lighting/fog (`lum`/`fog`) to defaults so state doesn't leak
+    /// between apps (fog off, fullbright): an app that never calls lum/fog
+    /// must look unlit, not inherit whatever the previous one left behind.
+    ///
+    /// Shared by `clean()` (hard/soft reset) and `clean_app_attrs()` (every
+    /// app load) rather than only living in one of them — `fog_color` used to
+    /// reset solely via `clean()`, which not every load path calls first, so
+    /// distance fog set by `fog()` could survive into the next app exactly
+    /// the way `attr{fog=...}` did before `clean_app_attrs` existed.
+    pub fn reset_lighting_and_fog(&mut self) {
+        self.light_dir = vec3(-0.3, -0.5, -0.8);
+        self.light_color = vec3(0., 0., 0.);
+        self.light_ambient = 1.;
+        self.amb_sky = glam::vec4(0., 0., 0., 0.);
+        self.amb_ground = glam::vec4(0., 0., 0., 0.);
+        self.fog_color = glam::vec4(0., 0., 0., 0.);
+        self.light_shape = 0;
+        self.light_pos = vec3(0., 0., 0.);
+        self.light_range = 0.;
+        self.light_angle = 0.;
+        self.shadow_on = false;
+        self.gouraud = false;
     }
 
     /// Reset the `attr` state an app *declares* for itself and must never inherit
@@ -174,11 +230,17 @@ impl Global {
     /// in step.
     pub fn clean_app_attrs(&mut self) {
         self.locked = false;
+        self.chip = 0;
+        self.monitor = 0;
         // Screen effects only exist in a headed build.
         #[cfg(feature = "headed")]
         {
             self.screen_effects = ScreenBinds::new();
         }
+        // Distance fog/lighting are set by Lua (`fog`/`lum`), not `attr`, but
+        // leak the exact same way if left out of a per-load reset — see
+        // `reset_lighting_and_fog`.
+        self.reset_lighting_and_fog();
     }
 
     // pub fn set(&mut self, key: String, v: f32) {
@@ -254,6 +316,8 @@ mod tests {
         // Stand in for what the logo (or any app) leaves behind.
         g.screen_effects.fog = 200.;
         g.screen_effects.crt_resolution = 999.;
+        g.chip = 2; // R30
+        g.monitor = 2; // Grille
         g.locked = true;
 
         g.clean_app_attrs();
@@ -263,6 +327,32 @@ mod tests {
             g.screen_effects.crt_resolution, fresh.crt_resolution,
             "nor any other screen effect"
         );
+        assert_eq!(g.chip, 0, "chip must reset to R00");
+        assert_eq!(g.monitor, 0, "monitor must reset to LCD");
         assert!(!g.locked, "and the console lock still clears");
+    }
+
+    /// Distance fog (the `fog()` native's `fog_color`, not `attr`'s screen-effect
+    /// `fog` scalar covered above) used to reset only in `clean()`, which not every
+    /// app-load path calls — `clean_app_attrs()`, called on *every* load, left it
+    /// untouched, so an app that called `fog()` could leave the next app fogged
+    /// even though that next app never mentions fog.
+    #[test]
+    fn distance_fog_does_not_leak_into_the_next_app() {
+        let mut g = Global::new();
+
+        g.fog_color = glam::vec4(0.4, 0.4, 0.6, 40.0);
+        g.light_color = vec3(1., 1., 1.);
+        g.light_ambient = 0.1;
+
+        g.clean_app_attrs();
+
+        assert_eq!(
+            g.fog_color,
+            glam::vec4(0., 0., 0., 0.),
+            "fog_color must reset to off on every app load, not just a hard/soft reset"
+        );
+        assert_eq!(g.light_color, vec3(0., 0., 0.));
+        assert_eq!(g.light_ambient, 1.);
     }
 }

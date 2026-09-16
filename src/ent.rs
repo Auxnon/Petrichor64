@@ -6,7 +6,7 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable};
 
-use glam::{vec3, vec4, Mat4, Quat, Vec3, Vec4};
+use glam::{vec4, Mat4, Quat, Vec3, Vec4};
 use std::{ops::Mul, rc::Rc};
 
 #[repr(C)]
@@ -153,7 +153,11 @@ impl<'lua> Ent {
                 offset,
             ),
             rotation,
-            color: wgpu::Color::GREEN,
+            // Opaque white — a no-op tint. Only `simple_uniforms` (specks)
+            // reads this directly; get_uniforms_with_mat reads lua.tint
+            // instead (see guide/entity.md). Was GREEN, harmless only
+            // because nothing sampled it before vertex-colour tint existed.
+            color: wgpu::Color::WHITE,
             model_name,
             model,
             tex,
@@ -175,30 +179,13 @@ impl<'lua> Ent {
     pub fn reparse(_lua: LuaEnt) {}
 
     pub fn build_meta(&self, lua: &LuaEnt, parent: Option<&Mat4>) -> Mat4 {
-        // Mat4::from_rotation_translation(rotation, translation);
-        let offset = vec3(
-            lua.offset[0] as f32,
-            lua.offset[1] as f32,
-            lua.offset[2] as f32,
-        )
-        .mul(16.);
-        // println!("offset {:?}", offset);
-
+        let (pos, offset, sz) = crate::lua_ent::render_transform(lua);
         let quat = Quat::from_euler(
             glam::EulerRot::XYZ,
             lua.rot_x as f32,
             lua.rot_y as f32,
             lua.rot_z as f32,
         );
-        // println!("build {} {:?}",self.model.name,parent);
-        let s: f32 = lua.scale as f32;
-        // Per-axis size lets entities be rectangular prisms, not just cubes.
-        let sz = vec3(
-            s * lua.size[0] as f32,
-            s * lua.size[1] as f32,
-            s * lua.size[2] as f32,
-        );
-        let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32).mul(16.); // DEV entity.pos
         let m = Mat4::from_translation(pos)
             * Mat4::from_scale(sz)
             * Mat4::from_quat(quat)
@@ -270,11 +257,15 @@ impl<'lua> Ent {
             }
         };
 
+        // Read fresh from LuaEnt every frame, same as position/rotation/scale
+        // — no dirty-flag plumbing needed (unlike asset/tex, this never
+        // triggers a model/texture lookup, so there's nothing expensive to
+        // gate). See guide/entity.md.
         let color = [
-            self.color.r as f32,
-            self.color.g as f32,
-            self.color.b as f32,
-            self.color.a as f32,
+            lua.tint[0] as f32,
+            lua.tint[1] as f32,
+            lua.tint[2] as f32,
+            lua.tint[3] as f32,
         ];
         EntityUniforms {
             color,

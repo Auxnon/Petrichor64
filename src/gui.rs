@@ -626,6 +626,7 @@ impl Gui {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn render(&mut self, bm: &mut BundleManager, queue: &Queue, time: f32, loggy: &mut Loggy) {
         self.time = time;
         #[cfg(feature = "headed")]

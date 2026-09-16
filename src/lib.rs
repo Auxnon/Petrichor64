@@ -30,6 +30,7 @@ use types::{ControlState, GlobalMap};
 
 mod asset;
 mod bundle;
+mod collide;
 mod command;
 #[cfg(feature = "headed")]
 mod controls;
@@ -75,6 +76,7 @@ mod vocaloid;
 mod template;
 mod texture;
 mod tile;
+mod tile_grid;
 #[cfg(all(feature = "render-tui", not(target_arch = "wasm32")))]
 mod tui;
 mod types;
@@ -259,6 +261,7 @@ fn state_change_checker(
     control_flow: &ActiveEventLoop,
     rwindow: &Arc<winit::window::Window>,
     center: LogicalPosition<f64>,
+    catcher: Option<&Receiver<MainPacket>>,
 ) -> bool {
     if c.global.is_state_changed {
         if c.global.state_delay > 0 {
@@ -299,7 +302,7 @@ fn state_change_checker(
                             &mut c.loggy,
                         );
                         if let Some(s) = res {
-                            let _ = crate::command::run_con_sys(c, &s);
+                            let _ = crate::command::run_con_sys(c, &s, catcher);
                         }
 
                         // Also check command-line arguments here.
@@ -313,13 +316,14 @@ fn state_change_checker(
                                     match command.unwrap().as_str() {
                                         "--init" | "-i" => {
                                             println!("cli-init: {:?}", arg);
-                                            crate::command::run_con_sys(c, arg);
+                                            let _ = crate::command::run_con_sys(c, arg, catcher);
                                         }
                                         "--new" | "-n" => {
                                             println!("cli-new: {:?}", arg);
                                             let _ = crate::command::run_con_sys(
                                                 c,
                                                 &format!("new {}", arg),
+                                                catcher,
                                             );
                                         }
                                         _ => {}
@@ -838,6 +842,9 @@ impl ApplicationHandler for App {
         if let Some(path) = self.deferred_load.take() {
             if let Some(core) = self.core.as_mut() {
                 crate::command::hard_reset(core);
+                if let Some(catcher) = self.catcher.as_ref() {
+                    drain_stray_messages(catcher);
+                }
                 if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
                     core.loggy
                         .log(LogType::CoreError, &format!("failed to load {}: {}", path, e));
@@ -865,6 +872,9 @@ impl ApplicationHandler for App {
             self.deferred_auto = false;
             if let Some(core) = self.core.as_mut() {
                 crate::command::hard_reset(core);
+                if let Some(catcher) = self.catcher.as_ref() {
+                    drain_stray_messages(catcher);
+                }
                 let payload = include_bytes!("../auto.game.png").to_vec();
                 ::log::info!("loading included game ({} bytes)", payload.len());
                 if let Err(e) =
@@ -987,6 +997,7 @@ impl ApplicationHandler for App {
                             event_loop,
                             &self.bits,
                             &self.bits_prev,
+                            self.catcher.as_ref(),
                         );
                     }
                     // Same as native: re-trace the cursor ray against this frame's
@@ -1099,7 +1110,7 @@ impl ApplicationHandler for App {
                 None => return,
             };
 
-            state_change_checker(core, event_loop, &win_arc, self.center);
+            state_change_checker(core, event_loop, &win_arc, self.center, Some(catcher));
 
             // Release grabbed mouse if the console was just opened.
             if core.global.console && core.global.mouse_grabbed_state {
@@ -1136,7 +1147,13 @@ impl ApplicationHandler for App {
             self.bits.1[10] = core.global.cursor_projected_pos.z;
 
             // Evaluate system shortcuts and console key commands.
-            controls::controls_evaluate(core, event_loop, &self.bits, &self.bits_prev);
+            controls::controls_evaluate(
+                core,
+                event_loop,
+                &self.bits,
+                &self.bits_prev,
+                Some(catcher),
+            );
 
             // Reset per-frame deltas after they've been consumed.
             core.global.mouse_delta = vec2(0., 0.);
@@ -1587,7 +1604,7 @@ pub fn start() {
 
         // Feed any queued stdin lines in as console commands.
         while let Ok(line) = core.cli_thread_receiver.try_recv() {
-            core_console_command(&mut core, line.trim());
+            core_console_command(&mut core, line.trim(), Some(&catcher));
         }
 
         core.update(&catcher);
@@ -1600,13 +1617,39 @@ pub fn start() {
     }
 }
 
-pub fn core_console_command(core: &mut Core, com_in: &str) {
+/// Discard anything left in the host's message queue from a bundle that
+/// `hard_reset` just tore down, before the bundle id it used can be
+/// reassigned to whatever loads next.
+///
+/// `Lua::die()` (see its doc comment) only waits up to 250ms for a bundle's
+/// Lua thread to drain its own inbound queue and confirm — a grace period,
+/// not a guarantee, so callers proceed regardless. That thread can still be
+/// mid-flight on an *outbound* message it already queued for the host (e.g.
+/// `attr{fog=200}`, which `logo.lua` sets on its very first line) when
+/// `hard_reset` returns. Left undrained, that message sits in `catcher`
+/// until the next `core.update()` call — by which point
+/// `Global::clean()`/`clean_app_attrs()` have already reset fog to off, and
+/// the app that loads next (which can be handed the same now-free bundle id
+/// the dead one used) gets it clobbered back on, nondeterministically,
+/// depending on exactly how the race lands. This is why a fresh
+/// `cargo run -- <app>` sometimes boots fogged solid even though the app
+/// itself never touches fog. Call right after every `hard_reset`, before the
+/// next `load_app`/`load_empty`.
+pub fn drain_stray_messages(catcher: &Receiver<MainPacket>) {
+    while catcher.try_recv().is_ok() {}
+}
+
+pub fn core_console_command(
+    core: &mut Core,
+    com_in: &str,
+    catcher: Option<&Receiver<MainPacket>>,
+) {
     let mut com = com_in.trim().to_owned();
     if let Some(alias) = core.global.aliases.get(&com) {
         com = alias.to_string();
     }
     for c in com.split("&&") {
-        match crate::command::run_con_sys(core, c) {
+        match crate::command::run_con_sys(core, c, catcher) {
             Ok(false) => {
                 // A non-system command routes to the running game's Lua VM. With
                 // no game loaded, get_lua() would panic ("No bundles loaded!") —
@@ -1705,6 +1748,10 @@ impl Core {
                 ambient,
                 sky,
                 ground,
+                shape,
+                pos,
+                range,
+                angle,
             } => {
                 if let Some(d) = dir {
                     self.global.light_dir = glam::vec3(d[0], d[1], d[2]);
@@ -1720,6 +1767,18 @@ impl Core {
                     let g = ground.or(sky).unwrap_or([0., 0., 0.]);
                     self.global.amb_sky = glam::vec4(s[0], s[1], s[2], 1.);
                     self.global.amb_ground = glam::vec4(g[0], g[1], g[2], 0.);
+                }
+                if let Some(sh) = shape {
+                    self.global.light_shape = sh;
+                }
+                if let Some(p) = pos {
+                    self.global.light_pos = glam::vec3(p[0], p[1], p[2]);
+                }
+                if let Some(r) = range {
+                    self.global.light_range = r;
+                }
+                if let Some(a) = angle {
+                    self.global.light_angle = a;
                 }
             }
             VmToHost::Fog(a) => {
@@ -1804,6 +1863,7 @@ impl Core {
                 {
                     self.instance_buffers = self.ent_manager.check_ents(
                         &self.gfx.device,
+                        &self.gfx.queue,
                         &self.tex_manager,
                         &self.model_manager,
                         self.global.iteration,
@@ -1857,7 +1917,7 @@ impl Core {
                         }
                     }
                 }
-                MainCommmand::Light(dir, color, ambient, sky, ground) => {
+                MainCommmand::Light(dir, color, ambient, sky, ground, shape, pos, range, angle) => {
                     if let Some(d) = dir {
                         self.global.light_dir = d;
                     }
@@ -1869,11 +1929,24 @@ impl Core {
                     }
                     // Any hemisphere colour switches ambient to hemisphere mode
                     // (amb_sky.w = 1); both default to the given/zero colour.
+                    // Sun-only — see the field doc on Global::amb_sky.
                     if sky.is_some() || ground.is_some() {
                         let s = sky.or(ground).unwrap_or(glam::Vec3::ZERO);
                         let g = ground.or(sky).unwrap_or(glam::Vec3::ZERO);
                         self.global.amb_sky = glam::vec4(s.x, s.y, s.z, 1.);
                         self.global.amb_ground = glam::vec4(g.x, g.y, g.z, 0.);
+                    }
+                    if let Some(sh) = shape {
+                        self.global.light_shape = sh;
+                    }
+                    if let Some(p) = pos {
+                        self.global.light_pos = p;
+                    }
+                    if let Some(r) = range {
+                        self.global.light_range = r;
+                    }
+                    if let Some(a) = angle {
+                        self.global.light_angle = a;
                     }
                 }
                 MainCommmand::Fog(v) => {
@@ -1883,6 +1956,78 @@ impl Core {
                     // Desired state; the frame loop reconciles it against the
                     // actual grab (and defers to a click on web).
                     self.global.mouse_grab = on;
+                }
+                MainCommmand::Shdw(on) => {
+                    self.global.shadow_on = on;
+                }
+                MainCommmand::Gour(on) => {
+                    self.global.gouraud = on;
+                }
+                MainCommmand::SetChip(chip_id) => {
+                    crate::root::apply_chip(
+                        &mut self.global,
+                        #[cfg(feature = "headed")]
+                        &mut self.gfx,
+                        chip_id,
+                    );
+                }
+                MainCommmand::GetChip(tx) => {
+                    self.log_check(tx.send(self.global.chip));
+                }
+                MainCommmand::SetMonitor(monitor_id) => {
+                    crate::root::apply_monitor(&mut self.global, monitor_id);
+                }
+                MainCommmand::GetMonitor(tx) => {
+                    self.log_check(tx.send(self.global.monitor));
+                }
+                MainCommmand::HitPair(a, b, tx) => {
+                    let ca = a
+                        .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|l| {
+                            Ok(crate::ent_manager::collider_for(l, &self.model_manager))
+                        })
+                        .ok();
+                    let cb = b
+                        .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|l| {
+                            Ok(crate::ent_manager::collider_for(l, &self.model_manager))
+                        })
+                        .ok();
+                    let result = match (ca, cb) {
+                        (Some(ca), Some(cb)) => crate::collide::test(&ca, &cb)
+                            .map(|h| (h.normal.x, h.normal.y, h.normal.z, h.depth)),
+                        _ => None,
+                    };
+                    self.log_check(tx.send(result));
+                }
+                MainCommmand::HitAll(tx) => {
+                    let hits = self
+                        .ent_manager
+                        .hit_all(id, &self.model_manager)
+                        .into_iter()
+                        .map(|(a, b, h)| (a, b, h.normal.x, h.normal.y, h.normal.z, h.depth))
+                        .collect();
+                    self.log_check(tx.send(hits));
+                }
+                MainCommmand::HitCell(entity_id, tx) => {
+                    let hits = self
+                        .ent_manager
+                        .hit_cell(id, &self.model_manager, &self.world, entity_id)
+                        .into_iter()
+                        .map(|(ix, iy, iz, h)| {
+                            (ix, iy, iz, h.normal.x, h.normal.y, h.normal.z, h.depth)
+                        })
+                        .collect();
+                    self.log_check(tx.send(hits));
+                }
+                MainCommmand::HitGrid(entity_id, tx) => {
+                    let hits = self
+                        .ent_manager
+                        .hit_grid(id, &self.model_manager, entity_id)
+                        .into_iter()
+                        .map(|(owner, ix, iy, iz, h)| {
+                            (owner, ix, iy, iz, h.normal.x, h.normal.y, h.normal.z, h.depth)
+                        })
+                        .collect();
+                    self.log_check(tx.send(hits));
                 }
                 MainCommmand::GetImg(s, tx) => {
                     #[cfg(feature = "headed")]
@@ -1898,10 +2043,20 @@ impl Core {
                             id,
                             &mut self.loggy,
                         );
-                        self.log_check(tx.send(()));
                         self.tex_manager
                             .refinalize(&self.gfx.queue, &self.gfx.master_texture);
                     }
+                    // Ack unconditionally: `tex()` blocks on this reply (see
+                    // src/command.rs), and without it every non-headed backend
+                    // (render-tui included) hung this native forever — dropping
+                    // `tx` at the end of a headed-only block closed the channel,
+                    // which the Lua side then saw as "receiving on a closed
+                    // channel" rather than a hang, but the effect is the same:
+                    // no non-headed backend could ever call tex(). There's no
+                    // GPU to upload to without "headed", so this is a no-op ack.
+                    #[cfg(not(feature = "headed"))]
+                    let _ = im;
+                    self.log_check(tx.send(()));
                 }
                 MainCommmand::Anim(name, items, speed) => {
                     #[cfg(feature = "headed")]
@@ -2266,12 +2421,14 @@ impl Core {
                             Some(to_load) => {
                                 self.log(LogType::Sys, &format!("load {}", to_load));
                                 crate::command::hard_reset(self);
+                                drain_stray_messages(catcher);
 
                                 crate::command::load_app(self, Some(&to_load), None, None, None);
                             }
                             _ => {
                                 //DEV if a load quit is triggered and then the lua context spams it too fast it technically quits to empty comnsole. should ahve it be code based or not trigger too quickly
                                 crate::command::hard_reset(self);
+                                drain_stray_messages(catcher);
                                 crate::command::load_empty(self);
                             }
                         }
@@ -2319,6 +2476,7 @@ impl Core {
         let instance_buffers = if loop_complete {
             Some(self.ent_manager.check_ents(
                 &self.gfx.device,
+                &self.gfx.queue,
                 &self.tex_manager,
                 &self.model_manager,
                 self.global.iteration,

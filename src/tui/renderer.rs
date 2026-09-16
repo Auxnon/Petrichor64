@@ -8,9 +8,11 @@ use std::io::{stdout, Write};
 /// Unlike the wgpu backend, this reads world/entity data directly (chunk
 /// `vert_data`/`ind_data`, `LuaEnt` positions) rather than through cooked GPU
 /// buffers — see the plan notes on why chunk/entity types weren't shared
-/// between backends. Terrain gets real per-triangle geometry; entities are
-/// drawn as coarse cube markers at their world position (no per-model shape
-/// or rotation yet — a reasonable v1 cut given the "world view only" scope).
+/// between backends. Both terrain and entities get real per-triangle
+/// geometry: an entity's `asset` is resolved through `ModelManager` (falling
+/// back to a cube for a sprite/billboard asset with no 3D shape) and drawn
+/// with its actual rotation and scale, mirroring `Ent::build_meta`'s
+/// translation * scale * rotation composition.
 pub struct TuiRenderer {
     cols: u16,
     rows: u16,
@@ -86,7 +88,8 @@ impl TuiRenderer {
             }
         }
 
-        if let Some((cube_verts, cube_inds)) = &core.model_manager.CUBE.data {
+        {
+            let cube = core.model_manager.cube_model();
             for wrapper in core
                 .ent_manager
                 .bundles
@@ -99,18 +102,37 @@ impl TuiRenderer {
                     {
                         return Ok(());
                     }
+                    // Real model + rotation, mirroring `Ent::build_meta`
+                    // (translation * scale * rotation) — falls back to the
+                    // cube when `asset` doesn't resolve to a model (e.g. a
+                    // billboard sprite has no 3D shape to show here).
+                    let model = core
+                        .model_manager
+                        .get_model_or_not(&lent.get_asset())
+                        .map(std::rc::Rc::clone)
+                        .unwrap_or_else(|| std::rc::Rc::clone(&cube));
+                    let Some((verts, inds)) = model.data.as_ref() else {
+                        return Ok(());
+                    };
                     let pos = vec3(lent.x as f32, lent.y as f32, lent.z as f32) * 16.0;
                     let scale = (lent.scale as f32).max(0.1);
+                    let quat = glam::Quat::from_euler(
+                        glam::EulerRot::XYZ,
+                        lent.rot_x as f32,
+                        lent.rot_y as f32,
+                        lent.rot_z as f32,
+                    );
                     let mvp = vp
                         * Mat4::from_translation(pos)
-                        * Mat4::from_scale(Vec3::splat(scale));
-                    for tri in cube_inds.chunks_exact(3) {
-                        let verts = [
-                            &cube_verts[tri[0] as usize],
-                            &cube_verts[tri[1] as usize],
-                            &cube_verts[tri[2] as usize],
+                        * Mat4::from_scale(Vec3::splat(scale))
+                        * Mat4::from_quat(quat);
+                    for tri in inds.chunks_exact(3) {
+                        let tri_verts = [
+                            &verts[tri[0] as usize],
+                            &verts[tri[1] as usize],
+                            &verts[tri[2] as usize],
                         ];
-                        rasterize_tri(&mut fb, &mvp, verts, [220, 140, 60]);
+                        rasterize_tri(&mut fb, &mvp, tri_verts, [220, 140, 60]);
                     }
                     Ok(())
                 });

@@ -20,6 +20,24 @@ missing doc fails the build).
 Long names predating this rule (candidates to shorten with approval): the
 tile family `gtile`/`ftile`/`dtile`/`istile`, plus `chord`, `instr`, `empty`.
 
+## World axis convention
+
+This engine is **Z-up**: x,y are the ground plane, z is height. (See
+`compute_shade` in `shader.wgsl` — the hemisphere-ambient mix uses the
+surface normal's `z` component as "up".) An example app building terrain
+should place height along `z`, not `y` — mixing the two makes the world
+render sideways.
+
+## `tile()` accepts a bare texture, not just a model/asset name
+
+`tile(asset, x, y, z, rot)` first looks for a model matching `asset`; if none
+exists, it looks for a **texture** of that name and — if found — auto-builds
+a cube tile textured with it on every face (see `guide/tile.md`). So a
+terrain tile doesn't need a dedicated model or a call to `mod()`: registering
+a texture with `tex(name, image)` and then calling `tile(name, ...)` is
+enough. An asset that resolves to neither a model nor a texture still places
+a cube, textured with the engine's fallback checker.
+
 ## Sound & audio (`src/sound.rs`, natives in `src/command.rs`)
 
 Audio is a **native-only, non-default feature** (`--features audio`, pulls

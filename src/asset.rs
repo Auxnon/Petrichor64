@@ -68,7 +68,9 @@ pub async fn pack(
     let script_items = get_script_items(&path, loggy)?;
     let sound_items = get_sound_items(&path);
 
-    let sources = walk_files(
+    // Packing never activates scripts (see the `if activate` guard in
+    // walk_files), so no `--! 0xNN` header is ever parsed here — discard it.
+    let (sources, _header) = walk_files(
         #[cfg(feature = "headed")]
         None,
         #[cfg(feature = "headed")]
@@ -143,7 +145,7 @@ pub async fn unpack(
     #[cfg(feature = "audio")] singer: &std::sync::mpsc::Sender<crate::sound::SoundCommand>,
     loggy: &mut Loggy,
     debug: bool,
-) {
+) -> Option<(u8, u8)> {
     if debug {
         loggy.log(LogType::Config, &format!("unpack {}", name));
     }
@@ -154,7 +156,7 @@ pub async fn unpack(
                 LogType::ConfigError,
                 &format!("couldn't retrieve archive {} -> {}", name, e),
             );
-            return;
+            return None;
         }
     };
     let map =
@@ -167,7 +169,7 @@ pub async fn unpack(
                     LogType::ConfigError,
                     &format!("failed to unpack {} -> {}", name, e),
                 );
-                return;
+                return None;
             }
         };
 
@@ -220,6 +222,7 @@ pub async fn unpack(
         debug,
     );
 
+    let mut header = None;
     if let Some(dir) = map.get("scripts") {
         loggy.log(LogType::Config, &format!("unpacking {} scripts", dir.len()));
         for (item_name, item_buffer) in dir {
@@ -239,7 +242,11 @@ pub async fn unpack(
                                 &format!("loading script {}", file_name), //buffer.to_string()),
                             );
                         }
-                        handle_script(file_name.to_string(), &mut bufreader, lua_master);
+                        let (_, h) =
+                            handle_script(file_name.to_string(), &mut bufreader, lua_master);
+                        if h.is_some() {
+                            header = h;
+                        }
                     } else {
                         if debug {
                             loggy.log(
@@ -265,9 +272,15 @@ pub async fn unpack(
             .collect();
         load_sounds_from_buffers(sounds, singer, loggy);
     }
+    header
 }
 
-fn handle_script<F>(name: String, buffer: &mut BufReader<F>, lua_master: &LuaCore) -> [u16; 3]
+/// Returns (codex version, chip/monitor header if the first line declared one).
+fn handle_script<F>(
+    name: String,
+    buffer: &mut BufReader<F>,
+    lua_master: &LuaCore,
+) -> ([u16; 3], Option<(u8, u8)>)
 where
     F: Read + Send,
 {
@@ -293,8 +306,38 @@ where
             false
         }
     });
+    let header = parse_chip_header(buffer);
     lua_master.async_load(name, buffer);
-    ver
+    (ver, header)
+}
+
+/// Peek at the first line for a `--! 0xNN` chip+monitor header (see
+/// `guide/mon.md`) and, if present, consume exactly that line so Lua never sees
+/// it — line 2 becomes line 1 as far as the parser is concerned. Leaves the
+/// buffer completely untouched on any non-match (no header, `0x00`, or a
+/// malformed line), so every existing script parses exactly as it does today.
+fn parse_chip_header<F: Read>(buffer: &mut BufReader<F>) -> Option<(u8, u8)> {
+    let reg = Regex::new(r"^--!\s*0x([0-9A-Fa-f]{1,2})\s*$").unwrap();
+    let buf = buffer.fill_buf().ok()?;
+    // A header line is a handful of bytes; BufReader's default fill is far
+    // larger, so a genuine header's newline is always inside this peek.
+    let newline_at = buf.iter().position(|&b| b == b'\n')?;
+    let line = std::str::from_utf8(&buf[..newline_at]).ok()?.trim_end();
+    let caps = reg.captures(line)?;
+    let byte = u8::from_str_radix(&caps[1], 16).ok()?;
+    let consume_len = newline_at + 1;
+    buffer.consume(consume_len);
+    let chip = match byte >> 4 {
+        1 => 1,
+        2 => 2,
+        _ => 0,
+    };
+    let monitor = match byte & 0x0F {
+        1 => 1,
+        2 => 2,
+        _ => 0,
+    };
+    Some((chip, monitor))
 }
 
 fn to_num(s: &Vec<&str>, n: usize, reg: &Regex) -> u16 {
@@ -773,7 +816,7 @@ pub fn walk_files<'a>(
     sound_items: &'a [PathBuf],
     loggy: &mut Loggy,
     debug: bool,
-) -> Vec<&'a str> {
+) -> (Vec<&'a str>, Option<(u8, u8)>) {
     // loggy.log(
     //     LogType::Config,
     //     &format!("current dir is {}", current_path.display()),
@@ -782,6 +825,7 @@ pub fn walk_files<'a>(
     let mut sources: SourceMap = HashMap::new();
     let mut configs = vec![];
     let mut version = [0; 3];
+    let mut header = None;
 
     for entry in asset_items.iter() {
         loggy.log(
@@ -856,13 +900,16 @@ pub fn walk_files<'a>(
                         // println!("script item is {}", st);
 
                         if activate {
-                            let ver = handle_script(
+                            let (ver, h) = handle_script(
                                 file_name.to_owned(),
                                 &mut buffered_reader,
                                 lua_master,
                             );
                             if ver[0] > version[0] || ver[1] > version[1] || ver[2] > version[2] {
                                 version = ver;
+                            }
+                            if h.is_some() {
+                                header = h;
                             }
                         }
                     }
@@ -883,7 +930,10 @@ pub fn walk_files<'a>(
     //.expect("Scripts directory failed to load")
     // The zip source list is exactly the shared collector's output — the loops
     // above only bake assets/scripts into the live instance (when activate).
-    collect_packable_sources(asset_items, script_items, sound_items)
+    (
+        collect_packable_sources(asset_items, script_items, sound_items),
+        header,
+    )
 }
 
 #[cfg(feature = "headed")]
@@ -1316,4 +1366,63 @@ function clr(...) end
         s += &format!("-- {}\n{}\n\n\n", desc.trim(), examp.trim());
     }
     s
+}
+
+#[cfg(test)]
+mod chip_header_tests {
+    use super::parse_chip_header;
+    use std::io::{BufReader, Read};
+
+    fn parse(src: &str) -> (Option<(u8, u8)>, String) {
+        let mut r = BufReader::new(src.as_bytes());
+        let header = parse_chip_header(&mut r);
+        let mut rest = String::new();
+        r.read_to_string(&mut rest).unwrap();
+        (header, rest)
+    }
+
+    #[test]
+    fn valid_header_is_parsed_and_consumed() {
+        // 0x21: high nibble 2 = R30, low nibble 1 = Slot.
+        let (header, rest) = parse("--! 0x21\nprint('hi')\n");
+        assert_eq!(header, Some((2, 1)));
+        assert_eq!(rest, "print('hi')\n", "the header line must not reach Lua");
+    }
+
+    #[test]
+    fn no_header_leaves_the_buffer_untouched() {
+        let (header, rest) = parse("print('hi')\nprint('bye')\n");
+        assert_eq!(header, None);
+        assert_eq!(rest, "print('hi')\nprint('bye')\n");
+    }
+
+    #[test]
+    fn malformed_header_falls_back_cleanly() {
+        let (header, rest) = parse("--! not_hex\nprint('hi')\n");
+        assert_eq!(header, None);
+        assert_eq!(
+            rest, "--! not_hex\nprint('hi')\n",
+            "a malformed header line must not be eaten"
+        );
+    }
+
+    #[test]
+    fn zero_byte_maps_to_r00_and_lcd() {
+        let (header, _) = parse("--! 0x00\nprint('hi')\n");
+        assert_eq!(header, Some((0, 0)));
+    }
+
+    #[test]
+    fn out_of_range_nibbles_fall_back_to_zero() {
+        // 0xFF: neither nibble is 1 or 2, so both fall back to 0.
+        let (header, _) = parse("--! 0xFF\nprint('hi')\n");
+        assert_eq!(header, Some((0, 0)));
+    }
+
+    #[test]
+    fn ordinary_comment_is_not_mistaken_for_a_header() {
+        let (header, rest) = parse("-- codex 1.0.0\nprint('hi')\n");
+        assert_eq!(header, None);
+        assert_eq!(rest, "-- codex 1.0.0\nprint('hi')\n");
+    }
 }

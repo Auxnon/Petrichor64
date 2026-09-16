@@ -193,6 +193,15 @@ pub struct World {
     layers: FxHashMap<u8, LayerModel>,
     pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
     pub local_mappers: FxHashMap<u8, Mapper>,
+    /// A read-only mirror of every chunk synced from the world thread so far,
+    /// per bundle — built for free out of the existing `WorldSync`/
+    /// `process_sync` pipeline (already runs every frame for mesh rebuilds).
+    /// The collision system reads this directly instead of round-tripping a
+    /// `TileCommand` through the world thread's channel per query — see
+    /// `tile::is_tile_in` and `guide/hit.md`. May lag the world thread's true
+    /// state by up to one `Check()` cycle; fine for collision, which already
+    /// re-checks every frame.
+    pub tile_mirror: FxHashMap<u8, FxHashMap<String, Chunk>>,
     loggy: Sender<(LogType, String)>,
 }
 
@@ -204,7 +213,17 @@ impl World {
             layers: FxHashMap::default(),
             senders: FxHashMap::default(),
             local_mappers: FxHashMap::default(),
+            tile_mirror: FxHashMap::default(),
             loggy,
+        }
+    }
+
+    /// Direct (non-channel) solid-tile query for a bundle's collider — reads
+    /// `tile_mirror` instead of round-tripping a `TileCommand`.
+    pub fn is_tile_local(&self, bundle_id: u8, ix: i32, iy: i32, iz: i32) -> bool {
+        match self.tile_mirror.get(&bundle_id) {
+            Some(chunks) => crate::tile::is_tile_in(chunks, ix, iy, iz),
+            None => false,
         }
     }
 
@@ -352,6 +371,16 @@ impl World {
         dropped: bool,
         model_manager: &ModelManager,
     ) {
+        if dropped && chunks.is_empty() {
+            if let Some(mirror) = self.tile_mirror.get_mut(&bundle_id) {
+                mirror.clear();
+            }
+        } else {
+            let mirror = self.tile_mirror.entry(bundle_id).or_default();
+            for chunk in &chunks {
+                mirror.insert(chunk.key.clone(), chunk.clone());
+            }
+        }
         if let Some(layer) = self.layers.get_mut(&bundle_id) {
             if dropped && chunks.is_empty() {
                 layer.chunks.clear();
@@ -387,6 +416,8 @@ impl World {
                                     ix,
                                     iy,
                                     iz,
+                                    #[cfg(feature = "headed")]
+                                    false,
                                 );
                                 model.build_chunk(
                                     &mapper.tex_map,
@@ -601,6 +632,7 @@ impl World {
         }
         self.local_mappers.remove(&bundle_id);
         self.layers.remove(&bundle_id);
+        self.tile_mirror.remove(&bundle_id);
     }
 
     /** Destroy all world instances and clear all models. End all threads*/

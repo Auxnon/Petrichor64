@@ -57,6 +57,49 @@ pub enum DrawState {
     Skip,
     Resize,
 }
+/// Light-space view*projection for the shadow map, or `None` if `lum`'s
+/// current shape can't shadow (`sphere` — needs a cube map, not supported;
+/// see `guide/shdw.md`). `cam_pos_world` is the already-×16 world-space
+/// camera position, used to center the sun's frustum around whatever's
+/// actually on screen (this is a small, deliberately blocky shadow map, not a
+/// tightly-fit cascade). `Global::light_pos`/`light_range` are tile-space
+/// (the same raw-until-render convention as `cam_pos` itself), scaled ×16
+/// here — see `Global::light_pos`'s field doc.
+fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Option<Mat4> {
+    let dir = if global.light_dir.length_squared() > 0. {
+        global.light_dir.normalize()
+    } else {
+        vec3(0., 0., -1.)
+    };
+    // Z is up in this engine (see generate_matrix); pick a fallback up-axis
+    // for the rare case a light points straight along Z.
+    let up = if dir.z.abs() > 0.99 { Vec3::Y } else { Vec3::Z };
+    match global.light_shape {
+        0 => {
+            // Sun: orthographic, centered on the camera, looking along dir.
+            let radius = 400.0;
+            let eye = cam_pos_world - dir * radius;
+            let view = Mat4::look_at_rh(eye, cam_pos_world, up);
+            let proj = Mat4::orthographic_rh(-radius, radius, -radius, radius, 1.0, radius * 2.5);
+            Some(proj * view)
+        }
+        1 => {
+            // Cone: perspective from light_pos, aimed along dir.
+            let pos = global.light_pos * 16.;
+            let range = if global.light_range > 0. {
+                global.light_range * 16.
+            } else {
+                400.0
+            };
+            let fov = (global.light_angle.max(0.05) * 2.0).min(3.0);
+            let view = Mat4::look_at_rh(pos, pos + dir, up);
+            let proj = Mat4::perspective_rh(fov, 1.0, 1.0, range);
+            Some(proj * view)
+        }
+        _ => None,
+    }
+}
+
 pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
@@ -126,7 +169,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         core.global.gui_params.resolution.0 as f32,
         core.global.gui_params.resolution.1 as f32,
         core.global.screen_effects.glitchiness[1],
-        0.,
+        core.global.screen_effects.vertex_snap,
     ];
     let specs: [f32; 4] = [
         (core.global.cam_pos.x) * 16.,
@@ -148,6 +191,27 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     let amb_sky: [f32; 4] = [ask.x, ask.y, ask.z, ask.w]; // rgb + w=hemisphere enable
     let amb_ground: [f32; 4] = [agr.x, agr.y, agr.z, agr.w];
 
+    let lp = core.global.light_pos * 16.;
+    let light_pos: [f32; 4] = [lp.x, lp.y, lp.z, core.global.light_range * 16.];
+    let light_shape: [f32; 4] = [
+        core.global.light_shape as f32,
+        core.global.light_angle,
+        0.,
+        0.,
+    ];
+    let lvp = light_view_proj(&core.global, cam_pos * 16.);
+    let shadow_on: [f32; 4] = [
+        if core.global.shadow_on && lvp.is_some() {
+            1.
+        } else {
+            0.
+        },
+        if core.global.gouraud { 1. } else { 0. },
+        0.,
+        0.,
+    ];
+    let light_view_proj_mat: [[f32; 4]; 4] = lvp.unwrap_or(Mat4::ZERO).to_cols_array_2d();
+
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
     let size3 = bytemuck::cast_slice(&time_ref);
@@ -167,12 +231,87 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         .write_buffer(&gfx.uniform_buf, 256, bytemuck::cast_slice(&amb_sky));
     gfx.queue
         .write_buffer(&gfx.uniform_buf, 272, bytemuck::cast_slice(&amb_ground));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 288, bytemuck::cast_slice(&light_pos));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 304, bytemuck::cast_slice(&light_shape));
+    gfx.queue.write_buffer(
+        &gfx.uniform_buf,
+        320,
+        bytemuck::cast_slice(&light_view_proj_mat),
+    );
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 384, bytemuck::cast_slice(&shadow_on));
+
+    // Hoisted above both passes: get_chunk_models() takes &mut core.world
+    // (it round-trips a TileCommand::Check to every world thread), so it
+    // must only run once a frame — the shadow pass and the main pass below
+    // both draw the same chunk set.
+    let chunks = core.world.get_chunk_models();
 
     let mut encoder = gfx
         .device
         .create_command_encoder(&CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+    // Shadow pass (guide/shdw.md): only when both shdw()'d on and lum's
+    // current shape can cast one (sun/cone — sphere needs a cube map, scoped
+    // out). Recorded before "World Render" so the depth data it writes is
+    // ready by the time fs_main samples it there.
+    if core.global.shadow_on && lvp.is_some() {
+        encoder.push_debug_group("Shadow Pass");
+        {
+            let mut shadow_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Shadow Pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &gfx.shadow_view,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Clear(1.0),
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            shadow_pass.set_pipeline(&gfx.shadow_pipeline);
+            shadow_pass.set_bind_group(0, &gfx.main_bind_group, &[]);
+            for c in chunks.iter() {
+                if let Some(b) = c.buffers.as_ref() {
+                    shadow_pass.set_index_buffer(b.1.slice(..), IndexFormat::Uint32);
+                    shadow_pass.set_vertex_buffer(0, b.0.slice(..));
+                    shadow_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
+                    shadow_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+                }
+            }
+            // Entity-owned tile grids (guide/entity.md, src/tile_grid.rs) —
+            // one cached ChunkModel per (owner, chunk), transform refreshed
+            // every frame by EntManager::check_entity_grids.
+            for models in core.ent_manager.entity_grid_models.values() {
+                for c in models.values() {
+                    if let Some(b) = c.buffers.as_ref() {
+                        shadow_pass.set_index_buffer(b.1.slice(..), IndexFormat::Uint32);
+                        shadow_pass.set_vertex_buffer(0, b.0.slice(..));
+                        shadow_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
+                        shadow_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+                    }
+                }
+            }
+            for id in draw_order.iter() {
+                if let Some(batches) = core.instance_buffers.get(id) {
+                    for (model, instance_buffer, size) in batches.iter() {
+                        shadow_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+                        shadow_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+                        shadow_pass
+                            .set_index_buffer(model.index_buf.slice(..), model.index_format);
+                        shadow_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                    }
+                }
+            }
+        }
+        encoder.pop_debug_group();
+    }
 
     encoder.push_debug_group("World Render");
     {
@@ -215,15 +354,29 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             render_pass.set_pipeline(&gfx.render_pipeline);
             render_pass.set_bind_group(0, &gfx.main_bind_group, &[]);
             render_pass.set_bind_group(1, &gfx.entity_bind_group, &[]);
-            let chunks = core.world.get_chunk_models();
+            // render_pipeline's layout always declares 3 groups now (guide/shdw.md)
+            // even when shadows are off — fs_main just won't sample it then.
+            render_pass.set_bind_group(2, &gfx.shadow_bind_group, &[]);
 
-            for c in chunks {
+            for c in chunks.iter() {
                 if c.buffers.is_some() {
                     let b = c.buffers.as_ref().unwrap();
                     render_pass.set_index_buffer(b.1.slice(..), IndexFormat::Uint32);
                     render_pass.set_vertex_buffer(0, b.0.slice(..));
                     render_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
                     render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+                }
+            }
+
+            // Entity-owned tile grids — see the matching shadow-pass loop above.
+            for models in core.ent_manager.entity_grid_models.values() {
+                for c in models.values() {
+                    if let Some(b) = c.buffers.as_ref() {
+                        render_pass.set_index_buffer(b.1.slice(..), IndexFormat::Uint32);
+                        render_pass.set_vertex_buffer(0, b.0.slice(..));
+                        render_pass.set_vertex_buffer(1, c.instance_buffer.slice(..));
+                        render_pass.draw_indexed(0..c.ind_data.len() as u32, 0, 0..1);
+                    }
                 }
             }
 

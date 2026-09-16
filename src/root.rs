@@ -88,6 +88,85 @@ pub struct Core {
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
 
+/// Apply the graphics "chip" preset: 0=R00, 1=R43, 2=R30 — see `guide/chip.md`.
+/// Rust-side constants, not Lua-authored numbers, shared by the `chip()` native
+/// (`MainCommmand::SetChip`) and the `--! 0xNN` script header, so the preset
+/// values only live in one place. A free function (not a `Core` method) taking
+/// `global`/`gfx` directly: the load path calls this while a `&mut Bundle`
+/// borrowed from `core.bundle_manager` is still alive, and a `&mut self` method
+/// can't prove it only touches disjoint fields the way explicit field borrows can.
+pub fn apply_chip(global: &mut Global, #[cfg(feature = "headed")] gfx: &mut Gfx, chip_id: u8) {
+    global.chip = chip_id;
+    // Only screen_effects/the sampler are headed concepts; global.chip itself
+    // is tracked headlessly too.
+    #[cfg(feature = "headed")]
+    match chip_id {
+        1 => {
+            // R43 (N64-ish): soft pixelation, full bilinear blur (both filters
+            // Linear), a gentle fog bump. No wobble/affine/dither — the N64 was
+            // perspective-correct.
+            global.screen_effects.crt_resolution = 480.;
+            global.screen_effects.vertex_snap = 0.;
+            global.screen_effects.fog = 60.;
+            gfx.set_filter_mode(false, false);
+        }
+        2 => {
+            // R30 (PS1-ish): blocky resolution, nonzero vertex_snap (clip-space
+            // wobble, and the same value also gates affine UVs + dithering in
+            // shader.wgsl), both filters Nearest (no texture filtering at all).
+            global.screen_effects.crt_resolution = 240.;
+            global.screen_effects.vertex_snap = 1.5;
+            global.screen_effects.fog = 0.;
+            gfx.set_filter_mode(true, true);
+        }
+        _ => {
+            // R00 (modern/default): today's exact values, so an app that never
+            // calls chip() is unaffected.
+            global.screen_effects.crt_resolution = 720.;
+            global.screen_effects.vertex_snap = 0.;
+            global.screen_effects.fog = 0.;
+            gfx.set_filter_mode(true, false);
+        }
+    }
+}
+
+/// Apply the display "monitor" preset: 0=LCD, 1=Slot, 2=Grille — see
+/// `guide/mon.md`. Sets everything the CRT post-pass owns except
+/// `crt_resolution`/`vertex_snap`/filtering, which stay chip-owned. Free
+/// function for the same reason as `apply_chip`.
+pub fn apply_monitor(global: &mut Global, monitor_id: u8) {
+    global.monitor = monitor_id;
+    #[cfg(feature = "headed")]
+    match monitor_id {
+        1 => {
+            // Slot (slot-mask CRT): softer consumer-set look.
+            global.screen_effects.modernize = 0.;
+            global.screen_effects.corner_harshness = 1.2;
+            global.screen_effects.corner_ease = 3.5;
+            global.screen_effects.dark_factor = 0.5;
+            global.screen_effects.low_range = 0.05;
+            global.screen_effects.high_range = 0.6;
+            global.screen_effects.glitchiness = [0.16, 0., 0.04];
+            global.screen_effects.lumen_threshold = 0.2;
+        }
+        2 => {
+            // Grille (aperture-grille CRT): crisp/punchy pro look.
+            global.screen_effects.modernize = 0.;
+            global.screen_effects.corner_harshness = 0.4;
+            global.screen_effects.corner_ease = 5.0;
+            global.screen_effects.dark_factor = 0.25;
+            global.screen_effects.low_range = 0.03;
+            global.screen_effects.high_range = 0.5;
+            global.screen_effects.glitchiness = [0.05, 0., 0.01];
+            global.screen_effects.lumen_threshold = 0.15;
+        }
+        _ => {
+            // LCD: modernize>0 bypasses the CRT pass entirely.
+            global.screen_effects.modernize = 1.;
+        }
+    }
+}
+
 impl<'core> Core {
     #[cfg(feature = "headed")]
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
@@ -274,6 +353,7 @@ impl<'core> Core {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
             self.gfx.set_config_size(new_size);

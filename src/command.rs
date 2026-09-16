@@ -62,7 +62,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     rc::Rc,
-    sync::mpsc::{sync_channel, Sender, SyncSender},
+    sync::mpsc::{sync_channel, Receiver, Sender, SyncSender},
 };
 
 macro_rules! lua_err {
@@ -97,10 +97,24 @@ static COM_LIST: [&str; 20] = [
     "test",
 ];
 
+/// Flush anything a just-torn-down bundle's Lua thread still had in flight to
+/// the host, right after `hard_reset` — see `crate::drain_stray_messages`.
+/// `catcher` is `None` on a caller that has no access to the receiver (e.g. a
+/// wasm/worker path with no such queue); nothing to drain there.
+fn drain_after_hard_reset(catcher: Option<&Receiver<MainPacket>>) {
+    if let Some(catcher) = catcher {
+        crate::drain_stray_messages(catcher);
+    }
+}
+
 /// Private commands not reachable by lua code,
 /// but also works without lua being loaded,
 /// returns false if not a valid command was entered and can safely run through the lua runtime
-pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
+pub fn run_con_sys(
+    core: &mut Core,
+    s: &str,
+    catcher: Option<&Receiver<MainPacket>>,
+) -> Result<bool, P64Error> {
     let bundle_id = core.bundle_manager.console_bundle_target;
     let main_bundle = core.bundle_manager.get_main_bundle();
     println!(" ({s})");
@@ -239,6 +253,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
 
         "load" => {
             hard_reset(core);
+            drain_after_hard_reset(catcher);
             load_app(
                 core,
                 if segments.len() > 1 {
@@ -255,9 +270,13 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
         }
         "exit" => {
             hard_reset(core);
+            drain_after_hard_reset(catcher);
             load_empty(core);
         }
-        "reset" => hard_reset(core),
+        "reset" => {
+            hard_reset(core);
+            drain_after_hard_reset(catcher);
+        }
         "reload" => reload(core, bundle_id),
         #[cfg(feature = "headed")]
         "atlas" => {
@@ -350,6 +369,7 @@ pub fn run_con_sys(core: &mut Core, s: &str) -> Result<bool, P64Error> {
                         core.loggy
                             .log(LogType::Config, &format!("created directory {}", name));
                         hard_reset(core);
+                        drain_after_hard_reset(catcher);
                         load_app(core, Some(name), None, None, None)?;
                     }
                     Ok(_t) => core.loggy.log(
@@ -943,6 +963,7 @@ function make(asset, x, y, z, scale) end"
         Ok(Value::Nil)
     });
 
+
     let pitcher = main_pitcher.clone();
     lua!(
         "lot",
@@ -1107,12 +1128,12 @@ function cam(params) end"
 
     let pitcher = main_pitcher.clone();
     lua!(
-        "lamp",
+        "lum",
         move |_, _, table_val: Value| {
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
-                // `dir` is a raw xyz vector (not a colour).
-                let dir = match table.get("dir") {
+                // A raw xyz vector table (not a colour) — shared by `dir`/`pos`.
+                let vec3_of = |key: &str| match table.get(key) {
                     Some(Value::Table(tbl)) => {
                         let t = tbl.borrow();
                         Some(glam::vec3(
@@ -1123,6 +1144,8 @@ function cam(params) end"
                     }
                     _ => None,
                 };
+                let dir = vec3_of("dir");
+                let pos = vec3_of("pos");
                 // Colours accept the usual forms: hex string ('ff0'), rgb table
                 // (0..1 or 0..255) — via the shared get_color helper.
                 let color_of = |key: &str| {
@@ -1138,17 +1161,34 @@ function cam(params) end"
                     Some(v) => Some(v.into()),
                     _ => None,
                 };
+                let shape = match table.get("shape") {
+                    Some(Value::String(s)) => match s.to_lowercase().as_str() {
+                        "sun" => Some(0u8),
+                        "cone" => Some(1u8),
+                        "sphere" => Some(2u8),
+                        _ => return Err(static_err("lum: unknown shape (want sun/cone/sphere)")),
+                    },
+                    _ => None,
+                };
+                let range = match table.get("range") {
+                    Some(v) => Some(v.into()),
+                    _ => None,
+                };
+                let angle = match table.get("angle") {
+                    Some(v) => Some(v.into()),
+                    _ => None,
+                };
                 lua_err!(pitcher.send((
                     bundle_id,
-                    MainCommmand::Light(dir, color, ambient, sky, ground)
+                    MainCommmand::Light(dir, color, ambient, sky, ground, shape, pos, range, angle)
                 )));
             }
             Ok(())
         },
-        "Set the directional sun: dir (xyz), color (rgb 0..1), ambient (0..1)",
+        "Set the one light: shape (\"sun\"/\"cone\"/\"sphere\", default sun), dir/pos (xyz), color (rgb 0..1), ambient (0..1), sky/ground (hemisphere, sun only), range, angle (cone half-angle, radians)",
         "
----@param params lamp_params
-function lamp(params) end"
+---@param params lum_params
+function lum(params) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -1195,6 +1235,260 @@ function fog(params) end"
 ---@param on boolean?
 function mgrab(on) end"
     );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "shdw",
+        move |_, _, on: Option<bool>| {
+            // Off by default: the shadow pass only runs once a script opts in
+            // — same "zero behavior change" discipline as chip()/mon().
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Shdw(on.unwrap_or(true)))));
+            Ok(())
+        },
+        "Enable the shadow map (from the current lum light), or disable it with shdw(false)",
+        "
+---@param on boolean?
+function shdw(on) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "gour",
+        move |_, _, on: Option<bool>| {
+            // Off by default: today's per-fragment "smooth" shading stays
+            // the default — see guide/gour.md.
+            lua_err!(pitcher.send((bundle_id, MainCommmand::Gour(on.unwrap_or(true)))));
+            Ok(())
+        },
+        "Enable Gouraud (per-vertex) shading, or disable it with gour(false) to go back to per-fragment",
+        "
+---@param on boolean?
+function gour(on) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "chip",
+        move |_, _, code: Option<String>| {
+            match code {
+                Some(c) => {
+                    let id = match c.to_lowercase().as_str() {
+                        "r00" => 0u8,
+                        "r43" => 1u8,
+                        "r30" => 2u8,
+                        _ => return Err(static_err("chip: unknown code (want r00/r43/r30)")),
+                    };
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::SetChip(id))));
+                    Ok(Value::Nil)
+                }
+                None => {
+                    let (tx, rx) = sync_channel::<u8>(0);
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::GetChip(tx))));
+                    let name = match rx.recv().unwrap_or(0) {
+                        1 => "r43",
+                        2 => "r30",
+                        _ => "r00",
+                    };
+                    Ok(Value::String(name.to_string()))
+                }
+            }
+        },
+        "Get or set the graphics chip preset: r00 (modern), r43 (N64-ish), r30 (PS1-ish)",
+        "
+---@param code string?
+---@return string?
+function chip(code) end"
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "mon",
+        move |_, _, code: Option<String>| {
+            match code {
+                Some(c) => {
+                    let id = match c.to_lowercase().as_str() {
+                        "lcd" => 0u8,
+                        "slot" => 1u8,
+                        "grille" => 2u8,
+                        _ => return Err(static_err("mon: unknown code (want lcd/slot/grille)")),
+                    };
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::SetMonitor(id))));
+                    Ok(Value::Nil)
+                }
+                None => {
+                    let (tx, rx) = sync_channel::<u8>(0);
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::GetMonitor(tx))));
+                    let name = match rx.recv().unwrap_or(0) {
+                        1 => "slot",
+                        2 => "grille",
+                        _ => "lcd",
+                    };
+                    Ok(Value::String(name.to_string()))
+                }
+            }
+        },
+        "Get or set the display monitor preset: lcd (modern flat panel), slot (slot-mask CRT), grille (aperture-grille CRT)",
+        "
+---@param code string?
+---@return string?
+function mon(code) end"
+    );
+
+    // The collision system's queries — see guide/hit.md. `hit.pair(a, b)` is
+    // a function, not a colon method (`ent1:hit(ent2)` as originally asked):
+    // silt-lua's native-call plumbing (`NativeReturn`) isn't reachable from
+    // outside the crate, so a `LuaEnt` userdata method has no way to bridge
+    // to a channel-backed native and get its return value back — only fire-
+    // and-forget (the `copy`->`_make` pattern) works there. A plain function
+    // has full pitcher access like any other native, so that's the shape.
+    let mut hit = vm_init.raw_table();
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "all",
+        move |vm, mc, _: ()| {
+            let (tx, rx) = sync_channel::<Vec<(u64, u64, f32, f32, f32, f32)>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::HitAll(tx))));
+            let hits = rx.recv().unwrap_or_default();
+            let out: Vec<Value> = hits
+                .into_iter()
+                .map(|(a, b, nx, ny, nz, depth)| {
+                    let mut t = vm.raw_table();
+                    t.set("a", a as f64);
+                    t.set("b", b as f64);
+                    t.set(
+                        "normal",
+                        vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
+                    );
+                    t.set("depth", depth as f64);
+                    vm.wrap_table(mc, t)
+                })
+                .collect();
+            Ok(vm.table_from_array(mc, out))
+        },
+        "Every currently-overlapping ent-vs-ent pair in this bundle: array of {a=id, b=id, normal={x,y,z}, depth=n}",
+        "
+---@return table[]
+function hit.all() end",
+        &mut hit
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "cell",
+        move |vm, mc, id: u64| {
+            let (tx, rx) = sync_channel::<Vec<(i32, i32, i32, f32, f32, f32, f32)>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::HitCell(id, tx))));
+            let hits = rx.recv().unwrap_or_default();
+            let out: Vec<Value> = hits
+                .into_iter()
+                .map(|(ix, iy, iz, nx, ny, nz, depth)| {
+                    let mut t = vm.raw_table();
+                    t.set(
+                        "tile",
+                        vm.table_from_array(mc, [ix as f64, iy as f64, iz as f64]),
+                    );
+                    t.set(
+                        "normal",
+                        vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
+                    );
+                    t.set("depth", depth as f64);
+                    vm.wrap_table(mc, t)
+                })
+                .collect();
+            Ok(vm.table_from_array(mc, out))
+        },
+        "Every solid tile entity `id`'s collider currently overlaps: array of {tile={x,y,z}, normal={x,y,z}, depth=n}",
+        "
+---@param id integer
+---@return table[]
+function hit.cell(id) end",
+        &mut hit
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "grid",
+        move |vm, mc, id: u64| {
+            let (tx, rx) = sync_channel::<Vec<(u64, i32, i32, i32, f32, f32, f32, f32)>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::HitGrid(id, tx))));
+            let hits = rx.recv().unwrap_or_default();
+            let out: Vec<Value> = hits
+                .into_iter()
+                .map(|(owner, ix, iy, iz, nx, ny, nz, depth)| {
+                    let mut t = vm.raw_table();
+                    t.set("owner", owner as f64);
+                    t.set(
+                        "tile",
+                        vm.table_from_array(mc, [ix as f64, iy as f64, iz as f64]),
+                    );
+                    t.set(
+                        "normal",
+                        vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
+                    );
+                    t.set("depth", depth as f64);
+                    vm.wrap_table(mc, t)
+                })
+                .collect();
+            Ok(vm.table_from_array(mc, out))
+        },
+        "Every hit between entity `id`'s collider and any other entity's tile grid: array of {owner=id, tile={x,y,z}, normal={x,y,z}, depth=n}",
+        "
+---@param id integer
+---@return table[]
+function hit.grid(id) end",
+        &mut hit
+    );
+
+    let pitcher = main_pitcher.clone();
+    lua_lib!(
+        "pair",
+        move |vm, mc, (ud_a, ud_b): (Value, Value)| {
+            let extract = |ud: Value| -> Option<UserDataWrapper> {
+                if let Value::UserData(lent) = ud {
+                    let lb = lent.borrow();
+                    if lb.is_type::<LuaEnt>() {
+                        return Some(lb.clone());
+                    }
+                }
+                None
+            };
+            let a = match extract(ud_a) {
+                Some(w) => w,
+                None => return Err(context_err("hit.pair expects two entities")),
+            };
+            let b = match extract(ud_b) {
+                Some(w) => w,
+                None => return Err(context_err("hit.pair expects two entities")),
+            };
+            let (tx, rx) = sync_channel::<Option<(f32, f32, f32, f32)>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::HitPair(a, b, tx))));
+            match rx.recv() {
+                Ok(Some((nx, ny, nz, depth))) => {
+                    let mut t = vm.raw_table();
+                    t.set(
+                        "normal",
+                        vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
+                    );
+                    t.set("depth", depth as f64);
+                    Ok(vm.wrap_table(mc, t))
+                }
+                _ => Ok(Value::Nil),
+            }
+        },
+        "Pairwise collision test between two entities: nil or {normal={x,y,z}, depth=n}",
+        "
+---@param a entity
+---@param b entity
+---@return table?
+function hit.pair(a, b) end",
+        &mut hit
+    );
+
+    vm_init
+        .globals
+        .borrow_mut(mc_in)
+        .set("hit", vm_init.wrap_table(mc_in, hit));
 
     #[cfg(feature = "audio")]
     let sing_bpm = singer.clone();
@@ -2678,7 +2972,7 @@ pub fn load_empty(core: &mut Core) {
     #[cfg(feature = "headed")]
     {
         let payload = crate::asset::get_logo();
-        block_on(crate::asset::unpack(
+        let header = block_on(crate::asset::unpack(
             #[cfg(feature = "headed")]
             &core.gfx.device,
             #[cfg(feature = "headed")]
@@ -2694,6 +2988,15 @@ pub fn load_empty(core: &mut Core) {
             &mut core.loggy,
             core.global.debug,
         ));
+        if let Some((chip_id, monitor_id)) = header {
+            crate::root::apply_chip(
+                &mut core.global,
+                #[cfg(feature = "headed")]
+                &mut core.gfx,
+                chip_id,
+            );
+            crate::root::apply_monitor(&mut core.global, monitor_id);
+        }
     }
 
     #[cfg(feature = "headed")]
@@ -2842,10 +3145,13 @@ async fn async_load_app(
     // core.tex_manager.reset();
 
     // if we get a path and it's a file, it needs to be unpacked, if it's a custom directoty we walk it, otherwise walk the local directory
-    match bundle.get_directory() {
+    // The first-line `--! 0xNN` chip+monitor header (see guide/mon.md), if any
+    // loaded script declared one — applied below, same effect as calling
+    // chip()/mon() once before main() runs.
+    let header: Option<(u8, u8)> = match bundle.get_directory() {
         Some(s) => match payload {
             Some(p) => {
-                crate::asset::unpack(
+                let h = crate::asset::unpack(
                     #[cfg(feature = "headed")]
                     &core.gfx.device,
                     #[cfg(feature = "headed")]
@@ -2863,6 +3169,7 @@ async fn async_load_app(
                 )
                 .await;
                 // println!("unpacked");
+                h
             }
             None => {
                 let mut path = crate::asset::determine_path(Some(s.as_ref()));
@@ -2873,7 +3180,7 @@ async fn async_load_app(
                     #[cfg(feature = "audio")]
                     crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
 
-                    crate::asset::walk_files(
+                    let (_, h) = crate::asset::walk_files(
                         #[cfg(feature = "headed")]
                         Some(&core.gfx.device),
                         #[cfg(feature = "headed")]
@@ -2891,6 +3198,7 @@ async fn async_load_app(
                         &mut core.loggy,
                         debug,
                     );
+                    h
                 } else {
                     match path.file_name() {
                         Some(file_name) => {
@@ -2923,7 +3231,7 @@ async fn async_load_app(
                                     &mut core.loggy,
                                     debug,
                                 )
-                                .await;
+                                .await
                             } else {
                                 return Err(P64Error::IoNotFileOrDir(s.into()));
                             }
@@ -2931,7 +3239,7 @@ async fn async_load_app(
                         None => {
                             return Err(P64Error::IoNotFileOrDir(s.into()));
                         }
-                    };
+                    }
                 }
             }
         },
@@ -2943,7 +3251,7 @@ async fn async_load_app(
             #[cfg(feature = "audio")]
             crate::asset::load_sounds_from_dir(&path, &core.singer, &mut core.loggy);
 
-            crate::asset::walk_files(
+            let (_, h) = crate::asset::walk_files(
                 #[cfg(feature = "headed")]
                 Some(&core.gfx.device),
                 #[cfg(feature = "headed")]
@@ -2959,8 +3267,18 @@ async fn async_load_app(
                 &mut core.loggy,
                 debug,
             );
+            h
         }
     };
+    if let Some((chip_id, monitor_id)) = header {
+        crate::root::apply_chip(
+            &mut core.global,
+            #[cfg(feature = "headed")]
+            &mut core.gfx,
+            chip_id,
+        );
+        crate::root::apply_monitor(&mut core.global, monitor_id);
+    }
     #[cfg(feature = "headed")]
     core.tex_manager
         .refinalize(&core.gfx.queue, &core.gfx.master_texture);
@@ -3243,19 +3561,59 @@ pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
     Cam(Option<glam::Vec3>, Option<glam::Vec2>),
-    /// Directional sun + hemisphere ambient: (dir, sun rgb, flat ambient, sky
-    /// rgb, ground rgb) — each optional so `lamp{}` can set just one aspect.
-    /// sky+ground present => hemisphere ambient; else the flat scalar is used.
+    /// The one light `lum{}` sets — (dir, sun rgb, flat ambient, sky rgb,
+    /// ground rgb, shape, pos, range, angle), each optional so a call can set
+    /// just one aspect. sky+ground present => hemisphere ambient (sun only);
+    /// else the flat scalar is used. `shape`: 0=sun (default), 1=cone,
+    /// 2=sphere — see `guide/lum.md`.
     Light(
         Option<glam::Vec3>,
         Option<glam::Vec3>,
         Option<f32>,
         Option<glam::Vec3>,
         Option<glam::Vec3>,
+        Option<u8>,
+        Option<glam::Vec3>,
+        Option<f32>,
+        Option<f32>,
     ),
     /// Distance fog: rgb + w = far distance (w=0 disables).
     Fog(glam::Vec4),
     MouseGrab(bool),
+    /// Enable/disable the shadow pass — see `guide/shdw.md`.
+    Shdw(bool),
+    /// Enable/disable Gouraud (per-vertex) shading — see `guide/gour.md`.
+    Gour(bool),
+    /// Graphics chip preset: 0=R00 (modern), 1=R43 (N64-ish), 2=R30 (PS1-ish).
+    /// See `guide/chip.md`.
+    SetChip(u8),
+    GetChip(SyncSender<u8>),
+    /// Display monitor preset: 0=LCD, 1=Slot (slot-mask CRT), 2=Grille
+    /// (aperture-grille CRT). See `guide/mon.md`.
+    SetMonitor(u8),
+    GetMonitor(SyncSender<u8>),
+    /// Pairwise collision test between two entity snapshots (`ent:hit(ent2)`'s
+    /// backing call — see `guide/hit.md`). `Some((nx,ny,nz,depth))` if they
+    /// overlap, `None` otherwise. Takes snapshots rather than ids because the
+    /// two entities may not even be in the same bundle as the caller.
+    HitPair(
+        UserDataWrapper,
+        UserDataWrapper,
+        SyncSender<Option<(f32, f32, f32, f32)>>,
+    ),
+    /// The O(n²)-avoided batch query behind `hit.all()`: every currently-
+    /// overlapping ent-vs-ent pair in the sender's bundle.
+    HitAll(SyncSender<Vec<(u64, u64, f32, f32, f32, f32)>>),
+    /// Every solid tile entity `id`'s collider currently overlaps — backs
+    /// `hit.cell(id)`.
+    HitCell(u64, SyncSender<Vec<(i32, i32, i32, f32, f32, f32, f32)>>),
+    /// Every hit between entity `id`'s collider and any *other* entity's
+    /// tile grid (see `src/tile_grid.rs`, `guide/hit.md`) — backs
+    /// `hit.grid(id)`.
+    HitGrid(
+        u64,
+        SyncSender<Vec<(u64, i32, i32, i32, f32, f32, f32, f32)>>,
+    ),
     Make(Vec<String>, SyncSender<u8>),
     Anim(String, Vec<String>, u32),
     // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
@@ -3317,13 +3675,19 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             pos: pos.map(|v| [v.x, v.y, v.z]),
             rot: rot.map(|v| [v.x, v.y]),
         }),
-        MainCommmand::Light(dir, color, ambient, sky, ground) => Some(VmToHost::Light {
-            dir: dir.map(|v| [v.x, v.y, v.z]),
-            color: color.map(|v| [v.x, v.y, v.z]),
-            ambient,
-            sky: sky.map(|v| [v.x, v.y, v.z]),
-            ground: ground.map(|v| [v.x, v.y, v.z]),
-        }),
+        MainCommmand::Light(dir, color, ambient, sky, ground, shape, pos, range, angle) => {
+            Some(VmToHost::Light {
+                dir: dir.map(|v| [v.x, v.y, v.z]),
+                color: color.map(|v| [v.x, v.y, v.z]),
+                ambient,
+                sky: sky.map(|v| [v.x, v.y, v.z]),
+                ground: ground.map(|v| [v.x, v.y, v.z]),
+                shape,
+                pos: pos.map(|v| [v.x, v.y, v.z]),
+                range,
+                angle,
+            })
+        }
         MainCommmand::Fog(v) => Some(VmToHost::Fog([v.x, v.y, v.z, v.w])),
         MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
         MainCommmand::Globals(table) => Some(VmToHost::Globals(
