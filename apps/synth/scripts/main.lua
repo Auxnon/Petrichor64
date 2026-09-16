@@ -160,7 +160,7 @@ function main()
 	cam({ pos = { 0, 3, 9 }, rot = { tau / 4, tau * (-1 / 5) } })
 	-- Overhead sun + hemisphere ambient (cool sky above, dark bounce below) so
 	-- key tops read cooler/brighter than their shaded sides and undersides.
-	lamp({
+	lum({
 		dir = { -0.35, 0.25, -0.9 },
 		color = "fe8", -- warm sun
 		sky = "8ad", -- cool sky ambient on the tops
