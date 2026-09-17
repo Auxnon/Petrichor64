@@ -290,11 +290,14 @@ impl<'core> Core {
             .report_interval_s(0.5)
             .build_with_target_rate(60.0);
 
-        let (_cli_thread_sender, cli_thread_receiver) = channel::<String>();
         // The TUI backend puts the terminal in raw mode and reads stdin itself
         // via crossterm; a second blocking line-reader thread on the same fd
-        // would race it for bytes. Just leave the sender unused there so
-        // `cli_thread_receiver.try_recv()` harmlessly never yields anything.
+        // would race it for bytes. `cli_thread_sender` only moves into that
+        // thread below, which only exists outside the render-tui build — so
+        // it's an unused-variable warning there, not (as leaving it
+        // underscore-prefixed here would silently become once the build below
+        // actually used it) a name that plain doesn't exist.
+        let (cli_thread_sender, cli_thread_receiver) = channel::<String>();
         #[cfg(not(feature = "render-tui"))]
         std::thread::spawn(move || loop {
             let mut line = String::new();

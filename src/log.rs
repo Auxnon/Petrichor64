@@ -99,6 +99,22 @@ impl Loggy {
         self.current_line.clone()
     }
 
+    /** SYS: current scrollback length — a mark to later diff against with
+    `since`, so a caller can capture exactly what a command logged (e.g. for
+    console pipe support in `command::run_con_sys`) without that command
+    needing to know it's being piped. */
+    pub fn mark(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /** SYS: every line logged since `mark`. */
+    pub fn since(&self, mark: usize) -> Vec<String> {
+        if mark >= self.buffer.len() {
+            return vec![];
+        }
+        self.buffer[mark..].to_vec()
+    }
+
     /** USER: populates current line with last issued command, if any*/
     pub fn history_up(&mut self) {
         let mut it = self.history_it;
@@ -150,7 +166,11 @@ impl Loggy {
 
     /** SYS: log out */
     pub fn log(&mut self, _log_type: LogType, str: &str) {
-        #[cfg(feature = "headed")]
+        // Buffering used to be headed-only (nothing else rendered a visible
+        // console, so why keep scrollback) — but `mark`/`since` need every
+        // backend's commands recorded here to support console piping
+        // (`command::run_con_sys`), headless included. `_print` is plain
+        // Vec<String> bookkeeping, no headed-only APIs, so this is free.
         self._print(str, false);
         println!("~{}", str);
         // println! is a no-op on wasm; mirror engine logs to the browser console

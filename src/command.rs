@@ -107,10 +107,42 @@ fn drain_after_hard_reset(catcher: Option<&Receiver<MainPacket>>) {
     }
 }
 
-/// Private commands not reachable by lua code,
-/// but also works without lua being loaded,
-/// returns false if not a valid command was entered and can safely run through the lua runtime
+/// Private commands not reachable by lua code, but also works without lua
+/// being loaded, returns false if not a valid command was entered and can
+/// safely run through the lua runtime.
+///
+/// Supports shell-style piping: `left | right` runs `left`, captures
+/// whatever it logged to the console (every command's real output already
+/// goes through `core.loggy.log`, so this needs no per-command support) and
+/// appends it as trailing arguments to `right`, and so on down the chain —
+/// `pwd | copy` logs the app's directory, then copies exactly that to the
+/// clipboard, and the same works for any other command's output.
 pub fn run_con_sys(
+    core: &mut Core,
+    s: &str,
+    catcher: Option<&Receiver<MainPacket>>,
+) -> Result<bool, P64Error> {
+    if !s.contains('|') {
+        return run_con_sys_single(core, s, catcher);
+    }
+    let mut piped: Option<String> = None;
+    let mut result = true;
+    for stage in s.split('|') {
+        let mut stage = stage.trim().to_string();
+        if let Some(prev) = piped.take() {
+            if !prev.is_empty() {
+                stage.push(' ');
+                stage.push_str(&prev);
+            }
+        }
+        let mark = core.loggy.mark();
+        result = run_con_sys_single(core, &stage, catcher)?;
+        piped = Some(core.loggy.since(mark).join("\n"));
+    }
+    Ok(result)
+}
+
+fn run_con_sys_single(
     core: &mut Core,
     s: &str,
     catcher: Option<&Receiver<MainPacket>>,
@@ -310,6 +342,31 @@ pub fn run_con_sys(
                     core.loggy
                         .log(LogType::ConfigError, &format!("read error: {er}"));
                 }
+            }
+        }
+        // Current app's directory — piping-friendly (see the `|` handling
+        // wrapping this whole function): `pwd | copy` logs the path and puts
+        // it straight on the clipboard.
+        "pwd" => {
+            core.loggy.log(
+                LogType::Config,
+                main_bundle.get_directory().unwrap_or(""),
+            );
+        }
+        // Clipboard write. Takes its text as trailing args, or — the point of
+        // this command existing — whatever the previous pipeline stage logged:
+        // `pwd | copy`, `ls | copy`, `bundles | copy`, any command at all.
+        "copy" => {
+            let content = segments[1..].join(" ");
+            if content.is_empty() {
+                core.loggy
+                    .log(LogType::ConfigError, "copy <text> (or pipe: `pwd | copy`)");
+            } else {
+                let _ = core
+                    .pitcher
+                    .send((bundle_id, MainCommmand::Copy(content.clone())));
+                core.loggy
+                    .log(LogType::Config, &format!("copied: {}", content));
             }
         }
         "ugh" => {
