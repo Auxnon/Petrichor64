@@ -1,27 +1,21 @@
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager, error_window, global::GuiParams, gui::ScreenIndex,
-    lua_define::MainPacket, render, texture::TexManager,
+    error_window, global::GuiParams, render, texture::TexManager,
 };
-use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple, world::World};
-use crate::{gui::Gui, log::LogType};
+use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
-use itertools::Itertools;
-use rustc_hash::FxHashMap;
 #[cfg(feature = "audio")]
 use std::sync::mpsc::channel;
 use std::sync::Arc;
-use std::{mem, rc::Rc};
+use std::mem;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
-use wgpu::{BackendOptions, Features, SurfaceTarget};
+use wgpu::{BackendOptions, ExperimentalFeatures, Features, Trace};
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
     // platform::macos::WindowExtMacOS,
-    window::{CursorGrabMode, Window, WindowBuilder},
+    window::Window,
 };
 
 const MAX_ENTS: u64 = 10000;
@@ -38,7 +32,18 @@ pub struct Gfx<'w> {
     pub main_layout: wgpu::BindGroupLayout,
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
+    /// The shadow map (guide/shdw.md): a small, fixed-size depth target
+    /// rendered from the lum{} light's POV, sampled by fs_main. Not resized
+    /// with the window.
+    pub shadow_view: wgpu::TextureView,
+    pub shadow_bind_group: wgpu::BindGroup,
+    pub shadow_pipeline: wgpu::RenderPipeline,
     pub surface: wgpu::Surface<'w>,
+    /// Kept so the surface can be rebuilt without tearing down the device, the
+    /// pipelines, or the running game — Android destroys the native window when the
+    /// app is backgrounded (screen sleep) and hands back a *new* one on resume, at
+    /// which point the old surface is dead. See `recreate_surface`.
+    instance: wgpu::Instance,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -53,6 +58,22 @@ struct GlobalUniforms {
     persp: [[f32; 4]; 4],
     adjustments: [[f32; 4]; 4],
     specs: [f32; 4],
+    // L0 retro lighting: directional sun. `light_color.w` carries ambient.
+    light_dir: [f32; 4],
+    light_color: [f32; 4],
+    // L2 distance fog: rgb + w = far distance (w=0 disables).
+    fog_color: [f32; 4],
+    // L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb. Sun shape only.
+    amb_sky: [f32; 4],
+    amb_ground: [f32; 4],
+    // lum{} shape state: xyz = world pos (cone/sphere), w = falloff range.
+    light_pos: [f32; 4],
+    // x = shape (0=sun,1=cone,2=sphere), y = cone half-angle (radians).
+    light_shape: [f32; 4],
+    // Light-space view*proj for the shadow map.
+    light_view_proj: [[f32; 4]; 4],
+    // x = shdw() on/off.
+    shadow_on: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -84,7 +105,7 @@ fn create_depth_texture(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         compare: Some(wgpu::CompareFunction::LessEqual), // 5.
         lod_min_clamp: 0.0,
         lod_max_clamp: 100.0,
@@ -104,17 +125,30 @@ impl<'w> Gfx<'w> {
         // let b=Box::new(*rwindow);
         // let window = &*rwindow;
         // let ww= SurfaceTarget::Window(Box::new(*rwindow));
-        let size = rwindow.inner_size();
+        // On the web the canvas often isn't laid out yet at init, so
+        // inner_size() reports 0x0 — which makes the surface config and every
+        // texture derived from it 0x0 and Dawn/WebGPU rejects them. Start from a
+        // sane default; the first Resized event reconfigures to the real size.
+        let size = {
+            let s = rwindow.inner_size();
+            if s.width == 0 || s.height == 0 {
+                winit::dpi::PhysicalSize::new(640, 548)
+            } else {
+                s
+            }
+        };
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            // label: Some("instance"),
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
+                for_resource_creation: None,
+                for_device_loss: None,
+            },
             backend_options: BackendOptions::from_env_or_default(),
-            // dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-            // gles_minor_version: wgpu::Gles3MinorVersion::Automatic,
-            flags: wgpu::InstanceFlags::empty(), // TODO is it worth discarding debug info
+            flags: wgpu::InstanceFlags::empty(),
+            display: None,
         });
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
@@ -134,21 +168,20 @@ impl<'w> Gfx<'w> {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect("Failed to request adapter");
 
         let (device, queue) = match adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: Features::empty(),
-                    required_limits: wgpu::Limits {
-                        max_storage_textures_per_shader_stage: 8,
-                        ..wgpu::Limits::default()
-                    },
-                    memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            .request_device(&wgpu::DeviceDescriptor {
+                trace: Trace::Off, // TODO make this on, where should it save?
+                experimental_features: ExperimentalFeatures::disabled(),
+                label: None,
+                required_features: Features::empty(),
+                required_limits: wgpu::Limits {
+                    max_storage_textures_per_shader_stage: 8,
+                    ..wgpu::Limits::default()
                 },
-                None,
-            )
+                memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
+            })
             .await
         {
             Ok((device, queue)) => (device, queue),
@@ -157,7 +190,7 @@ impl<'w> Gfx<'w> {
                 std::process::exit(1);
             }
         };
-        device.on_uncaptured_error(Box::new(|e| {
+        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
             error_window(Box::new(e));
             std::process::exit(1);
         }));
@@ -170,16 +203,38 @@ impl<'w> Gfx<'w> {
             texture: diff_tex,
         } = tex_manager.finalize(&device, &queue);
 
+        let surface_caps = surface.get_capabilities(&adapter);
+        // Prefer sRGB surface formats; fall back to first available
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             desired_maximum_frame_latency: 1,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb, //Bgra8UnormSrgb
+            format: surface_format,
             width: size.width,
             height: size.height,
             // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
             // lost? can we check if immediate is better?
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: CompositeAlphaMode::Opaque,
+            // Ask for what the surface actually supports. `Opaque` was hardcoded,
+            // which is fine on desktop and the web but fatal on Android, where the
+            // surface reports only `[Inherit]` — `Surface::configure` fails
+            // validation and the app dies before drawing a frame. Opaque is still
+            // preferred where it exists (the engine draws a full-screen opaque
+            // image, and letting the compositor blend costs work for nothing).
+            alpha_mode: if surface_caps
+                .alpha_modes
+                .contains(&CompositeAlphaMode::Opaque)
+            {
+                CompositeAlphaMode::Opaque
+            } else {
+                surface_caps.alpha_modes[0]
+            },
             view_formats: vec![],
         };
 
@@ -314,7 +369,15 @@ impl<'w> Gfx<'w> {
             persp: mx_persp.to_cols_array_2d(),
             adjustments: Mat4::ZERO.to_cols_array_2d(),
             specs: [0.0, 0.0, 0.0, 0.0],
-            //num_lights: [lights.len() as u32, 0, 0, 0],
+            light_dir: [0.0, 0.0, -1.0, 0.0],
+            light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
+            fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
+            amb_sky: [0.0, 0.0, 0.0, 0.0],   // w=0 => flat ambient
+            amb_ground: [0.0, 0.0, 0.0, 0.0],
+            light_pos: [0.0, 0.0, 0.0, 0.0],
+            light_shape: [0.0, 0.0, 0.0, 0.0], // shape=0 => sun
+            light_view_proj: Mat4::ZERO.to_cols_array_2d(),
+            shadow_on: [0.0, 0.0, 0.0, 0.0],
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -323,11 +386,125 @@ impl<'w> Gfx<'w> {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
+        // ============ Shadow map (guide/shdw.md) ============
+        // A small, fixed-size, deliberately low-resolution depth target — not
+        // tied to the window size or resized with it — rendered from the
+        // lum{} light's point of view (shadow_vs_main) and sampled with a
+        // hardware comparison sampler in fs_main. Off by default (shdw());
+        // when off the pass still runs (a handful of triangles into an
+        // unsampled target) rather than branching pipeline setup itself.
+        const SHADOW_MAP_SIZE: u32 = 128;
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            label: Some("shadow depth"),
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 1.0,
+            ..Default::default()
+        });
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("shadow bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
+        });
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow bind group"),
+            layout: &shadow_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
+        let shadow_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Shadow Pipeline Layout"),
+                bind_group_layouts: &[Some(&main_layout)],
+                ..Default::default()
+            });
+        let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
+            label: Some("Shadow Pipeline"),
+            layout: Some(&shadow_pipeline_layout),
+            vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("shadow_vs_main"),
+                buffers: &[
+                    crate::model::Vertex::desc(),
+                    crate::ent::EntityUniforms::desc(),
+                ],
+            },
+            fragment: None,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+                unclipped_depth: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&main_layout, &entity_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout), Some(&shadow_layout)],
+                ..Default::default()
             });
 
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -380,9 +557,9 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less), // 1.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -390,7 +567,7 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         let depth = create_depth_texture(&config, &device);
@@ -423,8 +600,8 @@ impl<'w> Gfx<'w> {
 
         let gui_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Gui Render Pipeline Layout"),
-            bind_group_layouts: &[&main_layout, &gui_aux_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&main_layout), Some(&gui_aux_layout)],
+            ..Default::default()
         });
 
         let gui_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -463,9 +640,9 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less, // 1.
-                stencil: wgpu::StencilState::default(),     // 2.
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less), // 1.
+                stencil: wgpu::StencilState::default(),           // 2.
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState {
@@ -473,15 +650,15 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         // =================== Sky Pipeline ===================
 
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Sky Render Pipeline Layout"),
-            bind_group_layouts: &[&main_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&main_layout)],
+            ..Default::default()
         });
 
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -515,8 +692,8 @@ impl<'w> Gfx<'w> {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -525,7 +702,7 @@ impl<'w> Gfx<'w> {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
         });
 
         let post = Post::new(
@@ -540,6 +717,7 @@ impl<'w> Gfx<'w> {
         (
             Self {
                 surface,
+                instance,
                 device,
                 queue,
                 size,
@@ -550,6 +728,9 @@ impl<'w> Gfx<'w> {
                 // view_matrix: mx_view,
                 // perspective_matrix: mx_persp,
                 render_pipeline,
+                shadow_view,
+                shadow_bind_group,
+                shadow_pipeline,
                 // switch_board: Arc::clone(&switch_board),
                 post,
                 main_bind_group,
@@ -596,9 +777,52 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_config_size(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.config.width = new_size.width;
-        self.config.height = new_size.height;
+        // Clamp to the device's max 2D texture dimension. On the web a canvas can
+        // enter a client-size <-> backing-buffer×DPR feedback loop and request a
+        // surface larger than the GPU allows, which aborts the wasm module
+        // ("Texture size exceeded maximum"). Clamping keeps it alive; the canvas
+        // CSS pin (attach_canvas_to_dom) is what actually stops the growth.
+        let max = self.device.limits().max_texture_dimension_2d;
+        let w = new_size.width.clamp(1, max);
+        let h = new_size.height.clamp(1, max);
+        self.size = winit::dpi::PhysicalSize::new(w, h);
+        self.config.width = w;
+        self.config.height = h;
+    }
+
+    /// Rebuild the surface against the window's *current* native handle, keeping the
+    /// device, pipelines, textures and the running game intact.
+    ///
+    /// Android destroys the native window whenever the app leaves the foreground (a
+    /// screen sleep is enough) and supplies a new one on resume. The old surface
+    /// refers to the window that no longer exists, so every frame after that draws
+    /// nowhere — the app comes back black. Only the surface is stale, which is why
+    /// this exists instead of rebuilding `Core` and losing the game's state.
+    pub fn recreate_surface(&mut self) -> bool {
+        match self.instance.create_surface(self.win_ref.clone()) {
+            Ok(surface) => {
+                // The new window can be a different size (rotation, a fold opening),
+                // so trust it over the config we were holding.
+                let s = self.win_ref.inner_size();
+                if s.width > 0 && s.height > 0 {
+                    self.size = s;
+                    self.config.width = s.width;
+                    self.config.height = s.height;
+                }
+                surface.configure(&self.device, &self.config);
+                self.surface = surface;
+                let d = create_depth_texture(&self.config, &self.device);
+                self.depth_texture = d.1;
+                true
+            }
+            Err(e) => {
+                // Not fatal: without a surface we simply don't draw, and the next
+                // resume gets another go. Aborting here would kill a running game
+                // over a transient window handle.
+                ::log::error!("could not recreate the surface: {}", e);
+                false
+            }
+        }
     }
 
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
@@ -622,7 +846,7 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        let _=self.win_ref.request_inner_size(LogicalSize::new(
+        let _ = self.win_ref.request_inner_size(LogicalSize::new(
             x.unwrap_or(&(self.size.width as f32))
                 .clamp(10., f32::INFINITY) as u32,
             y.unwrap_or(&(self.size.height as f32))
@@ -632,5 +856,52 @@ impl<'w> Gfx<'w> {
 
     pub fn set_title(&self, title: &str) {
         self.win_ref.set_title(title);
+    }
+
+    /// Swap the main scene/GUI texture sampler's filter mode and rebuild the one
+    /// `main_bind_group` that every draw call reads — the whole engine has exactly
+    /// one sampler for the master texture (see `chip.md`), so a chip change only
+    /// costs this, not a pipeline rebuild. R00 (today's default) is
+    /// `mag_nearest=true, min_nearest=false`; R43 wants both `false` (full
+    /// bilinear, the characteristic N64 blur); R30 wants both `true` (PS1 had no
+    /// texture filtering at all).
+    pub fn set_filter_mode(&mut self, mag_nearest: bool, min_nearest: bool) {
+        let filter = |nearest: bool| {
+            if nearest {
+                wgpu::FilterMode::Nearest
+            } else {
+                wgpu::FilterMode::Linear
+            }
+        };
+        let view = self
+            .master_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: filter(mag_nearest),
+            min_filter: filter(min_nearest),
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        self.main_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.main_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+            label: None,
+        });
     }
 }

@@ -6,6 +6,16 @@ struct VertexOutput {
 	@location(3) vpos:vec4<f32>,
 	@location(4) specs:vec4<f32>,
 	@location(5) time:f32,
+	// Screen-space linear (not perspective-correct) copy of tex_coords, for the
+	// R30 chip's affine texture mapping. Always computed; fs_main only uses it
+	// when vertex_snap (adjustments[3][3]) is >0, since only R30 wants it.
+	@location(6) @interpolate(linear) tex_coords_affine: vec2<f32>,
+	// Vertex-colour tint (guide/entity.md), passed through unchanged.
+	@location(7) tint: vec4<f32>,
+	// Gouraud (guide/gour.md): per-vertex shade, used instead of fs_main's own
+	// per-fragment computation when gour() is on. Always computed — cheap
+	// relative to per-fragment, and this way there's no shader permutation.
+	@location(8) shade: vec3<f32>,
 };
 
 struct InstanceInput {
@@ -23,7 +33,22 @@ struct Globals {
 	proj_mat: mat4x4<f32>,
 	adjustments: mat4x4<f32>,
 	specs: vec4<f32>,
-	//num_lights: vec4<u32>,
+	// L0 retro lighting: directional sun. light_color.w = ambient.
+	light_dir: vec4<f32>,
+	light_color: vec4<f32>,
+	// L2 distance fog: rgb + w = far distance (w=0 disables).
+	fog_color: vec4<f32>,
+	// L2 hemisphere ambient: sky rgb (w>0 enables) + ground rgb. Sun shape only.
+	amb_sky: vec4<f32>,
+	amb_ground: vec4<f32>,
+	// lum{} shape state: xyz = world pos (cone/sphere), w = falloff range.
+	light_pos: vec4<f32>,
+	// x = shape (0=sun,1=cone,2=sphere), y = cone half-angle (radians).
+	light_shape: vec4<f32>,
+	// Light-space view*proj for the shadow map (see monitor()/fs_main), and
+	// x = shdw() on/off.
+	light_view_proj: mat4x4<f32>,
+	shadow_on: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -48,15 +73,85 @@ var t_diffuse: texture_2d<f32>;
 @binding(2)
 var s_diffuse: sampler;
 
-@group(1) 
+@group(1)
 @binding(0)
 var primary: texture_2d<f32>;
-@group(1) 
+@group(1)
 @binding(1)
 var secondary: texture_2d<f32>;
-@group(1) 
+@group(1)
 @binding(2)
 var trinary: texture_2d<f32>;
+
+// The shadow map (see guide/shdw.md) — a small, deliberately low-resolution
+// depth texture rendered from the lum{} light's point of view by
+// shadow_vs_main, sampled here with a hardware comparison sampler (one tap,
+// no PCF — matches the "primitive" brief).
+@group(2)
+@binding(0)
+var t_shadow: texture_depth_2d;
+@group(2)
+@binding(1)
+var s_shadow: sampler_comparison;
+
+// The one lum{} light: 0=sun (directional, infinite), 1=cone (spot), 2=sphere
+// (point). shade = ambient + max(dot(N,-L),0) * color * atten. Defaults
+// (color=0, ambient=1, shape=sun) leave the scene fullbright/unchanged.
+// Shared by fs_main (per-fragment, default) and vs_main (per-vertex, when
+// gour() is on — see guide/gour.md) so there's one copy of this math, not two
+// drifting apart.
+fn compute_shade(norm: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+	let light_shape = globals.light_shape.x;
+	var ndl: f32;
+	var atten = 1.0;
+	// Ambient: flat scalar, or (sun only) L2 hemisphere by N.z.
+	var ambient = vec3<f32>(globals.light_color.w);
+	if (light_shape < 0.5) {
+		let ldir = normalize(globals.light_dir.xyz);
+		ndl = max(dot(norm, -ldir), 0.0);
+		if (globals.amb_sky.w > 0.) {
+			ambient = mix(globals.amb_ground.rgb, globals.amb_sky.rgb, norm.z * 0.5 + 0.5);
+		}
+	} else {
+		// Cone/sphere: a real position, falls off with distance.
+		let to_light = globals.light_pos.xyz - world_pos;
+		let dist = length(to_light);
+		let ldir = to_light / max(dist, 0.0001);
+		ndl = max(dot(norm, ldir), 0.0);
+		let range = max(globals.light_pos.w, 0.0001);
+		atten = clamp(1.0 - dist / range, 0.0, 1.0);
+		if (light_shape < 1.5) {
+			// Cone only: angular falloff from the aim direction, with a
+			// soft edge (smoothstep) rather than a hard cutoff.
+			let aim = normalize(globals.light_dir.xyz);
+			let cos_angle = cos(globals.light_shape.y);
+			let spot = smoothstep(cos_angle, mix(cos_angle, 1.0, 0.2), dot(-ldir, aim));
+			atten = atten * spot;
+		}
+	}
+	return ambient + ndl * atten * globals.light_color.rgb;
+}
+
+// Depth-only pass for the shadow map: same vertex data and model matrix as
+// vs_main, projected through the light's view*proj instead of the camera's.
+// Billboard rotation is skipped (shadows use the entity's base transform) —
+// a reasonable simplification for a primitive/blocky shadow system.
+@vertex
+fn shadow_vs_main(
+	@location(0) position: vec4<i32>,
+	@location(1) normal: vec4<i32>,
+	@location(2) tex_coords: vec2<f32>,
+	instance: InstanceInput
+) -> @builtin(position) vec4<f32> {
+	let w=mat4x4<f32>(
+		instance.model_matrix_0,
+		instance.model_matrix_1,
+		instance.model_matrix_2,
+		instance.model_matrix_3,
+	);
+	let world_pos = w * vec4<f32>(position);
+	return globals.light_view_proj * world_pos;
+}
 
 @vertex
 fn vs_main(
@@ -115,17 +210,25 @@ fn vs_main(
 	let uv_mod=instance.uv_mod;
 
 	let vpos:vec4<f32>=out.proj_position;
-	out.vpos=vec4<f32>((world_pos.x),(world_pos.y),(world_pos.z+globals.adjustments[0][0]),world_pos.w); 
-	// out.proj_position=vec4(round(out.proj_position.xyz/1.5)*1.5,out.proj_position.w); // 1.2 harsh 1.5 too harsh
-	// MARK
-	// out.proj_position=vec4(round(out.proj_position.xyz*2.)/2.,out.proj_position.w); // 1.2 harsh 1.5 too harsh
+	out.vpos=vec4<f32>((world_pos.x),(world_pos.y),(world_pos.z+globals.adjustments[0][0]),world_pos.w);
+	// R30 chip: clip-space vertex snap (the PS1 "wobble" — no subpixel precision).
+	// snap is also the flag fs_main uses to gate affine UV mixing and dithering,
+	// since only R30 wants any of the three; see ScreenBinds::vertex_snap.
+	let snap=globals.adjustments[3][3];
+	if(snap>0.){
+		out.proj_position=vec4<f32>(round(out.proj_position.xyz/snap)*snap,out.proj_position.w);
+	}
 
 	// let ntex=vec2<f32>(tex_coords.x*out.vpos.w,tex_coords.y*out.vpos.w);
 	out.tex_coords=(tex_coords*vec2<f32>(uv_mod.z,uv_mod.w))+vec2<f32>(uv_mod.x,uv_mod.y);
-	// MARK
-	// out.tex_coords= vec2<f32>(out.tex_coords.x*vpos.w,out.tex_coords.y*vpos.w);
+	out.tex_coords_affine=out.tex_coords;
 	out.specs=globals.specs;
 	out.time=globals.adjustments[0][0];
+	out.tint=instance.color;
+	// Gouraud (guide/gour.md): always computed, cheap relative to
+	// per-fragment — fs_main picks this or its own per-fragment shade based
+	// on gour()'s toggle (shadow_on.y), no shader permutation needed.
+	out.shade=compute_shade(out.world_normal, world_pos.xyz);
 	// FragPos = vec3(model * vec4(aPos, 1.0));
 	// out.frag_pos=vec3<f32>(world_pos.x,world_pos.y,world_pos.z,1.);
 	return out;
@@ -135,6 +238,15 @@ fn vs_main(
 
 
 var<private> f_color: vec4<f32>;
+
+// R30 chip: 4x4 ordered (Bayer) dither matrix, used to fake PS1-style ~15-bit
+// color depth without a true post-process pass — see fs_main.
+const BAYER4: array<f32,16> = array<f32,16>(
+	0.,8.,2.,10.,
+	12.,4.,14.,6.,
+	3.,11.,1.,9.,
+	15.,7.,13.,5.,
+);
 
 @fragment
 fn fs_main( in: VertexOutput) -> FragmentOutput {
@@ -148,18 +260,37 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	// in.world_position.xyz
 
 	let mutator=1.;//in.proj_position.w;
-	let t=in.time/2.;
-	let light_pos = vec3<f32>(1000.0*cos(t),1000.0*sin(t), 0.0);
-	let light_color=vec3<f32>(1.,1.,1.);
+	// Gouraud (guide/gour.md): gour()'s toggle (shadow_on.y) picks the
+	// per-vertex shade vs_main already computed, or recomputes it per-
+	// fragment (default, "smooth") — same compute_shade either way, so the
+	// two paths can never drift apart.
 	let norm = normalize(in.world_normal);
-	let light_dir = normalize(light_pos - in.world_position.xyz); 
-	let diff = max(dot(norm, light_dir), .1);
-	let diffuse = light_color;//diff *  
-	// vec3 result = (ambient + diffuse) * objectColor;
-// FragColor = vec4(result, 1.0);
-   
-	f_color=textureSample(t_diffuse, s_diffuse, in.tex_coords*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
-   
+	var shade = in.shade;
+	if (globals.shadow_on.y < 0.5) {
+		shade = compute_shade(norm, in.world_position.xyz);
+	}
+
+	// Shadow map (guide/shdw.md): one hard comparison tap, no PCF — off by
+	// default (shadow_on.x, set by shdw()) and a no-op outside the light's
+	// small frustum (lit=1, not shadowed, rather than clamping artifacts).
+	// Always per-fragment (stays sharp even with Gouraud shading on).
+	var lit = 1.0;
+	if (globals.shadow_on.x > 0.5) {
+		let light_clip = globals.light_view_proj * in.world_position;
+		let light_ndc = light_clip.xyz / light_clip.w;
+		let shadow_uv = light_ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+		if (shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 && light_ndc.z >= 0.0 && light_ndc.z <= 1.0) {
+			lit = textureSampleCompare(t_shadow, s_shadow, shadow_uv, light_ndc.z - 0.002);
+		}
+	}
+	shade = shade * lit;
+
+	// R30 chip: snap>0 also selects affine (screen-space linear) UVs instead of
+	// perspective-correct ones — the PS1's characteristic texture warp.
+	let snap=globals.adjustments[3][3];
+	let uv=mix(in.tex_coords,in.tex_coords_affine,select(0.,1.,snap>0.));
+	f_color=textureSample(t_diffuse, s_diffuse, uv*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+
 	if( in.specs.w>0.){
 		let end=in.specs.w;
 		let dist=length(in.world_position.xyz-in.specs.xyz);      
@@ -176,7 +307,25 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		discard;
 	}
 
-	return FragmentOutput(e3*vec4<f32>(diffuse,1.));
+	// Vertex-colour tint (guide/entity.md): {1,1,1,1} default is a no-op.
+	var rgb = e3.rgb * shade * in.tint.rgb;
+	// L2 distance fog: blend toward fog rgb as the fragment approaches the fog
+	// far distance (fog_color.w). specs.xyz is the camera's world position.
+	if (globals.fog_color.w > 0.) {
+		let fog_t = clamp(length(in.world_position.xyz - in.specs.xyz) / globals.fog_color.w, 0., 1.);
+		rgb = mix(rgb, globals.fog_color.rgb, fog_t);
+	}
+
+	// R30 chip: ordered-dither down to ~5 bits/channel (PS1-era color depth).
+	if(snap>0.){
+		let levels=31.;
+		let bidx=(i32(in.proj_position.x)%4)+(i32(in.proj_position.y)%4)*4;
+		let bayer=BAYER4[bidx]/16.-0.5;
+		rgb=clamp(rgb+bayer/levels,vec3<f32>(0.),vec3<f32>(1.));
+		rgb=floor(rgb*levels+0.5)/levels;
+	}
+
+	return FragmentOutput(vec4<f32>(rgb, e3.a));
 }
 
 @vertex
@@ -200,7 +349,7 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 
 @fragment
 fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
-  
+
 	// let e3: vec4<f32> = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
 	// if (e3.a < 0.5) {
 	//     discard;

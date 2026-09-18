@@ -1,5 +1,7 @@
 use std::borrow::Borrow;
 
+use glam::{vec3, Vec3};
+
 #[cfg(feature = "puc_lua")]
 use mlua::{Function, UserData, UserDataFields, UserDataMethods, Value::Nil};
 #[cfg(feature = "picc")]
@@ -10,6 +12,9 @@ use silt_lua::value::Value;
 use silt_lua::LuaError;
 
 //REMEMBER, setting the ent to dirty will hit the entity manager so fast then any other values changed even on the enxt line will be overlooked. The main thread is THAT much faster...
+// Serialize/Deserialize let a LuaEnt cross the wasm web-worker postMessage
+// boundary (the Spawn message) — see worker_protocol.rs.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LuaEnt {
     pub x: f64,
     pub y: f64,
@@ -31,15 +36,62 @@ pub struct LuaEnt {
     pub flipped: bool,
     pub parent: Option<u64>, // pub children: Option<Vec<Arc<Mutex<LuaEnt>>>>,
     pub bundle_id: u8,
+    /// Per-axis size multiplier on top of `scale`, so entities can be
+    /// rectangular prisms (a piano key, a wall) not just uniform cubes.
+    pub size: [f64; 3],
     pub offset: [f64; 3], // pub meta: mlua::Table,
                           // pub sender: Option<Sender<(u8, MainCommmand)>>,
                           // pub cloned: bool,
+    /// Collider shape override for the collision system (`hit.*`, `ent:hit`):
+    /// 0 = auto (cylinder for a billboard sprite, baked model AABB otherwise),
+    /// 1 = box, 2 = cylinder. See `guide/hit.md`.
+    pub hit_shape: u8,
+    /// Collider half-extents override, local space: `(x, y, z)` for a box, or
+    /// `(radius, radius, half_height)` for a cylinder. `[0,0,0]` (the default)
+    /// means "use the computed default" instead of this override.
+    pub hit_size: [f64; 3],
+    /// Collider center offset override, local space, on top of `hit_size`.
+    pub hit_offset: [f64; 3],
+    /// Vertex-colour tint, rgba 0..1 — multiplies the entity's shaded output.
+    /// Default `[1,1,1,1]` (opaque white) is a no-op. See `guide/entity.md`.
+    pub tint: [f64; 4],
+    /// This entity's own tile grid, if it has one — set by calling `tile`/
+    /// `ent:tile(...)` on a grid-less entity, which lazily creates one (see
+    /// `TileGrid`, `guide/entity.md`). `Box` keeps this off the common
+    /// (grid-less) `LuaEnt` clone path; `None` is one pointer, no allocation.
+    pub grid: Option<Box<crate::tile_grid::TileGrid>>,
 }
 pub mod lua_ent_flags {
     // pub const None: u8 = 0b0;
     pub const TEX: u8 = 0b1;
     pub const ASSET: u8 = 0b10;
     pub const DEAD: u8 = 0b100;
+}
+
+/// World-space position, local-space pivot offset, and per-axis scale for
+/// entity `lua` — the shared subset of `Ent::build_meta`'s transform (used
+/// there, with rotation, in the headed-only `ent.rs`) and of the collision
+/// system's default collider (`ent_manager::collider_for`, `collide.rs`,
+/// which deliberately ignores rotation — see `guide/hit.md`). Lives here
+/// rather than in `ent.rs` because collision must work in a headless build
+/// too, and `ent.rs`/`Ent` are `#[cfg(feature = "headed")]`-only. Position
+/// and offset are both ×16 to match every other world-space quantity in the
+/// engine (tile positions, `Chunk` cells); `size` folds `lua.scale` in.
+pub fn render_transform(lua: &LuaEnt) -> (Vec3, Vec3, Vec3) {
+    let pos = vec3(lua.x as f32, lua.y as f32, lua.z as f32) * 16.;
+    let offset = vec3(
+        lua.offset[0] as f32,
+        lua.offset[1] as f32,
+        lua.offset[2] as f32,
+    ) * 16.;
+    let s: f32 = lua.scale as f32;
+    // Per-axis size lets entities be rectangular prisms, not just cubes.
+    let sz = vec3(
+        s * lua.size[0] as f32,
+        s * lua.size[1] as f32,
+        s * lua.size[2] as f32,
+    );
+    (pos, offset, sz)
 }
 
 // #[cfg(feature = "silt")]
@@ -130,6 +182,94 @@ impl UserData for LuaEnt {
         });
 
         methods.add_method_mut("kill", |_, _, this, ()| Ok(this.unwrap().kill()));
+
+        // This entity's own tile grid — mirrors the world's tile()/dtile()/
+        // istile()/gtile()/ftile() natives (command.rs) exactly, just scoped
+        // to `self.grid` instead of the world. True colon methods (not a
+        // bridge to a channel-backed native): the grid lives on `self`, so
+        // there's no main-thread state to reach across to, the same reason
+        // `LuaImg`'s `fill`/`rect`/etc. work as plain colon methods. See
+        // guide/entity.md and guide/hit.md.
+        methods.add_method_mut(
+            "tile",
+            |_, _, this_res, (asset, x, y, z, rot): (Value, i32, i32, i32, Option<u8>)| {
+                let this = safe_unwrap!(this_res);
+                let name = match asset {
+                    Value::String(s) => s,
+                    _ => String::new(),
+                };
+                let grid = this
+                    .grid
+                    .get_or_insert_with(|| Box::new(crate::tile_grid::TileGrid::new()));
+                grid.set_tile(name, rot.unwrap_or(0), x, y, z);
+                Ok(Value::Nil)
+            },
+        );
+
+        methods.add_method_mut(
+            "dtile",
+            |_, _, this_res, (x, y, z): (Option<i32>, Option<i32>, Option<i32>)| {
+                let this = safe_unwrap!(this_res);
+                if let Some(grid) = this.grid.as_mut() {
+                    // Unlike the world's `dtile` (command.rs) — which has a
+                    // pre-existing dead-code bug (its "no args" match arm is
+                    // unreachable, so it never actually clears everything —
+                    // out of scope to fix here, flagged separately) — this
+                    // implements the documented "no args clears everything"
+                    // behavior correctly.
+                    match (x, y, z) {
+                        (Some(xx), Some(yy), Some(zz)) => grid.drop_chunk(xx, yy, zz),
+                        _ => grid.clear(),
+                    }
+                }
+                Ok(Value::Nil)
+            },
+        );
+
+        methods.add_method_mut("istile", |_, _, this_res, (x, y, z): (i32, i32, i32)| {
+            let this = safe_unwrap!(this_res);
+            Ok(match &this.grid {
+                Some(g) => Value::Bool(g.is_tile(x, y, z)),
+                None => Value::Nil,
+            })
+        });
+
+        methods.add_method_mut("gtile", |_, _, this_res, (x, y, z): (i32, i32, i32)| {
+            let this = safe_unwrap!(this_res);
+            Ok(match &this.grid {
+                Some(g) => Value::String(match g.get_tile(x, y, z) {
+                    Some((name, _)) => name,
+                    None => String::new(),
+                }),
+                None => Value::Nil,
+            })
+        });
+
+        methods.add_method_mut(
+            "ftile",
+            |lua,
+             mc,
+             this_res,
+             (t, x, y, z, dx, dy, dz): (String, i32, i32, i32, i32, i32, i32)| {
+                let this = safe_unwrap!(this_res);
+                match &this.grid {
+                    Some(g) => {
+                        let tt = if t.is_empty() { None } else { Some(t.as_str()) };
+                        match g.first_tile(tt, x, y, z, dx, dy, dz, 100) {
+                            Some(v) => Ok(lua.table_from_array(
+                                mc,
+                                vec![v[0] as f64, v[1] as f64, v[2] as f64],
+                            )),
+                            None => {
+                                let t = lua.raw_table();
+                                Ok(lua.wrap_table(mc, t))
+                            }
+                        }
+                    }
+                    None => Ok(Value::Nil),
+                }
+            },
+        );
     }
 
     fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
@@ -142,19 +282,19 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("z", |_, _, this| this.z);
         fields.add_field_method_set("z", |_, _, this, z: f64| this.z = z);
 
-        fields.add_field_method_get("rx", |_, _, this| (this.rot_x));
-        fields.add_field_method_get("ry", |_, _, this| (this.rot_y));
-        fields.add_field_method_get("rz", |_, _, this| (this.rot_z));
+        fields.add_field_method_get("rx", |_, _, this| this.rot_x);
+        fields.add_field_method_get("ry", |_, _, this| this.rot_y);
+        fields.add_field_method_get("rz", |_, _, this| this.rot_z);
 
-        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| (this.rot_z = rot_z));
-        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| (this.rot_y = rot_y));
-        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| (this.rot_x = rot_x));
+        fields.add_field_method_set("rz", |_, _, this, rot_z: f64| this.rot_z = rot_z);
+        fields.add_field_method_set("ry", |_, _, this, rot_y: f64| this.rot_y = rot_y);
+        fields.add_field_method_set("rx", |_, _, this, rot_x: f64| this.rot_x = rot_x);
 
-        fields.add_field_method_get("vx", |_, _, this| (this.vx));
-        fields.add_field_method_set("vx", |_, _, this, vx: f64| (this.vx = vx));
-        fields.add_field_method_get("vy", |_, _, this| (this.vy));
-        fields.add_field_method_set("vy", |_, _, this, vy: f64| (this.vy = vy));
-        fields.add_field_method_get("vz", |_, _, this| (this.vz));
+        fields.add_field_method_get("vx", |_, _, this| this.vx);
+        fields.add_field_method_set("vx", |_, _, this, vx: f64| this.vx = vx);
+        fields.add_field_method_get("vy", |_, _, this| this.vy);
+        fields.add_field_method_set("vy", |_, _, this, vy: f64| this.vy = vy);
+        fields.add_field_method_get("vz", |_, _, this| this.vz);
         fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);
@@ -166,6 +306,28 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("offset", |_, _, this, offset: [f64; 3]| {
             Ok(this.offset = offset)
         });
+
+        // Per-axis size (x, y, z) for rectangular-prism entities.
+        fields.add_field_method_get("size", |_, _, this| Ok(this.size));
+        fields.add_field_method_set("size", |_, _, this, size: [f64; 3]| Ok(this.size = size));
+
+        // Collider override for the collision system — see guide/hit.md.
+        fields.add_field_method_get("hit_shape", |_, _, this| Ok(this.hit_shape));
+        fields.add_field_method_set("hit_shape", |_, _, this, hit_shape: u8| {
+            Ok(this.hit_shape = hit_shape)
+        });
+        fields.add_field_method_get("hit_size", |_, _, this| Ok(this.hit_size));
+        fields.add_field_method_set("hit_size", |_, _, this, hit_size: [f64; 3]| {
+            Ok(this.hit_size = hit_size)
+        });
+        fields.add_field_method_get("hit_offset", |_, _, this| Ok(this.hit_offset));
+        fields.add_field_method_set("hit_offset", |_, _, this, hit_offset: [f64; 3]| {
+            Ok(this.hit_offset = hit_offset)
+        });
+
+        // Vertex-colour tint, rgba 0..1 — see guide/entity.md.
+        fields.add_field_method_get("tint", |_, _, this| Ok(this.tint));
+        fields.add_field_method_set("tint", |_, _, this, tint: [f64; 4]| Ok(this.tint = tint));
 
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
@@ -266,9 +428,15 @@ impl LuaEnt {
             flipped: false,
             parent: None, // children: None,
             bundle_id: 0,
+            size: [1., 1., 1.],
             offset: [0., 0., 0.], // meta: mlua::Table::new(),
             flags: 0,
             // cloned: false,
+            hit_shape: 0,
+            hit_size: [0., 0., 0.],
+            hit_offset: [0., 0., 0.],
+            tint: [1., 1., 1., 1.],
+            grid: None,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -286,6 +454,9 @@ impl LuaEnt {
     }
     pub fn get_flags(&self) -> u8 {
         self.flags
+    }
+    pub fn is_dead(&self) -> bool {
+        self.flags & lua_ent_flags::DEAD != 0
     }
     pub fn is_dirty(&self) -> bool {
         self.dirty
@@ -329,11 +500,21 @@ impl Clone for LuaEnt {
             flipped: self.flipped,
             parent: self.parent, // children,
             bundle_id: self.bundle_id,
+            size: self.size,
             offset: self.offset,
             flags: self.flags,
             // meta: self.meta.clone(),
             // sender: None,
             // cloned: true,
+            hit_shape: self.hit_shape,
+            hit_size: self.hit_size,
+            hit_offset: self.hit_offset,
+            tint: self.tint,
+            // Deep clone, same as everything else here — cheap when None
+            // (the common case), and grids are expected to be moving-
+            // platform-sized (small, sparse), not world-sized, so this
+            // isn't expected to matter; revisit if it measures otherwise.
+            grid: self.grid.clone(),
         }
     }
 }

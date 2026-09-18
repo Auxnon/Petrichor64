@@ -3,7 +3,7 @@ use std::{
     sync::mpsc::SendError,
 };
 
-use silt_lua::{LuaError, error::{ErrorOut, ErrorTuple}};
+use silt_lua::error::{ErrorOut, ErrorTuple};
 
 // use piccolo::{PrototypeError, StaticError};
 
@@ -17,11 +17,22 @@ pub enum P64Error {
     IoEmptyFile,
     LuaParseError(std::io::Error),
     LuaCompileError(std::io::Error),
-    LuaRunError(Box<ErrorOut>),
+    /// The error tuples plus the source index they came from (as reported by
+    /// silt's ErrorOut). The index lets the host resolve the originating source
+    /// text for a snippet — see `scripts` in lua_define.
+    LuaRunError(Vec<ErrorTuple>, usize),
+    /// currently a convenience for handling failed lua instance caught from loop
+    LuaLoopFail,
+    /// Lua isntance is destroyed and thus it's channel is closed
+    LuaClosed,
     LuaGenericError,
     MissingAssets,
     MissingScripts,
-    ChannelTimeoutError,
+    /// Every bundle slot is occupied. Ids are u8 and one live bundle means one live
+    /// Lua thread, so this is unreachable in practice — but it beats handing out an
+    /// id that is already in use.
+    BundleSlotsFull,
+    ChannelTimeoutError(u8),
     ChannelDisconnectedError,
 }
 
@@ -39,25 +50,32 @@ impl Display for P64Error {
             P64Error::IoEmptyFile => write!(f, "IO Error: Empty file"),
             P64Error::LuaParseError(err) => write!(f, "Lua Error: {}", err),
             P64Error::LuaCompileError(err) => write!(f, "Lua Error: {}", err),
+            P64Error::LuaLoopFail => write!(f, "Lua loop closed"),
+            P64Error::LuaClosed => write!(f, "Lua instance currently purged"),
             P64Error::MissingAssets => write!(f, "Missing app asset directory and contents"),
             P64Error::MissingScripts => write!(f, "Missing app script directory and contents"),
-            P64Error::ChannelTimeoutError => write!(f, "Lua channel timed out"),
+            P64Error::ChannelTimeoutError(i) => {
+                let op = match i {
+                    0 => "load",
+                    1 => "func",
+                    2 => "die",
+                    _ => "?",
+                };
+                write!(
+                    f,
+                    "Lua thread alive but did not reply to '{op}' in time (stuck mid-call)"
+                )
+            }
+            P64Error::BundleSlotsFull => write!(f, "No free bundle slot (256 in use)"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
-            P64Error::LuaRunError(err) => {
-                // writeln!("\n❌ Lua Parse Errors:\n");
-                // for (i, err) in (*error_tuple).iter().enumerate() {
-                //     writeln!(
-                //         "  [{}] {}:{} - {}",
-                //         i + 1,
-                //         err.location.0, err.location.1, err.code
-                //     );
-                // }
-                // writeln!("\nFound {} error(s)\n", errors.len());
-                // Ok(())
-
-                // write!(f, "  {}:{} - {}", err.location.0, err.location.1, err.code)
-                write!(f,"{}",err.to_string())
+            P64Error::LuaRunError(err, _) => {
+                let s = err
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                write!(f, "{}", s)
             }
         }
     }
@@ -75,12 +93,26 @@ impl<T> From<SendError<T>> for P64Error {
     }
 }
 
-impl From<ErrorOut> for P64Error {
-    fn from(mut value: ErrorOut) -> Self {
-        // let n = value.errors.len();
-        P64Error::LuaRunError(Box::new(value))
+impl From<Vec<ErrorTuple>> for P64Error {
+    fn from(value: Vec<ErrorTuple>) -> Self {
+        // No source index available on a bare tuple vec.
+        P64Error::LuaRunError(value, usize::MAX)
     }
 }
+
+impl From<ErrorOut> for P64Error {
+    fn from(value: ErrorOut) -> Self {
+        P64Error::LuaRunError(value.errors, value.source_index)
+    }
+}
+
+impl std::fmt::Debug for P64Error {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl std::error::Error for P64Error {}
 
 // impl From<ParserError> for P64Error {
 //     fn from(value: ParserError) -> Self {

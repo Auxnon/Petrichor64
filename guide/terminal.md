@@ -19,3 +19,11 @@
 - bundles - list active bundles
 - help - display these console commands
 - version - show engine and codex versions
+- pwd - print the current app's directory
+- copy < text > - copy text to the clipboard; with no text, copies whatever the previous piped command logged
+
+Commands chain with `&&` (run each regardless of the last) and pipe with `|`
+(the left command's logged output is appended as trailing arguments to the
+right command) — e.g. `pwd | copy` copies the current app's directory to the
+clipboard. Piping works with any command, not just `copy`: whatever a
+command logs to the console is what the next stage receives.

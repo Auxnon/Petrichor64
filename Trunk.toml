@@ -1,0 +1,15 @@
+# Trunk config for the web (wasm) build.
+#   trunk serve   # dev server with live reload at http://localhost:8080
+#   trunk build --release
+#
+# The wasm target is wasm32-unknown-unknown; the default feature set
+# (silt + headed + wasm) is what we build for the browser.
+[build]
+target = "web/index.html"
+dist = "web/dist"
+# Stable output names (Petrichor64.js / _bg.wasm) so the hand-written worker.js
+# can import the bundle by a fixed path. Re-enable hashing for production.
+filehash = false
+
+[serve]
+port = 8080

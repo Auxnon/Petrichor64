@@ -1,0 +1,711 @@
+# Petrichor64 Rendering Diagnostic Plan
+
+## Confirmed Working
+- Simple triangle shader (test.wgsl) draws correctly — the pipeline infrastructure, surface creation, and swapchain presentation work.
+- Clear colour (currently violet) is visible — the render pass itself executes.
+
+## Root Causes Found (wgpu 0.15 → 24 migration)
+
+### 1 — GUI / Sky textures never uploaded to GPU **(Critical)**
+
+**Symptom**: Only the clear violet colour is visible; no sky, console text, or Lua-drawn GUI.
+
+**Cause (three-part chain)**:
+
+a. In `src/lua_define.rs` (Lua loop), `BundleMutations::new()` defaults to
+   `gui: true, sky: true`, but two lines immediately override both to `false`:
+   ```rust
+   let mut mutations = BundleMutations::new();
+   mutations.gui = false;   // ← always false
+   mutations.sky = false;   // ← always false
+   ```
+   The proper dirty-detection code that was supposed to re-enable these flags
+   was commented out and never re-implemented for silt-lua.
+   Because mutations are always false, `Core::update` never calls
+   `gui.mark_dirty()`, so `ScreenLayer::dirty` remains `false` after the first
+   successful `check_render` call.
+
+b. `pool.gui_dirty` / `pool.sky_dirty` (the `Arc<AtomicCell<bool>>` in
+   `SharedPool`) are initialised to `false` and nothing ever sets them to
+   `true`. `ScreenLayer::check_render` gates the actual `write_tex` upload on
+   `pool.gui_dirty.load()`, so even if the layer *was* dirty, the texture is
+   never written to the GPU.
+
+c. `check_render` resets `self.dirty = false` whenever the pool exists,
+   regardless of whether the texture was actually uploaded. This prevents any
+   future upload attempt even after `mark_dirty` is later called.
+
+**Fix**:
+- Remove the `mutations.gui = false; mutations.sky = false;` overrides in
+  `lua_define.rs`, restoring the `BundleMutations::new()` defaults of `true`.
+  This ensures `mark_dirty` is called on every `LoopComplete`.
+- Simplify `check_render` to upload the LuaImg unconditionally whenever
+  `self.dirty` is true and the LuaImg weak-ref is upgradeable, removing the
+  `pool.gui_dirty` gate. Reset `self.dirty = false` only after a successful
+  upload.
+- The `pool.gui_dirty` / `pool.sky_dirty` fields can be re-wired later for a
+  proper per-frame dirty optimisation (see §5 below).
+
+---
+
+### 2 — System / Console layer never shows console text **(Critical)**
+
+**Symptom**: Even when the in-engine console is open, no text is visible.
+
+**Cause**: `Gui::apply_console_out_text()` draws text into
+`ScreenLayer::image` (an `Arc<AtomicCell<RgbaImage>>`). But
+`ScreenLayer::check_render` ignores `self.image` entirely — it reads from the
+Lua-owned `LuaImg` via the pool weak-ref. These are completely separate
+objects. The console pixels are never uploaded to the system GPU texture.
+
+Additionally, for `ScreenIndex::System`, `check_render` uses `pool.gui.as_ref()`
+which points to the **primary Lua raster**, not the system/console raster.
+
+**Fix**: In `check_render`, handle `ScreenIndex::System` separately:
+upload directly from `self.image` via `self.image.borrow()` rather than going
+through the pool/LuaImg path.
+
+---
+
+### 3 — Fullscreen quad draw calls use 4 instances instead of 1 **(Visual/Correctness)**
+
+**Symptom**: Sky, GUI, and post-process quads are drawn 4 times.
+
+**Cause**: All three fullscreen-quad passes call `draw(0..4, 0..4)` — 4
+vertices × **4 instances** — where only 1 instance is needed.  With
+`BlendState::ALPHA_BLENDING`, drawing 4 identical layers accumulates alpha,
+making semi-transparent Lua artwork appear significantly more opaque than
+intended. For a fully transparent texture (all `a = 0`) the effect is zero, so
+empty textures still show the clear colour correctly — but once content is
+drawn, the colour will be wrong.
+
+**Fix**: Change to `draw(0..4, 0..1)` for sky, GUI, and post-process draws.
+
+---
+
+### 4 — Secondary / Trinary layers always mirror Primary **(Design Gap)**
+
+**Cause**: In `check_render`, `ScreenIndex::Primary`, `Secondary`, `Trinary`,
+and `System` all resolve to `pool.gui.as_ref()` (the same primary LuaImg).
+Secondary and Trinary GPU textures receive the same content as Primary.
+
+`BundleMutations` has no fields for secondary/trinary, so there is no
+per-frame dirty signal for those layers.
+
+**Fix (future)**: Extend `BundleMutations` with secondary/trinary flags and
+expose separate `LuaImg` globals in the Lua VM (or index the pool by layer
+index). For now this is noted as a known limitation.
+
+---
+
+### 5 — pool.gui_dirty / sky_dirty optimisation path is incomplete **(Future Work)**
+
+The intended design is:
+1. Lua draws to the `gui` / `sky` `LuaImg` global.
+2. The Lua loop checks `img.dirty`, sets `shared.gui_dirty = true`, and sends
+   `mutations.gui = true`.
+3. `check_render` reads `pool.gui_dirty` to decide whether to re-upload.
+
+The code for step 2 is commented out in `lua_define.rs` because it used the
+silt-lua API (`apply_userdata_mut`) which needed to be adapted from the old
+mlua version. Re-implementing this would restore per-frame dirty culling and
+reduce unnecessary GPU texture uploads.
+
+**Short-term fix**: Remove the `mutations.gui/sky = false` overrides so every
+Lua frame triggers a texture upload (fine for correctness, slightly wasteful).
+
+**Longer-term**: Uncomment and adapt the dirty-check block using the correct
+silt-lua API (`vm.globals.borrow()` / `apply_userdata_mut`) and restore
+`pool.gui_dirty` as the gate in `check_render`.
+
+---
+
+### 6 — wgpu 24 surface format was hardcoded **(Fixed in previous commit)**
+
+`Bgra8UnormSrgb` was hardcoded for the surface and intermediate render texture.
+wgpu 24 requires querying `surface.get_capabilities()`. This was fixed in
+commit `5dcad1d`.
+
+---
+
+### 7 — World mesh not visible without game content **(Expected behaviour)**
+
+With the console/empty app there are no chunks or entities loaded, so the world
+render pass produces no geometry. When a game is loaded, `check_ents()` is
+called on every `LoopComplete` and should populate `instance_buffers`. This
+path is expected to work once the Lua loop correctly signals `LoopComplete`.
+
+---
+
+### 8 — Web canvas resize feedback loop → texture-size crash **(Mitigated; responsive sizing still TODO)**
+
+**Symptom**: On some page loads the canvas grows every frame until it fills the
+page, then the module aborts with `Texture size ... exceeded maximum texture
+size` (e.g. requesting 10240×8768 against an 8192 device limit).
+
+**Cause**: The canvas had no CSS size, so it *displayed* at its backing-buffer
+pixel size. winit sizes the backing buffer from the client rect × devicePixelRatio,
+so on a HiDPI display: buffer = client × DPR → (no CSS) display grows to buffer
+px → client rect grows → buffer grows again. A runaway that multiplies by DPR
+each observation until it passes the GPU's `max_texture_dimension_2d`.
+
+**Mitigation (committed)**:
+- `attach_canvas_to_dom` pins the canvas CSS display size (640×548), decoupling
+  display from the backing buffer so the loop can't start.
+- `Gfx::set_config_size` clamps width/height to `device.limits().max_texture_dimension_2d`
+  as a safety net, so any future resize path can't crash the module.
+
+**Still TODO**: The canvas now renders at a *fixed* CSS size. Making it responsive
+to the `<petrichor-64>` host container needs a ResizeObserver-driven path that
+reads the container's size (not the canvas's own) and sets the buffer from that,
+so display never feeds back into buffer. Until then, hosts resize via CSS on
+`#petrichor64-root` at their own risk.
+
+---
+
+## Retro Lighting (planned)
+
+Goal: give the 3D pass simple, cheap, era-appropriate lighting (think N64 / PS1 /
+Quake-lite) — **no shadow maps, no light decals, no per-pixel light loops**. A
+single "sun" plus ambient, and a couple of stylised extras.
+
+**Most of the scaffolding already exists** and is just switched off:
+- `Vertex` carries a normal (`_normal: [i8; 4]`, `model.rs`), and `shader.wgsl`
+  already passes `world_normal` + `world_position` to `fs_main`.
+- `fs_main` even computes `let diff = max(dot(norm, light_dir), .1)` — but line
+  ~157 sets `diffuse = light_color` with the `diff *` **commented out**, so
+  nothing is actually shaded. The light is also a hardcoded point light orbiting
+  on `in.time`.
+
+### Phase L0 — directional sun + ambient (the "turn it on" step)
+- Add a light to `GlobalUniforms` (`gfx.rs`): `light_dir: [f32;4]`,
+  `light_color: [f32;4]`, `ambient: [f32;4]` (there's a spare slot; the old
+  `num_lights` field is already stubbed). Feed it into the `Globals` block in
+  `shader.wgsl`.
+- Replace the orbiting point light with a fixed directional light and actually
+  apply it: `let shade = ambient + max(dot(norm, -light_dir), 0.0) * light_color;`
+  then `f_color.rgb *= shade`.
+- Expose it to Lua: a `light{ dir = {..}, color = {..}, ambient = {..} }` native
+  (mirrors the `cam` native → a `MainCommmand`/`VmToHost` like `Cam`).
+
+### Phase L1 — pick the retro shading model
+- **Gouraud (per-vertex)**: move the diffuse term into `vs_main` and interpolate
+  it — the authentic PS1/N64 look (cheap, slightly wobbly). Recommended default.
+- **Flat**: one normal per face → faceted Quake-lite look (needs face normals or
+  `@interpolate(flat)`).
+- Keep the current per-fragment path available as the "smooth" option.
+
+### Phase L2 — stylised extras (still no shadow maps)
+- **Distance fog**: blend `f_color.rgb` toward a fog colour by depth. The alpha
+  fade on `specs.w` (`fs_main` ~163) is the same idea — extend it to colour.
+  Very PS1/N64, and hides the far clip.
+- **Hemisphere ambient**: tint ambient by `normal.z` (sky colour above, ground
+  colour below) for free directionality without a second light.
+- **Banded/quantised diffuse**: `floor(diff * n) / n` for a stepped, cel/retro
+  ramp — pairs well with the palette look.
+- **Vertex-colour tint / baked AO**: the instance already carries a `color`
+  attribute; multiply it in so tiles/entities can bake in cheap occlusion.
+
+Constraints to hold the retro line: exactly one directional light (no loops),
+lighting stays in the existing single forward pass, and it degrades to
+"fullbright" (ambient = 1) so unlit apps look unchanged.
+
+---
+
+## Patches Applied
+
+| File | Change |
+|------|--------|
+| `src/lua_define.rs` | Remove `mutations.gui = false; mutations.sky = false;` so BundleMutations defaults (`true`) stand |
+| `src/gui.rs` | Fix `ScreenLayer::check_render`: upload System from `self.image`; upload Primary/Sky from LuaImg without `pool.gui_dirty` gate; reset dirty only after successful upload |
+| `src/render.rs` | Change `draw(0..4, 0..4)` → `draw(0..4, 0..1)` for sky, GUI, and post passes |
+
+---
+
+## Sound System
+
+Native-only optional feature (`--features audio`, pulls `cpal`). One cpal output
+stream owns all synth state on the audio thread; the engine sends one-way
+`SoundCommand`s over `core.singer` (`mpsc`). The stream outlives Lua reloads, so
+`SoundCommand::Reset` (sent from `async_load_app` every load) wipes instruments,
+samples, the loaded-file bank, and all voices.
+
+**Design constraints (from the engine owner):**
+- Instruments/samples stay **integer-indexed** for a fast mixer hot path — never
+  string-keyed. Names exist only in load/bind staging.
+- Don't add Lua commands just to associate a sound file with an id — reuse
+  `smpl` (string arg binds a loaded file; table arg is raw PCM).
+- Load-everything-at-boot is fine for now; **asset unloading is a deferred
+  concern** (see below).
+
+### Phases
+
+| Phase | Status | What |
+|-------|--------|------|
+| 0 | ✅ done | repair scramble/cutting; per-voice wrapped phase + attack/release envelope |
+| 1 | ✅ done | polyphony: 16 channels, voice allocation (`pick_channel`), `chord`/`song` |
+| 2a | ✅ done | waveforms beyond square/tri: `sine`/`saw`/`pulse`/`noise`/additive (`WaveType`, `osc`) |
+| 2b | ✅ done | retro PCM sampling: `smpl` + `voice_out` pitch-resample, `normalize_pcm` loudness-match |
+| A (loading) | ✅ done (E2E verified) | load `sounds/*.ogg` (pure-Rust `lewton`) → name bank → `smpl(id,'name')` bind; `Reset` clears bank; `Arc`-shared buffers. Verified: oggify output round-trips through lewton |
+| B (oggify) | ✅ done | `tools/oggify` workspace crate: `symphonia` decode (mp3+wav) → `vorbis_rs` encode → `.ogg`; walk a dir, confirm-before-delete originals (default no). Repo is now a workspace (`default-members=["."]` keeps the engine build tool-free); the Vorbis-encoder C dep stays out of the engine + wasm builds |
+| 3 | deferred | shared sound VM |
+| 4 | deferred | MIDI input (feature-gated) |
+
+### Remaining / gaps
+- **Packer bundles `sounds/`** ✅ — `collect_packable_sources` writes `.ogg` files
+  (raw wav/mp3 skipped: the engine can't decode them, convert with oggify first);
+  verified a packed `.game.png` carries the sounds. Both directory and packed
+  games now load sounds.
+- **Sample-rate/pitch correctness** ✅ — `Sample.rate_ratio` (= source rate /
+  device rate, source read from each ogg header by lewton) makes a note at
+  `base_freq` play at the recorded speed regardless of device rate. Raw Lua PCM
+  has no source rate so it's 1.0 (device-rate, unchanged). Device rate is a
+  load-time constant; nothing is user-passed.
+- **Silt `to_vec` hash-order bug** (unfixed upstream): read PCM/chord/song arrays
+  by `getn(i)` index loop, never `Vec<T>` `FromLua`.
+- **Sample end-click** (minor, theoretical): a sample that doesn't decay to ~0 at
+  its buffer end jumps to 0 in one sample when it stops. tone.ogg/amens decay so
+  it's inaudible; add a short end-fade if a non-decaying sample ever clicks.
+
+### Deferred: asset unloading (long-term)
+The load-everything-into-memory-at-boot model risks large memory footprints for
+big games. Not addressed now. This design leans the right way: the sound name
+bank is a natural unload hook (drop-by-name / free a slot) and `Arc` buffers
+avoid duplication. A full solution (refcounted unload across textures, models,
+and sounds) is a separate engine effort for when a game actually needs it.
+
+## Web Audio (AudioWorklet) and the wasm-ultra ladder
+
+The browser plays sound through the **AudioWorklet**: the synth (`petrichor-synth`,
+compiled to its own small wasm module) runs *inside* the browser's audio rendering
+thread, filling 128-frame blocks (~2.7 ms at 48 kHz). `synth/src/webout.rs` is the
+engine's side; `web/synth-worklet.js` is the processor.
+
+`WebAudioOut` (in `synth/src/sound.rs`) is the fallback: it generates audio on the
+**main** thread and schedules ~90 ms ahead. Glitch-free but far too laggy to play
+music with — it exists so a browser that can't run a worklet still makes sound.
+Behind the `web-fallback` feature, listed in `web/index.html` rather than folded
+into `wasm` (cargo features only ever *add*, so inside `wasm` it could never be
+left out). Measured cost of keeping it: **25 KB raw / 8 KB gzipped**. Keep it on.
+
+### Startup order is the whole game here
+
+Four separate silent-audio bugs came out of this path; all four presented as a
+clean console and no sound. What the current design encodes:
+
+1. **A processor is constructed on the audio rendering thread, which a *suspended*
+   AudioContext never starts.** So the node isn't created until `pump` sees the
+   context actually `Running` (i.e. after a user gesture).
+2. **The wasm handover is a handshake, not a post.** The processor sends `hello`
+   from its constructor; only then does the main thread send the wasm. Posting at
+   node-creation time raced construction and the message was silently dropped.
+3. **Send the wasm as raw bytes, never a compiled `WebAssembly.Module`.** Chrome
+   refuses to *deserialize* a module inside an `AudioWorkletGlobalScope` (cloning
+   one is only defined within an agent cluster; the audio thread is its own). It
+   fails on arrival — `postMessage` returns Ok. Deserialization is also
+   all-or-nothing per message, so a module and bytes in one envelope die together.
+   The worklet sync-compiles the bytes (~289 KB, a few ms, off the main thread
+   where the 4 KB sync-compile limit doesn't apply).
+4. **Hold commands until the synth confirms it exists.** A processor with no synth
+   discards them, and the ones sent at boot are the `instr`/`smpl` definitions — so
+   forwarding them into a dead worklet left the fallback with no instruments and
+   every note came out as a default beep.
+
+Every failure mode here is now loud: `post_message` results are checked, both ports
+carry `onmessageerror` (the event that fires when a message *arrives* but won't
+deserialize — the only signal for #3), the worklet acks the wasm with a byte count,
+and a worklet that starts but never reports a live synth falls back after ~4 s.
+
+### Command transport
+
+Commands reach the worklet as MessagePack (`encode_command`/`decode_command`, public
+on the synth crate so every sender agrees on the format — a command can carry a
+decoded ogg, which as a JS array would be one boxed number per sample).
+
+The **VM worker owns a private `MessagePort`** to the worklet, transferred to it by
+the main thread once the synth is live, so a note goes from Lua straight to the
+audio thread. Two frames of latency came off this:
+
+- one was an **ordering accident** — `pump()` ran at the top of `about_to_wait`, but
+  the worker's notes are applied ~120 lines below it, so every note missed the
+  forward and waited a frame. `pump()` now runs after the apply loop.
+- the other was the **main-thread hop** itself, which the lane removes.
+
+Routing is settled once and **never switches mid-stream**: until the worker is told
+which route applies it *buffers*. Switching would reorder — commands in flight to
+the main thread would arrive after ones later sent down the lane, and `instr`/`smpl`
+landing after the notes that use them is bug #4 again. So the main thread either
+transfers the lane or says "no lane is coming" (that message matters: a browser
+without AudioWorklet has only the main-thread route, and a worker buffering forever
+would be silent). Buffering costs nothing audible — the lane can't open before the
+first gesture, and the context is suspended until then.
+
+### Latency budget, and a warning about measuring it
+
+| stage | native | web |
+|-------|--------|-----|
+| key → Lua (one 60 fps frame) | ~16 ms | ~16 ms |
+| `note()` → audio thread | <1 ms (mpsc) | ~0 ms (lane) |
+| device block | ~10 ms (CoreAudio) | 2.7 ms (worklet) |
+| **engine total** | **~27 ms** | **~19 ms** |
+
+**Bluetooth output adds 100–200 ms** and sits downstream of both, so it swamps
+everything above and makes native and web feel identical. Judge latency on wired
+output only. If Petrichor is to be usable for performance, the docs should say so
+the way every DAW does.
+
+### mpsc vs. a shared-memory ring (the actual trade-off)
+
+They aren't competitors. `mpsc` is an **ownership-transfer channel** (arbitrary Rust
+values, allocation allowed); a SAB ring is a **byte pipe** (fixed-size records, no
+allocation). Latency isn't the difference — native's mpsc is already excellent, and
+the mixer drains it *per sample*, so a native note is sample-accurate to within one
+buffer. The ring's value is narrow: crossing a thread boundary on wasm without
+postMessage + serde.
+
+What *did* matter was allocation. `Note` carried two `Vec<Consonant>`, was taken by
+value on the audio thread and dropped there — `free()` in the audio callback, the
+one place that must never wait on the allocator. Fixed by `vocaloid::Cluster`
+(4 bursts inline + a length, `Copy`, truncating). Note that plain notes were always
+safe: an empty `Vec` doesn't allocate. Only `sing` tripped it.
+
+Still allocating on the audio thread, deliberately: `Chain(Vec<Note>)` (a song is
+queued rarely), and `Reset`/`LoadSample` (load time, where a glitch is invisible).
+These are the natural contents of a "cold lane" if the transport is ever split.
+
+### The ladder (in value order)
+
+1. ~~Port transfer~~ ✅ done — biggest win, needed no shared memory.
+2. **Sample-accurate scheduling.** A *command-schema* property, not a transport one:
+   the native mixer already drains per sample, so adding a timestamp field buys
+   sample-accurate `arp`/`song` on native today with mpsc untouched. Do this before
+   any ring work — it's what makes the clock/`arp` feature feel right.
+3. **SAB command ring** (needs `wasm-ultra`). Worker writes fixed-size POD records;
+   the worklet reads them in `process()` via `Atomics.load` on the write cursor. No
+   serialization, no postMessage. Never `Atomics.wait` on the audio thread —
+   polling per render quantum is the correct pattern and costs nothing. Variable
+   payloads stay off the ring (`LoadSample` carries 345k floats): keep them on
+   postMessage, or put PCM in a separate SAB arena and pass `(offset, len)`. The
+   commands are already integer-keyed, which fits.
+   **Synergy:** wasm-ultra's shared entity buffer wants the same SPSC-ring
+   primitive. Build it once, use it for both.
+4. **Shared PCM arena** — kills the duplicated ~4 MB heap, makes `smpl` zero-copy.
+   The hard one: `+atomics,+bulk-memory --shared-memory` means nightly and
+   `-Z build-std`, and two wasm *instances* can't share `Arc<Vec<f32>>` — it needs a
+   hand-managed arena, not Rust-level sharing. Lowest priority; samples load once.
+5. **Mic input ring** — same primitive, zero-copy capture.
+
+**wasm-ultra is currently 0 lines of code** (`grep -rn 'feature = "wasm-ultra"' src/`
+returns nothing) — the feature is declared and awaiting an implementation. The
+worklet needs *nothing* from it: a separate wasm module with its own linear memory,
+unaffected by COOP/COEP. Ultra is an upgrade to the transport, not a prerequisite.
+
+## Mobile: Android now, iOS anticipated
+
+### Where it stands
+
+The engine **type-checks for `aarch64-linux-android`** (`cargo check --target
+aarch64-linux-android`), touch input works through the existing mouse API, and
+`android_main` exists. It has **not been built into an APK or run on a device** —
+that needs an Android SDK + NDK, which the dev machine doesn't have (see below).
+
+### `desktop` is not the same as `not(wasm)`
+
+The assumption that "native" implies clipboard, native dialogs and a terminal is
+what broke first: `native-dialog` has no Android backend at all. So build.rs now
+emits a **`desktop`** cfg (macOS/Windows/Linux/BSD), and the desktop-only crates
+(`clipboard`, `native-dialog`, `crossterm`, `midir`) moved to a Cargo target table
+gated on the equivalent longhand predicate.
+
+The duplication is forced, not sloppy: a build-script cfg **cannot** drive
+dependency resolution, so the condition exists in both places and they must be kept
+in step. build.rs says so at the point of definition.
+
+`OS` (visible to Lua) gained `"droid"` and `"ios"`, plus an `"other"` fallback so an
+unforeseen platform fails at runtime with an odd name rather than refusing to
+compile.
+
+### Touch → `mus()`
+
+Folded into the mouse so every existing game works untouched: the **primary** finger
+is the cursor, contact is a left click. Primary means *the first finger down that is
+still down*, tracked by winit's touch id — so a second finger landing and lifting
+mid-drag doesn't hijack the cursor or release the button, which is what id-less
+handling gets wrong. Deltas are accumulated per frame in pixels (touch has no
+`DeviceEvent::MouseMotion`), and a tap produces no delta on first contact so it
+doesn't read as a flick. Position stays where the finger lifted, like a mouse that
+stopped moving.
+
+Not gated to mobile: winit reports touch identically on Android, iOS and desktop
+touchscreens, so this also makes a Surface or touch laptop work. Multi-touch
+gestures should get their own Lua command rather than being smuggled through `mus`.
+
+### Remaining before it runs a game on a device
+
+1. **Where the game comes from.** Desktop takes a path; web fetches
+   `/game.game.png` or falls back to an embedded bundle. An APK has neither — the
+   game wants reading out of APK assets via `AndroidApp::asset_manager()`. The
+   embedded-bundle path is wasm-only today because it goes through `fetch`.
+2. ~~**Surface lifecycle.**~~ ✅ fixed. Android destroys the native window whenever the
+   app leaves the foreground (a screen lock is enough) and supplies a new one on
+   return; `resumed` had an early `return` when a window already existed, so the
+   surface kept pointing at the dead one and the app came back black — exactly as
+   predicted. `Gfx` now keeps the `wgpu::Instance` so `recreate_surface()` can rebuild
+   just the surface, keeping the device, pipelines and running game; `suspended()`
+   stops drawing until then. Verified by sleep/wake and by minimising.
+3. **APK packaging.** The `.so` is done (`just android` / `just android release`)
+   but nothing wraps it into an installable APK yet. Options: `cargo-apk`
+   (simplest for `native-activity`, but unmaintained and untested against NDK 30 /
+   build-tools 36), `cargo-ndk` + a Gradle project (most control, most setup), or
+   `xbuild`. Packaging needs an `AndroidManifest.xml` whose
+   `android.app.lib_name` is `petrichor64` (matching the emitted
+   `libpetrichor64.so`) and `minSdkVersion` 26 — see below.
+4. **Audio is unverified.** It links, but nothing has produced a sound. Expect this
+   to need attention — mobile audio wants larger buffers than desktop.
+
+### minSdk is 26, and audio is why
+
+The first link attempt (API 24) failed with `ld.lld: error: unable to find library
+-laaudio`. cpal's Android backend links **AAudio**, which only exists from Android
+8.0 (API 26). So the audio feature sets the platform floor; if audio is ever made
+optional on Android, 24 becomes reachable again. `android_api` in the justfile is
+the single place this is set.
+
+### Verified on hardware (Galaxy Z Fold 5, Android 16)
+
+The APK installs, launches, loads the game baked in with `include_auto`, decodes its
+oggs and holds a steady **60 fps**. Two startup aborts had to be fixed to get there —
+a hardcoded surface `alpha_mode` and gilrs's missing Android backend, both in
+`5bbf327`.
+
+**Touch works and is exact.** A tap at (400, 1200) on a 904x2316 screen reports
+`x=0.4425, y=0.5181` — 400/904 and 1200/2316 to four decimals. Press/release edges
+fire correctly.
+
+**Unprojection is aspect-correct**, which is the thing a phone was most likely to
+break. Off-centre ray deflection per unit of screen space came out 0.315 horizontal
+vs 0.809 vertical — a ratio of 2.57 against the screen's own aspect of 2316/904 =
+2.56. And visually, a cube placed at `mus().v * 12` lands centred on the crosshair to
+within a pixel or two.
+
+`test/touch` is the app that proves it, kept as a smoke test. Three things it
+documents by example, each of which looked like an engine bug first: `m1` is a
+boolean (not 0/1); `fill()` on the gui layer is *opaque* and hides the 3D scene, so
+use `clr()`; and the cube mesh is corner-anchored and untextured by default, so it
+needs `tex`/`offset` to show up where you expect.
+
+Sleep/wake and minimise/restore both come back drawing correctly (`suspended —
+surface released` / `surface rebuilt after resume` in logcat). The inner (unfolded)
+display is 1812x2176 and the app survives being moved to it — the resume path takes
+its size from the window rather than the stale config, so a fold or rotation
+re-derives the render targets.
+
+### Verified so far
+
+- `libpetrichor64.so` **links** for `aarch64-linux-android`: 300 MB debug,
+  **11 MB release**.
+- Both entry symbols are exported and the justfile *checks* them rather than
+  assuming, because a missing one kills the app at startup with no useful message:
+  `android_main` (ours) and `ANativeActivity_onCreate` (android-activity's
+  native-activity backend, which is what `android.app.lib_name` resolves).
+- `just check-android` type-checks without needing the NDK at all (checking doesn't
+  link), so the target can't rot unnoticed.
+- The toolchain is discovered, never hardcoded: `$ANDROID_HOME` or the Android
+  Studio default, newest NDK under it. `just android-env` prints the shell exports
+  worth having (`adb`, `emulator`, `sdkmanager`).
+
+### For iOS later
+
+The `desktop` cfg and the touch handling are already iOS-shaped — iOS is excluded
+from the desktop-only deps and reports touch the same way, so it should reach the
+same "type-checks" state cheaply. What differs: entry point (winit has an iOS
+`EventLoop` path, no `android_main` equivalent), assets come from the app bundle
+rather than an AssetManager, audio is CoreAudio via cpal (already supported), and
+signing/provisioning is a whole separate problem. The `midi` feature could actually
+work there (CoreMIDI), unlike Android.
+
+## Overlay apps (the tool suite): editing a running app from on top of it
+
+The goal: a source editor, image editor, sound/sample editor and model editor that
+run *over* a live app and edit it in place. The encouraging finding is how much of
+this the engine already has — the missing pieces are small and specific, not
+architectural.
+
+### What already exists (verified in code, not assumed)
+
+| piece | state |
+|-------|-------|
+| Bundles with parent/child relations | ✅ `make_bundle(.., bundle_relations: Option<(u8, bool)>)`; the comment at `command.rs:2469` already calls it "a sub or **overlay**" |
+| Per-bundle Lua pool, each with its own `gui`/`sky` raster | ✅ `bundle_manager.get_pool(id)` |
+| Four gui layers composited on the GPU | ✅ `shader.wgsl:gui_fs_main` samples system/primary/secondary/trinary |
+| Per-layer bundle selection | ✅ the field exists: `ScreenLayer.bundle_target` |
+| Call order that runs children with parents | ✅ `rebuild_call_order()` |
+| Input capture precedent | ✅ with the console open the app is fed a *neutral* ControlState, so its keys go to the console instead |
+
+### What's missing (all of it small)
+
+1. **`bundle_target` is never assigned** — every layer is hardcoded to bundle 0, and
+   `check_render` has an explicit early-out for Secondary/Trinary (`self.dirty =
+   false`) so they never source a pool at all. Wiring these two is what makes an
+   overlay visible; nothing else in the render path needs to change.
+2. **Input focus isn't generalized.** The console's "app gets a neutral snapshot"
+   trick is exactly the mechanism an overlay needs; it just needs to become
+   `focus: Option<u8>` rather than a console special case.
+3. **Lua can't load a bundle**: `MainCommmand::Load(_) => todo!()`. Overlays have to
+   be spawned from the console or the engine until that's filled in.
+4. **No cross-bundle access.** This is the actual substance of the editors — an
+   overlay can currently only see its own scripts and textures. `io.get`/`io.set` are
+   scoped to the calling bundle's directory, and `tex`/`gimg` to its own assets.
+5. **No sample read-back** for a sound editor (the `DumpSample` ping-pong noted under
+   Sound System is precisely this).
+
+### Trust boundary: who may summon an overlay
+
+An overlay is the **privileged** surface — it reaches the filesystem and edits another
+bundle's contents. So the edit target must never be able to summon one, hand it code,
+or borrow its reach. That gives two *orthogonal* axes, and keeping them separate is
+what makes the model tractable:
+
+- **Immersion (app-controlled, may only ever subtract).** `attr{lock}` is an app
+  saying "don't edit me" — it suppresses the engine's own surfaces. That's a
+  deliberate tradeoff, not a hole: a locked app gives *itself* less editability and
+  gains nothing. Worth noting it can't wedge the tools permanently either, because
+  `clean_app_attrs()` clears `locked` on every load — the lock dies with the app, so
+  loading anything else gets you back in.
+- **Privilege (engine-controlled, absolute).** Only the engine may create a
+  privileged bundle. Nothing in Lua can, at any privilege level.
+
+Concretely:
+
+1. **Trigger lives in `controls_evaluate`.** That runs before `call_loop`, on the
+   engine's own snapshot of input, so the chord can't be observed or swallowed by the
+   app. (No keyboard on a phone, so mobile needs a reserved gesture handled at the
+   same level — an open question, and a chance to reserve something a game would
+   never use.)
+2. **Capability by construction, not by check.** Each bundle's Lua context is built
+   separately (`init_lua_sys`), so the privileged API — the `app.*` handle and
+   target-scoped `io` — is simply *not installed* in an ordinary app's globals.
+   There's no flag to get wrong at a call site and nothing to forge: an unprivileged
+   bundle has no name to call.
+3. **Provenance: an overlay's code never comes from the edited app.** Embedded in the
+   engine, or from a tools directory the user controls — never the game's bundle,
+   or a game could ship its own "editor" and inherit its reach.
+4. **`MainCommmand::Load(_) => todo!()` must not become the escalation path.** It's
+   the obvious place to add Lua-driven bundle loading; if that ever happens, a child
+   inherits *at most* its parent's capabilities, and privileged is never among them.
+
+The unprivileged leg of this was not theoretical: `io.get`/`io.set` could read and
+write anywhere on disk via an absolute path (fixed in `65b2420`) — the game sandbox
+has to actually hold before an elevated surface above it means anything.
+
+**How it ended up enforced** (phase 1, `app.*`): the privileged table is *built* only
+for a bundle the engine marked as an overlay, so in a game's VM the natives don't
+exist to be called — and the mark is set before the VM starts, which is why overlays
+load through `command::load_overlay` instead of `load_app` + `mark_overlay` after the
+fact. Nothing in Lua can mark one: an app's `over()` passes its bool as `is_parent`
+and makes an ordinary child bundle. On arrival, each `app.*` packet is checked again
+against the sender's id (`Core::overlay_edit_target`), which is also the only place
+the edit target is resolved — the first *non-overlay* bundle, so two open editors
+both aim at the game and never at each other.
+
+### Shape
+
+An overlay is a **child bundle bound to a gui layer**. The app keeps running on
+`primary`; the overlay draws to `secondary` and takes input focus. Because the layers
+composite by alpha, the overlay's transparent pixels show the app straight through,
+which is what an editor wants.
+
+The editors then differ only in what they reach for in the target, so the enabling
+work is one shared **target handle** rather than four bespoke bridges:
+
+```lua
+-- inside an overlay bundle
+app.list()               -- ✅ every file in the target, relative + sorted
+app.read("scripts/main.lua")   -- ✅ source
+app.write("scripts/main.lua", s) -- ✅
+app.reload()             -- ✅ hot-reload the target, overlay stays up
+app.tex_names()
+app.get_tex(name)        -- image userdata, editable with the usual im: methods
+app.set_tex(name, im)
+app.samples()            -- ids + PCM (needs DumpSample)
+app.set_sample(id, pcm)
+```
+
+### Two constraints worth knowing before designing UI
+
+- **Compositing is alpha-*tested*, not blended**: `if (system.a < 0.1)` picks the
+  topmost opaque-enough layer. So an editor cannot dim the app behind it — a scrim
+  needs a real `mix()` in `gui_fs_main`. One line, but a deliberate decision, since
+  it changes how every existing layer combines.
+- **Only four layers**, one of which is the console. So at most three concurrent
+  app+overlay surfaces.
+
+### 3D in an overlay: the camera is the switch
+
+An overlay is a 2D surface today. To let one own 3D content — a model editor, gizmos,
+a floating inspector — it needs a camera of its own, and that immediately forces a
+decision about depth. The two things worth wanting turn out to be mutually exclusive:
+
+- **Its own camera** means its geometry cannot be depth-compared against the app's.
+  Two cameras give two unrelated world→depth mappings, so "in front of" stops meaning
+  anything and the answer changes as either camera moves.
+- **Interleaving with the app's geometry** (the focus effect: an outline that occludes
+  correctly among the game's blocks) is only coherent while both are looking through
+  the *same* camera.
+
+So rather than a depth flag that can be set to an incoherent combination, the mode
+falls out of whether the overlay ever calls `cam`:
+
+| overlay | camera | depth | cost |
+|---|---|---|---|
+| never calls `cam` | the app's | the app's — interleaved (focus mode) | **nothing**: no extra pass, no extra uniforms |
+| calls `cam` | its own | its own, cleared — drawn over the scene | one extra pass |
+
+A gui-only overlay is the common case and pays nothing, which is the point.
+`BundleManager::has_camera` is that switch, and it is only ever true because the
+bundle asked.
+
+**An overlay that wants 3D should set a camera in `main()`.** Sharing the app's camera
+and depth buffer is legal and free, but interleaving two apps' geometry is inherently
+unpredictable — that is the tradeoff, deliberately taken.
+
+**Done:** the camera is per bundle (`Bundle.cam`), and `MainCommmand::Cam` routes to
+the sender. This was a live bug on its own: every bundle wrote the single global
+camera, so an overlay calling `cam` swung the app's view out from under it. The app's
+camera still drives the scene; an overlay's is recorded and ignored by the view.
+
+**Remaining, for the separate pass:**
+
+1. **Group instance buffers by bundle.** `EntManager::render_ents` builds them from
+   `render_hash`, keyed by model name, flattening every bundle together — so there is
+   currently no way to draw "just the overlay's entities". `LuaEnt` already carries
+   `bundle_id`, so this is a keying change, not new bookkeeping.
+2. **A second camera in the uniforms.** `render.rs` writes one view/persp pair into
+   `gfx.uniform_buf` at offsets 0/64 and binds one `main_bind_group`. The second pass
+   needs either a second slice + bind group or a dynamic offset.
+3. **The pass itself**, in `render_loop` between the app's 3D and the gui composite —
+   the gui layers must stay on top — with `depth_ops` clearing so the overlay's
+   geometry can't be swallowed by the scene. Skipped entirely when no overlay
+   `has_camera`, so the default costs one bool check per frame.
+4. **World chunks are per-bundle already** (`world.destroy(bundle_id)`), so an overlay
+   with tiles comes along for free once (1) and (3) exist.
+
+### Phases
+
+Each is independently useful, and phase 0 is what unlocks the rest.
+
+| phase | work | deliverable |
+|-------|------|-------------|
+| **0** | assign `bundle_target`, drop the Secondary/Trinary early-out, generalize input focus | a "hello overlay" drawing over a running app and taking input — the unlock |
+| **1** | ✅ target handle: `app.list`/`read`/`write`/`reload` | the engine half is in; the **source editor** UI on top of it is next |
+| **2** | target handle: texture get/set | **image editor** — Fresco's brush engine pointed at the target's texture instead of its own canvas |
+| **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
+| **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
+
+### A mobile wrinkle for the source editor
+
+Text editing needs a keyboard, and the Android build uses `native-activity`, which
+has no soft-keyboard plumbing. Either switch to `game-activity` (a feature swap plus
+a Gradle project, see the Android section) or have the overlay **draw its own
+keyboard** — which is cheap here, fits a fantasy console, and works identically on
+desktop and phone. The second option is more in keeping with the engine.

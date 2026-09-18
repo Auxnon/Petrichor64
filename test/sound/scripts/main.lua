@@ -1,100 +1,76 @@
 math.randomseed(os.time())
 attr({
-    dark = 99.,
-    low = 0.1,
-    high = 0.9,
-    flatness = 4.,
-    curvature = 0.8,
-    resolution = 720,
-    glitch = { 4. },
+	dark = 99.,
+	low = 0.1,
+	high = 0.9,
+	flatness = 4.,
+	curvature = 0.8,
+	resolution = 720,
+	glitch = { 4. },
 })
--- asong = { "F", "_" }
--- last = ""
-
--- layout = { "" }
-
-bars = {}
-bar_notes = {}
-music_note_set = { "C", "Cs", "D", "Ds", "E", "F", "Fs", "G", "Gs", "A", "As", "B" }
-
-iter_notes = 1
-sound_counter = 0
-out = {}
-
-bar_ui_size = 0.8
-bar_ui_size2 = 1. - bar_ui_size
-
-mouse_once = false
-
-last_notes = {}
-last_instr = {}
-
-musical_mode = true
 
 -- e c - e f - - f
 --  G - - A _ G e c
 sky:fill("000")
 
 function rando(min, max)
-    if max == nil then
-        max = min
-        min = 0
-    end
-    return min + math.random() * (max - min)
+	if max == nil then
+		max = min
+		min = 0
+	end
+	return min + math.random() * (max - min)
 end
 
 pps = {}
 function main()
-    for i = 1, 100 do
-        e = {
-            h = rando(10.),
-            pp = make("jumpers" .. flr(rando(0, 4)), rando(-12., 12.), rando(8, 40), rando(0., 4.)),
-            vel = 0.
-        }
-        -- e.pp:anim("Idle")
-        pps[#pps + 1] = e
-    end
+	for i = 1, 100 do
+		e = {
+			h = rando(10.),
+			pp = make("jumpers" .. flr(rando(0, 4)), rando(-12., 12.), rando(8, 40), rando(0., 4.)),
+			vel = 0.,
+		}
+		-- e.pp:anim("Idle")
+		pps[#pps + 1] = e
+	end
 
-    pps[1].pp.x = 2.
-    pps[1].pp.y = 0.
-    pps[1].pp.z = -.9
+	pps[1].pp.x = 2.
+	pps[1].pp.y = 0.
+	pps[1].pp.z = -0.9
 
-    local poof = gimg("poofy")
+	local poof = gimg("poofy")
 
+	for i = 1, 12 do
+		img(poof, rnd(), rnd() / 3.)
+		--     spawn("poofy", rnd(-12., 12.), 18, rnd(1., 8.))
+	end
 
-    for i = 1, 12 do
-        img(poof, rnd(), rnd() / 3.)
-        --     spawn("poofy", rnd(-12., 12.), 18, rnd(1., 8.))
-    end
+	for i = -10, 10 do
+		for j = 0, 40 do
+			tile("colored" .. flr(rando(0, 4)), i, j, -2)
+		end
+	end
 
+	-- print("note_set", table.concat(note_set, ", "))
 
-    for i = -10, 10 do
-        for j = 0, 40 do
-            tile("colored" .. flr(rando(0, 4)), i, j, -2)
-        end
-    end
+	for i = 1, bar_ui_count do
+		if i % 2 == 0 then
+			bars[i] = 0.
+		else
+			bars[i] = 38. / 440.
+		end
+		last_instr[i] = bars[i]
+		last_notes[i] = bars[i]
+		check_bar(i)
+	end
 
-    -- print("note_set", table.concat(note_set, ", "))
+	make_ui_buttons()
 
-    for i = 1, bar_ui_count do
-        if i % 2 == 0 then
-            bars[i] = 0.
-        else
-            bars[i] = 38. / 440.
-        end
-        last_instr[i] = bars[i]
-        last_notes[i] = bars[i]
-        check_bar(i)
-    end
-
-    make_ui_buttons()
-
-    send_instr()
-    -- instr(2., noise_wave())
+	send_instr()
+	-- instr(2., noise_wave())
 end
 
 -- sounder = .1
-svel = .02
+svel = 0.02
 
 sounder = 1.
 stime = 0.
@@ -106,209 +82,208 @@ lx = 0.
 ly = 0.
 
 camera = {
-    x = 0.,
-    y = 0,
-    z = 0
+	x = 0.,
+	y = 0,
+	z = 0,
 }
 overlay = ""
 function check_bar(bi)
-    if musical_mode then
-        local v = 1 + flr(bars[bi] * (#music_note_set - 1))
-        local current_note = music_note_set[v]
-        bar_notes[bi] = current_note
-        -- also adjust our bar ui to be flush with the edge
-        bars[bi] = v / (#music_note_set)
-        return current_note
-    else
-        local v = (bars[bi] * 440.)
-        bar_notes[bi] = v
-        return v
-    end
+	if musical_mode then
+		local v = 1 + flr(bars[bi] * (#music_note_set - 1))
+		local current_note = music_note_set[v]
+		bar_notes[bi] = current_note
+		-- also adjust our bar ui to be flush with the edge
+		bars[bi] = v / #music_note_set
+		return current_note
+	else
+		local v = (bars[bi] * 440.)
+		bar_notes[bi] = v
+		return v
+	end
 end
 
 function loop()
-    overlay = ""
-    for i, e in ipairs(pps) do
-        if e.pp.z > -1 then
-            e.vel = e.vel - 0.01
-            e.pp.z = e.pp.z + e.vel
-        else
-            e.vel = -e.vel
-            e.pp.z = -0.999
-        end
-    end
-    clr()
+	overlay = ""
+	for i, e in ipairs(pps) do
+		if e.pp.z > -1 then
+			e.vel = e.vel - 0.01
+			e.pp.z = e.pp.z + e.vel
+		else
+			e.vel = -e.vel
+			e.pp.z = -0.999
+		end
+	end
+	clr()
 
-    if key("space", true) then
-        activate()
-    end
+	if key("space", true) then
+		activate()
+	end
 
-    local m = mus()
-    if m.m1 then
-        -- if mouse_once then
-        --     mouse_once = false
-        -- end
-    else
-        mouse_once = true
-    end
+	local m = mus()
+	if m.m1 then
+		-- if mouse_once then
+		--     mouse_once = false
+		-- end
+	else
+		mouse_once = true
+	end
 
-    -- print("mouse " .. m.x)
-    if m.y > 0.19 then
-        ui_bars(m)
-    end
+	-- print("mouse " .. m.x)
+	if m.y > 0.19 then
+		ui_bars(m)
+	end
 
-    draw_bars()
+	draw_bars()
 
-    draw_buttons(m)
+	draw_buttons(m)
 
-    d = d + ddir
-    if d > 1 then
-        ddir = -ddir
-    elseif d < 0 then
-        ddir = -ddir
-    end
+	d = d + ddir
+	if d > 1 then
+		ddir = -ddir
+	elseif d < 0 then
+		ddir = -ddir
+	end
 
-    vr = 2. + d
+	vr = 2. + d
 
-    ss = ss + 0.1
-    sx = math.cos(ss) / vr + 0.5
-    sy = math.sin(ss) / 20. + 0.9
+	ss = ss + 0.1
+	sx = math.cos(ss) / vr + 0.5
+	sy = math.sin(ss) / 20. + 0.9
 
-    if lx ~= 0 then
-        line(lx, ly, sx, sy)
-    end
+	if lx ~= 0 then
+		line(lx, ly, sx, sy)
+	end
 
-    lx = sx
-    ly = sy
+	lx = sx
+	ly = sy
 
+	if #overlay > 0 then
+		rect(m.x + 1 / 64, m.y - 1 / 16, 10 * #overlay, 10, "fff")
+		text(overlay, m.x, m.y - 1 / 16)
+	end
 
-    if #overlay > 0 then
-        rect(m.x + 1 / 64, m.y - 1 / 16, 10 * #overlay, 10, "fff")
-        text(overlay, m.x, m.y - 1 / 16)
-    end
-
-    cam { pos = { camera.x, camera.y, camera.z } }
+	cam({ pos = { camera.x, camera.y, camera.z } })
 end
 
 function clamp(n, min, max)
-    if n < min then
-        return min
-    elseif n > max then
-        return max
-    else
-        return n
-    end
+	if n < min then
+		return min
+	elseif n > max then
+		return max
+	else
+		return n
+	end
 end
 
 function make_square()
-    for i = 1, bar_ui_count do
-        if i % 2 == 0 then
-            bars[i] = 0.
-        else
-            bars[i] = 38. / 440.
-        end
-        check_bar(i)
-    end
+	for i = 1, bar_ui_count do
+		if i % 2 == 0 then
+			bars[i] = 0.
+		else
+			bars[i] = 38. / 440.
+		end
+		check_bar(i)
+	end
 end
 
 function make_noise()
-    for i = 1, bar_ui_count do
-        bars[i] = math.random()
-        check_bar(i)
-    end
+	for i = 1, bar_ui_count do
+		bars[i] = math.random()
+		check_bar(i)
+	end
 end
 
 function activate()
-    mute(0)
-    if mode_type then
-        print("Notes")
-        send_notes()
-    else
-        print("Instr")
-        send_instr()
-    end
+	mute(0)
+	if mode_type then
+		print("Notes")
+		send_notes()
+	else
+		print("Instr")
+		send_instr()
+	end
 end
 
 function send_instr()
-    if half_enabled then
-        print "half"
-    else
-        print "full"
-    end
-    -- iterate over bars
-    -- for j = 1, #bars do
-    --     print("p" .. bars[j])
-    -- end
-    instr(bars, half_enabled)
-    note(440., 2.)
+	if half_enabled then
+		print("half")
+	else
+		print("full")
+	end
+	-- iterate over bars
+	-- for j = 1, #bars do
+	--     print("p" .. bars[j])
+	-- end
+	instr(bars, half_enabled)
+	note(440., 2.)
 end
 
 function send_notes()
-    out = {}
+	out = {}
 
-    local dur = song_speed / 40.
-    -- print("dur" .. dur)
-    for i = 1, #bars do
-        if bars[i] > 0. then
-            local n = bar_notes[i]
-            if type(n) == "string" then
-                n = octave4[n]
-            end
-            out[#out + 1] = { n, dur } --octave4[bar_notes[i]]
-        else
-            out[#out + 1] = { 0., dur }
-        end
-    end
-    -- print "OUT"
-    -- out = square_wave()
-    -- print("out:" .. table.concat(out, ","))
+	local dur = song_speed / 40.
+	-- print("dur" .. dur)
+	for i = 1, #bars do
+		if bars[i] > 0. then
+			local n = bar_notes[i]
+			if type(n) == "string" then
+				n = octave4[n]
+			end
+			out[#out + 1] = { n, dur } --octave4[bar_notes[i]]
+		else
+			out[#out + 1] = { 0., dur }
+		end
+	end
+	-- print "OUT"
+	-- out = square_wave()
+	-- print("out:" .. table.concat(out, ","))
 
-    -- instr(2., out)
-    song(out)
+	-- instr(2., out)
+	song(out)
 end
 
 function draw_bars()
-    local bb = (bar_ui_count + 2)
-    local w = 1 / (bar_ui_count + 3)
-    -- print("bars" .. #bars)
-    local c = "BF7298"
-    if mode_type then
-        c = "85C0FF"
-    end
-    for i = 1, #bars do
-        local h = bars[i]
-        local x = i / bb
-        if h == 0. then
-            rect(x, 0.95, w, 0.05, "006")
-        else
-            rect(x, (1. - h) * bar_ui_size + bar_ui_size2, w, h * bar_ui_size, c)
-            -- text(flr(bar_notes[i]), x - 8 / 320., 1. - h - 8 / 240.)
-        end
-    end
+	local bb = (bar_ui_count + 2)
+	local w = 1 / (bar_ui_count + 3)
+	-- print("bars" .. #bars)
+	local c = "BF7298"
+	if mode_type then
+		c = "85C0FF"
+	end
+	for i = 1, #bars do
+		local h = bars[i]
+		local x = i / bb
+		if h == 0. then
+			rect(x, 0.95, w, 0.05, "006")
+		else
+			rect(x, (1. - h) * bar_ui_size + bar_ui_size2, w, h * bar_ui_size, c)
+			-- text(flr(bar_notes[i]), x - 8 / 320., 1. - h - 8 / 240.)
+		end
+	end
 end
 
 ---@param m mouse
 function ui_bars(m)
-    local bb = (bar_ui_count + 2)
-    local w = 1 / bb
-    for i = 1, #bars do
-        local x = i / bb
+	local bb = (bar_ui_count + 2)
+	local w = 1 / bb
+	for i = 1, #bars do
+		local x = i / bb
 
-        if m.x > x and m.x < x + w then
-            if m.m1 then
-                bars[i] = clamp(1. - m.y, 0., bar_ui_size) / bar_ui_size
-                local b = check_bar(i)
-                if type(b) == "string" then
-                    overlay = b
-                else
-                    overlay = "" .. flr(b) .. "hz"
-                end
-            elseif m.m2 then
-                bars[i] = 0.
-                bar_notes[i] = 0. --""
-            end
+		if m.x > x and m.x < x + w then
+			if m.m1 then
+				bars[i] = clamp(1. - m.y, 0., bar_ui_size) / bar_ui_size
+				local b = check_bar(i)
+				if type(b) == "string" then
+					overlay = b
+				else
+					overlay = "" .. flr(b) .. "hz"
+				end
+			elseif m.m2 then
+				bars[i] = 0.
+				bar_notes[i] = 0. --""
+			end
 
-            -- print("bar is " .. m.y)
-        end
-    end
+			-- print("bar is " .. m.y)
+		end
+	end
 end

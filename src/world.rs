@@ -102,6 +102,17 @@ impl WorldInstance {
         ind
     }
 
+    /// Map a tile texture name to an int index if not already mapped, returning
+    /// `Some(index)` when newly assigned (so a caller like the wasm worker can
+    /// sync the mapping to the main thread), or `None` if already mapped.
+    pub fn ensure_tex(&mut self, name: &str) -> Option<u32> {
+        if self.INT_TEX_DICTIONARY.contains_key(name) {
+            None
+        } else {
+            Some(self.index_texture(name.to_string()))
+        }
+    }
+
     /** We already had a numerical key created in a previous index_texture call and want to add another String->u32 translation*/
     fn index_texture_direct(&mut self, key: String, index: u32) {
         self.INT_TEX_DICTIONARY.insert(key, index);
@@ -182,6 +193,15 @@ pub struct World {
     layers: FxHashMap<u8, LayerModel>,
     pub senders: FxHashMap<u8, Sender<(TileCommand, SyncSender<TileResponse>)>>,
     pub local_mappers: FxHashMap<u8, Mapper>,
+    /// A read-only mirror of every chunk synced from the world thread so far,
+    /// per bundle — built for free out of the existing `WorldSync`/
+    /// `process_sync` pipeline (already runs every frame for mesh rebuilds).
+    /// The collision system reads this directly instead of round-tripping a
+    /// `TileCommand` through the world thread's channel per query — see
+    /// `tile::is_tile_in` and `guide/hit.md`. May lag the world thread's true
+    /// state by up to one `Check()` cycle; fine for collision, which already
+    /// re-checks every frame.
+    pub tile_mirror: FxHashMap<u8, FxHashMap<String, Chunk>>,
     loggy: Sender<(LogType, String)>,
 }
 
@@ -193,7 +213,17 @@ impl World {
             layers: FxHashMap::default(),
             senders: FxHashMap::default(),
             local_mappers: FxHashMap::default(),
+            tile_mirror: FxHashMap::default(),
             loggy,
+        }
+    }
+
+    /// Direct (non-channel) solid-tile query for a bundle's collider — reads
+    /// `tile_mirror` instead of round-tripping a `TileCommand`.
+    pub fn is_tile_local(&self, bundle_id: u8, ix: i32, iy: i32, iz: i32) -> bool {
+        match self.tile_mirror.get(&bundle_id) {
+            Some(chunks) => crate::tile::is_tile_in(chunks, ix, iy, iz),
+            None => false,
         }
     }
 
@@ -208,6 +238,25 @@ impl World {
         self.layers.insert(bundle_id, LayerModel::new());
         self.local_mappers.insert(bundle_id, Mapper::new());
         sender
+    }
+
+    /// Set up a bundle's main-side world state (GPU chunk models + tex/model
+    /// mapper) WITHOUT spawning a world thread. Used on wasm, where the tile data
+    /// lives in the VM worker and only synced chunks are meshed here.
+    pub fn init_local(&mut self, bundle_id: u8) {
+        self.layers.entry(bundle_id).or_insert_with(LayerModel::new);
+        self.local_mappers
+            .entry(bundle_id)
+            .or_insert_with(Mapper::new);
+    }
+
+    /// Record a tile-texture's atlas uv under its int index for a bundle's local
+    /// mapper, so `process_sync` can resolve chunk cells. Fed by the worker's
+    /// MapTex messages on wasm.
+    pub fn set_local_tex(&mut self, bundle_id: u8, index: u32, uv: glam::Vec4) {
+        if let Some(m) = self.local_mappers.get_mut(&bundle_id) {
+            m.tex_map.insert(index, uv);
+        }
     }
 
     pub fn init(
@@ -322,6 +371,16 @@ impl World {
         dropped: bool,
         model_manager: &ModelManager,
     ) {
+        if dropped && chunks.is_empty() {
+            if let Some(mirror) = self.tile_mirror.get_mut(&bundle_id) {
+                mirror.clear();
+            }
+        } else {
+            let mirror = self.tile_mirror.entry(bundle_id).or_default();
+            for chunk in &chunks {
+                mirror.insert(chunk.key.clone(), chunk.clone());
+            }
+        }
         if let Some(layer) = self.layers.get_mut(&bundle_id) {
             if dropped && chunks.is_empty() {
                 layer.chunks.clear();
@@ -357,6 +416,8 @@ impl World {
                                     ix,
                                     iy,
                                     iz,
+                                    #[cfg(feature = "headed")]
+                                    false,
                                 );
                                 model.build_chunk(
                                     &mapper.tex_map,
@@ -406,10 +467,17 @@ impl World {
     ) {
         let (tx, rx) = sync_channel::<TileResponse>(0);
         match sender.send((TileCommand::Set(vec![(t, ivec4(r as i32, x, y, z))]), tx)) {
-            Ok(_) => match rx.recv() {
-                Ok(TileResponse::Success(true)) => {}
-                _ => {}
-            },
+            Ok(_) => {
+                // Native waits for the world thread's ack; the wasm VM runs in a
+                // worker with no world thread yet, so it can't block here.
+                #[cfg(not(target_arch = "wasm32"))]
+                match rx.recv() {
+                    Ok(TileResponse::Success(true)) => {}
+                    _ => {}
+                }
+                #[cfg(target_arch = "wasm32")]
+                let _ = rx;
+            }
             _ => {}
         }
     }
@@ -564,6 +632,7 @@ impl World {
         }
         self.local_mappers.remove(&bundle_id);
         self.layers.remove(&bundle_id);
+        self.tile_mirror.remove(&bundle_id);
     }
 
     /** Destroy all world instances and clear all models. End all threads*/
@@ -647,7 +716,12 @@ impl World {
                 }
             }
             _ => {
-                self.loggy.send((
+                // On wasm the world (and its tile-texture mapping) lives in the
+                // VM worker; main has no world sender here, which is expected —
+                // the worker supplies the mapping via MapTex. Only a real error
+                // on native.
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = self.loggy.send((
                     LogType::WorldError,
                     format!("err::no world tex mapper for bundle {}", bundle_id),
                 ));

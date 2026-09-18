@@ -1,8 +1,6 @@
 use wgpu::{BindGroup, Buffer};
 use winit::dpi::PhysicalSize;
 
-const RENDER_TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-
 pub struct Post {
     pub post_bind_group: BindGroup,
     pub post_pipeline: wgpu::RenderPipeline,
@@ -10,6 +8,7 @@ pub struct Post {
     post_sampler: wgpu::Sampler,
     // uniform_buf: Buffer,
     pub post_texture: wgpu::Texture,
+    pub format: wgpu::TextureFormat,
 }
 
 pub struct ScreenBinds {
@@ -23,6 +22,10 @@ pub struct ScreenBinds {
     pub glitchiness: [f32; 3],
     pub lumen_threshold: f32,
     pub fog: f32,
+    /// R30 chip-only clip-space vertex snap grid size. 0 = off (R00/R43). When
+    /// >0, `vs_main` also gates affine texture mapping and dithering on this same
+    /// value — see `chip.md` for why the three are coupled.
+    pub vertex_snap: f32,
 }
 
 impl ScreenBinds {
@@ -38,6 +41,7 @@ impl ScreenBinds {
             glitchiness: [0.12, 0., 0.02],
             lumen_threshold: 0.2,
             fog: 0.0,
+            vertex_snap: 0.0,
         }
     }
 }
@@ -51,13 +55,13 @@ impl Post {
         uniform_buf: &Buffer,
     ) -> Post {
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(&device, (config.width, config.height));
+            crate::texture::render_sampler(&device, (config.width, config.height), config.format);
 
         let (post_pipeline, post_bind_group_layout) = {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
-                bind_group_layouts: &[&main_layout],
-                push_constant_ranges: &[],
+                bind_group_layouts: &[Some(&main_layout)],
+                ..Default::default()
             });
             (
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -106,7 +110,7 @@ impl Post {
                     //     bias: wgpu::DepthBiasState::default(),
                     // }),
                     multisample: wgpu::MultisampleState::default(),
-                    multiview: None,
+                    multiview_mask: None,
                 }),
                 main_layout,
             )
@@ -140,6 +144,7 @@ impl Post {
 
             post_texture,
             post_sampler,
+            format: config.format,
         }
     }
 
@@ -151,7 +156,7 @@ impl Post {
         main_group_layout: &wgpu::BindGroupLayout,
     ) {
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(device, (size.width, size.height));
+            crate::texture::render_sampler(device, (size.width, size.height), self.format);
 
         self.post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post bind group"),

@@ -3,11 +3,24 @@
 name = "Petrichor64"
 version = "0.4.3"
 edition = "2021"
-resolver = "2"
 description = "Cross platform lua interpreting game engine"
 
 [lib]
+# Distinct from the "Petrichor64" bin so wasm tooling (trunk/wasm-bindgen) can
+# tell the two build artifacts apart.
+name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
+
+# The repo is a workspace so dev tools live beside the engine without linking
+# into its binary. `oggify` converts audio -> ogg (carries a Vorbis *encoder*
+# with a C dep we deliberately keep out of the size-optimized engine build).
+# Build it explicitly: `cargo build -p oggify`.
+[workspace]
+members = ["tools/oggify", "synth"]
+# Engine-only by default so `cargo build` never drags in oggify's C encoder.
+# Build the tool explicitly: `cargo build -p oggify`.
+default-members = ["."]
+resolver = "2"
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
@@ -19,12 +32,41 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed","wasm"] # "online_capable" ,  "headed"
+default=[ "silt","headed","audio","studio"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
-online_capable=["tokio/full", "tokio-util", "rmp-serde", "bytes"]
-wasm=["tokio/full", "tokio-util/compat"]
+online_capable=["rmp-serde", "bytes"]
+# `wasm` marks a wasm build (drop-in, CDN-friendly, no shared memory). NOT in
+# default — native builds must never enable it. tokio/tokio-util are non-optional
+# now (needed by async_zip on both targets), so this pulls no deps itself.
+wasm=["audio"]
+# The browser's main-thread audio scheduler, used only if the AudioWorklet path
+# fails to start. Enabled by web/index.html (so normal web builds have it) rather
+# than by `wasm` itself, because cargo features only ever add: folding it into
+# `wasm` would make it impossible to leave out. Dropping it also drops the whole
+# DSP from the engine's wasm, since the mixer is only reachable from here on that
+# target (the worklet module carries its own copy) — but a browser that cannot run
+# the worklet then gets no sound at all.
+web-fallback=["petrichor-synth/web-fallback"]
+# `wasm-ultra` is the high-performance wasm build: SharedArrayBuffer + wasm
+# atomics for a shared entity buffer (requires COOP/COEP isolation headers on the
+# host page). Additive over `wasm`; ultra-only code gates on feature="wasm-ultra",
+# shared wasm code stays on cfg(target_arch="wasm32").
+wasm-ultra=["wasm"]
 headed=["wgpu", "winit", "winit_input_helper"]
-audio=["cpal"]
+# Software-rasterized renderer for terminals: no GPU/windowing deps at all, so
+# it builds and runs on devices with no modern graphics API (e.g. a Raspberry
+# Pi Zero 2 W over SSH). Independent of `headed` — reads raw tile/entity data
+# directly rather than the wgpu-cooked chunk/entity buffers, so it doesn't
+# depend on (or conflict with) the wgpu renderer.
+render-tui=["crossterm"]
+# The synth itself lives in the `petrichor-synth` workspace crate (shared with the
+# browser AudioWorklet build); `host-io` pulls in its cpal/WebAudio glue, and cpal
+# stays listed here for the wasm feature-union noted below.
+audio=["cpal", "lewton", "petrichor-synth"]
+# MIDI input, native-only and off by default (MIDI is a niche for a fantasy
+# console, so its cost stays opt-in). Implies `audio`, since incoming notes are
+# played by the synth. See src/midi.rs and guide/midi.md.
+midi=["midir", "audio"]
 puc_lua=["mlua"]
 silt=["silt-lua"]
 picc=["piccolo"]
@@ -34,13 +76,20 @@ studio=[]
 
 [dependencies]
 #wgpu = { version = "0.12", features = ["webgl"],optional=true }
-wgpu = { version = "24.0.1", optional=true }
+wgpu = { version = "29.0.3", optional=true }
 cpal={ version ="0.16.0", optional=true }
+# The shared synth crate (DSP + host I/O). `host-io` gives us the cpal output
+# stream, mic capture and the WebAudio fallback; the AudioWorklet build of this
+# same crate leaves that feature off so its wasm module stays small.
+petrichor-synth={ path="synth", optional=true, features=["host-io"] }
+# Pure-Rust OGG/Vorbis decoder for loading sounds/*.ogg at boot (no C deps).
+# Encoding to ogg lives in the separate `oggify` tool, not the engine binary.
+lewton={ version ="0.10.2", optional=true }
 bytemuck= { version = "1.21.0", features = ["derive"] }
 bytes={version="1.10.0", optional=true}
 
-winit = { version ="0.29.15",  optional=true }
-winit_input_helper={ version ="0.16.0", optional=true }
+winit = { version ="0.30.13",  optional=true }
+winit_input_helper={ version ="0.17.0", optional=true }
 pollster = "0.4.0"
 log="0.4.28"
 env_logger = "0.11.8"
@@ -48,6 +97,7 @@ lazy_static="1.5.0"
 parking_lot ="0.12.4"
 anyhow="1.0.100"
 image ="0.25.5"
+colored="3.1.1"
 
 
 # used by imageproc
@@ -57,6 +107,9 @@ imageproc="0.26.0"
 gltf="1.4.1"
 itertools="0.14.0"
 serde={version="1.0.219",features=["derive"]}
+# lets ChunkWire's packed cell bytes serialize as a Uint8Array (byte-level clone)
+# instead of a JS number array (per-element boxing).
+serde_bytes="0.11"
 
 mlua={version= "0.10.3", optional=true, features=["luau"]}
 fastrand={version="2.3.0", features=["js"]}
@@ -69,30 +122,134 @@ rmp-serde={version="1.3.0",optional=true}
 # uuid = {version="0.8.2",features = ["serde", "v4"]}
 # futures="0.3.31"
 # zip="2.2.2"
-async_zip = { version = "0.0.18", features = ["lzma","tokio"] }
+# lzma was dropped: only Compression::Stored is used (see file_util.rs), and the
+# lzma feature pulls liblzma-sys, a C library with no wasm target.
+async_zip = { version = "0.0.18", features = ["tokio"] }
 
 # used by async_zip, matching their version hopefully
 # futures-lite={version="2.1.0", features = ["std"]}
 # default-features = false
 
 spin_sleep = "1.3.0"
-clipboard = "0.5.0"
 rustc-hash = "2.1.1"
 ron="0.8.1"
 gilrs ="0.10.10"
 serde_json ="1.0.139"
-tokio = { version = "1.43.0", features = ["full"], optional=true }
-tokio-util= { version = "0.7.13", features = ["codec"],optional=true } 
+# tokio/tokio-util are needed on BOTH targets (async_zip, file_util's compat
+# readers, native pack_zip/run_cli), so they're non-optional. The base carries
+# only the wasm-safe pieces; "full" (which pulls mio/net and won't build on wasm)
+# is added for native targets below.
+tokio = { version = "1.43.0", features = ["sync", "macros", "io-util", "rt"] }
+tokio-util = { version = "0.7.13", features = ["codec", "compat"] }
 dirs="6.0.0"
 
 regex="1.11.1"
-native-dialog = "0.9.0"
-silt-lua = {version="0.3.0", optional=true, path="../silt-lua"}
+# silt-lua = {version="0.3.0", optional=true, git="https://github.com/auxnon/silt-lua", branch="copilot/sub-pr-10-again"}
+# `vector`: first-class vec2/vec3/vec4 VM values (glam-backed) — real vector math
+# in Lua instead of {x,y,z} tables, which the model editor leans on heavily.
+silt-lua = {version="0.3.0", optional=true, path="../silt-stable", features=["vector"]}
 piccolo = { git="https://github.com/kyren/piccolo", optional=true } # version="0.2.0",
 # gc-arena = {git="https://github.com/kyren/gc-arena"}
 crossbeam = "0.8.4"
 atomicell = "0.2.0"
-# wasm-bindgen = "0.2.83"
+
+# ---------------------------------------------------------------------------
+# Desktop-only dependencies: crates that need a desktop OS, not merely a native
+# one. None of them build for Android or iOS (native-dialog has no backend there
+# at all), so "not wasm" is not a strong enough condition once phones are targets.
+#
+# This predicate must stay in step with the `desktop` cfg that build.rs emits,
+# which is what the call sites use — a build-script cfg can't drive dependency
+# resolution, so the condition has to be written out longhand here.
+# ---------------------------------------------------------------------------
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
+clipboard = "0.5.0"
+native-dialog = "0.9.0"
+# TUI backend: terminal control has no wasm32 target, and a phone has no terminal.
+crossterm = { version = "0.28.1", optional = true }
+# MIDI input (the `midi` feature). midir is a thin FFI binding over each host's
+# native MIDI stack — CoreMIDI on macOS, WinMM/WinRT on Windows, ALSA seq on
+# Linux — which is also what gets us BLE MIDI for free: macOS and Windows present
+# an OS-paired Bluetooth MIDI device as an ordinary MIDI port. Native-only for
+# now; midir does have a Web MIDI backend, but wiring it through the wasm VM
+# worker is a separate job (see guide/midi.md).
+midir = { version = "0.10.1", optional = true }
+
+# ---------------------------------------------------------------------------
+# All-native dependencies: fine on desktop *and* mobile.
+# ---------------------------------------------------------------------------
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
+# feature set declared in [dependencies]. Features union across target tables.
+tokio = { version = "1.43.0", features = ["full"] }
+
+# ---------------------------------------------------------------------------
+# Android. winit already depends on `android-activity`, but that crate refuses to
+# compile until one of its two backends is chosen, so the choice has to be made
+# here.
+#
+# `native-activity` over `game-activity`: it needs no Java/Gradle scaffolding, so
+# `cargo apk` can build a runnable APK on its own. The tradeoff is weaker text
+# input (no proper soft-keyboard/IME plumbing), which the in-engine console will
+# eventually want — switching to `game-activity` later is a feature swap here plus
+# a Gradle project, and nothing in the engine's own code depends on which is used.
+# ---------------------------------------------------------------------------
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30.13", features = ["android-native-activity"], optional = true }
+# The `AndroidApp` handed to `android_main`, which the event loop is built from.
+android-activity = "0.6"
+# Routes `log` to logcat. Android has no stdout to read, so without this every
+# `log::info!` in the engine goes nowhere and a failure to start is invisible.
+android_logger = "0.14"
+
+# ---------------------------------------------------------------------------
+# wasm-only dependencies: browser glue for the web build.
+# ---------------------------------------------------------------------------
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# cpal needs its wasm-bindgen feature to use the WebAudio backend on wasm32;
+# without it the host finds no output device. (Feature unions with the base
+# optional cpal dep, which the `audio` feature enables.)
+cpal = { version = "0.16.0", optional = true, features = ["wasm-bindgen"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+console_log = "1.0"
+js-sys = "0.3"
+# JsValue <-> serde for postMessage payloads (HostToVm / VmToHost).
+serde-wasm-bindgen = "0.6"
+# winit uses web-time's Instant on wasm; match it for our frame pacing.
+web-time = "1.1"
+web-sys = { version = "0.3", features = [
+    "console",
+    "AudioContext",
+    "AudioContextState",
+    "BaseAudioContext",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioNode",
+    "AudioScheduledSourceNode",
+    "AudioDestinationNode",
+    "Document",
+    "Window",
+    "Element",
+    "Node",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "Location",
+    "Request",
+    "RequestInit",
+    "Response",
+    "Worker",
+    "WorkerType",
+    "WorkerOptions",
+    "MessageEvent",
+    # The AudioWorklet command lane transferred to the VM worker (web_worker.rs).
+    "MessagePort",
+    "EventTarget",
+    "MouseEvent",
+    "KeyboardEvent",
+    "CssStyleDeclaration",
+] }
 
 # [dependencies.tracy]
 # package = "tracy_full"
@@ -123,6 +280,28 @@ atomicell = "0.2.0"
 # short_description = "Sound editor"
 # deb_depends = []
 # osx_frameworks = []
+
+# ---------------------------------------------------------------------------
+# Android packaging (cargo-apk). `just android-apk`.
+#
+# The game is baked into the library via the `include_auto` feature for now, so
+# nothing here needs to ship assets — dynamic loading from APK assets comes later.
+# ---------------------------------------------------------------------------
+[package.metadata.android]
+package = "com.makeavoy.petrichor64"
+# Only arm64 for now; add the others when there's a reason to test on an old phone
+# or the x86_64 emulator (`just android-targets` installs them).
+build_targets = ["aarch64-linux-android"]
+apk_name = "petrichor64"
+
+[package.metadata.android.sdk]
+# 26 is forced by audio: cpal's Android backend links AAudio, which doesn't exist
+# before Android 8.0. See the justfile's `android_api`.
+min_sdk_version = 26
+target_sdk_version = 33
+
+[package.metadata.android.application]
+label = "Petrichor64"
 
 [package.metadata.bundle]
 name = "Petrichor64"
