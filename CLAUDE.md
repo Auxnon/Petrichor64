@@ -69,9 +69,11 @@ persistent audio state, clear it in the `Reset` arm too.
 - **Waveforms** live in `WaveType` + `osc()`; **samples** go through
   `voice_out()` (pitch-resampled by `freq/base_freq`, linear interp, one-shots
   self-release). New sample buffers are loudness-matched via `normalize_pcm`.
-- **Silt `Table`→`Vec` has a hash-order bug** (`to_vec`, still unfixed
-  upstream): read PCM/chord/song arrays with a `getn(i)` index loop, never
-  `Vec<f32>` `FromLua`, or the buffer scrambles into noise.
+- **Silt `Table`→`Vec` used to have a hash-order bug** (`to_vec` walked the
+  hashmap). Fixed in silt PR Auxnon/silt-lua#16 — it now reads the 1..n sequence
+  (`ipairs` semantics: stops at the first hole, ignores non-integer keys).
+  The existing `getn(i)` loops for PCM/chord/song, and `ordered_list` in
+  `command.rs`, are still correct and safe to keep.
 
 ### Loading sound files (`sounds/` folder)
 

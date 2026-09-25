@@ -1279,7 +1279,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 ---@field rot number[]? azimuth, altitude
 
 --- @class model_data
---- @field t string[]? texture assets
+--- @field t (string|string[])? texture asset(s)
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
