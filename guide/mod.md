@@ -3,9 +3,9 @@
 _set model_
 
 ```lua
----@alias regular_data {v:number[3][], u?:number[2][]}, i?:integer[], n?:number[3][], t:string[]}
----@alias quad_data {q:number, u?:number[2][], n?:number[3][],t:string[]}
----@alias cube_data {t:string[]}
+---@alias regular_data {v:number[3][], u?:number[2][]}, i?:integer[], n?:number[3][], t?:string|string[]}
+---@alias quad_data {q:number[3][], u?:number[2][], n?:number[3][], t?:string|string[]}
+---@alias cube_data {t:string|string[]}
 ---@type fun(asset:string, data:regular_data|quad_data|cube_data)
 function mod(asset,data)
 ```
@@ -22,10 +22,10 @@ mod("card", {
     })
 ```
 
-**The quad method** is done by passing a data with a q field set and is considerably simpler if not less predictable. A quad is 4 vertices, so by passing in 8 vertices we create 8 quad faces. Indices are automatic. UVs are estimated based on right hand rule, aligning the top edge to the 1st and 2nd vertices. The UV is uniformly applied and always fit rather then clipped. Estimations may not be perfect. Expect bugs. The mechanism may change in the future. The following creates a plane that's 1 wide on the X axis, and 1 tall on the Z axis.
+**The quad method** is done by passing a data with a q field set and is considerably simpler if not less predictable. A quad is 4 vertices, listed in order around its edge (1→2→3→4, no crossing), so by passing in 8 vertices we create 2 quad faces. Indices are automatic. UVs are estimated based on right hand rule, aligning the top edge to the 1st and 2nd vertices. The UV is uniformly applied and always fit rather then clipped. Estimations may not be perfect. Expect bugs. The mechanism may change in the future. The following creates a plane that's 1 wide on the X axis, and 1 tall on the Z axis.
 
 ````lua
-`t` is optional in every form. A model built without one gets the engine's fallback
+`t` is a texture name, or a list of names that the faces cycle through; a bare string is the same as a one-element list (`t="tex"` == `t={"tex"}`). `t` is optional in every form. A model built without one gets the engine's fallback
 texture — a grey checker that lives in the first slot of the atlas and is always
 present — so a mesh can be built first and textured later through the entity. An app
 that ships its own image named `default` replaces it.

@@ -2288,13 +2288,13 @@ function nimg(w, h) end"
 
                                 Err(static_err("expecting table for param 2"));};
 
-                match t.try_get_type::<_, Vec<[f32; 3]>>("q",vm,mc) {
+                match ordered_list::<[f32; 3]>(&t,"q",vm,mc) {
                     Some(quads) => {
 
                         let (v,n, uv, i) =
-                        match t.try_get_type::<_,Vec<[f32;2]>>("u",vm,mc) { //Vec<[f32;2]>
+                        match ordered_list::<[f32;2]>(&t,"u",vm,mc) { //Vec<[f32;2]>
                             Some(uvi)=>{
-                                let inds= t.try_get_type::<_,Vec<u32>>("i",vm,mc).unwrap_or_else(||{ 
+                                let inds= ordered_list::<u32>(&t,"i",vm,mc).unwrap_or_else(||{ 
                                     let mut ind = Vec::new();
                                     let mut i = 0;
                                     for _ in 0..quads.len() {
@@ -2308,7 +2308,7 @@ function nimg(w, h) end"
                                     }
                                     ind
                                 });
-                                let norms=t.try_get_type::<_,Vec<[f32;3]>>("n",vm,mc).unwrap_or_else(||{
+                                let norms=ordered_list::<[f32;3]>(&t,"n",vm,mc).unwrap_or_else(||{
                                     let mut norms = Vec::new();
                                     for _ in 0..quads.len() {
                                         norms.push([0., 0., 0.]);
@@ -2325,7 +2325,7 @@ function nimg(w, h) end"
     convert_quads(quads)
                             }
                         };
-                        match t.try_get_type::<_,Vec<String>>("t",vm,mc) {
+                        match ordered_list::<String>(&t,"t",vm,mc) {
                             Some(textures) => {
                                 // let tt=Vec::<String>::from_lua(tex, vm, mc);
                                 // let tt: Vec<String>= textures.clone().
@@ -2378,14 +2378,14 @@ function nimg(w, h) end"
                     }
                     _ => {
                         // println!("got no quads");
-                        let vin = t.try_get_type::<_, Vec<[f32; 3]>>("v",vm,mc);
+                        let vin = ordered_list::<[f32; 3]>(&t,"v",vm,mc);
                         match vin {
                             Some(vecs) => {
                                 if vecs.len() > 2 {
-                                    let inds =  t.get_type::<_, Vec<u32>>("i",vm,mc);
-                                    let uvs =  t.get_type::<_, Vec<[f32; 2]>>("u",vm,mc);
-                                    let norms =  t.get_type::<_, Vec<[f32; 3]>>("n",vm,mc);
-                                    match t.try_get_type::<_, Vec<String>>("t",vm,mc) {
+                                    let inds =  ordered_list::<u32>(&t,"i",vm,mc).unwrap_or_default();
+                                    let uvs =  ordered_list::<[f32; 2]>(&t,"u",vm,mc).unwrap_or_default();
+                                    let norms =  ordered_list::<[f32; 3]>(&t,"n",vm,mc).unwrap_or_default();
+                                    match ordered_list::<String>(&t,"t",vm,mc) {
                                         Some(textures) => {
                                             lua_err!( pitcher.send((
                                                 bundle_id,
@@ -2432,7 +2432,7 @@ function nimg(w, h) end"
                                 Err(static_err("This type of model requires a vertex list at index \"v\" < v={{0,0,0},{1,0,0},{1,1,0},{0,1,0}} >"))
                             }
                             _ => {
-                                match t.try_get_type::<_, Vec<String>>("t",vm,mc) {
+                                match ordered_list::<String>(&t,"t",vm,mc) {
                                     Some(texture) => {
                                         if texture.len() > 0 {
                                             let t = texture[0].clone();
@@ -3921,6 +3921,32 @@ fn table_hasher(table: &Table) -> Vec<(String, ValueMap)> {
         };
     }
     data
+}
+
+/// Read `t[key]` as an ordered list, walking indices 1..n with `getn`. Silt's
+/// `Vec<T>` FromLua iterates the table's hashmap, so a list like `q`'s four
+/// corners comes back in hash order — a quad's winding scrambles into a bowtie.
+/// A bare non-table value is a one-element list (`t="tex"` == `t={"tex"}`).
+/// `None` when the key is absent.
+#[cfg(feature = "silt")]
+fn ordered_list<'v, R>(t: &Table<'v>, key: &str, vm: &VM<'v>, mc: &Mutation<'v>) -> Option<Vec<R>>
+where
+    R: silt_lua::value::FromLua<'v> + Default,
+{
+    match t.get_value(&key.into()) {
+        Value::Nil => None,
+        Value::Table(inner) => {
+            let tb = inner.borrow();
+            let mut out = Vec::new();
+            let mut i = 1;
+            while let Some(v) = tb.getn(i) {
+                out.push(R::from_lua(v, vm, mc).unwrap_or_default());
+                i += 1;
+            }
+            Some(out)
+        }
+        v => Some(vec![R::from_lua(&v, vm, mc).unwrap_or_default()]),
+    }
 }
 
 fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {
