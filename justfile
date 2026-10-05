@@ -90,7 +90,7 @@ synth-wasm:
 
 # Dev server with live reload at http://localhost:8080.
 # NOTE: Trunk.toml sets filehash=false (worker.js imports a fixed bundle name),
-# so the browser caches Petrichor64_bg.wasm across rebuilds. After changing
+# so the browser caches petrichor64_bg.wasm across rebuilds. After changing
 # features/protocol, hard-reload with DevTools "Disable cache" on — otherwise
 # the main thread and VM worker can run different vintages of the bundle (e.g.
 # "unknown variant `Sound`" if one has audio and the other doesn't).
@@ -201,7 +201,7 @@ android profile="debug":
     export CXX_aarch64_linux_android="$TC/${TRIPLE}{{android_api}}-clang++"
     export AR_aarch64_linux_android="$TC/llvm-ar"
     FLAG=""; [ "{{profile}}" = "release" ] && FLAG="--release"
-    # --lib only: the `Petrichor64` bin has no meaning on Android (the activity
+    # --lib only: the `petrichor64` bin has no meaning on Android (the activity
     # loads the cdylib and calls android_main), and building it just wastes time.
     cargo build --target "$TRIPLE" --lib $FLAG
     OUT="target/$TRIPLE/{{profile}}/libpetrichor64.so"

@@ -6,10 +6,14 @@ edition = "2021"
 description = "Cross platform lua interpreting game engine"
 
 [lib]
-# Distinct from the "Petrichor64" bin so wasm tooling (trunk/wasm-bindgen) can
-# tell the two build artifacts apart.
 name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
+
+# Lowercase executable name. Note it now shares the lib's name, so on wasm the
+# cdylib and bin artifacts can collide (cargo warns about it).
+[[bin]]
+name = "petrichor64"
+path = "src/main.rs"
 
 # The repo is a workspace so dev tools live beside the engine without linking
 # into its binary. `oggify` converts audio -> ogg (carries a Vorbis *encoder*

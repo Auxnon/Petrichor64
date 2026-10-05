@@ -7,7 +7,7 @@
 [build]
 target = "web/index.html"
 dist = "web/dist"
-# Stable output names (Petrichor64.js / _bg.wasm) so the hand-written worker.js
+# Stable output names (petrichor64.js / _bg.wasm) so the hand-written worker.js
 # can import the bundle by a fixed path. Re-enable hashing for production.
 filehash = false
 

@@ -1,6 +1,6 @@
 -- Chisel — a grid modeller. Place points, connect them into faces, extrude.
 --
--- Runs as a normal app for now:  Petrichor64 apps/model
+-- Runs as a normal app for now:  petrichor64 apps/model
 --
 -- It is meant to become the overlay model editor (PLAN.md phase 4), but an overlay
 -- with its own 3D needs the separate render pass that doesn't exist yet — without it

@@ -1,7 +1,7 @@
 -- What silt's `vector` feature gives Lua. Enabled via the silt-lua dependency in
 -- Cargo.toml; without it `vec3` is nil and everything below fails.
 --
---     Petrichor64 test/vecs
+--     petrichor64 test/vecs
 --
 -- vec2/vec3/vec4 are first-class VM values (glam-backed), not tables or userdata:
 -- they carry operators, field access and a method library, which is what makes the

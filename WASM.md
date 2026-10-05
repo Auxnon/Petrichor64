@@ -166,7 +166,7 @@ the engine has something to run without a round-trip.
     NO InitBack — the worker owns the gui/sky pixels). Each non-Init message
     re-`enter`s the arena, runs `handle_lua_talk`, drains the local `catcher`
     (→ `main_command_to_host` → `VmToHost` posted back) and `loggy_rx` (→ console).
-    `web/worker.js` is an ES-module worker importing `/Petrichor64.js`.
+    `web/worker.js` is an ES-module worker importing `/petrichor64.js`.
     Confirmed: VM builds, `loop()` runs per frame, globals persist across
     re-enters (count hit 30/60), `cout`→loggy→console, `LoopComplete` streams to
     main. Fixes along the way: `start()` no-ops with no `Window`; Load's reply

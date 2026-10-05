@@ -8,7 +8,7 @@
 //
 // Trunk emits stable names (filehash=false) so we can import the bundle by a
 // fixed path. It's an ES-module worker: spawn with { type: "module" }.
-import init, { worker_init, worker_receive } from "/Petrichor64.js";
+import init, { worker_init, worker_receive } from "/petrichor64.js";
 
 let ready = false;
 const queue = [];

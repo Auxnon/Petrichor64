@@ -1,7 +1,7 @@
 -- What a source editor can rely on. One check per step so a crash localizes, and
 -- results go through cout's variadic form rather than concat, so a concat bug can't
 -- be mistaken for a string-library gap. Run as an overlay to also cover `key` and
--- `app.*`:  Petrichor64 test/target --overlay test/strings
+-- `app.*`:  petrichor64 test/target --overlay test/strings
 step = 0
 s = "local x = 42 -- hi"
 

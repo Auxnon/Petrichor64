@@ -2,7 +2,7 @@
 -- and the modeller (apps/model). Run it and read the console — every check prints ok or FAIL, and a
 -- miscompile shows up as an "is not callable" error rather than a FAIL line.
 --
---     Petrichor64 test/silt-callarg
+--     petrichor64 test/silt-callarg
 --
 -- 1. CALL ARGUMENTS — a call in an argument list, followed by a local-variable
 --    argument, clobbers the callee register: the call invokes its own FIRST
