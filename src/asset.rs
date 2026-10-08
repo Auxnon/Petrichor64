@@ -571,6 +571,27 @@ pub fn determine_path(directory: Option<&str>) -> PathBuf {
     }
 }
 
+/// Where a game passed to `load` (or on the command line) lives. A path that
+/// exists relative to the working directory wins, so `petrichor64 .` or
+/// `load ../game` source the folder (or `name.game.png`) beside where the app
+/// was run; anything else falls back to `determine_path`, which in release
+/// builds is the home directory.
+pub fn resolve_app_path(s: &str) -> PathBuf {
+    let local = match std::env::current_dir() {
+        Ok(cwd) => cwd.join(s),
+        Err(_) => PathBuf::from(s),
+    };
+    let packed = local.with_file_name(format!(
+        "{}.game.png",
+        local.file_name().and_then(|f| f.to_str()).unwrap_or("")
+    ));
+    if local.exists() || packed.is_file() {
+        local
+    } else {
+        determine_path(Some(s))
+    }
+}
+
 pub fn make_directory(
     directory: &str,
     command_map: Option<&HashMap<String, (String, String)>>,

@@ -3229,7 +3229,7 @@ async fn async_load_app(
                 h
             }
             None => {
-                let mut path = crate::asset::determine_path(Some(s.as_ref()));
+                let mut path = crate::asset::resolve_app_path(s.as_ref());
                 if path.is_dir() {
                     let asset_items = crate::asset::get_asset_items(&path, &mut core.loggy)?;
                     let script_items = crate::asset::get_script_items(&path, &mut core.loggy)?;
