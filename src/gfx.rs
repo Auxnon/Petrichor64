@@ -177,7 +177,13 @@ impl<'w> Gfx<'w> {
                 label: None,
                 required_features: Features::empty(),
                 required_limits: wgpu::Limits {
-                    max_storage_textures_per_shader_stage: 8,
+                    // No shader uses storage textures today; capped at what the
+                    // adapter offers so devices with fewer (e.g. SwiftShader's 4)
+                    // still get a device instead of failing outright.
+                    max_storage_textures_per_shader_stage: adapter
+                        .limits()
+                        .max_storage_textures_per_shader_stage
+                        .min(8),
                     ..wgpu::Limits::default()
                 },
                 memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?

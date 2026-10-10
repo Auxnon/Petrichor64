@@ -28,7 +28,7 @@ play game='':
 
 # Run the terminal (software) renderer — no GPU/window.
 tui game='':
-    cargo run --no-default-features --features silt,render-tui -- {{game}}
+    cargo run --no-default-features --features silt,render-tui,bin -- {{game}}
 
 # ---------------------------------------------------------------------------
 # Native — build
@@ -48,7 +48,7 @@ build-cart:
 
 # Headless server build (no GPU/window/Lua-default; networking only).
 build-headless:
-    cargo build --release --no-default-features --features online_capable
+    cargo build --release --no-default-features --features online_capable,bin
 
 # macOS .app bundles (needs `cargo install cargo-bundle`).
 bundle-mac-silicon:

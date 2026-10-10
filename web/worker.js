@@ -7,8 +7,10 @@
 // back.
 //
 // Trunk emits stable names (filehash=false) so we can import the bundle by a
-// fixed path. It's an ES-module worker: spawn with { type: "module" }.
-import init, { worker_init, worker_receive } from "/petrichor64.js";
+// fixed path. The web build compiles the lib (see web/index.html), which trunk
+// names after the package, hence the capital P.
+// It's an ES-module worker: spawn with { type: "module" }.
+import init, { worker_init, worker_receive } from "/Petrichor64.js";
 
 let ready = false;
 const queue = [];

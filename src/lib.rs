@@ -44,7 +44,9 @@ mod gfx;
 mod global;
 mod gui;
 mod log;
-#[cfg(feature = "online_capable")]
+#[cfg(any(feature = "ws", feature = "online_capable"))]
+mod json;
+#[cfg(any(feature = "ws", feature = "online_capable"))]
 mod lua_connection;
 mod lua_define;
 mod lua_ent;
@@ -52,6 +54,8 @@ mod lua_img;
 mod model;
 #[cfg(feature = "online_capable")]
 mod online;
+#[cfg(feature = "ws")]
+mod ws;
 #[cfg(feature = "online_capable")]
 mod packet;
 mod pad;
@@ -1252,6 +1256,16 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
     if let Err(e) = event_loop.run_app(&mut engine) {
         ::log::error!("petrichor64: event loop exited with {:?}", e);
     }
+}
+
+/// Web entry point. The web build is the lib's cdylib (web/index.html builds
+/// the lib, not the bin): the lowercase bin shares the lib's name, so on wasm
+/// both would emit `petrichor64.wasm` and trunk can't pick one. Also runs in
+/// the VM worker's instance, where `start()` finds no window and returns.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn wasm_main() {
+    start();
 }
 
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]

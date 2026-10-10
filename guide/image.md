@@ -4,6 +4,14 @@ An image instance ties to image raster userdata hosted inside the lua context. S
 
 > The image type is not to be confused with the `img` method on the image type itself, as it can be used independently as `img` which is really an alias for `gui:img`
 
+### Image fields
+
+- `w: integer` - read only, width in pixels
+- `h: integer` - read only, height in pixels
+
+`gui.w`/`gui.h` follow the window, so they're how a script lays out pixel-sized text
+or works out the screen's aspect ratio.
+
 ### Image methods\*\*
 
 ### line

@@ -9,11 +9,14 @@ description = "Cross platform lua interpreting game engine"
 name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
 
-# Lowercase executable name. Note it now shares the lib's name, so on wasm the
-# cdylib and bin artifacts can collide (cargo warns about it).
+# Lowercase executable name. It shares the lib's name, so on wasm the cdylib and
+# bin artifacts collide. So the bin needs the default-on `bin` feature, and the
+# web build (web/index.html) turns default features off to build only the lib,
+# whose entry is `wasm_main` in lib.rs.
 [[bin]]
 name = "petrichor64"
 path = "src/main.rs"
+required-features = ["bin"]
 
 # The repo is a workspace so dev tools live beside the engine without linking
 # into its binary. `oggify` converts audio -> ogg (carries a Vorbis *encoder*
@@ -36,13 +39,21 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed","audio","studio"] # "online_capable" ,  "headed" , "include_auto"
+default=[ "silt","headed","audio","studio","bin"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
+# Builds the `petrichor64` executable. Default on; the web build leaves it off
+# (see [[bin]]).
+bin=[]
 online_capable=["rmp-serde", "bytes"]
+# WebSocket client for `conn("ws://…")` / `conn("wss://…")`. Separate from
+# `online_capable` (raw TCP + MessagePack, can host): a browser can only speak
+# WebSocket, and this is client-only. Native pulls tungstenite + rustls (wss);
+# on wasm it's the browser's own WebSocket, so `wasm` turns it on for free.
+ws=["dep:tungstenite"]
 # `wasm` marks a wasm build (drop-in, CDN-friendly, no shared memory). NOT in
 # default — native builds must never enable it. tokio/tokio-util are non-optional
 # now (needed by async_zip on both targets), so this pulls no deps itself.
-wasm=["audio"]
+wasm=["audio", "ws"]
 # The browser's main-thread audio scheduler, used only if the AudioWorklet path
 # fails to start. Enabled by web/index.html (so normal web builds have it) rather
 # than by `wasm` itself, because cargo features only ever add: folding it into
@@ -183,6 +194,8 @@ midir = { version = "0.10.1", optional = true }
 # All-native dependencies: fine on desktop *and* mobile.
 # ---------------------------------------------------------------------------
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# `ws` feature: blocking WebSocket client run on its own thread (src/ws.rs).
+tungstenite = { version = "0.30", optional = true, features = ["rustls-tls-webpki-roots"] }
 # native tokio gets the full runtime (threads, net, fs); wasm keeps the reduced
 # feature set declared in [dependencies]. Features union across target tables.
 tokio = { version = "1.43.0", features = ["full"] }
@@ -253,6 +266,12 @@ web-sys = { version = "0.3", features = [
     "MouseEvent",
     "KeyboardEvent",
     "CssStyleDeclaration",
+    # `ws` feature: the VM worker's WebSocket client (src/ws.rs).
+    "WebSocket",
+    "BinaryType",
+    "CloseEvent",
+    "WorkerGlobalScope",
+    "WorkerLocation",
 ] }
 
 # [dependencies.tracy]

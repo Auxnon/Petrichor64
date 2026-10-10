@@ -3,19 +3,31 @@
 _set connection_
 
 ```lua
----@type fun(address:string, udp?:boolean, server?:boolean)
+---@type fun(address:string, udp?:boolean, server?:boolean):connection
 function conn(address, udp, server)
 ```
 
-Creates a web socket to specified website or IP address. Currently uses the [MessagePack](https://msgpack.org/) protocol. Easiest way to establish a server is have a seperate instance of Petrichor64 running with the server boolean set to true. Port forwarding may be necessary depending on how users are intended to connect. The client versions of an app or game will then need to know the ip address or website it's hosted on.
+Opens a [connection](#connection). The address decides the transport:
 
-You can also use this to pull data from a website directly in theory. Currently this is limited to MessagePack but other payloads like JSON will be supported in the future.
+- **WebSocket** — `ws://host:port/path`, `wss://host/path`, or a path starting
+  with `/`. A leading-`/` path is resolved against the page's own origin, so it
+  only works on the web build (where it picks `wss:` on an https page). Needs the
+  `ws` feature, which the web build always has; native builds opt in with
+  `--features ws`. This is the transport to use for talking to an ordinary web
+  server, and the only one available in a browser. `udp` and `server` are ignored.
+- **TCP** — anything else, e.g. `192.168.1.2:3000`. Raw TCP framed with
+  [MessagePack](https://msgpack.org/), native only, behind the `online_capable`
+  feature. Set `server` to true to host instead: the easiest server is another
+  instance of Petrichor64 (or its headless build) running with `server` set.
 
-You may want to use the headless version of Petrichor64 if available, this runs without graphical interface from command line.
+Messages sent before a WebSocket finishes opening are queued, so it's fine to
+`send` a handshake straight after `conn`. A build with no networking compiled in
+returns `nil`.
 
-See [connection]()
+See [connection](#connection)
 
 ```lua
-socket=conn("192.168.1.2:3000")
-
+socket=conn("ws://localhost:4000/socket/websocket") -- websocket
+socket=conn("/socket/websocket") -- websocket on the page's own host (web only)
+socket=conn("192.168.1.2:3000") -- raw tcp
 ```

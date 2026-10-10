@@ -280,7 +280,9 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		let light_ndc = light_clip.xyz / light_clip.w;
 		let shadow_uv = light_ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
 		if (shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 && light_ndc.z >= 0.0 && light_ndc.z <= 1.0) {
-			lit = textureSampleCompare(t_shadow, s_shadow, shadow_uv, light_ndc.z - 0.002);
+			// The Level variant: plain textureSampleCompare is only legal in uniform
+			// control flow, which Chrome's WGSL compiler enforces (naga doesn't).
+			lit = textureSampleCompareLevel(t_shadow, s_shadow, shadow_uv, light_ndc.z - 0.002);
 		}
 	}
 	shade = shade * lit;

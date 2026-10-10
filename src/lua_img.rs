@@ -13,7 +13,10 @@ use piccolo::{AnyUserData, Value};
 
 #[cfg(feature = "silt")]
 use silt_lua::prelude::{UserData, Value};
-use silt_lua::{userdata::UserDataMethods, LuaError};
+use silt_lua::{
+    userdata::{UserDataFields, UserDataMethods},
+    LuaError,
+};
 
 pub struct LuaImg {
     pub dirty: bool,
@@ -137,6 +140,11 @@ impl UserData for LuaImg {
     }
     fn get_id(&self) -> usize {
         2
+    }
+    /// Read-only pixel size, so scripts can lay out text and project to `gui`.
+    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("w", |_, _, this| this.width as i64);
+        fields.add_field_method_get("h", |_, _, this| this.height as i64);
     }
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
         // methods.add_method_mut(name, method)
