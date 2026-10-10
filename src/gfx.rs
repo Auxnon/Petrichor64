@@ -38,6 +38,10 @@ pub struct Gfx<'w> {
     pub shadow_view: wgpu::TextureView,
     pub shadow_bind_group: wgpu::BindGroup,
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Skinned-mesh variants of the two pipelines above (src/skeleton.rs).
+    pub skinned_pipeline: wgpu::RenderPipeline,
+    pub skinned_shadow_pipeline: wgpu::RenderPipeline,
+    pub palette_layout: wgpu::BindGroupLayout,
     pub surface: wgpu::Surface<'w>,
     /// Kept so the surface can be rebuilt without tearing down the device, the
     /// pipelines, or the running game — Android destroys the native window when the
@@ -576,6 +580,14 @@ impl<'w> Gfx<'w> {
             multiview_mask: None,
         });
 
+        let palette_layout = crate::skeleton::palette_layout(&device);
+        let (skinned_pipeline, skinned_shadow_pipeline) = skinned_pipelines(
+            &device,
+            &shader,
+            [&main_layout, &entity_layout, &shadow_layout, &palette_layout],
+            config.format,
+        );
+
         let depth = create_depth_texture(&config, &device);
 
         // let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
@@ -734,6 +746,9 @@ impl<'w> Gfx<'w> {
                 // view_matrix: mx_view,
                 // perspective_matrix: mx_persp,
                 render_pipeline,
+                skinned_pipeline,
+                skinned_shadow_pipeline,
+                palette_layout,
                 shadow_view,
                 shadow_bind_group,
                 shadow_pipeline,
@@ -910,4 +925,95 @@ impl<'w> Gfx<'w> {
             label: None,
         });
     }
+}
+
+/// The skinned render and shadow pipelines: the plain ones plus the skin
+/// vertex buffer and the palette at group 3. Kept in step with the plain
+/// descriptors in `Gfx::new` by hand.
+fn skinned_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    [main, entity, shadow, palette]: [&wgpu::BindGroupLayout; 4],
+    format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    let buffers = [
+        crate::model::Vertex::desc(),
+        crate::ent::EntityUniforms::desc(),
+        crate::skeleton::SkinVertex::desc(),
+    ];
+    let primitive = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        strip_index_format: None,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        polygon_mode: wgpu::PolygonMode::Fill,
+        conservative: false,
+        unclipped_depth: false,
+    };
+    let depth = Some(wgpu::DepthStencilState {
+        format: wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+    let multisample = wgpu::MultisampleState {
+        count: 1,
+        mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let render_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Skinned Pipeline Layout"),
+        bind_group_layouts: &[Some(main), Some(entity), Some(shadow), Some(palette)],
+        ..Default::default()
+    });
+    let render = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        cache: None,
+        label: Some("Skinned Pipeline"),
+        layout: Some(&render_layout),
+        vertex: wgpu::VertexState {
+            compilation_options: Default::default(),
+            module: shader,
+            entry_point: Some("vs_skinned"),
+            buffers: &buffers,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            compilation_options: Default::default(),
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive,
+        depth_stencil: depth.clone(),
+        multisample,
+        multiview_mask: None,
+    });
+
+    let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Skinned Shadow Pipeline Layout"),
+        bind_group_layouts: &[Some(main), None, None, Some(palette)],
+        ..Default::default()
+    });
+    let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        cache: None,
+        label: Some("Skinned Shadow Pipeline"),
+        layout: Some(&shadow_layout),
+        vertex: wgpu::VertexState {
+            compilation_options: Default::default(),
+            module: shader,
+            entry_point: Some("shadow_vs_skinned"),
+            buffers: &buffers,
+        },
+        fragment: None,
+        primitive,
+        depth_stencil: depth,
+        multisample,
+        multiview_mask: None,
+    });
+    (render, shadow)
 }

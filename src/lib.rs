@@ -50,6 +50,7 @@ mod json;
 mod lua_connection;
 mod lua_define;
 mod lua_ent;
+mod skeleton;
 mod lua_img;
 mod model;
 #[cfg(feature = "online_capable")]
@@ -200,6 +201,9 @@ pub struct App {
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
+    /// How many skeletons have been forwarded to the worker (skeleton::take_new).
+    #[cfg(target_arch = "wasm32")]
+    skeletons_sent: usize,
     /// Whether the worker has been told how its sound commands travel — given the
     /// worklet's command lane, or told none is coming. Settled once per session.
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -247,6 +251,8 @@ impl Default for App {
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
+            #[cfg(target_arch = "wasm32")]
+            skeletons_sent: 0,
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             sound_lane_settled: false,
             #[cfg(target_arch = "wasm32")]
@@ -1045,6 +1051,10 @@ impl ApplicationHandler for App {
                     // (bundle routed). Posting a Loop before Init — e.g. while the
                     // bundle is still unzipping — errors "message before Init".
                     if self.worker_inited {
+                        let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                        if !new_skeletons.is_empty() {
+                            w.post(&HostToVm::Skeletons(new_skeletons));
+                        }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
                         let console_open =
@@ -1053,6 +1063,7 @@ impl ApplicationHandler for App {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
                                 analog: vec![0f32; 11],
+                                clock: crate::skeleton::clock(),
                             });
                         } else {
                             w.post(&HostToVm::loop_from(&self.bits));
@@ -1836,6 +1847,19 @@ impl Core {
                     });
                 }
             }
+            VmToHost::EntSkel(changes) => {
+                #[cfg(feature = "headed")]
+                for (id, skel) in changes {
+                    self.ent_manager.each_ent(|eref| {
+                        let _ = eref.with_mut(|l| {
+                            if l.get_id() == id {
+                                l.skel = skel.clone();
+                            }
+                            Ok(())
+                        });
+                    });
+                }
+            }
             VmToHost::EntRemove(ids) => {
                 // Drop the render mirrors of entities that died in the VM. Only the
                 // bundles that lost one get their batches rebuilt.
@@ -1881,6 +1905,7 @@ impl Core {
                         &self.tex_manager,
                         &self.model_manager,
                         self.global.iteration,
+                        &self.gfx.palette_layout,
                     );
                 }
             }
@@ -2494,6 +2519,7 @@ impl Core {
                 &self.tex_manager,
                 &self.model_manager,
                 self.global.iteration,
+                &self.gfx.palette_layout,
             ))
         } else {
             None
@@ -2507,8 +2533,18 @@ impl Core {
         };
 
         self.global.iteration += 1;
+        publish_clock();
         instance_buffers
     }
+}
+
+lazy_static::lazy_static! {
+    static ref BOOT: Instant = Instant::now();
+}
+
+/// Advance the shared animation clock (see `skeleton::clock`) once a frame.
+fn publish_clock() {
+    crate::skeleton::set_clock(BOOT.elapsed().as_secs_f64());
 }
 
 pub fn error_window(e: Box<dyn std::error::Error>) {

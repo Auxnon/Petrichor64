@@ -52,6 +52,9 @@ pub struct Ent {
     anim: Option<Anim>,
     anim_it: u64,
     pub pos: Option<Vec3>,
+    /// This frame's joint palette (packed x16 space) when the model is skinned;
+    /// shared with the bundle's batch so the renderer can upload it.
+    pub palette: Rc<std::cell::RefCell<Vec<Mat4>>>,
 }
 
 impl<'lua> Ent {
@@ -167,6 +170,7 @@ impl<'lua> Ent {
             anim: None,
             anim_it: 0,
             pos: None,
+            palette: Default::default(),
         }
     }
 
@@ -179,17 +183,7 @@ impl<'lua> Ent {
     pub fn reparse(_lua: LuaEnt) {}
 
     pub fn build_meta(&self, lua: &LuaEnt, parent: Option<&Mat4>) -> Mat4 {
-        let (pos, offset, sz) = crate::lua_ent::render_transform(lua);
-        let quat = Quat::from_euler(
-            glam::EulerRot::XYZ,
-            lua.rot_x as f32,
-            lua.rot_y as f32,
-            lua.rot_z as f32,
-        );
-        let m = Mat4::from_translation(pos)
-            * Mat4::from_scale(sz)
-            * Mat4::from_quat(quat)
-            * Mat4::from_translation(offset);
+        let m = crate::lua_ent::entity_matrix(lua);
         match parent {
             Some(p) => *p * m,
             None => m,

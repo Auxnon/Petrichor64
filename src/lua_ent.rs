@@ -60,6 +60,10 @@ pub struct LuaEnt {
     /// `TileGrid`, `guide/entity.md`). `Box` keeps this off the common
     /// (grid-less) `LuaEnt` clone path; `None` is one pointer, no allocation.
     pub grid: Option<Box<crate::tile_grid::TileGrid>>,
+    /// Skeletal animation state; `None` until `anim`/`bone` is used on an
+    /// entity whose model has a skeleton.
+    #[serde(default)]
+    pub skel: Option<crate::skeleton::SkelState>,
 }
 pub mod lua_ent_flags {
     // pub const None: u8 = 0b0;
@@ -112,6 +116,39 @@ pub fn render_transform(lua: &LuaEnt) -> (Vec3, Vec3, Vec3) {
 //     }
 // }
 
+/// The entity's model matrix in the renderer's packed (x16) space. Shared by
+/// `Ent::build_meta` and the Lua side (`ent:bone`) so both agree.
+pub fn entity_matrix(lua: &LuaEnt) -> glam::Mat4 {
+    use glam::{Mat4, Quat};
+    let (pos, offset, sz) = render_transform(lua);
+    let quat = Quat::from_euler(
+        glam::EulerRot::XYZ,
+        lua.rot_x as f32,
+        lua.rot_y as f32,
+        lua.rot_z as f32,
+    );
+    Mat4::from_translation(pos)
+        * Mat4::from_scale(sz)
+        * Mat4::from_quat(quat)
+        * Mat4::from_translation(offset)
+}
+
+/// Read up to three numbers from a `{a, b, c}` table.
+fn vec3_arg(v: &Value) -> Option<[f32; 3]> {
+    if let Value::Table(t) = v {
+        // explicit: this file imports std::borrow::Borrow
+        let t = silt_lua::gc_arena::lock::RefLock::borrow(&**t);
+        let mut out = [0f32; 3];
+        for (i, o) in out.iter_mut().enumerate() {
+            if let Some(n) = t.getn(i + 1) {
+                *o = n.into();
+            }
+        }
+        return Some(out);
+    }
+    None
+}
+
 macro_rules! safe_unwrap {
     ($ud:ident) => {
         if let Some(ud) = $ud {
@@ -152,8 +189,27 @@ impl UserData for LuaEnt {
             Ok(Value::Nil)
         });
 
-        methods.add_method_mut("anim", |_, _, this_res, (tex, force): (String, bool)| {
+        methods.add_method_mut(
+            "anim",
+            |_, _, this_res, (tex, force, speed): (String, Option<bool>, Option<f64>)| {
             let this = safe_unwrap!(this_res);
+            let force = force.unwrap_or(false);
+            // A clip of the entity's skeleton takes precedence over a sprite
+            // animation of the same name; "" returns to the rest pose.
+            if let Some(sk) = crate::skeleton::lookup(&this.asset) {
+                let clip = tex.to_lowercase();
+                if clip.is_empty() || sk.clip_index(&clip).is_some() {
+                    let st = this.skel.get_or_insert_with(Default::default);
+                    if st.clip != clip || force {
+                        st.clip = clip;
+                        st.start = crate::skeleton::clock();
+                    }
+                    if let Some(sp) = speed {
+                        st.speed = sp as f32;
+                    }
+                    return Ok(Value::Bool(true));
+                }
+            }
             if tex != this.tex || force {
                 this.dirty = true;
                 this.tex = tex;
@@ -161,7 +217,57 @@ impl UserData for LuaEnt {
             this.anim = true;
 
             Ok(Value::Bool(true))
-        });
+        },
+        );
+
+        // ent:bone(name) -> {x, y, z, rx, ry, rz} or nil: the bone's world
+        // position (tile units) and its current override rotation.
+        // ent:bone(name, {rx, ry, rz}, {x, y, z}?) sets an override in the
+        // bone's local space, on top of the playing clip; `false` clears it.
+        methods.add_method_mut(
+            "bone",
+            |vm, mc, this_res, (name, rot, pos): (String, Option<Value>, Option<Value>)| {
+                let this = safe_unwrap!(this_res);
+                let Some(sk) = crate::skeleton::lookup(&this.asset) else {
+                    return Ok(Value::Nil);
+                };
+                let Some(index) = sk.joint_index(&name) else {
+                    return Ok(Value::Nil);
+                };
+                match &rot {
+                    Some(Value::Bool(false)) => {
+                        if let Some(st) = this.skel.as_mut() {
+                            st.set_bone(&name, None);
+                        }
+                    }
+                    Some(r) => {
+                        let st = this.skel.get_or_insert_with(Default::default);
+                        let mut o = st.bone(&name).unwrap_or_default();
+                        if let Some(r) = vec3_arg(r) {
+                            o.rot = r;
+                        }
+                        if let Some(p) = pos.as_ref().and_then(vec3_arg) {
+                            o.pos = p;
+                        }
+                        st.set_bone(&name, Some(o));
+                    }
+                    None => {}
+                }
+                let st = this.skel.clone().unwrap_or_default();
+                let g = st.globals(&sk, crate::skeleton::clock());
+                let joint16 = g[index].transform_point3(glam::Vec3::ZERO) * 16.;
+                let world = entity_matrix(this).transform_point3(joint16) / 16.;
+                let o = st.bone(&name).unwrap_or_default();
+                let mut t = vm.raw_table();
+                t.set("x", world.x as f64);
+                t.set("y", world.y as f64);
+                t.set("z", world.z as f64);
+                t.set("rx", o.rot[0] as f64);
+                t.set("ry", o.rot[1] as f64);
+                t.set("rz", o.rot[2] as f64);
+                Ok(vm.wrap_table(mc, t))
+            },
+        );
 
         methods.add_method_mut("copy", |lua, mc, this_res, _: ()| {
             let this = safe_unwrap!(this_res);
@@ -298,6 +404,13 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);
+
+        // Joint names of the model's skeleton (empty if it has none).
+        fields.add_field_method_get("bones", |_, _, this| {
+            crate::skeleton::lookup(&this.asset)
+                .map(|sk| sk.joints.iter().map(|j| j.name.clone()).collect::<Vec<String>>())
+                .unwrap_or_default()
+        });
         fields.add_field_method_set("flipped", |_, _, this, flipped: bool| {
             this.flipped = flipped
         });
@@ -437,6 +550,7 @@ impl LuaEnt {
             hit_offset: [0., 0., 0.],
             tint: [1., 1., 1., 1.],
             grid: None,
+            skel: None,
         }
     }
     // pub fn set_id(&mut self, id: u64) {
@@ -515,6 +629,7 @@ impl Clone for LuaEnt {
             // platform-sized (small, sparse), not world-sized, so this
             // isn't expected to matter; revisit if it measures otherwise.
             grid: self.grid.clone(),
+            skel: self.skel.clone(),
         }
     }
 }

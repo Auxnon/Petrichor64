@@ -160,6 +160,67 @@ fn vs_main(
 	@location(2) tex_coords: vec2<f32>,
 	instance: InstanceInput
 ) -> VertexOutput {
+	return vs_common(vec4<f32>(position), vec3<f32>(normal.xyz) / 100., tex_coords, instance);
+}
+
+// Skinned meshes (src/skeleton.rs): a second vertex buffer carries each
+// vertex's joints and weights, and group 3 holds this instance's joint
+// palette, already in the packed x16 space the positions use.
+struct SkinInput {
+	@location(11) joints: vec4<u32>,
+	@location(12) weights: vec4<f32>,
+};
+
+@group(3)
+@binding(0)
+var<uniform> joint_palette: array<mat4x4<f32>, 64>;
+
+fn skin_matrix(skin: SkinInput) -> mat4x4<f32> {
+	return joint_palette[skin.joints.x] * skin.weights.x
+		+ joint_palette[skin.joints.y] * skin.weights.y
+		+ joint_palette[skin.joints.z] * skin.weights.z
+		+ joint_palette[skin.joints.w] * skin.weights.w;
+}
+
+@vertex
+fn vs_skinned(
+	@location(0) position: vec4<i32>,
+	@location(1) normal: vec4<i32>,
+	@location(2) tex_coords: vec2<f32>,
+	instance: InstanceInput,
+	skin: SkinInput
+) -> VertexOutput {
+	let m = skin_matrix(skin);
+	let p = m * vec4<f32>(position);
+	let n = (m * vec4<f32>(vec3<f32>(normal.xyz) / 100., 0.)).xyz;
+	return vs_common(p, n, tex_coords, instance);
+}
+
+@vertex
+fn shadow_vs_skinned(
+	@location(0) position: vec4<i32>,
+	@location(1) normal: vec4<i32>,
+	@location(2) tex_coords: vec2<f32>,
+	instance: InstanceInput,
+	skin: SkinInput
+) -> @builtin(position) vec4<f32> {
+	let w=mat4x4<f32>(
+		instance.model_matrix_0,
+		instance.model_matrix_1,
+		instance.model_matrix_2,
+		instance.model_matrix_3,
+	);
+	return globals.light_view_proj * (w * (skin_matrix(skin) * vec4<f32>(position)));
+}
+
+// Everything after the vertex's model-space position and normal are known,
+// shared by the plain and skinned entry points.
+fn vs_common(
+	position: vec4<f32>,
+	normal: vec3<f32>,
+	tex_coords: vec2<f32>,
+	instance: InstanceInput
+) -> VertexOutput {
 
 	let billboarded=false;
 	// let tex_coords=instance.uv;
@@ -172,14 +233,14 @@ fn vs_main(
 		instance.model_matrix_2,
 		instance.model_matrix_3,
 	);
-	var world_pos =  w *vec4<f32>(position); 
+	var world_pos =  w *position;
 	// world_pos=round(world_pos/2.)*2.;
 	var out: VertexOutput;
 	out.world_position = world_pos;
 	let v=globals.view_mat;
 
 
-	let pos=vec4<f32>(position);
+	let pos=position;
 
 	let bb=instance.effects[0];
 	//billboard if true
@@ -204,7 +265,7 @@ fn vs_main(
 		// out.proj_position=globals.proj_mat*(globals.view_mat*billbo*w*vec4<f32>(1.,1.,1.,1.)+ pos);
 	out.proj_position=globals.proj_mat*(globals.view_mat*w*vec4<f32>(0.,0.,0.,1./bb)+roo*vec4<f32>(pos.x,pos.y,0.,0.));
 	}else{
-	out.world_normal = mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * (vec3<f32>(normal.xyz)/100.);
+	out.world_normal = mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * normal;
 		out.proj_position=globals.proj_mat*(globals.view_mat*world_pos);
 	}
 	let uv_mod=instance.uv_mod;

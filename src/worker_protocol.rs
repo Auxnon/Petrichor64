@@ -44,7 +44,13 @@ pub enum HostToVm {
         #[serde(with = "serde_bytes")]
         keys: Vec<u8>,
         analog: Vec<f32>,
+        /// Main's animation clock (skeleton::clock), so clips sampled in the
+        /// worker line up with the ones the renderer draws.
+        #[serde(default)]
+        clock: f64,
     },
+    /// Skeletons main has loaded since the last batch, for `ent:bone` in the VM.
+    Skeletons(Vec<(String, crate::skeleton::Skeleton)>),
     /// Viewport resized.
     Resize(u32, u32),
     /// A file/app was dropped or requested for load-in-place.
@@ -112,6 +118,9 @@ pub enum VmToHost {
     MapTex { name: String, index: u32 },
     /// A runtime/async error to surface in the engine console.
     Error(String),
+    /// Changed skeletal animation state per entity id (clip, start, overrides);
+    /// main copies it onto its mirror so the renderer poses the same way.
+    EntSkel(Vec<(u64, Option<crate::skeleton::SkelState>)>),
     /// A sound command the VM issued (note/instr/smpl/…). The VM worker has no
     /// audio device (AudioContext is main-thread only), so it forwards these to
     /// the main thread, which replays them into its cpal stream.
@@ -234,6 +243,7 @@ impl HostToVm {
         HostToVm::Loop {
             keys: cs.0.iter().map(|b| *b as u8).collect(),
             analog: cs.1.to_vec(),
+            clock: crate::skeleton::clock(),
         }
     }
 }

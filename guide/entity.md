@@ -26,8 +26,42 @@ The following fields directly modify the entity when set:
 
 **Methods**
 
-- `anim(animation: string, force?:boolean)` - set an animation created from config or via the [anim](#anim) command
+- `anim(animation: string, force?:boolean, speed?:number)` - set an animation created from config or via the [anim](#anim) command. On an entity whose model is a skinned glTF mesh, a name matching one of the model's clips plays that clip instead (looping; `speed` scales it, `""` returns to the rest pose). See **Skeletons** below
 - `kill` - direct [kill](#kill) usage, destroys object from the renderer
+
+**Skeletons**
+
+An entity made from a glTF model that has a skin (an armature) is skinned on the
+GPU and can be posed from script. Its clips are the glTF animations, by name
+(lowercased). The pose is a function of the clip, how long it has played, and
+any bone overrides, so `ent:bone` reads exactly what is drawn.
+
+- `bones: string[]` - read only. The skeleton's joint names, parents first
+  (empty if the model has no skeleton)
+- `ent:bone(name: string): {x, y, z, rx, ry, rz}|nil` - the bone's world
+  position (tile units, like `ent.x`) and its current override rotation; `nil`
+  if there's no such bone
+- `ent:bone(name, rot: number[3], pos?: number[3])` - override a bone in its own
+  local space, on top of whatever clip is playing: `rot` = `{rx, ry, rz}` radians
+  multiplied into the animated rotation, `pos` added to its translation. Returns
+  the same table as the getter
+- `ent:bone(name, false)` - clear that bone's override
+
+Vertex data is used as authored, so export skinned models **Z-up** (Blender:
+untick "+Y Up"). Up to 64 joints per skin. A skin without inverse bind
+matrices gets them from its rest pose. Builds with no GPU (headless, terminal)
+still load skeletons, so bone queries work there too.
+
+```lua
+guy = make("player", 0, 0, 0)
+guy:anim("walk")                     -- clip from player.glb
+guy:bone("head", {0, 0, 0.5})        -- look left while walking
+local hand = guy:bone("hand.r")
+sword.x = hand.x
+sword.y = hand.y
+sword.z = hand.z
+guy:bone("head", false)              -- let the clip drive it again
+```
 
 **Entity-owned tile grids**
 

@@ -63,6 +63,8 @@ struct WorkerVm {
     /// actually changed (dirty-only streaming). A static entity costs nothing
     /// after its first frame; main keeps the last value it received.
     last_xforms: std::collections::HashMap<u64, EntXform>,
+    /// Same, for skeletal animation state.
+    last_skels: std::collections::HashMap<u64, Option<crate::skeleton::SkelState>>,
 }
 
 thread_local! {
@@ -202,6 +204,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         world_instance,
         entities,
         last_xforms,
+        last_skels,
     } = worker;
 
     // Kept alive through the enter below so Load's reply send doesn't hit a
@@ -209,8 +212,15 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // postMessage). Must outlive `talk`, hence a fn-scope binding.
     let mut _load_rx = None;
     let talk: Option<LuaTalk> = match msg {
-        HostToVm::Loop { keys, analog } => {
+        HostToVm::Loop { keys, analog, clock } => {
+            crate::skeleton::set_clock(clock);
             Some(LuaTalk::Loop(control_state_from_wire(&keys, &analog)))
+        }
+        HostToVm::Skeletons(list) => {
+            for (name, skel) in list {
+                crate::skeleton::register(&name, skel);
+            }
+            None
         }
         HostToVm::Load { name, content } => {
             let (tx, rx) = sync_channel::<LuaResponse>(1);
@@ -314,10 +324,17 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // last frame (exact compare — same Lua value → identical bytes). A scene of
     // mostly-static entities streams almost nothing; main keeps the last value.
     let mut ent_bytes = Vec::new();
+    let mut skel_changes = Vec::new();
     let mut alive: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let mut removed: std::collections::HashSet<u64> = std::collections::HashSet::new();
     entities.retain(|w| {
         match w.downcast_ref::<LuaEnt, _, _>(|l| {
+            if l.skel.is_some() || last_skels.contains_key(&l.get_id()) {
+                if last_skels.get(&l.get_id()) != Some(&l.skel) {
+                    skel_changes.push((l.get_id(), l.skel.clone()));
+                    last_skels.insert(l.get_id(), l.skel.clone());
+                }
+            }
             Ok((
                 l.is_dead(),
                 EntXform {
@@ -357,6 +374,10 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         }
     }
     last_xforms.retain(|id, _| alive.contains(id));
+    last_skels.retain(|id, _| alive.contains(id));
+    if !skel_changes.is_empty() {
+        out.push(VmToHost::EntSkel(skel_changes));
+    }
     if !removed.is_empty() {
         out.push(VmToHost::EntRemove(removed.into_iter().collect()));
     }
@@ -471,5 +492,6 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         world_instance: WorldInstance::new(bundle_id),
         entities: Vec::new(),
         last_xforms: std::collections::HashMap::new(),
+        last_skels: std::collections::HashMap::new(),
     })
 }
