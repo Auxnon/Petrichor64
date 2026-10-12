@@ -538,6 +538,7 @@ impl ApplicationHandler for App {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas) = window.canvas() {
                 attach_canvas_to_dom(&canvas);
+                install_keyboard_sink(&canvas);
                 install_web_input_handlers(
                     &canvas,
                     self.pointer_lock_wanted.clone(),
@@ -1541,6 +1542,128 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
         .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
     if let Some(parent) = parent {
         let _ = parent.append_child(canvas);
+    }
+}
+
+/// Route the keyboard through a hidden `<textarea>` inside the canvas.
+///
+/// winit listens for keys on the canvas, which is focusable but not editable.
+/// Keyboard extensions (Vimium, Surfingkeys, Tridactyl...) treat a focused
+/// non-editable element as "the page" and swallow their bound keys (d, f, x,
+/// r...) in a window capture listener before the canvas sees them; the only
+/// thing they reliably let through is typing into an editable element. So
+/// focus sits on a textarea in the canvas's fallback content: it isn't
+/// rendered, but it's focusable, the extensions see an editable target, and
+/// its key events bubble up to winit's listeners on the canvas unchanged.
+/// winit preventDefaults them, so nothing is ever typed into it.
+///
+/// - Whenever the canvas gets focus (a click, Tab, winit), focus moves on to
+///   the textarea.
+/// - The textarea losing focus is reported to winit as the canvas blurring
+///   (a synthetic `blur`), which clears held keys; the canvas's own blur
+///   doesn't fire then, since it never had focus.
+/// - While the player is "in" the game (last pointerdown on the canvas), focus
+///   dropped to nothing (an extension's Esc calls blur()) goes straight back.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn install_keyboard_sink(canvas: &web_sys::HtmlCanvasElement) {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Some(sink) = doc
+        .create_element("textarea")
+        .ok()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    else {
+        return;
+    };
+    for (k, v) in [
+        ("aria-label", "game keyboard input"),
+        ("autocomplete", "off"),
+        ("autocapitalize", "off"),
+        ("autocorrect", "off"),
+        ("spellcheck", "false"),
+        // no on-screen keyboard popping up on every tap on mobile
+        ("inputmode", "none"),
+    ] {
+        let _ = sink.set_attribute(k, v);
+    }
+    let _ = canvas.append_child(&sink);
+
+    // Whether the player is in the game: their last pointerdown was on it.
+    let engaged = Rc::new(Cell::new(true));
+    {
+        let engaged = engaged.clone();
+        let canvas_node: web_sys::Node = canvas.clone().unchecked_into();
+        let on_down = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| {
+            let inside = e
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                .map_or(false, |n| canvas_node.contains(Some(&n)));
+            engaged.set(inside);
+        });
+        let _ = doc.add_event_listener_with_callback_and_bool(
+            "pointerdown",
+            on_down.as_ref().unchecked_ref(),
+            true,
+        );
+        on_down.forget();
+    }
+
+    {
+        let sink = sink.clone();
+        let on_focus = Closure::<dyn FnMut()>::new(move || {
+            let _ = sink.focus();
+        });
+        let _ = canvas.add_event_listener_with_callback("focus", on_focus.as_ref().unchecked_ref());
+        on_focus.forget();
+    }
+
+    {
+        let canvas = canvas.clone();
+        let refocus_sink = sink.clone();
+        let on_blur = Closure::<dyn FnMut()>::new(move || {
+            if let Ok(ev) = web_sys::FocusEvent::new("blur") {
+                let _ = canvas.dispatch_event(&ev);
+            }
+            if !engaged.get() {
+                return;
+            }
+            // after the blur settles: if focus went nowhere, take it back
+            let sink = refocus_sink.clone();
+            let retry = Closure::once_into_js(move || {
+                let idle = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.active_element())
+                    .map_or(true, |a| a.tag_name() == "BODY");
+                if idle {
+                    let _ = sink.focus();
+                }
+            });
+            if let Some(w) = web_sys::window() {
+                let _ = w.set_timeout_with_callback(retry.unchecked_ref());
+            }
+        });
+        let _ = sink.add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref());
+        on_blur.forget();
+    }
+
+    {
+        // anything that does get in (paste, IME) is thrown away
+        let field = sink.clone();
+        let on_input = Closure::<dyn FnMut()>::new(move || field.set_value(""));
+        let _ = sink.add_event_listener_with_callback("input", on_input.as_ref().unchecked_ref());
+        on_input.forget();
+    }
+
+    // Start with the keyboard, unless the host page has focused something.
+    let page_idle = doc.active_element().map_or(true, |a| a.tag_name() == "BODY");
+    if page_idle {
+        let _ = sink.focus();
     }
 }
 

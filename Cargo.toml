@@ -269,6 +269,10 @@ web-sys = { version = "0.3", features = [
     "MouseEvent",
     "KeyboardEvent",
     "CssStyleDeclaration",
+    # the keyboard sink (install_keyboard_sink in lib.rs)
+    "Event",
+    "FocusEvent",
+    "HtmlTextAreaElement",
     # `ws` feature: the VM worker's WebSocket client (src/ws.rs).
     "WebSocket",
     "BinaryType",
