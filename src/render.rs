@@ -101,6 +101,13 @@ fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Optio
 }
 
 pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
+    // the scene renders at crt_resolution (see Gfx::render_size), which attr
+    // and chip() can change at any time
+    core.gfx
+        .set_render_resolution(core.global.screen_effects.crt_resolution);
+    // LCD (modernize) draws the gui at full resolution over the post pass;
+    // the CRT keeps it in the scene so it curves and scanlines with it
+    let gui_on_top = core.global.screen_effects.modernize > 0.;
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
@@ -439,7 +446,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         }
 
         //gui space
-        {
+        if !gui_on_top {
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
@@ -512,6 +519,12 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         {
             post_pass.set_pipeline(&gfx.post.post_pipeline);
             post_pass.set_bind_group(0, &gfx.post.post_bind_group, &[]);
+            post_pass.draw(0..4, 0..1);
+        }
+        if gui_on_top {
+            post_pass.set_pipeline(&gfx.gui_overlay_pipeline);
+            post_pass.set_bind_group(0, &core.gui.gui_group, &[]);
+            post_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
             post_pass.draw(0..4, 0..1);
         }
     }

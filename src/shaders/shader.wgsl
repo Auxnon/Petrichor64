@@ -54,6 +54,10 @@ struct Globals {
 struct GuiFrag {
 	@builtin(position) pos: vec4<f32>, 
 	@location(1) screen: vec4<f32>,
+	// 0..1 across the target, top-left origin. From the quad, not from
+	// pos/screen: the scene's target (Gfx::render_size) is smaller than the
+	// window that `screen` describes.
+	@location(2) uv: vec2<f32>,
 	// @location(2) eh: array<f32>,
 	// @location(2) adjustments: array<f32,12>,
 };
@@ -407,6 +411,7 @@ fn gui_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 	}
 	
 	out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2],globals.adjustments[3][0],globals.adjustments[3][1]);
+	out.uv=out.pos.xy*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5,0.5);
 	return out;
 }
 
@@ -421,7 +426,7 @@ fn gui_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
 	let aspect=in.screen.z/in.screen.w;
 	let f=1.;//min(in.screen.x,in.screen.y);
 
-	let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
+	let p =in.uv;
 	let system=textureSample(t_diffuse, s_diffuse, p);
 	let primary=textureSample(primary, s_diffuse, p);
 	let secondary=textureSample(secondary, s_diffuse, p);
@@ -454,12 +459,13 @@ fn sky_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 		out.pos=vec4<f32>(1.,1., 0.0, 1.0);
 	}
 	out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2], globals.adjustments[3][0],globals.adjustments[3][1]);
+	out.uv=out.pos.xy*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5,0.5);
 	return out;
 }
 
 @fragment
 fn sky_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
-	let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
+	let p =in.uv;
 	f_color=textureSample(t_diffuse, s_diffuse, p);
    return f_color;
 }
@@ -485,6 +491,7 @@ fn post_vs_main(@builtin(vertex_index) in_vertex_index: u32) ->GuiFrag{
 	out.screen=vec4<f32>(globals.adjustments[0][1],globals.adjustments[0][2], globals.adjustments[3][0],globals.adjustments[3][1]);
 	
 
+	out.uv=out.pos.xy*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5,0.5);
 	return out;
 }
 
@@ -667,7 +674,7 @@ fn monitor(texture:texture_2d<f32>,samp:sampler,in_coords:vec2<f32>,adj:mat4x4<f
 
 @fragment
 fn post_fs_main(in: GuiFrag) ->  @location(0) vec4<f32> {
-	let p =vec2<f32>(in.pos.x/in.screen.x, in.pos.y/in.screen.y);
+	let p =in.uv;
 
 	if (globals.adjustments[2][3]>0.){
 		f_color=textureSample(t_diffuse, s_diffuse, p);

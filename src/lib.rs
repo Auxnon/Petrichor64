@@ -105,7 +105,7 @@ use winit::error::EventLoopError;
 #[cfg(feature = "headed")]
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalPosition,
+    dpi::PhysicalPosition,
     event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
@@ -144,6 +144,9 @@ const OS: &str = "ios";
 const OS: &str = "other";
 
 const FPS: f32 = 60.;
+/// How far the frame loop may lag before it drops the backlog (see about_to_wait).
+#[cfg(feature = "headed")]
+const MAX_FRAMES_BEHIND: u32 = 4;
 
 /// Per-loop output of `Core::update`: the freshly-built entity instance buffers
 /// under `headed`, nothing headless.
@@ -155,7 +158,10 @@ type UpdateOut = ();
 #[cfg(feature = "headed")]
 pub struct App {
     window: Option<Arc<Window>>,
-    center: LogicalPosition<f64>,
+    /// Middle of the window in physical pixels, where a mouse grab parks the
+    /// cursor. (It was a LogicalPosition holding physical numbers, so on a 2x
+    /// display the cursor went to the bottom-right corner.)
+    center: PhysicalPosition<f64>,
     core: Option<Core>,
     next_frame_time: Instant,
     frame_duration: Duration,
@@ -232,7 +238,7 @@ impl Default for App {
     fn default() -> Self {
         Self {
             window: None,
-            center: LogicalPosition::new(320.0f64, 240.0f64),
+            center: PhysicalPosition::new(320.0f64, 240.0f64),
             core: None,
             next_frame_time: Instant::now(),
             frame_duration: Duration::from_secs_f32(1.0 / FPS),
@@ -275,7 +281,7 @@ fn state_change_checker(
     c: &mut Core,
     control_flow: &ActiveEventLoop,
     rwindow: &Arc<winit::window::Window>,
-    center: LogicalPosition<f64>,
+    center: PhysicalPosition<f64>,
     catcher: Option<&Receiver<MainPacket>>,
 ) -> bool {
     if c.global.is_state_changed {
@@ -602,14 +608,23 @@ impl ApplicationHandler for App {
                     core.resize(physical_size);
                 }
                 // Keep the mouse-grab re-center position up to date.
-                self.center = LogicalPosition::new(
+                self.center = PhysicalPosition::new(
                     physical_size.width as f64 / 2.0,
                     physical_size.height as f64 / 2.0,
                 );
             }
 
             // ----------------------------------------------------------------
-            WindowEvent::ScaleFactorChanged { .. } => {}
+            // Moved to a display with another scale (Retina <-> not). The
+            // engine works in physical pixels throughout, and winit follows
+            // this with a Resized when the physical size changes; re-derive
+            // anyway in case it doesn't (same physical size, new scale), so
+            // nothing sized from the old scale lingers.
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let (Some(core), Some(w)) = (&mut self.core, self.window.as_ref()) {
+                    core.resize(w.inner_size());
+                }
+            }
 
             // ----------------------------------------------------------------
             WindowEvent::RedrawRequested => {
@@ -1228,8 +1243,16 @@ impl ApplicationHandler for App {
             // Request a GPU frame; rendering happens in RedrawRequested.
             win_arc.request_redraw();
 
-            // Advance to the next target frame time (avoids drift).
+            // Advance to the next target frame time (avoids drift). But if
+            // we've fallen well behind (a slow GPU, a stall, the window
+            // hidden), start over from now: catching up one frame per loop
+            // never finishes while the GPU is the bottleneck, and fast-forwards
+            // the game through the whole backlog once it isn't.
             self.next_frame_time += self.frame_duration;
+            let behind = Instant::now().saturating_duration_since(self.next_frame_time);
+            if behind > self.frame_duration * MAX_FRAMES_BEHIND {
+                self.next_frame_time = Instant::now() + self.frame_duration;
+            }
         }
 
         // Sleep until the next frame is due.

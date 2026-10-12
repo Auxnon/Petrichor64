@@ -52,7 +52,22 @@ pub struct Gfx<'w> {
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub depth_texture: wgpu::TextureView,
+    /// The window's (surface's) size in physical pixels: what the post pass
+    /// draws, and the aspect ratio everything uses.
     pub size: winit::dpi::PhysicalSize<u32>,
+    /// What the scene renders at (`post` and `depth_texture`): `crt_resolution`
+    /// pixels wide, never wider than the window, at the window's aspect. The
+    /// look is low-res anyway, and rendering every physical pixel made the
+    /// cost grow with the display: 4x on a 2x (Retina) screen, 7x at 5K
+    /// fullscreen, for detail the CRT pass throws away. See `internal_size`.
+    pub render_size: winit::dpi::PhysicalSize<u32>,
+    /// The gui drawn straight onto the window in the post pass (no depth), so
+    /// with the LCD monitor it stays sharp at full resolution instead of being
+    /// squeezed through the scene's internal resolution. The CRT monitor still
+    /// draws it in the scene, so it curves and scanlines with everything else.
+    pub gui_overlay_pipeline: wgpu::RenderPipeline,
+    /// The `crt_resolution` that `render_size` was last derived from.
+    render_res: f32,
 }
 
 #[repr(C)]
@@ -84,13 +99,13 @@ struct GlobalUniforms {
 // };
 
 fn create_depth_texture(
-    config: &wgpu::SurfaceConfiguration,
+    size: PhysicalSize<u32>,
     device: &wgpu::Device,
 ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
+            width: size.width,
+            height: size.height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -591,7 +606,7 @@ impl<'w> Gfx<'w> {
             config.format,
         );
 
-        let depth = create_depth_texture(&config, &device);
+        let depth = create_depth_texture(size, &device);
 
         // let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
 
@@ -674,6 +689,37 @@ impl<'w> Gfx<'w> {
             multiview_mask: None,
         });
 
+        let gui_overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
+            label: Some("Gui Overlay Pipeline"),
+            layout: Some(&gui_pipeline_layout),
+            vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("gui_vs_main"),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("gui_fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            // the post pass has no depth attachment
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+        });
+
         // =================== Sky Pipeline ===================
 
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -742,6 +788,9 @@ impl<'w> Gfx<'w> {
                 device,
                 queue,
                 size,
+                render_size: size,
+                render_res: 0.,
+                gui_overlay_pipeline,
                 config,
                 depth_texture: depth.1,
                 uniform_buf,
@@ -835,8 +884,7 @@ impl<'w> Gfx<'w> {
                 }
                 surface.configure(&self.device, &self.config);
                 self.surface = surface;
-                let d = create_depth_texture(&self.config, &self.device);
-                self.depth_texture = d.1;
+                self.rebuild_scene_targets();
                 true
             }
             Err(e) => {
@@ -852,11 +900,53 @@ impl<'w> Gfx<'w> {
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
         let new_size = self.size;
         self.surface.configure(&self.device, &self.config);
-        let d = create_depth_texture(&self.config, &self.device);
+        self.rebuild_scene_targets();
+        Self::compute_gui_size(gui_params, new_size)
+    }
+
+    /// The scene's resolution for a `crt_resolution` and a window size:
+    /// `crt_resolution` wide (the CRT pass quantises to that many columns),
+    /// capped at the window's width, at the window's aspect ratio.
+    pub fn internal_size(crt_resolution: f32, window: PhysicalSize<u32>) -> PhysicalSize<u32> {
+        let ww = window.width.max(1);
+        let wh = window.height.max(1);
+        let w = if crt_resolution.is_finite() && crt_resolution >= 1. {
+            (crt_resolution.round() as u32).min(ww)
+        } else {
+            ww
+        };
+        let h = ((w as u64 * wh as u64 + ww as u64 / 2) / ww as u64).max(1) as u32;
+        PhysicalSize::new(w, h)
+    }
+
+    /// Size the scene's targets for this `crt_resolution`; a no-op unless it
+    /// changed (called every frame, as `attr`/`chip` can change it any time).
+    pub fn set_render_resolution(&mut self, crt_resolution: f32) {
+        if crt_resolution != self.render_res {
+            self.render_res = crt_resolution;
+            self.rebuild_scene_targets();
+        }
+    }
+
+    /// Re-make the scene's colour (`post`) and depth targets at `render_size`,
+    /// recomputed from the window size and `render_res`.
+    fn rebuild_scene_targets(&mut self) {
+        let rs = Self::internal_size(self.render_res, self.size);
+        if rs != self.render_size {
+            let msg = format!(
+                "scene renders at {}x{} for a {}x{} window",
+                rs.width, rs.height, self.size.width, self.size.height
+            );
+            #[cfg(target_arch = "wasm32")]
+            ::log::info!("{}", msg);
+            #[cfg(not(target_arch = "wasm32"))]
+            println!("{}", msg);
+        }
+        self.render_size = rs;
+        let d = create_depth_texture(rs, &self.device);
         self.depth_texture = d.1;
         self.post
-            .resize(&self.device, new_size, &self.uniform_buf, &self.main_layout);
-        Self::compute_gui_size(gui_params, new_size)
+            .resize(&self.device, rs, &self.uniform_buf, &self.main_layout);
     }
 
     pub fn set_fullscreen(&self, enable: bool) {
@@ -869,12 +959,14 @@ impl<'w> Gfx<'w> {
         }
     }
 
+    /// `attr{size={w, h}}`, in logical points; a missing one keeps the current
+    /// size. `self.size` is physical pixels, so it's converted first: as it
+    /// was, on a 2x display the dimension left out doubled.
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
+        let now: LogicalSize<f32> = self.size.to_logical(self.win_ref.scale_factor());
         let _ = self.win_ref.request_inner_size(LogicalSize::new(
-            x.unwrap_or(&(self.size.width as f32))
-                .clamp(10., f32::INFINITY) as u32,
-            y.unwrap_or(&(self.size.height as f32))
-                .clamp(10., f32::INFINITY) as u32,
+            x.unwrap_or(&now.width).clamp(10., f32::INFINITY) as u32,
+            y.unwrap_or(&now.height).clamp(10., f32::INFINITY) as u32,
         ));
     }
 
@@ -1062,5 +1154,27 @@ fn main_shader_source(adapter: &wgpu::Adapter) -> std::borrow::Cow<'static, str>
         src.replace("@interpolate(linear) ", "").into()
     } else {
         src.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_scene_renders_crt_resolution_wide_at_the_windows_aspect() {
+        let size = |w, h| PhysicalSize::new(w, h);
+        // a 2x (Retina) 640x548 window, and 5K fullscreen: both 720 wide
+        assert_eq!(Gfx::internal_size(720., size(1280, 1096)), size(720, 617));
+        assert_eq!(Gfx::internal_size(720., size(5120, 2880)), size(720, 405));
+        // never wider than the window
+        assert_eq!(Gfx::internal_size(720., size(640, 548)), size(640, 548));
+        // the chip presets
+        assert_eq!(Gfx::internal_size(240., size(1920, 1080)), size(240, 135));
+        // nonsense falls back to the window
+        assert_eq!(Gfx::internal_size(0., size(800, 600)), size(800, 600));
+        assert_eq!(Gfx::internal_size(f32::NAN, size(800, 600)), size(800, 600));
+        // and nothing is ever zero
+        assert_eq!(Gfx::internal_size(720., size(4000, 1)), size(720, 1));
     }
 }
