@@ -144,7 +144,9 @@ impl<'w> Gfx<'w> {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        // Chrome on Linux exposes `navigator.gpu` without a WebGPU adapter;
+        // the detection drops WebGPU there so WebGL2 gets used instead.
+        let instance = wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
             backends: default_backends(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
                 for_resource_creation: None,
@@ -153,7 +155,8 @@ impl<'w> Gfx<'w> {
             backend_options: BackendOptions::from_env_or_default(),
             flags: wgpu::InstanceFlags::empty(),
             display: None,
-        });
+        })
+        .await;
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
 
