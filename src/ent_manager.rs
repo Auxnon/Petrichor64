@@ -769,7 +769,11 @@ impl EntManager {
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
         b.array.retain_mut(|(lent, ent, uni_ref)| {
-            if let Err(_) = lent.with_mut(|l: &mut LuaEnt| {
+            // Ok(false) is a killed entity: it leaves the array (and so the
+            // render batches). This used to be ignored, so on native a killed
+            // entity kept drawing, frozen at its last transform; swapping a
+            // model (an avatar's head for a new face) left the old one behind.
+            match lent.with_mut(|l: &mut LuaEnt| {
                 let parent = match l.parent {
                     Some(u) => mats.get(&u),
                     None => None,
@@ -837,9 +841,13 @@ impl EntManager {
                 mats.insert(l.get_id(), mat);
                 Ok(true)
             }) {
-                failed += 1;
+                Ok(alive) => alive,
+                Err(_) => {
+                    // couldn't lock it this frame: keep it, try again next
+                    failed += 1;
+                    true
+                }
             }
-            return true;
         });
 
         if failed > 0 {
