@@ -353,11 +353,18 @@ pub fn dehex(s2: &str) -> Vec4 {
         s2
     };
 
-    let halfed = s2.len() < 4;
+    // RGB / RGBA are one digit a channel, RRGGBB / RRGGBBAA two. Measured
+    // without the '#'. It was `s2.len() < 4`: 4-digit RGBA ("0009") was read
+    // as two 2-digit pairs, too few channels, so came out fully transparent
+    // (and drew as an eraser), and "#FFF" sliced past the end and panicked.
+    let halfed = s.len() <= 4;
     let res = if halfed {
         half_decode_hex(s)
-    } else {
+    } else if s.len() % 2 == 0 {
         decode_hex(s)
+    } else {
+        // odd length past 4: not a colour (and would slice past the end)
+        return vec4(0., 0., 0., 0.);
     };
 
     match res {
@@ -425,5 +432,25 @@ fn half_decode_hex(s: &str) -> Result<Vec<u8>, core::num::ParseIntError> {
 impl ToString for LuaImg {
     fn to_string(&self) -> String {
         format!("image({}x{})", self.width, self.height)
+    }
+}
+
+#[cfg(test)]
+mod hex_tests {
+    use super::dehex;
+    use glam::vec4;
+
+    #[test]
+    fn every_hex_form_parses() {
+        assert_eq!(dehex("F00"), vec4(1., 0., 0., 1.));
+        assert_eq!(dehex("#F00"), vec4(1., 0., 0., 1.));
+        // RGBA short: was fully transparent
+        assert_eq!(dehex("0009"), vec4(0., 0., 0., 9. / 15.));
+        assert_eq!(dehex("#0009"), vec4(0., 0., 0., 9. / 15.));
+        assert_eq!(dehex("FF0000"), vec4(1., 0., 0., 1.));
+        assert_eq!(dehex("#00FF0080"), vec4(0., 1., 0., 128. / 255.));
+        // nonsense is transparent, never a panic
+        assert_eq!(dehex("12345"), vec4(0., 0., 0., 0.));
+        assert_eq!(dehex("zz"), vec4(0., 0., 0., 0.));
     }
 }

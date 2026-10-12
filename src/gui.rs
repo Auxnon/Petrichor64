@@ -12,7 +12,7 @@ use crate::{
 use crate::texture::TexTuple;
 
 use image::{imageops::ColorMap, ImageBuffer, Rgba, RgbaImage};
-use imageproc::drawing::{draw_filled_circle_mut, draw_filled_rect_mut};
+use imageproc::drawing::draw_filled_rect_mut;
 #[cfg(feature = "headed")]
 use wgpu::{BindGroup, Device, Queue};
 
@@ -1108,6 +1108,31 @@ pub fn init_image(device: &Device, queue: &Queue, size: (u32, u32)) -> (TexTuple
     (out, img)
 }
 
+/// Write `color` over the pixel at (x, y), if it's on the image. Translucent
+/// colours blend over what's there, like text and images do; opaque ones
+/// replace it; fully transparent ones replace it too, so drawing with alpha 0
+/// still erases. (Shapes used to always replace: a translucent box drawn over
+/// another shape punched a see-through hole in it.)
+fn plot(target: &mut RgbaImage, x: i32, y: i32, color: image::Rgba<u8>) {
+    if x < 0 || y < 0 || x >= target.width() as i32 || y >= target.height() as i32 {
+        return;
+    }
+    let p = target.get_pixel_mut(x as u32, y as u32);
+    match color.0[3] {
+        0 | 255 => *p = color,
+        _ => image::Pixel::blend(p, &color),
+    }
+}
+
+fn to_rgba(c: Vec4) -> image::Rgba<u8> {
+    image::Rgba([
+        (c.x * 255.).floor() as u8,
+        (c.y * 255.).floor() as u8,
+        (c.z * 255.).floor() as u8,
+        (c.w * 255.).floor() as u8,
+    ])
+}
+
 pub fn direct_rect(
     target: &mut RgbaImage,
     width: u32,
@@ -1121,51 +1146,35 @@ pub fn direct_rect(
 ) {
     let xx = eval(x, width);
     let yy = eval(y, height);
-    let ww = eval(w, width).max(1) as u32;
-    let hh = eval(h, height).max(1) as u32;
-    let color = image::Rgba([
-        (c.x * 255.).floor() as u8,
-        (c.y * 255.).floor() as u8,
-        (c.z * 255.).floor() as u8,
-        (c.w * 255.).floor() as u8,
-    ]);
-    match corner {
+    let ww = eval(w, width).max(1);
+    let hh = eval(h, height).max(1);
+    let color = to_rgba(c);
+    let radius = match corner {
         Some(c) => {
-            let maxa = (ww.min(hh) / 2) as i32;
-            let mut radius = eval(c, maxa as u32) as i32;
-
-            if radius > maxa {
-                radius = maxa;
-            }
-            let ww2 = ww as i32;
-            let hh2 = hh as i32;
-
-            let cx1 = xx + (radius);
-            let cx2 = xx + (ww2 - radius - 1); // -1 is error correction, why do we need it? -\_(ツ)_/-
-            let cy1 = yy + radius;
-            let cy2 = yy + (hh2 - radius - 1);
-            draw_filled_circle_mut(target, (cx1, cy1), radius, color);
-            draw_filled_circle_mut(target, (cx1, cy2), radius, color);
-            draw_filled_circle_mut(target, (cx2, cy1), radius, color);
-            draw_filled_circle_mut(target, (cx2, cy2), radius, color);
-
-            draw_filled_rect_mut(
-                target,
-                imageproc::rect::Rect::at(xx, cy1).of_size(ww, (cy2 - cy1) as u32),
-                color,
-            );
-            draw_filled_rect_mut(
-                target,
-                imageproc::rect::Rect::at(cx1, yy).of_size((cx2 - cx1) as u32, hh),
-                color,
-            );
+            let maxa = ww.min(hh) / 2;
+            eval(c, maxa as u32).clamp(0, maxa)
         }
-        None => {
-            draw_filled_rect_mut(
-                target,
-                imageproc::rect::Rect::at(xx, yy).of_size(ww, hh),
-                color,
-            );
+        None => 0,
+    };
+    // corner circle centres; every pixel is set once, so a translucent
+    // rounded box blends evenly (it used to be four circles and two
+    // overlapping rects)
+    let cx1 = xx + radius;
+    let cx2 = xx + ww - radius - 1;
+    let cy1 = yy + radius;
+    let cy2 = yy + hh - radius - 1;
+    let r2 = radius * radius;
+    let x0 = xx.max(0);
+    let y0 = yy.max(0);
+    let x1 = (xx + ww).min(target.width() as i32);
+    let y1 = (yy + hh).min(target.height() as i32);
+    for py in y0..y1 {
+        let dy = (cy1 - py).max(py - cy2).max(0);
+        for px in x0..x1 {
+            let dx = (cx1 - px).max(px - cx2).max(0);
+            if dx * dx + dy * dy <= r2 {
+                plot(target, px, py, color);
+            }
         }
     }
 }
@@ -1184,19 +1193,13 @@ pub fn direct_line(
     let yy1 = eval(y1, height);
     let xx2 = eval(x2, width);
     let yy2 = eval(y2, height);
-
-    let color = image::Rgba([
-        (c.x * 255.).floor() as u8,
-        (c.y * 255.).floor() as u8,
-        (c.z * 255.).floor() as u8,
-        (c.w * 255.).floor() as u8,
-    ]);
-    imageproc::drawing::draw_line_segment_mut(
-        target,
+    let color = to_rgba(c);
+    for (px, py) in imageproc::drawing::BresenhamLineIter::new(
         (xx1 as f32, yy1 as f32),
         (xx2 as f32, yy2 as f32),
-        color,
-    );
+    ) {
+        plot(target, px, py, color);
+    }
 }
 
 /** evaluate position with GuiUnits then draw letters over image. Returns the line count */
@@ -1369,4 +1372,45 @@ impl ColorMap for TextMap {
 /** Mutate the image provided to the dimensions */
 pub fn resizer(im: &mut RgbaImage, w: u32, h: u32) {
     *im = image::imageops::resize(im, w, h, image::imageops::FilterType::Nearest);
+}
+
+#[cfg(test)]
+mod blend_tests {
+    use super::*;
+
+    fn px(img: &RgbaImage, x: u32, y: u32) -> [u8; 4] {
+        img.get_pixel(x, y).0
+    }
+
+    /// A translucent box over another shape tints it; it used to replace its
+    /// pixels, punching a see-through hole (a name tag over a speech bubble).
+    #[test]
+    fn a_translucent_box_blends_over_what_is_drawn() {
+        let mut img = RgbaImage::new(8, 8);
+        let i = |v: i64| LuaResponse::Integer(v);
+        direct_rect(&mut img, 8, 8, i(0), i(0), i(8), i(8), Vec4::new(1., 1., 1., 1.), None);
+        direct_rect(&mut img, 8, 8, i(2), i(2), i(4), i(4), Vec4::new(0., 0., 0., 0.6), Some(i(1)));
+        let inside = px(&img, 4, 4);
+        assert_eq!(inside[3], 255, "still opaque: no hole");
+        assert!(inside[0] > 80 && inside[0] < 120, "white tinted dark, got {:?}", inside);
+        assert_eq!(px(&img, 0, 0), [255, 255, 255, 255], "outside untouched");
+        // rounded: the box's own corner pixel is left alone
+        assert_eq!(px(&img, 2, 2), [255, 255, 255, 255]);
+        // one coverage per pixel: the middle of an edge matches the centre
+        assert_eq!(px(&img, 4, 2), inside);
+    }
+
+    #[test]
+    fn opaque_replaces_and_alpha_zero_still_erases() {
+        let mut img = RgbaImage::new(4, 4);
+        let i = |v: i64| LuaResponse::Integer(v);
+        direct_rect(&mut img, 4, 4, i(0), i(0), i(4), i(4), Vec4::new(1., 0., 0., 1.), None);
+        direct_rect(&mut img, 4, 4, i(0), i(0), i(2), i(2), Vec4::new(0., 0., 1., 1.), None);
+        assert_eq!(px(&img, 0, 0), [0, 0, 255, 255]);
+        direct_rect(&mut img, 4, 4, i(0), i(0), i(2), i(2), Vec4::new(0., 0., 0., 0.), None);
+        assert_eq!(px(&img, 1, 1), [0, 0, 0, 0]);
+        assert_eq!(px(&img, 3, 3), [255, 0, 0, 255]);
+        // off the edge is clipped, not a panic
+        direct_rect(&mut img, 4, 4, i(-5), i(2), i(20), i(9), Vec4::new(0., 1., 0., 1.), Some(i(3)));
+    }
 }
