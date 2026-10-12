@@ -2557,6 +2557,15 @@ function irnd(a, b) end"
     );
 
     lua!(
+        "now",
+        move |_, _, (): ()| { Ok(crate::skeleton::clock()) },
+        "Seconds since the engine started, as of this frame. Steps are paced by the display, so use the difference between frames to move things at a steady speed",
+        "
+---@return number
+function now() end"
+    );
+
+    lua!(
         "flr",
         move |_, _, f: f64| { Ok(f.floor() as i64) },
         "Floor value",
