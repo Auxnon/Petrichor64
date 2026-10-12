@@ -99,6 +99,16 @@ pub enum VmToHost {
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the
     /// host re-uploads them.
     LoopComplete { gui: bool, sky: bool },
+    /// A finished gui (`sky: false`) or sky frame from the VM. The worker owns
+    /// these pixels — main can't reach into its arena the way native reads the
+    /// shared LuaImg — so each changed frame is shipped whole.
+    Raster {
+        sky: bool,
+        w: u32,
+        h: u32,
+        #[serde(with = "serde_bytes")]
+        px: Vec<u8>,
+    },
     /// Per-frame live transforms of the worker's entities (the VM mutates them;
     /// this mirrors the changes to the main-thread render copies). Since the VM
     /// lives in a separate wasm instance there's no shared memory — this is the

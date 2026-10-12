@@ -251,3 +251,26 @@ comments pointing back here, so they can be reverted once these are fixed:
 
 Neither is expensive at this scale, but both make the code noticeably worse to read,
 and the first is the kind of rule that is impossible to remember consistently.
+
+---
+
+## 6. Parameters a short call leaves out aren't nil
+
+**Fixed** in `../silt-stable` `f62ccbd` (regression tests: `tests/missing_args.rs`).
+Found in sosh's client, where every `UI.panel(x, y, w, h)` drew white.
+
+A call with fewer arguments than the callee declares left the missing parameter
+slots as whatever was on the stack above the arguments. Reading one directly
+usually happened to give nil; reading it after the callee pushed something gave
+that instead:
+
+```lua
+function panel(x, y, w, h, col)
+    gui:rect(x, y, w, h, col or "141A26C8")   -- col was gui:rect itself
+end
+panel(1, 2, 3, 4)
+```
+
+`get_color` turns a non-colour value into white, so the symptom was a white
+rectangle rather than an error. `CALL` now pushes nils up to the closure's arity
+(or its fixed-parameter count, if variadic) before building the frame.

@@ -201,6 +201,9 @@ pub struct App {
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
+    /// gui size the worker's rasters were last given (Init or Resize).
+    #[cfg(target_arch = "wasm32")]
+    worker_gui_size: [u32; 2],
     /// How many skeletons have been forwarded to the worker (skeleton::take_new).
     #[cfg(target_arch = "wasm32")]
     skeletons_sent: usize,
@@ -251,6 +254,8 @@ impl Default for App {
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
+            #[cfg(target_arch = "wasm32")]
+            worker_gui_size: [0, 0],
             #[cfg(target_arch = "wasm32")]
             skeletons_sent: 0,
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -974,8 +979,17 @@ impl ApplicationHandler for App {
                                 // mapper); the worker owns the tile data and syncs
                                 // chunks here.
                                 core.world.init_local(0);
+                                // A game is starting: close the boot console, as
+                                // the native auto-load path does.
+                                core.global.console = false;
+                                core.gui.disable_console();
                                 for (name, png) in &bundle.textures {
                                     core.load_wasm_texture(name, png);
+                                }
+                                // Models after textures, as native does, so a
+                                // model naming an asset texture finds it.
+                                for (name, bytes) in &bundle.models {
+                                    core.load_wasm_model(name, bytes);
                                 }
                                 #[cfg(feature = "audio")]
                                 crate::asset::load_sounds_from_buffers(
@@ -984,11 +998,23 @@ impl ApplicationHandler for App {
                                     &mut core.loggy,
                                 );
                             }
+                            let size = self
+                                .core
+                                .as_ref()
+                                .map_or([256, 256], |c| c.gui.size());
                             w.post(&HostToVm::Init {
                                 bundle_id: 0,
-                                width: 256,
-                                height: 256,
+                                width: size[0],
+                                height: size[1],
                             });
+                            self.worker_gui_size = size;
+                            // Skeletons from the models just loaded, before main()
+                            // can ask an entity to play a clip.
+                            let skeletons =
+                                crate::skeleton::take_new(&mut self.skeletons_sent);
+                            if !skeletons.is_empty() {
+                                w.post(&HostToVm::Skeletons(skeletons));
+                            }
                             for (name, content) in &bundle.scripts {
                                 w.post(&HostToVm::Load {
                                     name: name.clone(),
@@ -1051,6 +1077,14 @@ impl ApplicationHandler for App {
                     // (bundle routed). Posting a Loop before Init — e.g. while the
                     // bundle is still unzipping — errors "message before Init".
                     if self.worker_inited {
+                        // Keep the worker's gui/sky rasters the size of the
+                        // layers they're uploaded into (native's Gui::resize).
+                        if let Some(size) = self.core.as_ref().map(|c| c.gui.size()) {
+                            if size != self.worker_gui_size && size[0] > 0 && size[1] > 0 {
+                                w.post(&HostToVm::Resize(size[0], size[1]));
+                                self.worker_gui_size = size;
+                            }
+                        }
                         let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
@@ -1338,6 +1372,8 @@ struct WasmBundle {
     textures: Vec<(String, Vec<u8>)>,
     /// (path, ogg bytes) — passed as-is to load_sounds_from_buffers.
     sounds: Vec<(String, Vec<u8>)>,
+    /// glb/gltf models, by file name (the model manager stems it).
+    models: Vec<(String, Vec<u8>)>,
 }
 
 /// Fetch a URL's bytes, or None on any failure (missing file, network error).
@@ -1427,10 +1463,20 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
                 .collect()
         })
         .unwrap_or_default();
+    let models = map
+        .get("assets")
+        .map(|v| {
+            v.iter()
+                .filter(|(n, _)| n.ends_with(".glb") || n.ends_with(".gltf"))
+                .map(|(n, b)| (n.clone(), b.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(WasmBundle {
         scripts,
         textures,
         sounds,
+        models,
     })
 }
 
@@ -1751,6 +1797,25 @@ impl Core {
     }
 
     #[cfg(target_arch = "wasm32")]
+    fn load_wasm_model(&mut self, name: &str, bytes: &[u8]) {
+        #[cfg(feature = "headed")]
+        {
+            self.model_manager.load_from_buffer(
+                &self.gfx.device,
+                &mut self.tex_manager,
+                &mut self.world,
+                0,
+                name,
+                &bytes.to_vec(),
+                &mut self.loggy,
+                false,
+            );
+            self.tex_manager
+                .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
         match msg {
@@ -1892,6 +1957,12 @@ impl Core {
             }
             VmToHost::Globals(_) => {
                 // TODO: Globals → screen effects.
+            }
+            VmToHost::Raster { sky, w, h, px } => {
+                #[cfg(feature = "headed")]
+                if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
+                    self.gui.write_bundle_raster(0, sky, &img, &self.gfx.queue);
+                }
             }
             VmToHost::LoopComplete { .. } => {
                 // Native rebuilds entity instance buffers when a LoopComplete

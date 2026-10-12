@@ -534,6 +534,41 @@ impl Gui {
     /// mapping from `layer_order()` every frame — so this only sets the dirty bit.
     /// A bundle with no layer yet needs no mark: the frame that assigns it one marks
     /// it dirty as part of the assignment.
+    pub fn size(&self) -> [u32; 2] {
+        self.size
+    }
+
+    /// Upload a frame of a bundle's gui or sky raster that arrived from
+    /// elsewhere (the web VM worker) rather than through its shared LuaImg.
+    /// Frames from before the latest resize are dropped; the worker resends.
+    #[cfg(feature = "headed")]
+    pub fn write_bundle_raster(
+        &mut self,
+        bundle_id: u8,
+        sky: bool,
+        img: &RgbaImage,
+        queue: &wgpu::Queue,
+    ) {
+        let mut layers = if sky {
+            vec![&mut self.sky_layer]
+        } else {
+            vec![
+                &mut self.primary_layer,
+                &mut self.secondary_layer,
+                &mut self.trinary_layer,
+            ]
+        };
+        for layer in layers.iter_mut() {
+            let t = &layer.texture.texture;
+            if layer.bundle_target == Some(bundle_id)
+                && (t.width(), t.height()) == img.dimensions()
+            {
+                crate::texture::write_tex(queue, t, img);
+                layer.dirty = false;
+            }
+        }
+    }
+
     pub fn mark_bundle_dirty(&mut self, bundle_id: u8, sky: bool) {
         if sky {
             if self.sky_layer.bundle_target == Some(bundle_id) {

@@ -17,7 +17,7 @@ use std::sync::mpsc::{channel, sync_channel, Receiver, SyncSender};
 
 use image::RgbaImage;
 use parking_lot::Mutex;
-use silt_lua::{Compiler, Lua};
+use silt_lua::{userdata::WeakWrapper, Compiler, Lua};
 use wasm_bindgen::prelude::*;
 
 use crate::command::{init_lua_sys, main_command_to_host};
@@ -159,7 +159,10 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
     // per-frame entity buffer rides as a Uint8Array the JS glue transfers
     // zero-copy (no SharedArrayBuffer / isolation headers required).
     let obj = js_sys::Object::new();
-    let msgs = serde_wasm_bindgen::to_value(&out).unwrap_or_else(|_| js_sys::Array::new().into());
+    let msgs = serde_wasm_bindgen::to_value(&out).unwrap_or_else(|e| {
+        web_sys::console::error_1(&format!("[petrichor worker] encode failed: {e}").into());
+        js_sys::Array::new().into()
+    });
     let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("msgs"), &msgs);
     #[cfg(feature = "audio")]
     if sounds.length() > 0 {
@@ -228,7 +231,14 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
             Some(LuaTalk::Load(Box::new(Script { name, content }), tx))
         }
         HostToVm::Main => Some(LuaTalk::Main),
-        HostToVm::Resize(w, h) => Some(LuaTalk::Resize(w, h)),
+        HostToVm::Resize(w, h) => {
+            // Native's Gui::resize does this to the shared rasters; here the
+            // worker owns them. The next loop publishes the resized frames.
+            for r in [&ctx.gui_ref, &ctx.sky_ref] {
+                with_raster(r, |img| img.resize(w.max(1), h.max(1)));
+            }
+            Some(LuaTalk::Resize(w, h))
+        }
         HostToVm::Drop(s) => Some(LuaTalk::Drop(s)),
         HostToVm::Init { .. } => None, // handled by the caller
     };
@@ -263,6 +273,20 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                     out.push(VmToHost::Spawn(lent));
                 }
                 entities.push(wrapper);
+            }
+            crate::command::MainCommmand::LoopComplete(m) => {
+                for (changed, r, sky) in [(m.gui, &ctx.gui_ref, false), (m.sky, &ctx.sky_ref, true)] {
+                    if !changed {
+                        continue;
+                    }
+                    if let Some(Some((w, h, px))) = with_raster(r, |img| {
+                        img.take_presented()
+                            .map(|f| (f.width(), f.height(), f.as_raw().clone()))
+                    }) {
+                        out.push(VmToHost::Raster { sky, w, h, px });
+                    }
+                }
+                out.push(VmToHost::LoopComplete { gui: m.gui, sky: m.sky });
             }
             other => {
                 if let Some(v) = main_command_to_host(other) {
@@ -386,7 +410,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
 
 /// Build the VM the way `LuaCore::start` does, but with worker-local plumbing
 /// (its own channels, self-provisioned resources, no InitBack — the worker owns
-/// the gui/sky pixels and posts SetImg instead).
+/// the gui/sky pixels and posts Raster instead).
 fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P64Error> {
     let size = [width.max(1), height.max(1)];
 
@@ -423,15 +447,19 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
 
         let main_rast = LuaImg::new(bundle_id, main_im.clone(), size[0], size[1], letters.clone());
         let sky_rast = LuaImg::new(bundle_id, sky_im.clone(), size[0], size[1], letters.clone());
-        let (main_val, _main_ref) = vm.create_userdata_tuple(mc, main_rast);
-        let (sky_val, _sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
+        let (main_val, main_ref) = vm.create_userdata_tuple(mc, main_rast);
+        let (sky_val, sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
+        // Kept so the loop can publish each finished frame and we can ship it
+        // (see VmToHost::Raster), and so Resize can resize the rasters.
+        let gui_ref = main_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
+        let sky_ref = sky_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
         {
             let mut g = vm.globals.borrow_mut(mc);
             g.set("gui", main_val);
             g.set("sky", sky_val);
         }
         // No InitBack: the main thread can't hold Gc refs into this worker's
-        // arena. The worker owns the pixels and posts SetImg when they change.
+        // arena. The worker owns the pixels and posts Raster when they change.
 
         init_lua_sys(
             vm,
@@ -472,10 +500,9 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             diff_keys_mutex,
             mice_mutex,
             async_sender: pitcher.clone(),
-            // The worker owns its pixels and posts SetImg when they change, so it
-            // has no raster to publish for a renderer in this process.
-            gui_ref: None,
-            sky_ref: None,
+            // The loop publishes into these; dispatch ships what it published.
+            gui_ref,
+            sky_ref,
         })
     })?;
 
@@ -494,4 +521,18 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         last_xforms: std::collections::HashMap::new(),
         last_skels: std::collections::HashMap::new(),
     })
+}
+
+/// Run `f` on the gui or sky raster, if it's still alive.
+fn with_raster<T>(r: &Option<WeakWrapper>, f: impl FnOnce(&mut LuaImg) -> T) -> Option<T> {
+    let mut ud = r.as_ref()?.upgrade()?;
+    let mut f = Some(f);
+    let mut out = None;
+    let _ = ud.downcast_mut(|img: &mut LuaImg| {
+        if let Some(f) = f.take() {
+            out = Some(f(img));
+        }
+        Ok(())
+    });
+    out
 }

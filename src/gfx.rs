@@ -145,7 +145,7 @@ impl<'w> Gfx<'w> {
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: default_backends(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
                 for_resource_creation: None,
                 for_device_loss: None,
@@ -188,7 +188,7 @@ impl<'w> Gfx<'w> {
                         .limits()
                         .max_storage_textures_per_shader_stage
                         .min(8),
-                    ..wgpu::Limits::default()
+                    ..base_limits(&adapter)
                 },
                 memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
             })
@@ -294,7 +294,7 @@ impl<'w> Gfx<'w> {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(main_shader_source(&adapter).into()),
         });
 
         let main_uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
@@ -1016,4 +1016,48 @@ fn skinned_pipelines(
         multiview_mask: None,
     });
     (render, shadow)
+}
+
+/// Every backend natively. On the web WebGPU when the page can actually use
+/// it, else WebGL2: a browser can hand out a WebGPU canvas context while
+/// hiding the `GPUCanvasContext` interface (insecure origins), which wgpu
+/// can't recover from, so check up front.
+fn default_backends() -> wgpu::Backends {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let global = js_sys::global();
+        let secure = js_sys::Reflect::get(&global, &"isSecureContext".into())
+            .map(|v| v.as_bool().unwrap_or(false))
+            .unwrap_or(false);
+        let has_ctx = js_sys::Reflect::has(&global, &"GPUCanvasContext".into()).unwrap_or(false);
+        if secure && has_ctx {
+            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+        } else {
+            log::warn!("WebGPU unavailable (secure context: {secure}), using WebGL2");
+            wgpu::Backends::GL
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    wgpu::Backends::all()
+}
+
+/// Limits to ask for: the defaults, or WebGL2's on the GL backend in a
+/// browser, which can't meet them.
+fn base_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    if cfg!(target_arch = "wasm32") && adapter.get_info().backend == wgpu::Backend::Gl {
+        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+    } else {
+        wgpu::Limits::default()
+    }
+}
+
+/// The main shader. WebGL2's GLSL ES 3.0 has no `noperspective`, so there the
+/// R30 affine UVs fall back to perspective-correct ones.
+fn main_shader_source(adapter: &wgpu::Adapter) -> std::borrow::Cow<'static, str> {
+    let src = include_str!("shaders/shader.wgsl");
+    if cfg!(target_arch = "wasm32") && adapter.get_info().backend == wgpu::Backend::Gl {
+        src.replace("@interpolate(linear) ", "").into()
+    } else {
+        src.into()
+    }
 }

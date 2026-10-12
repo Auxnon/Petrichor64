@@ -388,23 +388,20 @@ pub fn get_color<'gc>(x: Value<'gc>) -> Vec4 {
             //     })
             //     .collect::<Vec<f32>>();
             let t = tab.borrow();
-
-            let mut r = t.get_number(0);
-            let g = t.get_number(1);
-            let b = t.get_number(2);
-            let a = t.get_number(3);
-            if r > 1. {
-                r = r / 255.;
-            }
-            if g > 1. {
-                r = g / 255.;
-            }
-            if b > 1. {
-                r = b / 255.;
-            }
-            if a > 1. {
-                r = a / 255.;
-            }
+            // {r, g, b[, a]}, Lua 1-indexed; 0-1 floats or 0-255 per channel.
+            // Alpha defaults to opaque.
+            let chan = |i: i64| {
+                let v = t.get_number(i);
+                if v > 1. {
+                    v / 255.
+                } else {
+                    v
+                }
+            };
+            let r = chan(1);
+            let g = chan(2);
+            let b = chan(3);
+            let a = if t.border() >= 4 { chan(4) } else { 1. };
 
             vec4(r as f32, g as f32, b as f32, a as f32)
         }
