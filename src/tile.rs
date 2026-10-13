@@ -679,6 +679,13 @@ impl ChunkModel {
 
     #[cfg(feature = "headed")]
     pub fn cook(&mut self, device: &Device) {
+        // A chunk with nothing left in it (its last tile removed, or only
+        // ever cleared) draws nothing; zero-length buffers would panic when
+        // bound ("buffer slices can not be empty").
+        if self.ind_data.is_empty() {
+            self.buffers = None;
+            return;
+        }
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
             contents: bytemuck::cast_slice(&self.vert_data),
