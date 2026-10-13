@@ -1,6 +1,14 @@
 # silt bugs found writing the editor overlay
 
-> **#5 is open** (found later, building `apps/model`). #1–#4 are fixed in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
+> **Status re-checked 2026-10-10 while building `~/projects/model-chor`: #1, #2 and #3
+> are NOT fixed in the silt the engine builds against**, and #8–#12 below are new.
+> The engine uses `../silt-stable` on branch `fix/constant-index-u16` at `1315850`. The
+> commits named as the fixes below (`9ac21ea`, `0e09035`) don't exist anywhere in that
+> repo (`git cat-file -t` fails on both). So either they live in another checkout or
+> they were never pushed. Until they land, treat the "fixed" line below as wrong and
+> keep every workaround. The repros are in "Re-check" at the end.
+
+> **#5 and #7 are open; #6 has a fix on branch `fix/constant-index-u16`** (#5 found building `apps/model`; #6 and #7 building `editor/`). #1–#4 are fixed in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
 > along with them (the stack accounting it depended on). `test/silt-callarg` now
 > reports `done, failures: 0` with no `is not callable` lines, and 60 top-level
 > globals no longer panics. Kept for the reproductions and the diagnosis trail.
@@ -241,6 +249,123 @@ against field assignment too, not just bracket indexing.
 
 ---
 
+## 6. More than 256 constants in one chunk silently reads the wrong constants
+
+**Open.** No error at compile time or at runtime — string and number literals just
+resolve to *other* constants from the same chunk:
+
+```lua
+T = {}
+T[1] = "s1"
+T[2] = "s2"
+-- ... one line per index, up to
+T[200] = "s200"
+return T[1] .. " " .. T[130] .. " " .. T[200]
+-- expected: "s1 s130 s200"
+-- actual:   "s73s73s74s74s75"   (even the " " separators are wrong)
+```
+
+Each line adds two constants (the index and the string), so it breaks at around 128
+lines. It's per **chunk**: a script file's top level is one chunk, and each function
+body is its own, so it bites data-heavy top-level code (asset tables, level data,
+big lookup tables) long before it bites functions. The engine compiles each file in
+`scripts/` separately, so splitting a file is a workaround.
+
+**Where it is.** Every constant-bearing opcode stores its index as a `u8`
+(`CONSTANT`, `CLOSURE`, `DEFINE_GLOBAL`, `GET_GLOBAL`, `SET_GLOBAL`,
+`TABLE_GET_BY_CONSTANT`, `METHOD_GET`, … in `src/code.rs`), and the compiler
+narrows with a silent cast:
+
+```rust
+// chunk.rs
+pub fn write_constant(&mut self, value: Value<'chnk>) -> usize {
+    self.constants.push(value);
+    // TODO limit to u8
+    self.constants.len() - 1
+}
+// compiler.rs
+f.chunk.write_constant(value) as u8   // index 256 becomes 0, 257 becomes 1, ...
+```
+
+The misleading error line numbers seen alongside it (`Cannot get length of
+'number'` reported on an unrelated line) come from the same thing — a wrapped
+constant can be an identifier, so `GET_GLOBAL` fetches the wrong global.
+
+Found while testing `editor/` with a harness that concatenated several scripts into
+one chunk.
+
+### Fix: widen constant operands to `u16` (branch `fix/constant-index-u16` in `../silt-stable`)
+
+**Why `u16` is free.** `OpCode` is already **4 bytes, 2-byte aligned** (measured with
+`size_of`): the jump variants (`GOTO_IF_FALSE(u16)`, `FOR_GENERIC { u8, u16 }`) set
+the enum's size. A constant variant widened to `u16` is tag + padding + `u16` —
+still 4 bytes. Same instruction stream size, same cache footprint, and the VM's
+`constants[index as usize]` load is unchanged.
+
+**What changed.**
+- `code.rs`: `pub type ConstIndex = u16`; the 8 `constant:` operands use it
+  (`CONSTANT`, `CLOSURE`, `DEFINE_GLOBAL`, `GET_GLOBAL`, `SET_GLOBAL`, `DEFINE_LOCAL`,
+  `TABLE_GET_BY_CONSTANT`, `METHOD_GET`).
+- `compiler.rs`: one checked narrowing, `Compiler::const_index`, used by every site
+  that used to `as u8` (identifiers, literals, both `CLOSURE` emitters). Past
+  `u16::MAX` it's a new compile error, `TooManyConstants`, reported at the
+  offending line, instead of a wrap. `type Ident` (global-name index) follows.
+- `lua.rs` hot-swap: `copy_constant(k as u8)` had the same wrap; now `ConstIndex`.
+- `tests/constant_index.rs`: string literals, globals and closures past 256 resolve
+  correctly; ~65 000 constants still run; overflowing is a clean compile error.
+  All five fail on the old compiler.
+
+**Speed.** Criterion `benches/interpreter.rs`, saved baseline vs widened:
+for-loop −1.2%, while-loop 0.0%, fib(28) −0.3%, table r/w −3.2%, native call −1.1%,
+native multi −3.1% — all noise or better. `string_concat` read +1.7…+6%, but an A/A
+run (the *unchanged* code against the same baseline) read +6.2% too, so that's
+machine drift, not the change. petrichor64 builds and its tests pass against it.
+
+**Alternatives considered.**
+- *clox-style `CONSTANT_LONG` variants* — keeps a u8 fast path, but doubles every
+  constant-bearing opcode and its match arm in the VM, for no gain: the u16 is
+  already free.
+- *Error at 256* — tiny change, but breaks any big data script outright.
+- *Deduplicate literal constants* — worth doing later (repeated numbers and strings
+  each take a slot today; identifiers are already deduped), but it only delays the
+  limit, and it's compile-time only.
+
+**Related, not fixed here.**
+- `Chunk::write_identifier` finds an existing identifier by *linear scan* of the
+  constant table, so compiling a chunk with *n* globals is O(n²). Compile-time only;
+  a `HashMap` side index (the existing `TODO` next to it) would fix it.
+- `emit_rewind` / `emit_forloop` call `error_at(TooManyOperations)` and discard the
+  result without `push_error`, so a >65535-op loop body marks the chunk invalid
+  with no message ("Unknown error") and writes a wrapped jump first. Same shape of
+  bug the new `const_index` avoids.
+- Locals and upvalues are still `u8` slots (`TooManyLocals` guards them) — a real
+  limit, but not a silent one.
+
+---
+
+## 7. silt CLI only: implicit returns crash on a global assigned from a call, then an `if` containing a call
+
+**Open, does not affect the engine.** The `silt` binary compiles with
+`Compiler::new_with_flags(true, true, false)` — `implicit_returns` on. petrichor64
+uses `Compiler::new()` (off) and runs this fine.
+
+```lua
+function g() for i = 1, 2 do end return 1 end
+function f() files = g() if false then print("none") end end
+f() return files
+-- silt CLI: panic in CallFrame::get_loc_by_count (src/function.rs:208)
+-- or, in a bigger file, a segfault
+```
+
+All of these are needed: a loop in `g`, a **global** (not local) assigned from the
+call, and an `if` as the last statement of `f` whose body contains a call. With
+`if false then end` (no call) or `local x = g()` it runs. The likely suspect is the
+implicit-return path in `compiler.rs` (`last_was_expression`, lines ~1142/2013)
+treating the trailing `if` as a returnable expression and leaving the stack
+unbalanced. Not investigated further, since it's CLI-only.
+
+---
+
 ## What the workarounds cost (now removed)
 
 `apps/edit` currently works around all three, and the workarounds are marked with
@@ -251,3 +376,102 @@ comments pointing back here, so they can be reverted once these are fixed:
 
 Neither is expensive at this scale, but both make the code noticeably worse to read,
 and the first is the kind of rule that is impossible to remember consistently.
+
+---
+
+## Re-check, 2026-10-10: what still reproduces (and what's new)
+
+I ran these in the engine (`cargo build`, scripts in a scratch app) against
+`../silt-stable` @ `1315850` on `fix/constant-index-u16`. Each test ran on its own
+frame, so one failure couldn't hide the next. None of them are fixed.
+
+### #1 still open: a call in the first argument, then a local later, calls the wrong value
+
+The shape is wider than the table at the top says. **The call doesn't have to be
+the whole argument.** A call anywhere inside the first argument's expression
+triggers it, as long as a local appears later in the argument list:
+
+| call | result |
+|---|---|
+| `two(1 + cos(az) * fl, 2)` | **`Value: 1` is not callable** |
+| `two(cos(az) * fl, 2)` | **`Value: 0.7648…` is not callable** (calls the result of `cos`) |
+| `three(cos(az), b, b)` | **not callable**, the exact case listed as fixed |
+| `three(cos(az) * fl, b, b)` | **not callable** |
+| `two(1 + cos(az), 2)` | ok (only a constant after the call) |
+| `two(2, 1 + cos(az) * fl)` | ok (the call isn't in the first argument) |
+| `three(b, cos(az) + 1, b)` | ok |
+| `two(cos(az) * 2, sin(az) * 2)` | ok |
+| `local q = cos(az) * 2 + 1` | ok |
+
+The same thing happens in a table constructor. `{ 1 + cos(az) * fl, 2 }` fails with
+`Invalid chunk due compilation corruption`.
+
+**This is what breaks `apps/model` ("renders wrong").** Its `loop()` does
+`vec3(cursor.x + cos(cam_az) * flat, …)`, so every frame errors with
+`Value 'Value: 0.7648…' is not callable` and nothing after it runs. Workaround:
+hoist every call into a local before using it as an argument.
+
+### #2 / #3 still open: table.insert / table.remove on tables built by index
+
+```lua
+local t2 = {}
+for i = 1, 5 do t2[#t2 + 1] = i end
+table.remove(t2, 2)    -- t2[2] is nil (expected 3); #t2 is 4
+table.insert(t2, 1, 9) -- t2[2] is nil (expected 1); #t2 is 4 (expected 5)
+```
+
+Two related things, same tables:
+
+- **#8. `t[#t] = nil` doesn't shrink `#t`.** A 5-element loop-built table still
+  reads `#t == 5` afterwards. HANDOFF mentions this one; it's still true.
+- **#9. Setting a key to nil leaves it in `pairs`.** After `set[5] = true; set[5] = nil`,
+  `for k in pairs(set)` still runs once. `set[5] == nil` reads correctly; only
+  iteration is wrong.
+
+Workaround: never delete. Rebuild the array with a filtering loop, and keep "sets"
+as `true`/`false` values checked with `== true`.
+
+### #10 new: anonymous functions panic the compiler
+
+```lua
+local f = function(q) return q * 2 end   -- inside a function body
+```
+
+This panics the compile with `attempt to subtract with overflow` at
+`silt-stable/src/compiler.rs:1710` (local resolution: `i - offset` under a
+functional depth). `m.k = function(self, q) … end` and
+`pcall(function() error("x") end)` in the same function do the same, and the whole
+file then fails to load. It also showed up at file top level: a table of
+`TEST_FNS.x = function() … end` entries broke the chunk. Workaround: only named
+global functions (`pcall(named_fn, arg)` works).
+
+**Also: a one-line function body that declares a local miscompiles.**
+`function f(d) local t = clock() g(d) ACC.x = ACC.x + clock() - t end` passed the
+wrong values: `g` got an integer where it should have got a table, and another
+copy gave `Cannot - 'number' and 'bool'`. The same body split across lines works.
+
+### #11 new: assigning a field through an index fails when the element is userdata
+
+```lua
+gizmo_ents[k].z = -1000   -- error: Cannot perform table operations on a non-table value (userdata)
+```
+
+Reading `gizmo_ents[k].z` works, and so does `local e = gizmo_ents[k]; e.z = -1000`.
+Only the set through an indexed expression fails, and only for userdata (entities).
+Doing the same to a plain table element (`F[i].c = c`) is fine.
+
+### #12 new: smaller gaps
+
+- **No scientific notation.** `1e30` is a lex error (`Invalid number: 1`).
+- **vec3 fields are read-only.** `v.x = 5` gives `Meta method missing for '[]'`.
+  Build a new `vec3` instead.
+- `vec3` math is f32. `vec3(3,0,4):normalize().x` is `0.6000000238…`, so don't
+  compare it to an exact `0.6`. Expected behaviour, but it surprises an exact test.
+
+### Checked and fine in this build
+
+`+=`, `tonumber` (with base), `string.find/sub/format/match`, `pcall` with a named
+function, multiple return values, `ipairs`/`pairs` (except #9), nested
+constructors with constants, `table.concat`, vec3 `cross`/`dot`/`length`/arithmetic
+and `==`, numeric `for` with a negative step.
+
