@@ -2210,18 +2210,15 @@ function instr(id, spec, cfg) end"
         move |_, _, (name, im): (String, Value)| {
             if let Value::UserData(ud) = im {
                 ud.borrow().downcast_ref::<LuaImg, _, _>(|limg| {
-                    let (tx, rx) = std::sync::mpsc::sync_channel::<()>(0);
+                    // Fire and forget, on every target (wasm always did: its VM
+                    // can't block on the main thread). Commands arrive in order, so
+                    // a mod() or make() after this already sees the texture; the
+                    // reply slot is buffered so the main thread never waits either.
+                    let (tx, _rx) = std::sync::mpsc::sync_channel::<()>(1);
                     lua_err!(pitcher.send((
                         bundle_id,
                         MainCommmand::SetImg(name, limg.image.clone(), tx),
                     )));
-                    // Native waits for the upload ack; the wasm VM runs in a
-                    // worker that can't block on the main thread — it fires the
-                    // SetImg and moves on (uploaded a frame later).
-                    #[cfg(not(target_arch = "wasm32"))]
-                    lua_err!(rx.recv());
-                    #[cfg(target_arch = "wasm32")]
-                    let _ = rx;
                     Ok(())
                 })?;
             };
@@ -2283,10 +2280,38 @@ function nimg(w, h) end"
     lua!(
             "mod",
             move |vm,mc, (asset, tval): (String, Value)| {
-                let (tx, rx) = std::sync::mpsc::sync_channel::<u8>(0);
+                // The reply slot is buffered and nobody waits on it: commands from this
+                // thread reach the main thread in order, so a `make()` or `gmod()` after
+                // this already sees the model. Waiting for the ack used to cost a whole
+                // main-loop pass per call, which capped a tool rebuilding a mesh every
+                // frame at a fraction of the frame rate.
+                let (tx, _rx) = std::sync::mpsc::sync_channel::<u8>(1);
                 let t=if let Value::Table(t)=tval{t.borrow()}else{return 
 
                                 Err(static_err("expecting table for param 2"));};
+
+                if let Some(built) = mesh_from_table(&t, vm, mc) {
+                    let mesh = built.map_err(static_err)?;
+                    if mesh.pos.len() < 3 {
+                        return Err(static_err("mod: nothing to build (no faces or segments)"));
+                    }
+                    let textures = ordered_list::<String>(&t, "t", vm, mc)
+                        .unwrap_or_else(|| vec![crate::texture::DEFAULT_TEX.to_string()]);
+                    lua_err!(pitcher.send((
+                        bundle_id,
+                        MainCommmand::Model(Box::new(ModelPacket {
+                            asset,
+                            textures,
+                            vecs: mesh.pos,
+                            norms: mesh.norm,
+                            inds: mesh.ind,
+                            uvs: mesh.uv,
+                            style: TextureStyle::Tri,
+                            sender: tx,
+                        })),
+                    )));
+                    return Ok("Building model in polygon mode");
+                }
 
                 match ordered_list::<[f32; 3]>(&t,"q",vm,mc) {
                     Some(quads) => {
@@ -2344,9 +2369,6 @@ function nimg(w, h) end"
                                         })
                                     )),
                                 ));
-                                if let Err(err) = rx.recv() {
-                                    return Err(LuaError::Custom(err.to_string()));
-                                }
                             }
                             _ => {
                                 // No texture given: build with the engine's fallback
@@ -2369,9 +2391,6 @@ function nimg(w, h) end"
                                         sender: tx,
                                     }))
                                 )));
-                                if let Err(err) = rx.recv() {
-                                    return Err(LuaError::Custom(err.to_string()));
-                                }
                             }
                         }
                         Ok("Building model in quad mode")
@@ -2401,9 +2420,6 @@ function nimg(w, h) end"
                                                     sender:tx})
                                                 ),
                                             )));
-                                            if let Err(err) = rx.recv() {
-                                                return Err(LuaError::Custom(err.to_string()));
-                                            }
                                             return Ok("Building model in vert mode")
                                         }
                                         _ => {
@@ -2422,9 +2438,6 @@ function nimg(w, h) end"
                                                     sender: tx})
                                                 ),
                                             )));
-                                            if let Err(err) = rx.recv() {
-                                                return Err(LuaError::Custom(err.to_string()));
-                                            }
                                             return Ok("Building model in vert mode")
                                         }
                                     }
@@ -2451,9 +2464,6 @@ function nimg(w, h) end"
                                                     tx,
                                                 ),
                                             )));
-                                            if let Err(err) = rx.recv() {
-                                                return Err(LuaError::Custom(err.to_string()));
-                                            }
                                         }
                                         Ok("Building model in texture mode")
                                     }
@@ -2496,6 +2506,110 @@ function mod(asset, t) end"
 ---@param bundle integer?
 ---@return string[]
 function lmod(model, bundle) end"
+    );
+
+    // glTF out of, and back into, the same arrays mod() takes. Writing is how a
+    // modelling tool saves its work as an asset the engine (or anything else) can
+    // load; reading hands a file's triangles back as tables so a tool can edit an
+    // existing model. The heavy lifting is in gltf_io.rs; this only moves tables.
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "glb",
+        move |vm, mc, (path, data): (String, Value)| {
+            let opts = match &data {
+                Value::Table(t) => Some(t.borrow()),
+                Value::Nil => None,
+                _ => return Err(static_err("glb: second argument must be a table")),
+            };
+            let y_up = opts
+                .as_ref()
+                .and_then(|t| ordered_list::<String>(t, "up", vm, mc))
+                .map(|u| u.first().map(|s| s.eq_ignore_ascii_case("y")).unwrap_or(false))
+                .unwrap_or(false);
+            let writing = opts
+                .as_ref()
+                .map(|t| !matches!(t.get_value(&"v".into()), Value::Nil))
+                .unwrap_or(false);
+
+            let shaped = opts.as_ref().and_then(|t| mesh_from_table(t, vm, mc));
+            if let Some(built) = shaped {
+                let t = opts.unwrap();
+                let mut mesh = built.map_err(static_err)?;
+                let texture = ordered_list::<String>(&t, "t", vm, mc).and_then(|v| v.into_iter().next());
+                drop(t);
+                if let Err(e) = mesh.complete() {
+                    return Err(static_err(e));
+                }
+                if y_up {
+                    mesh.to_y_up();
+                }
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((
+                    bundle_id,
+                    MainCommmand::GlbWrite(Box::new((path, mesh, texture)), tx)
+                )));
+                return Ok(Value::Bool(rx.recv().unwrap_or(false)));
+            }
+
+            if writing {
+                let t = opts.unwrap();
+                let mut mesh = crate::gltf_io::MeshData {
+                    pos: ordered_list::<[f32; 3]>(&t, "v", vm, mc).unwrap_or_default(),
+                    norm: ordered_list::<[f32; 3]>(&t, "n", vm, mc).unwrap_or_default(),
+                    uv: ordered_list::<[f32; 2]>(&t, "u", vm, mc).unwrap_or_default(),
+                    ind: ordered_list::<u32>(&t, "i", vm, mc).unwrap_or_default(),
+                };
+                let texture = ordered_list::<String>(&t, "t", vm, mc).and_then(|v| v.into_iter().next());
+                drop(t);
+                if let Err(e) = mesh.complete() {
+                    return Err(static_err(e));
+                }
+                if y_up {
+                    mesh.to_y_up();
+                }
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((
+                    bundle_id,
+                    MainCommmand::GlbWrite(Box::new((path, mesh, texture)), tx)
+                )));
+                return Ok(Value::Bool(rx.recv().unwrap_or(false)));
+            }
+
+            let (tx, rx) = sync_channel::<Option<crate::gltf_io::MeshData>>(0);
+            lua_err!(pitcher.send((bundle_id, MainCommmand::GlbRead(path, tx))));
+            let mut mesh = match rx.recv() {
+                Ok(Some(m)) => m,
+                _ => return Ok(Value::Nil),
+            };
+            if y_up {
+                mesh.from_y_up();
+            }
+            let v3 = |a: &Vec<[f32; 3]>| -> Vec<Value> {
+                a.iter()
+                    .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64, p[2] as f64]))
+                    .collect()
+            };
+            let pos = v3(&mesh.pos);
+            let norm = v3(&mesh.norm);
+            let uv: Vec<Value> = mesh
+                .uv
+                .iter()
+                .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64]))
+                .collect();
+            let ind: Vec<Value> = mesh.ind.iter().map(|i| Value::Integer(*i as i64)).collect();
+            let mut out = vm.raw_table();
+            out.set("v", vm.table_from_array(mc, pos));
+            out.set("n", vm.table_from_array(mc, norm));
+            out.set("u", vm.table_from_array(mc, uv));
+            out.set("i", vm.table_from_array(mc, ind));
+            Ok(vm.wrap_table(mc, out))
+        },
+        "Write mesh tables to a .glb/.gltf in the app folder, or read one back <path:string, data?:{v,i,n,u,t,up}>",
+        "
+---@param path string
+---@param data {v:number[3][], i?:integer[], n?:number[3][], u?:number[2][], t?:string, up?:string}?
+---@return boolean|{v:number[3][], i:integer[], n:number[3][], u:number[2][]}|nil
+function glb(path, data) end"
     );
 
     //     lua!(
@@ -3698,6 +3812,13 @@ pub enum MainCommmand {
     Stats(),
     Read(String, SyncSender<Option<String>>),
     Write(String, String, SyncSender<bool>),
+    /// `glb(path, data)`: path, mesh, and the name of a texture to embed.
+    GlbWrite(
+        Box<(String, crate::gltf_io::MeshData, Option<String>)>,
+        SyncSender<bool>,
+    ),
+    /// `glb(path)`: the file's triangles, or None if it can't be read.
+    GlbRead(String, SyncSender<Option<crate::gltf_io::MeshData>>),
     /// The `app.*` family: an overlay reaching into the app it edits. The main thread
     /// re-checks that the sender really is an engine-marked overlay before acting on
     /// any of these — the natives are only installed into overlay VMs, but a
@@ -3947,6 +4068,90 @@ where
         }
         v => Some(vec![R::from_lua(&v, vm, mc).unwrap_or_default()]),
     }
+}
+
+/// Points from a Lua list of `{x, y, z}` tables or `vec3` values.
+fn point_list<'v>(t: &Table<'v>, key: &str) -> Option<Vec<[f32; 3]>> {
+    match t.get_value(&key.into()) {
+        Value::Table(inner) => {
+            let tb = inner.borrow();
+            let mut out = Vec::new();
+            let mut i = 1;
+            while let Some(v) = tb.getn(i) {
+                out.push(match v {
+                    #[cfg(feature = "silt")]
+                    Value::Vec3(p) => [p.x, p.y, p.z],
+                    Value::Table(p) => p.borrow().to_array::<f32, 3>(),
+                    _ => [0., 0., 0.],
+                });
+                i += 1;
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// The polygon (`p` + `f`) and line (`l`) forms shared by `mod()` and `glb()`.
+/// None if the table is neither, so the caller falls through to its other forms.
+///
+/// - polygon: `p` positions, `f` faces as lists of **1-based** indices into `p`
+///   (Lua's own convention, unlike `i`), `fu` one uv per face
+/// - line: `l` segment endpoints in pairs, `lw` width (one, or per segment),
+///   `lu` one uv per segment
+/// - either: `scale` multiplies positions (see guide/mod.md on precision)
+fn mesh_from_table<'v>(
+    t: &Table<'v>,
+    vm: &VM<'v>,
+    mc: &Mutation<'v>,
+) -> Option<Result<crate::gltf_io::MeshData, String>> {
+    let scale = match t.get_value(&"scale".into()) {
+        Value::Integer(n) => n as f32,
+        Value::Number(n) => n as f32,
+        _ => 1.,
+    };
+    let mut mesh = if let Value::Table(ft) = t.get_value(&"f".into()) {
+        let pos = point_list(t, "p").unwrap_or_default();
+        let ftb = ft.borrow();
+        let mut faces = Vec::new();
+        let mut i = 1;
+        while let Some(Value::Table(face)) = ftb.getn(i) {
+            let fb = face.borrow();
+            let mut idx = Vec::new();
+            let mut k = 1;
+            while let Some(v) = fb.getn(k) {
+                let n = match v {
+                    Value::Integer(n) => *n,
+                    Value::Number(n) => *n as i64,
+                    _ => 0,
+                };
+                if n < 1 {
+                    return Some(Err(format!("face {} has index {} (indices start at 1)", i, n)));
+                }
+                idx.push((n - 1) as u32);
+                k += 1;
+            }
+            faces.push(idx);
+            i += 1;
+        }
+        let fu = ordered_list::<[f32; 2]>(t, "fu", vm, mc).unwrap_or_default();
+        match crate::gltf_io::MeshData::from_polygons(&pos, &faces, &fu) {
+            Ok(m) => m,
+            Err(e) => return Some(Err(e)),
+        }
+    } else if let Some(pts) = point_list(t, "l") {
+        let lw = ordered_list::<f32>(t, "lw", vm, mc).unwrap_or_default();
+        let lu = ordered_list::<[f32; 2]>(t, "lu", vm, mc).unwrap_or_default();
+        crate::gltf_io::MeshData::from_lines(&pts, &lw, &lu)
+    } else {
+        return None;
+    };
+    if scale != 1. {
+        for p in mesh.pos.iter_mut() {
+            *p = [p[0] * scale, p[1] * scale, p[2] * scale];
+        }
+    }
+    Some(Ok(mesh))
 }
 
 fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {

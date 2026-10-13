@@ -44,6 +44,24 @@ Tweak monitor properties, lock mouse, disable console, etc. If there's a global 
   (`vox`) and effects (`fade`) stay consistent. Different simultaneous
   timbres/singers = different channels.
 
+**Reading**
+
+Called with no table, `attr()` returns what the engine knows about the screen:
+
+- `w`, `h`: integer - window size in physical pixels
+- `aspect`: number - `w / h`, the aspect the 3D view is projected with (its vertical
+  field of view is a fixed 45°), so a script can place things against the screen
+  edges in 3D
+- `gw`, `gh`: integer - the gui raster's actual size, which stretches with the
+  window's aspect
+- `os`: string, `hz`: number
+
+```lua
+local s = attr()
+local half_h = 0.41421356 -- tan(45° / 2): the view's half-height at distance 1
+local half_w = half_h * s.aspect
+```
+
 ```lua
 attr({title="Your Game Or App Name Goes Here"})
 attr{modernize=0} -- try default crt monitor settings

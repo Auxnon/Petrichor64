@@ -94,3 +94,29 @@ Directory games load from disk; packed `.game.png` games decode the bundled
 `sounds/` entries in `asset::unpack` (whitelist `["assets","scripts","sounds"]`).
 **Known gap:** the *packer* (`collect_packable_sources`/`pack_folder`) does not
 yet bundle `sounds/` into `.game.png`, so packed-game sound loading is untested.
+
+## Meshes from tools: `mod()` polygon/line forms and `glb()`
+
+Besides the `v`/`i`, `q` and cube forms, `mod()` takes a **polygon form** (`p`
+points, `f` faces as **1-based** index lists, `fu` one uv per face) and a **line
+form** (`l` endpoint pairs, `lw` width(s), `lu` one uv per segment), both built in
+Rust by `gltf_io::MeshData::{from_polygons, from_lines}`, and both with an optional
+`scale` (model vertices pack at 1/16 unit — build fine meshes larger and scale the
+entity down). Use these for anything rebuilt often: Lua-side triangle generation
+was ~10x slower. `glb(path, data)` writes the same tables (or `v`/`i`) as
+`.glb`/`.gltf`, `glb(path)` reads one back; see `guide/glb.md`. The modeller that
+drove these lives outside the repo at `~/projects/model-chor`.
+
+## `mod()` and `tex()` don't wait for the main thread
+
+They used to block on a rendezvous ack, which cost a full main-loop pass per call.
+Commands from one Lua thread reach the main thread in order over one channel, so
+a following `make()`/`gmod()`/`mod()` already sees the result; the ack slot is now
+buffered and unread. If you add a native that must observe main-thread state,
+give it its own reply channel and wait on that — don't reintroduce the ack here.
+
+## Scripts load in sorted order
+
+`asset::get_script_items` sorts, so every file's top level runs in the same order
+on every filesystem. Still, keep top-level code free of other files' globals
+(compute those in `main()`): packed games and future loaders needn't sort.

@@ -213,22 +213,46 @@ impl ModelManager {
                         // });
                         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-                        let verts_interleaved = izip!(
-                            reader.read_positions().unwrap(),
-                            reader.read_tex_coords(0).unwrap().into_f32(),
-                        );
+                        let positions: Vec<[f32; 3]> = match reader.read_positions() {
+                            Some(p) => p.collect(),
+                            None => continue,
+                        };
+                        let n = positions.len();
+                        // UVs and normals are optional in glTF. A missing UV set used
+                        // to panic the loader; missing normals were never read at all,
+                        // and a zero normal shades as NaN. Untextured files sample the
+                        // texture's corner; normals fall back to flat ones.
+                        let uvs: Vec<[f32; 2]> = reader
+                            .read_tex_coords(0)
+                            .map(|t| t.into_f32().collect())
+                            .filter(|u: &Vec<[f32; 2]>| u.len() == n)
+                            .unwrap_or_else(|| vec![[0., 0.]; n]);
+                        let indices_opt: Option<Vec<u32>> =
+                            reader.read_indices().map(|i| i.into_u32().collect());
+                        let normals: Vec<[f32; 3]> = reader
+                            .read_normals()
+                            .map(|it| it.collect())
+                            .filter(|v: &Vec<[f32; 3]>| v.len() == n)
+                            .unwrap_or_else(|| match &indices_opt {
+                                Some(ind) => crate::gltf_io::flat_normals(&positions, ind),
+                                None => vec![[0., 0., 1.]; n],
+                            });
 
-                        let vertices = verts_interleaved
-                            .map(|(pos, uv)| {
-                                let mut vv = vertexx(pos, [0, 0, 0], uv);
+                        let vertices = izip!(positions, normals, uvs)
+                            .map(|(pos, nor, uv)| {
+                                let nor = [
+                                    (nor[0] * 100.) as i8,
+                                    (nor[1] * 100.) as i8,
+                                    (nor[2] * 100.) as i8,
+                                ];
+                                let mut vv = vertexx(pos, nor, uv);
                                 //DEV are we always offseting the glb uv by the tilemap this way?
                                 vv.texture(uv_adjust[0]);
                                 vv
                             })
                             .collect::<Vec<Vertex>>();
 
-                        if let Some(inds) = reader.read_indices() {
-                            let indices = inds.into_u32().map(|u| u as u32).collect::<Vec<u32>>();
+                        if let Some(indices) = indices_opt {
 
                             let model = Self::build_complex_model(
                                 #[cfg(feature = "headed")]

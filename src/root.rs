@@ -361,7 +361,18 @@ impl<'core> Core {
         if new_size.width > 0 && new_size.height > 0 {
             self.gfx.set_config_size(new_size);
 
-            if self.global.state_delay == 0 {
+            // Queue one rebuild unless one is already pending; the delay below
+            // debounces a drag-resize into it. This used to test `state_delay == 0`
+            // instead, which is also nonzero for unrelated reasons — the boot
+            // config sets 8 — so a window the compositor resized right after
+            // creation (any tiling WM) never rebuilt its targets and drew the frame
+            // stretched or tiled until the next manual resize.
+            let pending = self
+                .global
+                .state_changes
+                .iter()
+                .any(|s| matches!(s, StateChange::Resized));
+            if !pending {
                 self.global.state_changes.push(StateChange::Resized);
             }
             self.global.state_delay = 15;

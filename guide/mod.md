@@ -6,7 +6,9 @@ _set model_
 ---@alias regular_data {v:number[3][], u?:number[2][]}, i?:integer[], n?:number[3][], t?:string|string[]}
 ---@alias quad_data {q:number[3][], u?:number[2][], n?:number[3][], t?:string|string[]}
 ---@alias cube_data {t:string|string[]}
----@type fun(asset:string, data:regular_data|quad_data|cube_data)
+---@alias polygon_data {p:(number[3]|vec3)[], f:integer[][], fu?:number[2][], t?:string, scale?:number}
+---@alias line_data {l:(number[3]|vec3)[], lw?:number|number[], lu?:number[2][], t?:string, scale?:number}
+---@type fun(asset:string, data:regular_data|quad_data|cube_data|polygon_data|line_data)
 function mod(asset,data)
 ```
 
@@ -33,6 +35,43 @@ that ships its own image named `default` replaces it.
 ```lua
 mod("flat", {q={{0,0,0}, {1,0,0},{1,0,1},{0,0,1}}})
 ````
+
+**The polygon method** takes a mesh the way a modelling tool keeps one: a list of
+points `p` and a list of faces `f`, each face a list of **1-based** indices into `p`
+(Lua's own convention — note `i` above is 0-based), wound so the right-hand rule
+points out of the face. Faces can have any number of corners; the engine fans
+each one from its first corner (exact for convex faces), gives it a flat normal,
+and gives each face its own copy of its corners. `fu` is one UV per face — point
+it at a texel of `t` to colour faces from a palette. Points can be `{x, y, z}`
+tables or `vec3` values. All of the triangle work happens in the engine, so
+rebuilding a model this way every frame is cheap.
+
+```lua
+mod("wedge", {
+    p = { vec3(0, 0, 0), vec3(1, 0, 0), vec3(1, 1, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(0, 1, 1) },
+    f = { { 1, 4, 3, 2 }, { 1, 2, 5 }, { 4, 6, 3 }, { 1, 5, 6, 4 }, { 2, 3, 6, 5 } },
+})
+```
+
+**The line method** builds square beams along line segments: `l` is a list of
+endpoints taken in pairs, `lw` the beam's thickness (one number, or one per
+segment), `lu` one UV per segment. Beams look the same from every angle, which a
+flat quad doesn't — for wireframes, grids, gizmos and debug lines.
+
+```lua
+mod("axes", {
+    l = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 0, 0 }, { 0, 0, 1 } },
+    lw = 0.02,
+})
+```
+
+`scale` (polygon and line methods) multiplies every position before the model is
+packed. Model vertices are stored at 1/16 of a unit, so a fine mesh — a thin grid
+line, a small handle — loses its shape; build it `scale` times larger and show it
+on an entity with `ent.scale = 1 / scale` to keep 1/(16 × scale) precision.
+
+[glb](#glb) accepts the same polygon tables, so a mesh shown with `mod()` can be
+saved as a glTF file unchanged.
 
 **The cube method** is the simplest of all as it's literally just re-texturing a cube by passing in texture assets directly. the texture array can be 6 in length for each face in order of Z+, X+, Y+, X-, Y-, Z-. Any omitted asset will default to the first
 
