@@ -224,7 +224,7 @@ pub struct Gui {
     // sky_image: RgbaImage,
     time: f32,
     pub letters: RgbaImage,
-    size: [u32; 2],
+    pub size: [u32; 2],
     console_background_color: image::Rgba<u8>,
     // console_dity: bool,
     // main_dirty: bool,
@@ -1114,14 +1114,17 @@ pub fn direct_rect(
             draw_filled_circle_mut(target, (cx2, cy1), radius, color);
             draw_filled_circle_mut(target, (cx2, cy2), radius, color);
 
+            // A radius at the cap (half the short side) leaves these spans at -1:
+            // the circles already cover them, but `of_size` panics on zero or a
+            // wrapped negative, which took the whole Lua thread down.
             draw_filled_rect_mut(
                 target,
-                imageproc::rect::Rect::at(xx, cy1).of_size(ww, (cy2 - cy1) as u32),
+                imageproc::rect::Rect::at(xx, cy1).of_size(ww, (cy2 - cy1).max(1) as u32),
                 color,
             );
             draw_filled_rect_mut(
                 target,
-                imageproc::rect::Rect::at(cx1, yy).of_size((cx2 - cx1) as u32, hh),
+                imageproc::rect::Rect::at(cx1, yy).of_size((cx2 - cx1).max(1) as u32, hh),
                 color,
             );
         }

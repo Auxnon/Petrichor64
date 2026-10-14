@@ -372,33 +372,33 @@ pub fn get_color<'gc>(x: Value<'gc>) -> Vec4 {
     match x {
         Value::String(s) => dehex(&s),
         Value::Table(tab) => {
-            // let tt = t.next(key)
-            //     .sequence_values::<f32>()
-            //     .filter_map(|f| match f {
-            //         Ok(v) => Some(v),
-            //         _ => None,
-            //     })
-            //     .collect::<Vec<f32>>();
+            // `{r, g, b, a?}`, 1-based like any Lua array (see guide/color.md).
+            // The table is 0-255 when every entry is an integer and one is over 1,
+            // otherwise 0-1, so `{255, 0, 0}`, `{1, 1, .4}` and `{0.8, 0.8, 0.75}`
+            // all mean what they look like. Missing rgb is 0, missing alpha opaque.
+            // This used to read index 0 — so red was always 0 and
+            // `lum{color={0.8,0.8,0.75}}` lit the scene cyan — and every >1
+            // rescale wrote into `r`.
             let t = tab.borrow();
-
-            let mut r = t.get_number(0);
-            let g = t.get_number(1);
-            let b = t.get_number(2);
-            let a = t.get_number(3);
-            if r > 1. {
-                r = r / 255.;
+            let mut vals = [None::<f32>; 4];
+            let mut all_int = true;
+            let mut over_one = false;
+            for i in 0..4 {
+                match t.getn(i + 1) {
+                    Some(Value::Integer(n)) => {
+                        vals[i] = Some(*n as f32);
+                        over_one |= *n > 1;
+                    }
+                    Some(Value::Number(n)) => {
+                        vals[i] = Some(*n as f32);
+                        all_int = false;
+                    }
+                    _ => {}
+                }
             }
-            if g > 1. {
-                r = g / 255.;
-            }
-            if b > 1. {
-                r = b / 255.;
-            }
-            if a > 1. {
-                r = a / 255.;
-            }
-
-            vec4(r as f32, g as f32, b as f32, a as f32)
+            let scale = if all_int && over_one { 255. } else { 1. };
+            let c = |i: usize, missing: f32| vals[i].map(|v| v / scale).unwrap_or(missing);
+            vec4(c(0, 0.), c(1, 0.), c(2, 0.), c(3, 1.))
         }
         _ => vec4(1., 1., 1., 1.),
     }

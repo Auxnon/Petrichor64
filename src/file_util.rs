@@ -152,6 +152,24 @@ pub fn write_file_string_scrubbed(dir: &str, path: &str, contents: &str) -> Resu
     write_file_string(p, contents)
 }
 
+/** Load a file's bytes, file path cannot go higher than dir. A missing file is an
+error here, not an empty buffer, so a reader can tell "absent" from "empty". */
+pub fn get_file_buffer_scrubbed(dir: &str, path: &str) -> Result<Vec<u8>, P64Error> {
+    let p = scrub_path(dir, path)?;
+    std::fs::read(p).map_err(P64Error::IoError)
+}
+
+/** Write bytes to a file, creating its parent folders inside dir (an exporter
+writing `exports/thing.glb` shouldn't need the folder made by hand). File path
+cannot go higher than dir. */
+pub fn write_file_bytes_scrubbed(dir: &str, path: &str, contents: &[u8]) -> Result<(), P64Error> {
+    let p = scrub_path(dir, path)?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(P64Error::IoError)?;
+    }
+    std::fs::write(p, contents).map_err(P64Error::IoError)
+}
+
 /// Every file under `dir`, as slash-separated paths relative to it
 /// (`scripts/main.lua`) and sorted, so an editor can list what it's allowed to open.
 ///

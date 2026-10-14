@@ -35,6 +35,12 @@ pub struct GlobalMap {
     pub os: &'static str,
     pub hertz: f32,
     pub resolution: (u32, u32),
+    /// Window size in physical pixels. The 3D view's aspect is `window.0 / window.1`
+    /// (the projection is built from the surface size), which a script needs to
+    /// place anything relative to the screen edges in 3D.
+    pub window: (u32, u32),
+    /// The gui raster's actual size — `resolution` stretched to the window's aspect.
+    pub gui: (u32, u32),
 }
 
 impl GlobalMap {
@@ -43,7 +49,15 @@ impl GlobalMap {
             os,
             hertz,
             resolution: res,
+            window: res,
+            gui: res,
         }
+    }
+
+    pub fn with_screen(mut self, window: (u32, u32), gui: (u32, u32)) -> Self {
+        self.window = (window.0.max(1), window.1.max(1));
+        self.gui = gui;
+        self
     }
 
     #[cfg(feature = "picc")]
@@ -76,6 +90,11 @@ impl GlobalMap {
         res_tbl.set(0, self.resolution.0);
         res_tbl.set(1, self.resolution.1);
         table.set("res", vm.wrap_table(mc, res_tbl));
+        table.set("w", self.window.0);
+        table.set("h", self.window.1);
+        table.set("aspect", self.window.0 as f64 / self.window.1 as f64);
+        table.set("gw", self.gui.0);
+        table.set("gh", self.gui.1);
     }
 }
 

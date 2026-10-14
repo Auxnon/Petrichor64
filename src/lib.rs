@@ -41,6 +41,7 @@ mod error;
 mod file_util;
 #[cfg(feature = "headed")]
 mod gfx;
+mod gltf_io;
 mod global;
 mod gui;
 mod log;
@@ -296,11 +297,7 @@ fn state_change_checker(
                     #[cfg(not(feature = "headed"))]
                     StateChange::Quit => return false,
                     StateChange::Config => {
-                        let res = crate::asset::parse_config(
-                            &mut c.global,
-                            c.bundle_manager.get_lua(),
-                            &mut c.loggy,
-                        );
+                        let res = crate::asset::parse_config(&mut c.global, &mut c.loggy);
                         if let Some(s) = res {
                             let _ = crate::command::run_con_sys(c, &s, catcher);
                         }
@@ -826,7 +823,10 @@ impl ApplicationHandler for App {
     ) {
         if let DeviceEvent::MouseMotion { delta } = event {
             if let Some(core) = &mut self.core {
-                core.global.mouse_delta = vec2(delta.0 as f32, delta.1 as f32);
+                // Accumulate: several motion events can land between two ticks,
+                // and the tick resets this after Lua reads it. Assigning kept only
+                // the last event, so fast motion read as a fraction of itself.
+                core.global.mouse_delta += vec2(delta.0 as f32, delta.1 as f32);
             }
         }
     }
@@ -2056,7 +2056,7 @@ impl Core {
                     // GPU to upload to without "headed", so this is a no-op ack.
                     #[cfg(not(feature = "headed"))]
                     let _ = im;
-                    self.log_check(tx.send(()));
+                    let _ = tx.send(()); // fire-and-forget now (see the `tex` native)
                 }
                 MainCommmand::Anim(name, items, speed) => {
                     #[cfg(feature = "headed")]
@@ -2105,7 +2105,9 @@ impl Core {
                         self.global.is_state_changed = true;
                     }
 
-                    self.log_check(model.sender.send(0));
+                    // Nobody waits on this ack any more (see the `mod` native);
+                    // a dropped receiver is the normal case, not an error.
+                    let _ = model.sender.send(0);
                 }
                 MainCommmand::ListModel(s, bundles, tx) => {
                     let list = self.model_manager.search_model(&s, bundles);
@@ -2133,7 +2135,7 @@ impl Core {
                             m2,
                         );
 
-                        self.log_check(tx.send(0));
+                        let _ = tx.send(0); // unread ack (see the `mod` native)
                     }
                 }
                 MainCommmand::Spawn(lent) => {
@@ -2230,6 +2232,12 @@ impl Core {
                     let resolution = self.global.gui_params.resolution;
                     #[cfg(not(feature = "headed"))]
                     let resolution = (256, 256);
+                    #[cfg(feature = "headed")]
+                    let t = GlobalMap::new(OS, 60., resolution).with_screen(
+                        (self.gfx.size.width, self.gfx.size.height),
+                        (self.gui.size[0], self.gui.size[1]),
+                    );
+                    #[cfg(not(feature = "headed"))]
                     let t = GlobalMap::new(OS, 60., resolution);
                     self.log_check(tx.send(t));
                 }
@@ -2289,6 +2297,58 @@ impl Core {
                     };
                     let res = tx.send(pak);
                     self.log_check(res);
+                }
+                MainCommmand::GlbWrite(job, tx) => {
+                    let (file, mesh, texture) = *job;
+                    // Embed the named texture by cutting it back out of the atlas —
+                    // the same pixels the model shows in the engine. An unknown name
+                    // exports untextured rather than failing the whole write.
+                    let image = texture.and_then(|t| {
+                        self.tex_manager
+                            .get_tex_or_not(&t)
+                            .map(|_| self.tex_manager.get_img(&t).2)
+                    });
+                    let bytes = if file.to_ascii_lowercase().ends_with(".gltf") {
+                        crate::gltf_io::to_gltf(&mesh, image.as_ref()).map(|s| s.into_bytes())
+                    } else {
+                        crate::gltf_io::to_glb(&mesh, image.as_ref())
+                    };
+                    let res = match (bytes, self.bundle_manager.get_main_bundle().get_directory()) {
+                        (Ok(b), Some(dir)) => {
+                            match crate::file_util::write_file_bytes_scrubbed(dir, &file, &b) {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    self.log(LogType::IoError, &format!("!!{}", e));
+                                    false
+                                }
+                            }
+                        }
+                        (Err(e), _) => {
+                            self.log(LogType::IoError, &format!("!!{}", e));
+                            false
+                        }
+                        (_, None) => {
+                            self.log(LogType::IoError, "!! No relative path access");
+                            false
+                        }
+                    };
+                    self.log_check(tx.send(res));
+                }
+                MainCommmand::GlbRead(file, tx) => {
+                    let mesh = match self.bundle_manager.get_main_bundle().get_directory() {
+                        Some(dir) => crate::file_util::get_file_buffer_scrubbed(dir, &file)
+                            .map_err(|e| e.to_string())
+                            .and_then(|b| crate::gltf_io::read(&b)),
+                        None => Err("No relative path access".to_string()),
+                    };
+                    let out = match mesh {
+                        Ok(m) => Some(m),
+                        Err(e) => {
+                            self.log(LogType::IoError, &format!("!!{}", e));
+                            None
+                        }
+                    };
+                    self.log_check(tx.send(out));
                 }
                 MainCommmand::Write(file, contents, tx) => {
                     let res = match self.bundle_manager.get_main_bundle().get_directory() {

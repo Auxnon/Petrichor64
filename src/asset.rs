@@ -386,36 +386,62 @@ pub fn check_config() -> bool {
     let p = determine_path(Some(".petrichor64/config.lua"));
     p.exists()
 }
-pub fn parse_config(globals: &mut Global, lua: &LuaCore, loggy: &mut Loggy) -> Option<String> {
+/// Read `.petrichor64/config.lua` (`dev`, `alias`, `init`) into `globals`, and
+/// return `init`, a console command to run.
+///
+/// The config is evaluated in its own throwaway VM on this thread. It used to be
+/// loaded into whichever app was the main bundle, with a blocking `load` that
+/// waits up to 10 s for that app's Lua thread — and an app still inside `main()`,
+/// calling `tex`/`mod()`, is itself waiting on this thread, so boot deadlocked
+/// for the full timeout (and the config's globals leaked into the app's VM). It
+/// only defines plain values, so it needs no engine natives.
+#[cfg(feature = "silt")]
+pub fn parse_config(globals: &mut Global, loggy: &mut Loggy) -> Option<String> {
     let p = determine_path(Some(".petrichor64/config.lua"));
-    let mut result = None;
-    if p.exists() {
-        if let Ok(file) = fs::File::open(p) {
-            let mut buffer = std::io::BufReader::new(file);
-            if let Err(e) = lua.load(".petrichor64/config.lua".to_owned(), &mut buffer) {
-                loggy.log(LogType::LuaError, &format!("{}", e));
-            }
+    if !p.exists() {
+        return None;
+    }
+    let src = match fs::read_to_string(&p) {
+        Ok(s) => s,
+        Err(e) => {
+            loggy.log(LogType::LuaError, &format!("config: {}", e));
+            return None;
+        }
+    };
+    // One evaluation per value: the source is tiny, and a bare `return name`
+    // hands back exactly the shapes the old per-global lookups did.
+    let read = |name: &str| -> Result<LuaResponse, String> {
+        let mut vm = silt_lua::Lua::new_with_standard();
+        let mut comp = silt_lua::Compiler::new();
+        let code = format!("{}\nreturn {}", src, name);
+        vm.run(Some(".petrichor64/config.lua"), &code, &mut comp)
+            .map_err(|e| e.to_string())
+    };
 
-            globals.debug = eval_bool(lua.func("dev"));
-            if let Ok(LuaResponse::Table(t)) = lua.func("alias") {
-                if globals.debug {
-                    loggy.log(LogType::Config, &format!("{} aliases", t.len()));
-                }
-                // crate::lg!("{:?} aliases", t);
-                for (k, v) in t {
-                    if globals.debug {
-                        loggy.log(LogType::Config, &format!("{} -> {}", k, v));
-                    }
-                    globals.aliases.insert(k.coerce_string(), v.coerce_string());
-                }
-            }
-            if let Ok(LuaResponse::String(s)) = lua.func("init") {
-                result = Some(s);
-            }
+    let mut result = None;
+    match read("dev") {
+        Ok(v) => globals.debug = eval_bool::<()>(Ok(v)),
+        Err(e) => {
+            loggy.log(LogType::LuaError, &format!("config: {}", e));
+            return None;
+        }
+    }
+    if let Ok(LuaResponse::Table(t)) = read("alias") {
+        if globals.debug {
+            loggy.log(LogType::Config, &format!("{} aliases", t.len()));
+        }
+        for (k, v) in t {
             if globals.debug {
-                loggy.log(LogType::Config, "dev is enabled");
+                loggy.log(LogType::Config, &format!("{} -> {}", k, v));
             }
-        };
+            globals.aliases.insert(k.coerce_string(), v.coerce_string());
+        }
+    }
+    if let Ok(LuaResponse::String(s)) = read("init") {
+        result = Some(s);
+    }
+    if globals.debug {
+        loggy.log(LogType::Config, "dev is enabled");
     }
     result
 }
@@ -708,10 +734,16 @@ pub fn get_script_items(
     );
     match read_dir(&scripts_path) {
         Ok(dir) => {
-            let scripts_dir: Vec<PathBuf> = dir
+            let mut scripts_dir: Vec<PathBuf> = dir
                 .filter(Result::is_ok)
                 .map(|e| e.unwrap().path())
                 .collect();
+            // Every file's top level runs in this order, so make it the same on
+            // every machine: raw read_dir order is whatever the filesystem keeps
+            // (creation order on one, hash order on another), and a top-level
+            // `K = A * B` using another file's global worked on one disk and was
+            // nil on the next.
+            scripts_dir.sort();
             Ok(scripts_dir)
         }
         Err(e) => {
@@ -1300,7 +1332,7 @@ pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> Strin
 ---@field rot number[]? azimuth, altitude
 
 --- @class model_data
---- @field t string[]? texture assets
+--- @field t (string|string[])? texture asset(s)
 --- @field q number[][]? quads
 --- @field v number[][]? vertices
 --- @field u number[][]? uvs
