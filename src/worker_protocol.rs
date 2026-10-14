@@ -126,6 +126,8 @@ pub enum VmToHost {
     /// Sync a tile-texture name→index mapping so main's local mapper can resolve
     /// a chunk cell's int back to an atlas uv.
     MapTex { name: String, index: u32 },
+    /// A `tileset(...)` definition; main meshes its members on the dual grid.
+    Tileset(crate::tileset::TilesetDef),
     /// A runtime/async error to surface in the engine console.
     Error(String),
     /// Changed skeletal animation state per entity id (clip, start, overrides);
