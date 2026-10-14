@@ -4023,7 +4023,7 @@ fn table_hasher(table: &Table) -> Vec<(String, ValueMap)> {
         let str_key = if let Some(str_key) = match key {
             Value::String(s) => Some(s.to_owned()),
 
-            Value::Integer(i) => Some((*i).to_string()),
+            Value::Integer(i) => Some(i.to_string()),
             _ => None,
         } {
             let mapped = match val {
