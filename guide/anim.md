@@ -15,6 +15,9 @@ You can also set the texture of an entity manually every frame but this is needl
 
 > _Bonus_: You can set animations including ping-pong with a json file as outputed by an aseprite made animation. A more robust universal config format, as well as more command parameters, is still WIP
 
+Skinned glTF models carry their own clips; `ent:anim("name")` plays those directly
+with no `anim` call needed (see [entity](#entity), **Skeletons**).
+
 ```lua
 anim("walk",{"walk1","walk2","walk3"})
 ent:anim("walk")

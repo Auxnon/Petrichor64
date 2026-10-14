@@ -71,6 +71,7 @@ impl ModelManager {
             index_buf: plane_index_buf,
             #[cfg(feature = "headed")]
             index_format: wgpu::IndexFormat::Uint32,
+            skin: None,
         };
         let PLANE = Rc::new(plane_model);
 
@@ -101,6 +102,7 @@ impl ModelManager {
             index_buf: cube_index_buf,
             #[cfg(feature = "headed")]
             index_format: wgpu::IndexFormat::Uint32,
+            skin: None,
         };
         let CUBE = Rc::new(cube_model);
         let mut DICTIONARY = HashMap::new();
@@ -198,6 +200,25 @@ impl ModelManager {
                 let mut first_instance = true;
                 let mut meshes = vec![];
 
+                // The first skin bound to a node: its skeleton applies to the
+                // meshes that node uses. Registered under the model's names
+                // below so Lua can drive it.
+                let skinned = nodes
+                    .nodes()
+                    .find_map(|n| Some((n.skin()?, n.mesh()?.index())))
+                    .and_then(|(skin, mesh_index)| {
+                        match crate::skeleton::from_gltf(&nodes, &skin, &buffers) {
+                            Ok((skel, remap)) => Some((skel, remap, mesh_index)),
+                            Err(e) => {
+                                loggy.log(
+                                    LogType::ModelError,
+                                    &format!("{}: skin ignored, {}", base_name, e),
+                                );
+                                None
+                            }
+                        }
+                    });
+
                 for (mi, mesh) in nodes.meshes().enumerate() {
                     let mesh_name = match mesh.name() {
                         Some(name) => name.to_string(),
@@ -252,6 +273,26 @@ impl ModelManager {
                             })
                             .collect::<Vec<Vertex>>();
 
+                        let skin = match &skinned {
+                            Some((_, remap, mesh_index)) if *mesh_index == mesh.index() => {
+                                match (reader.read_joints(0), reader.read_weights(0)) {
+                                    (Some(j), Some(w)) => Some(
+                                        j.into_u16()
+                                            .zip(w.into_f32())
+                                            .map(|(j, w)| crate::skeleton::SkinVertex {
+                                                joints: j.map(|i| {
+                                                    remap.get(i as usize).copied().unwrap_or(0)
+                                                }),
+                                                weights: w,
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                    _ => None,
+                                }
+                            }
+                            _ => None,
+                        };
+
                         if let Some(indices) = indices_opt {
 
                             let model = Self::build_complex_model(
@@ -261,12 +302,21 @@ impl ModelManager {
                                 Some(&mesh_name),
                                 vertices,
                                 indices,
+                                skin.clone(),
                             );
 
                             meshes.push(model);
                             // }
                         };
                     }
+                }
+
+                if let Some((skel, _, _)) = skinned {
+                    // Every name an entity could be made with resolves to it.
+                    for m in meshes.iter().filter(|m| m.skin.is_some()) {
+                        crate::skeleton::register(&m.name, skel.clone());
+                    }
+                    crate::skeleton::register(&base_name, skel);
                 }
 
                 if meshes.len() > 0 {
@@ -320,6 +370,7 @@ impl ModelManager {
         mesh_name: Option<&str>,
         vertices: Vec<Vertex>,
         indices: Vec<u32>,
+        skin: Option<Vec<crate::skeleton::SkinVertex>>,
     ) -> Rc<Model> {
         let compound_name = match mesh_name {
             Some(n) => format!("{}.{}", base_name, n),
@@ -339,6 +390,15 @@ impl ModelManager {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let skin = skin.map(|verts| ModelSkin {
+            #[cfg(feature = "headed")]
+            buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&format!("{} Skin Buffer", compound_name)),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            verts,
+        });
         let (bounds_min, bounds_max) = compute_bounds(&vertices);
         let model = Model {
             base_name: base_name.to_string(),
@@ -353,6 +413,7 @@ impl ModelManager {
             index_buf: mesh_index_buf,
             #[cfg(feature = "headed")]
             index_format: wgpu::IndexFormat::Uint32,
+            skin,
         };
         let model_cell = Rc::new(model);
 
@@ -490,6 +551,7 @@ impl ModelManager {
             None,
             vertices,
             indicies,
+            None,
         );
 
         world.index_model(bundle_id, &model.base_name, Rc::clone(&model));
@@ -631,6 +693,7 @@ impl ModelManager {
             index_buf: mesh_index_buf,
             #[cfg(feature = "headed")]
             index_format: wgpu::IndexFormat::Uint32,
+            skin: None,
         };
 
         let rced_model = Rc::new(model);
@@ -976,6 +1039,7 @@ fn build_model(
         index_buf,
         #[cfg(feature = "headed")]
         index_format: wgpu::IndexFormat::Uint32,
+        skin: None,
     }
 }
 
@@ -1000,6 +1064,15 @@ pub struct Model {
     pub index_buf: wgpu::Buffer,
     #[cfg(feature = "headed")]
     pub index_format: wgpu::IndexFormat,
+    /// Per-vertex joints/weights for a skinned glTF mesh; its skeleton lives in
+    /// `skeleton::SKELETONS` under this model's names.
+    pub skin: Option<ModelSkin>,
+}
+
+pub struct ModelSkin {
+    pub verts: Vec<crate::skeleton::SkinVertex>,
+    #[cfg(feature = "headed")]
+    pub buf: wgpu::Buffer,
 }
 
 /// Model-local-space AABB from raw vertex positions — `Vertex._pos` is packed

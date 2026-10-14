@@ -22,9 +22,6 @@ use crate::{
 };
 use colored::Colorize;
 
-#[cfg(feature = "online_capable")]
-use online::Online;
-
 use image::RgbaImage;
 use itertools::Itertools;
 use pollster::{block_on, FutureExt};
@@ -2674,6 +2671,15 @@ function irnd(a, b) end"
     );
 
     lua!(
+        "now",
+        move |_, _, (): ()| { Ok(crate::skeleton::clock()) },
+        "Seconds since the engine started, as of this frame. Steps are paced by the display, so use the difference between frames to move things at a steady speed",
+        "
+---@return number
+function now() end"
+    );
+
+    lua!(
         "flr",
         move |_, _, f: f64| { Ok(f.floor() as i64) },
         "Floor value",
@@ -2790,20 +2796,25 @@ function over(str) end"
     lua!(
         "conn",
         move |vm, mc, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
-            #[cfg(feature = "online_capable")]
+            #[cfg(any(feature = "ws", feature = "online_capable"))]
             {
-                return match Online::open(&addr, udp.unwrap_or(false), server.unwrap_or(false)) {
+                return match crate::lua_connection::LuaConnection::open(
+                    &addr,
+                    udp.unwrap_or(false),
+                    server.unwrap_or(false),
+                ) {
                     Ok(c) => Ok(vm.create_userdata(mc, c)),
-                    Err(er) => {
-                        // println!("Unable to create connection {}", er);
-                        Err(LuaError::Custom(format!("conn fail, {}", er.to_string())))
-                    }
+                    Err(er) => Err(LuaError::Custom(format!("conn fail, {}", er))),
                 };
             }
-            #[cfg(not(feature = "online_capable"))]
-            Ok(())
+            // No transport compiled in: nil, as before, so `if socket then` holds.
+            #[cfg(not(any(feature = "ws", feature = "online_capable")))]
+            {
+                let _ = (vm, mc, addr, udp, server);
+                Ok(Value::Nil)
+            }
         },
-        "Create a new connection to the ip, site, etc. A :port is optional",
+        "Open a connection: ws://, wss:// or /path for a websocket, else ip:port tcp",
         "
 --- @param addr string
 --- @param udp? boolean

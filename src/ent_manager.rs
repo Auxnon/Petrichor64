@@ -26,7 +26,10 @@ use wgpu::{util::DeviceExt, Buffer};
 use glam::{vec3, Mat4, Quat, Vec3};
 
 #[cfg(feature = "headed")]
-pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize)>;
+/// Per model: the model, its instance buffer, the instance count, and for a
+/// skinned model the palette bind group (one `PALETTE_STRIDE` block per
+/// instance, selected with a dynamic offset).
+pub type InstanceBuffer = Vec<(Rc<Model>, Buffer, usize, Option<wgpu::BindGroup>)>;
 
 /// One entity's world-space collider — the collision system's per-entity
 /// unit, snapshotted fresh each query (see `EntManager::hit_snapshot`).
@@ -238,7 +241,14 @@ pub struct BundleEnts {
     #[cfg(not(feature = "headed"))]
     pub array: Vec<UserDataWrapper>,
     #[cfg(feature = "headed")]
-    pub render_hash: FxHashMap<String, (Rc<Model>, Vec<Rc<RefCell<EntityUniforms>>>)>,
+    pub render_hash: FxHashMap<
+        String,
+        (
+            Rc<Model>,
+            Vec<Rc<RefCell<EntityUniforms>>>,
+            Vec<Rc<RefCell<Vec<Mat4>>>>,
+        ),
+    >,
     pub hash_dirty: bool,
 }
 
@@ -248,32 +258,82 @@ impl BundleEnts {
         self.render_hash.clear();
         for (_lent, ent, uni_ref) in self.array.iter() {
             match self.render_hash.get_mut(&ent.model.name) {
-                Some((_, vec)) => {
+                Some((_, vec, pals)) => {
                     vec.push(Rc::clone(uni_ref));
+                    pals.push(Rc::clone(&ent.palette));
                 }
                 _ => {
                     self.render_hash.insert(
                         ent.model.name.clone(),
-                        (Rc::clone(&ent.model), vec![Rc::clone(uni_ref)]),
+                        (
+                            Rc::clone(&ent.model),
+                            vec![Rc::clone(uni_ref)],
+                            vec![Rc::clone(&ent.palette)],
+                        ),
                     );
                 }
             }
         }
     }
 
-    fn instance_buffers(&self, device: &wgpu::Device) -> InstanceBuffer {
+    fn instance_buffers(
+        &self,
+        device: &wgpu::Device,
+        palette_layout: &wgpu::BindGroupLayout,
+    ) -> InstanceBuffer {
         self.render_hash
             .iter()
-            .map(|(_name, (m, unis))| {
+            .map(|(_name, (m, unis, pals))| {
                 let u = unis.iter().map(|u| u.borrow().clone()).collect::<Vec<_>>();
                 let sz = u.len();
+                let skin = m
+                    .skin
+                    .as_ref()
+                    .map(|_| Self::palette_bind_group(pals, device, palette_layout));
                 (
                     Rc::clone(m),
                     EntManager::build_instance_buffer(&u, device),
                     sz,
+                    skin,
                 )
             })
             .collect::<Vec<_>>()
+    }
+
+    /// Every instance's palette, padded to the shader's fixed joint count.
+    /// An entity whose palette hasn't been computed draws in its bind pose.
+    fn palette_bind_group(
+        pals: &[Rc<RefCell<Vec<Mat4>>>],
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::BindGroup {
+        use crate::skeleton::{MAX_JOINTS, PALETTE_STRIDE};
+        let mut data: Vec<[f32; 16]> = Vec::with_capacity(pals.len().max(1) * MAX_JOINTS);
+        for p in pals.iter().map(|p| p.borrow()) {
+            for i in 0..MAX_JOINTS {
+                data.push(p.get(i).unwrap_or(&Mat4::IDENTITY).to_cols_array());
+            }
+        }
+        if data.is_empty() {
+            data.resize(MAX_JOINTS, Mat4::IDENTITY.to_cols_array());
+        }
+        let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("skin palettes"),
+            contents: bytemuck::cast_slice(&data),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("skin palettes"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buf,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(PALETTE_STRIDE),
+                }),
+            }],
+        })
     }
 }
 
@@ -703,12 +763,17 @@ impl EntManager {
         tm: &TexManager,
         mm: &ModelManager,
         iteration: u64,
+        palette_layout: &wgpu::BindGroupLayout,
     ) -> InstanceBuffer {
         let mut failed = 0;
         let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
 
         b.array.retain_mut(|(lent, ent, uni_ref)| {
-            if let Err(_) = lent.with_mut(|l: &mut LuaEnt| {
+            // Ok(false) is a killed entity: it leaves the array (and so the
+            // render batches). This used to be ignored, so on native a killed
+            // entity kept drawing, frozen at its last transform; swapping a
+            // model (an avatar's head for a new face) left the old one behind.
+            match lent.with_mut(|l: &mut LuaEnt| {
                 let parent = match l.parent {
                     Some(u) => mats.get(&u),
                     None => None,
@@ -766,12 +831,23 @@ impl EntManager {
                 let mat = ent.build_meta(&l, parent);
                 let uni = ent.get_uniforms_with_mat(&l, iteration, mat);
                 uni_ref.replace(uni);
+                if ent.model.skin.is_some() {
+                    if let Some(sk) = crate::skeleton::lookup(&ent.model.name) {
+                        let st = l.skel.clone().unwrap_or_default();
+                        let g = st.globals(&sk, crate::skeleton::clock());
+                        ent.palette.replace(crate::skeleton::palette16(&sk, &g));
+                    }
+                }
                 mats.insert(l.get_id(), mat);
                 Ok(true)
             }) {
-                failed += 1;
+                Ok(alive) => alive,
+                Err(_) => {
+                    // couldn't lock it this frame: keep it, try again next
+                    failed += 1;
+                    true
+                }
             }
-            return true;
         });
 
         if failed > 0 {
@@ -785,7 +861,7 @@ impl EntManager {
             b.rebuild_render_hash();
             b.hash_dirty = false;
         }
-        b.instance_buffers(device)
+        b.instance_buffers(device, palette_layout)
     }
 
     /// Advance every bundle's entities and hand back one batch set per bundle, for
@@ -798,6 +874,7 @@ impl EntManager {
         tm: &TexManager,
         mm: &ModelManager,
         iteration: u64,
+        palette_layout: &wgpu::BindGroupLayout,
     ) -> FxHashMap<u8, InstanceBuffer> {
         let ids: Vec<u8> = self.bundles.keys().copied().collect();
         let mut out = FxHashMap::default();
@@ -805,7 +882,7 @@ impl EntManager {
             // Taken out and put back so the per-bundle pass can hold `&mut self` for
             // the texture/model managers without aliasing the map.
             if let Some(mut b) = self.bundles.remove(&id) {
-                let buffers = self.check_bundle_ents(&mut b, device, tm, mm, iteration);
+                let buffers = self.check_bundle_ents(&mut b, device, tm, mm, iteration, palette_layout);
                 out.insert(id, buffers);
                 self.bundles.insert(id, b);
             }

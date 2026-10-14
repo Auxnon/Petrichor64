@@ -45,14 +45,19 @@ mod gltf_io;
 mod global;
 mod gui;
 mod log;
-#[cfg(feature = "online_capable")]
+#[cfg(any(feature = "ws", feature = "online_capable"))]
+mod json;
+#[cfg(any(feature = "ws", feature = "online_capable"))]
 mod lua_connection;
 mod lua_define;
 mod lua_ent;
+mod skeleton;
 mod lua_img;
 mod model;
 #[cfg(feature = "online_capable")]
 mod online;
+#[cfg(feature = "ws")]
+mod ws;
 #[cfg(feature = "online_capable")]
 mod packet;
 mod pad;
@@ -101,7 +106,7 @@ use winit::error::EventLoopError;
 #[cfg(feature = "headed")]
 use winit::{
     application::ApplicationHandler,
-    dpi::LogicalPosition,
+    dpi::PhysicalPosition,
     event::{DeviceEvent, DeviceId, ElementState, MouseScrollDelta, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{Key, KeyCode, NamedKey, PhysicalKey},
@@ -140,6 +145,9 @@ const OS: &str = "ios";
 const OS: &str = "other";
 
 const FPS: f32 = 60.;
+/// How far the frame loop may lag before it drops the backlog (see about_to_wait).
+#[cfg(feature = "headed")]
+const MAX_FRAMES_BEHIND: u32 = 4;
 
 /// Per-loop output of `Core::update`: the freshly-built entity instance buffers
 /// under `headed`, nothing headless.
@@ -151,7 +159,10 @@ type UpdateOut = ();
 #[cfg(feature = "headed")]
 pub struct App {
     window: Option<Arc<Window>>,
-    center: LogicalPosition<f64>,
+    /// Middle of the window in physical pixels, where a mouse grab parks the
+    /// cursor. (It was a LogicalPosition holding physical numbers, so on a 2x
+    /// display the cursor went to the bottom-right corner.)
+    center: PhysicalPosition<f64>,
     core: Option<Core>,
     next_frame_time: Instant,
     frame_duration: Duration,
@@ -197,6 +208,12 @@ pub struct App {
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
+    /// gui size the worker's rasters were last given (Init or Resize).
+    #[cfg(target_arch = "wasm32")]
+    worker_gui_size: [u32; 2],
+    /// How many skeletons have been forwarded to the worker (skeleton::take_new).
+    #[cfg(target_arch = "wasm32")]
+    skeletons_sent: usize,
     /// Whether the worker has been told how its sound commands travel — given the
     /// worklet's command lane, or told none is coming. Settled once per session.
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -222,7 +239,7 @@ impl Default for App {
     fn default() -> Self {
         Self {
             window: None,
-            center: LogicalPosition::new(320.0f64, 240.0f64),
+            center: PhysicalPosition::new(320.0f64, 240.0f64),
             core: None,
             next_frame_time: Instant::now(),
             frame_duration: Duration::from_secs_f32(1.0 / FPS),
@@ -244,6 +261,10 @@ impl Default for App {
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
+            #[cfg(target_arch = "wasm32")]
+            worker_gui_size: [0, 0],
+            #[cfg(target_arch = "wasm32")]
+            skeletons_sent: 0,
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             sound_lane_settled: false,
             #[cfg(target_arch = "wasm32")]
@@ -261,7 +282,7 @@ fn state_change_checker(
     c: &mut Core,
     control_flow: &ActiveEventLoop,
     rwindow: &Arc<winit::window::Window>,
-    center: LogicalPosition<f64>,
+    center: PhysicalPosition<f64>,
     catcher: Option<&Receiver<MainPacket>>,
 ) -> bool {
     if c.global.is_state_changed {
@@ -520,6 +541,7 @@ impl ApplicationHandler for App {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas) = window.canvas() {
                 attach_canvas_to_dom(&canvas);
+                install_keyboard_sink(&canvas);
                 install_web_input_handlers(
                     &canvas,
                     self.pointer_lock_wanted.clone(),
@@ -583,14 +605,23 @@ impl ApplicationHandler for App {
                     core.resize(physical_size);
                 }
                 // Keep the mouse-grab re-center position up to date.
-                self.center = LogicalPosition::new(
+                self.center = PhysicalPosition::new(
                     physical_size.width as f64 / 2.0,
                     physical_size.height as f64 / 2.0,
                 );
             }
 
             // ----------------------------------------------------------------
-            WindowEvent::ScaleFactorChanged { .. } => {}
+            // Moved to a display with another scale (Retina <-> not). The
+            // engine works in physical pixels throughout, and winit follows
+            // this with a Resized when the physical size changes; re-derive
+            // anyway in case it doesn't (same physical size, new scale), so
+            // nothing sized from the old scale lingers.
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let (Some(core), Some(w)) = (&mut self.core, self.window.as_ref()) {
+                    core.resize(w.inner_size());
+                }
+            }
 
             // ----------------------------------------------------------------
             WindowEvent::RedrawRequested => {
@@ -964,8 +995,17 @@ impl ApplicationHandler for App {
                                 // mapper); the worker owns the tile data and syncs
                                 // chunks here.
                                 core.world.init_local(0);
+                                // A game is starting: close the boot console, as
+                                // the native auto-load path does.
+                                core.global.console = false;
+                                core.gui.disable_console();
                                 for (name, png) in &bundle.textures {
                                     core.load_wasm_texture(name, png);
+                                }
+                                // Models after textures, as native does, so a
+                                // model naming an asset texture finds it.
+                                for (name, bytes) in &bundle.models {
+                                    core.load_wasm_model(name, bytes);
                                 }
                                 #[cfg(feature = "audio")]
                                 crate::asset::load_sounds_from_buffers(
@@ -974,11 +1014,23 @@ impl ApplicationHandler for App {
                                     &mut core.loggy,
                                 );
                             }
+                            let size = self
+                                .core
+                                .as_ref()
+                                .map_or([256, 256], |c| c.gui.size());
                             w.post(&HostToVm::Init {
                                 bundle_id: 0,
-                                width: 256,
-                                height: 256,
+                                width: size[0],
+                                height: size[1],
                             });
+                            self.worker_gui_size = size;
+                            // Skeletons from the models just loaded, before main()
+                            // can ask an entity to play a clip.
+                            let skeletons =
+                                crate::skeleton::take_new(&mut self.skeletons_sent);
+                            if !skeletons.is_empty() {
+                                w.post(&HostToVm::Skeletons(skeletons));
+                            }
                             for (name, content) in &bundle.scripts {
                                 w.post(&HostToVm::Load {
                                     name: name.clone(),
@@ -1041,6 +1093,18 @@ impl ApplicationHandler for App {
                     // (bundle routed). Posting a Loop before Init — e.g. while the
                     // bundle is still unzipping — errors "message before Init".
                     if self.worker_inited {
+                        // Keep the worker's gui/sky rasters the size of the
+                        // layers they're uploaded into (native's Gui::resize).
+                        if let Some(size) = self.core.as_ref().map(|c| c.gui.size()) {
+                            if size != self.worker_gui_size && size[0] > 0 && size[1] > 0 {
+                                w.post(&HostToVm::Resize(size[0], size[1]));
+                                self.worker_gui_size = size;
+                            }
+                        }
+                        let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                        if !new_skeletons.is_empty() {
+                            w.post(&HostToVm::Skeletons(new_skeletons));
+                        }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
                         let console_open =
@@ -1049,6 +1113,7 @@ impl ApplicationHandler for App {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
                                 analog: vec![0f32; 11],
+                                clock: crate::skeleton::clock(),
                             });
                         } else {
                             w.post(&HostToVm::loop_from(&self.bits));
@@ -1178,8 +1243,16 @@ impl ApplicationHandler for App {
             // Request a GPU frame; rendering happens in RedrawRequested.
             win_arc.request_redraw();
 
-            // Advance to the next target frame time (avoids drift).
+            // Advance to the next target frame time (avoids drift). But if
+            // we've fallen well behind (a slow GPU, a stall, the window
+            // hidden), start over from now: catching up one frame per loop
+            // never finishes while the GPU is the bottleneck, and fast-forwards
+            // the game through the whole backlog once it isn't.
             self.next_frame_time += self.frame_duration;
+            let behind = Instant::now().saturating_duration_since(self.next_frame_time);
+            if behind > self.frame_duration * MAX_FRAMES_BEHIND {
+                self.next_frame_time = Instant::now() + self.frame_duration;
+            }
         }
 
         // Sleep until the next frame is due.
@@ -1254,6 +1327,16 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
     }
 }
 
+/// Web entry point. The web build is the lib's cdylib (web/index.html builds
+/// the lib, not the bin): the lowercase bin shares the lib's name, so on wasm
+/// both would emit `petrichor64.wasm` and trunk can't pick one. Also runs in
+/// the VM worker's instance, where `start()` finds no window and returns.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn wasm_main() {
+    start();
+}
+
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn start() {
     env_logger::init();
@@ -1313,6 +1396,8 @@ struct WasmBundle {
     textures: Vec<(String, Vec<u8>)>,
     /// (path, ogg bytes) — passed as-is to load_sounds_from_buffers.
     sounds: Vec<(String, Vec<u8>)>,
+    /// glb/gltf models, by file name (the model manager stems it).
+    models: Vec<(String, Vec<u8>)>,
 }
 
 /// Fetch a URL's bytes, or None on any failure (missing file, network error).
@@ -1402,10 +1487,20 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
                 .collect()
         })
         .unwrap_or_default();
+    let models = map
+        .get("assets")
+        .map(|v| {
+            v.iter()
+                .filter(|(n, _)| n.ends_with(".glb") || n.ends_with(".gltf"))
+                .map(|(n, b)| (n.clone(), b.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(WasmBundle {
         scripts,
         textures,
         sounds,
+        models,
     })
 }
 
@@ -1470,6 +1565,128 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
         .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
     if let Some(parent) = parent {
         let _ = parent.append_child(canvas);
+    }
+}
+
+/// Route the keyboard through a hidden `<textarea>` inside the canvas.
+///
+/// winit listens for keys on the canvas, which is focusable but not editable.
+/// Keyboard extensions (Vimium, Surfingkeys, Tridactyl...) treat a focused
+/// non-editable element as "the page" and swallow their bound keys (d, f, x,
+/// r...) in a window capture listener before the canvas sees them; the only
+/// thing they reliably let through is typing into an editable element. So
+/// focus sits on a textarea in the canvas's fallback content: it isn't
+/// rendered, but it's focusable, the extensions see an editable target, and
+/// its key events bubble up to winit's listeners on the canvas unchanged.
+/// winit preventDefaults them, so nothing is ever typed into it.
+///
+/// - Whenever the canvas gets focus (a click, Tab, winit), focus moves on to
+///   the textarea.
+/// - The textarea losing focus is reported to winit as the canvas blurring
+///   (a synthetic `blur`), which clears held keys; the canvas's own blur
+///   doesn't fire then, since it never had focus.
+/// - While the player is "in" the game (last pointerdown on the canvas), focus
+///   dropped to nothing (an extension's Esc calls blur()) goes straight back.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn install_keyboard_sink(canvas: &web_sys::HtmlCanvasElement) {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let Some(sink) = doc
+        .create_element("textarea")
+        .ok()
+        .and_then(|e| e.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    else {
+        return;
+    };
+    for (k, v) in [
+        ("aria-label", "game keyboard input"),
+        ("autocomplete", "off"),
+        ("autocapitalize", "off"),
+        ("autocorrect", "off"),
+        ("spellcheck", "false"),
+        // no on-screen keyboard popping up on every tap on mobile
+        ("inputmode", "none"),
+    ] {
+        let _ = sink.set_attribute(k, v);
+    }
+    let _ = canvas.append_child(&sink);
+
+    // Whether the player is in the game: their last pointerdown was on it.
+    let engaged = Rc::new(Cell::new(true));
+    {
+        let engaged = engaged.clone();
+        let canvas_node: web_sys::Node = canvas.clone().unchecked_into();
+        let on_down = Closure::<dyn FnMut(web_sys::Event)>::new(move |e: web_sys::Event| {
+            let inside = e
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                .map_or(false, |n| canvas_node.contains(Some(&n)));
+            engaged.set(inside);
+        });
+        let _ = doc.add_event_listener_with_callback_and_bool(
+            "pointerdown",
+            on_down.as_ref().unchecked_ref(),
+            true,
+        );
+        on_down.forget();
+    }
+
+    {
+        let sink = sink.clone();
+        let on_focus = Closure::<dyn FnMut()>::new(move || {
+            let _ = sink.focus();
+        });
+        let _ = canvas.add_event_listener_with_callback("focus", on_focus.as_ref().unchecked_ref());
+        on_focus.forget();
+    }
+
+    {
+        let canvas = canvas.clone();
+        let refocus_sink = sink.clone();
+        let on_blur = Closure::<dyn FnMut()>::new(move || {
+            if let Ok(ev) = web_sys::FocusEvent::new("blur") {
+                let _ = canvas.dispatch_event(&ev);
+            }
+            if !engaged.get() {
+                return;
+            }
+            // after the blur settles: if focus went nowhere, take it back
+            let sink = refocus_sink.clone();
+            let retry = Closure::once_into_js(move || {
+                let idle = web_sys::window()
+                    .and_then(|w| w.document())
+                    .and_then(|d| d.active_element())
+                    .map_or(true, |a| a.tag_name() == "BODY");
+                if idle {
+                    let _ = sink.focus();
+                }
+            });
+            if let Some(w) = web_sys::window() {
+                let _ = w.set_timeout_with_callback(retry.unchecked_ref());
+            }
+        });
+        let _ = sink.add_event_listener_with_callback("blur", on_blur.as_ref().unchecked_ref());
+        on_blur.forget();
+    }
+
+    {
+        // anything that does get in (paste, IME) is thrown away
+        let field = sink.clone();
+        let on_input = Closure::<dyn FnMut()>::new(move || field.set_value(""));
+        let _ = sink.add_event_listener_with_callback("input", on_input.as_ref().unchecked_ref());
+        on_input.forget();
+    }
+
+    // Start with the keyboard, unless the host page has focused something.
+    let page_idle = doc.active_element().map_or(true, |a| a.tag_name() == "BODY");
+    if page_idle {
+        let _ = sink.focus();
     }
 }
 
@@ -1726,6 +1943,25 @@ impl Core {
     }
 
     #[cfg(target_arch = "wasm32")]
+    fn load_wasm_model(&mut self, name: &str, bytes: &[u8]) {
+        #[cfg(feature = "headed")]
+        {
+            self.model_manager.load_from_buffer(
+                &self.gfx.device,
+                &mut self.tex_manager,
+                &mut self.world,
+                0,
+                name,
+                &bytes.to_vec(),
+                &mut self.loggy,
+                false,
+            );
+            self.tex_manager
+                .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
         match msg {
@@ -1822,6 +2058,19 @@ impl Core {
                     });
                 }
             }
+            VmToHost::EntSkel(changes) => {
+                #[cfg(feature = "headed")]
+                for (id, skel) in changes {
+                    self.ent_manager.each_ent(|eref| {
+                        let _ = eref.with_mut(|l| {
+                            if l.get_id() == id {
+                                l.skel = skel.clone();
+                            }
+                            Ok(())
+                        });
+                    });
+                }
+            }
             VmToHost::EntRemove(ids) => {
                 // Drop the render mirrors of entities that died in the VM. Only the
                 // bundles that lost one get their batches rebuilt.
@@ -1855,6 +2104,12 @@ impl Core {
             VmToHost::Globals(_) => {
                 // TODO: Globals → screen effects.
             }
+            VmToHost::Raster { sky, w, h, px } => {
+                #[cfg(feature = "headed")]
+                if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
+                    self.gui.write_bundle_raster(0, sky, &img, &self.gfx.queue);
+                }
+            }
             VmToHost::LoopComplete { .. } => {
                 // Native rebuilds entity instance buffers when a LoopComplete
                 // arrives via the mpsc catcher; on wasm that signal comes through
@@ -1867,6 +2122,7 @@ impl Core {
                         &self.tex_manager,
                         &self.model_manager,
                         self.global.iteration,
+                        &self.gfx.palette_layout,
                     );
                 }
             }
@@ -2540,6 +2796,7 @@ impl Core {
                 &self.tex_manager,
                 &self.model_manager,
                 self.global.iteration,
+                &self.gfx.palette_layout,
             ))
         } else {
             None
@@ -2553,8 +2810,18 @@ impl Core {
         };
 
         self.global.iteration += 1;
+        publish_clock();
         instance_buffers
     }
+}
+
+lazy_static::lazy_static! {
+    static ref BOOT: Instant = Instant::now();
+}
+
+/// Advance the shared animation clock (see `skeleton::clock`) once a frame.
+fn publish_clock() {
+    crate::skeleton::set_clock(BOOT.elapsed().as_secs_f64());
 }
 
 pub fn error_window(e: Box<dyn std::error::Error>) {

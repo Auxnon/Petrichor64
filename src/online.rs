@@ -10,7 +10,7 @@ use tokio::{
     sync::mpsc::{self},
 };
 
-use crate::{lua_connection::LuaConnection, packet::Packet64};
+use crate::{lua_connection::TcpLink, packet::Packet64};
 
 // packets over tcp
 // 1 byte for type
@@ -23,7 +23,7 @@ trait Connection {}
 pub struct Online {}
 impl Online {
     /** address in format 0.0.0.0:1234 */
-    pub fn open(address: &str, udp: bool, server: bool) -> Result<LuaConnection, Box<dyn Error>> {
+    pub fn open(address: &str, udp: bool, server: bool) -> Result<TcpLink, Box<dyn Error>> {
         let addr = address.parse::<SocketAddr>()?;
 
         let (netin_send, netin_recv) = channel::<Packet64>();
@@ -38,7 +38,7 @@ impl Online {
             );
 
         // println!("opening connection to {}", address);
-        let conn = LuaConnection::new(netout_send, netin_recv, handle);
+        let conn = TcpLink::new(netout_send, netin_recv, handle);
         Ok(conn)
     }
 }

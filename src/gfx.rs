@@ -38,6 +38,10 @@ pub struct Gfx<'w> {
     pub shadow_view: wgpu::TextureView,
     pub shadow_bind_group: wgpu::BindGroup,
     pub shadow_pipeline: wgpu::RenderPipeline,
+    /// Skinned-mesh variants of the two pipelines above (src/skeleton.rs).
+    pub skinned_pipeline: wgpu::RenderPipeline,
+    pub skinned_shadow_pipeline: wgpu::RenderPipeline,
+    pub palette_layout: wgpu::BindGroupLayout,
     pub surface: wgpu::Surface<'w>,
     /// Kept so the surface can be rebuilt without tearing down the device, the
     /// pipelines, or the running game — Android destroys the native window when the
@@ -48,7 +52,22 @@ pub struct Gfx<'w> {
     pub queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub depth_texture: wgpu::TextureView,
+    /// The window's (surface's) size in physical pixels: what the post pass
+    /// draws, and the aspect ratio everything uses.
     pub size: winit::dpi::PhysicalSize<u32>,
+    /// What the scene renders at (`post` and `depth_texture`): `crt_resolution`
+    /// pixels wide, never wider than the window, at the window's aspect. The
+    /// look is low-res anyway, and rendering every physical pixel made the
+    /// cost grow with the display: 4x on a 2x (Retina) screen, 7x at 5K
+    /// fullscreen, for detail the CRT pass throws away. See `internal_size`.
+    pub render_size: winit::dpi::PhysicalSize<u32>,
+    /// The gui drawn straight onto the window in the post pass (no depth), so
+    /// with the LCD monitor it stays sharp at full resolution instead of being
+    /// squeezed through the scene's internal resolution. The CRT monitor still
+    /// draws it in the scene, so it curves and scanlines with everything else.
+    pub gui_overlay_pipeline: wgpu::RenderPipeline,
+    /// The `crt_resolution` that `render_size` was last derived from.
+    render_res: f32,
 }
 
 #[repr(C)]
@@ -80,13 +99,13 @@ struct GlobalUniforms {
 // };
 
 fn create_depth_texture(
-    config: &wgpu::SurfaceConfiguration,
+    size: PhysicalSize<u32>,
     device: &wgpu::Device,
 ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
         size: wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
+            width: size.width,
+            height: size.height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -140,8 +159,10 @@ impl<'w> Gfx<'w> {
 
         // The instance is a handle to our GPU
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+        // Chrome on Linux exposes `navigator.gpu` without a WebGPU adapter;
+        // the detection drops WebGPU there so WebGL2 gets used instead.
+        let instance = wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
+            backends: default_backends(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
                 for_resource_creation: None,
                 for_device_loss: None,
@@ -149,7 +170,8 @@ impl<'w> Gfx<'w> {
             backend_options: BackendOptions::from_env_or_default(),
             flags: wgpu::InstanceFlags::empty(),
             display: None,
-        });
+        })
+        .await;
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
 
@@ -177,8 +199,14 @@ impl<'w> Gfx<'w> {
                 label: None,
                 required_features: Features::empty(),
                 required_limits: wgpu::Limits {
-                    max_storage_textures_per_shader_stage: 8,
-                    ..wgpu::Limits::default()
+                    // No shader uses storage textures today; capped at what the
+                    // adapter offers so devices with fewer (e.g. SwiftShader's 4)
+                    // still get a device instead of failing outright.
+                    max_storage_textures_per_shader_stage: adapter
+                        .limits()
+                        .max_storage_textures_per_shader_stage
+                        .min(8),
+                    ..base_limits(&adapter)
                 },
                 memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
             })
@@ -284,7 +312,7 @@ impl<'w> Gfx<'w> {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(main_shader_source(&adapter).into()),
         });
 
         let main_uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
@@ -570,7 +598,15 @@ impl<'w> Gfx<'w> {
             multiview_mask: None,
         });
 
-        let depth = create_depth_texture(&config, &device);
+        let palette_layout = crate::skeleton::palette_layout(&device);
+        let (skinned_pipeline, skinned_shadow_pipeline) = skinned_pipelines(
+            &device,
+            &shader,
+            [&main_layout, &entity_layout, &shadow_layout, &palette_layout],
+            config.format,
+        );
+
+        let depth = create_depth_texture(size, &device);
 
         // let switch_board = Arc::new(RwLock::new(switch_board::SwitchBoard::new()));
 
@@ -653,6 +689,37 @@ impl<'w> Gfx<'w> {
             multiview_mask: None,
         });
 
+        let gui_overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            cache: None,
+            label: Some("Gui Overlay Pipeline"),
+            layout: Some(&gui_pipeline_layout),
+            vertex: wgpu::VertexState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("gui_vs_main"),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                compilation_options: Default::default(),
+                module: &shader,
+                entry_point: Some("gui_fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            // the post pass has no depth attachment
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+        });
+
         // =================== Sky Pipeline ===================
 
         let sky_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -721,6 +788,9 @@ impl<'w> Gfx<'w> {
                 device,
                 queue,
                 size,
+                render_size: size,
+                render_res: 0.,
+                gui_overlay_pipeline,
                 config,
                 depth_texture: depth.1,
                 uniform_buf,
@@ -728,6 +798,9 @@ impl<'w> Gfx<'w> {
                 // view_matrix: mx_view,
                 // perspective_matrix: mx_persp,
                 render_pipeline,
+                skinned_pipeline,
+                skinned_shadow_pipeline,
+                palette_layout,
                 shadow_view,
                 shadow_bind_group,
                 shadow_pipeline,
@@ -811,8 +884,7 @@ impl<'w> Gfx<'w> {
                 }
                 surface.configure(&self.device, &self.config);
                 self.surface = surface;
-                let d = create_depth_texture(&self.config, &self.device);
-                self.depth_texture = d.1;
+                self.rebuild_scene_targets();
                 true
             }
             Err(e) => {
@@ -828,11 +900,53 @@ impl<'w> Gfx<'w> {
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
         let new_size = self.size;
         self.surface.configure(&self.device, &self.config);
-        let d = create_depth_texture(&self.config, &self.device);
+        self.rebuild_scene_targets();
+        Self::compute_gui_size(gui_params, new_size)
+    }
+
+    /// The scene's resolution for a `crt_resolution` and a window size:
+    /// `crt_resolution` wide (the CRT pass quantises to that many columns),
+    /// capped at the window's width, at the window's aspect ratio.
+    pub fn internal_size(crt_resolution: f32, window: PhysicalSize<u32>) -> PhysicalSize<u32> {
+        let ww = window.width.max(1);
+        let wh = window.height.max(1);
+        let w = if crt_resolution.is_finite() && crt_resolution >= 1. {
+            (crt_resolution.round() as u32).min(ww)
+        } else {
+            ww
+        };
+        let h = ((w as u64 * wh as u64 + ww as u64 / 2) / ww as u64).max(1) as u32;
+        PhysicalSize::new(w, h)
+    }
+
+    /// Size the scene's targets for this `crt_resolution`; a no-op unless it
+    /// changed (called every frame, as `attr`/`chip` can change it any time).
+    pub fn set_render_resolution(&mut self, crt_resolution: f32) {
+        if crt_resolution != self.render_res {
+            self.render_res = crt_resolution;
+            self.rebuild_scene_targets();
+        }
+    }
+
+    /// Re-make the scene's colour (`post`) and depth targets at `render_size`,
+    /// recomputed from the window size and `render_res`.
+    fn rebuild_scene_targets(&mut self) {
+        let rs = Self::internal_size(self.render_res, self.size);
+        if rs != self.render_size {
+            let msg = format!(
+                "scene renders at {}x{} for a {}x{} window",
+                rs.width, rs.height, self.size.width, self.size.height
+            );
+            #[cfg(target_arch = "wasm32")]
+            ::log::info!("{}", msg);
+            #[cfg(not(target_arch = "wasm32"))]
+            println!("{}", msg);
+        }
+        self.render_size = rs;
+        let d = create_depth_texture(rs, &self.device);
         self.depth_texture = d.1;
         self.post
-            .resize(&self.device, new_size, &self.uniform_buf, &self.main_layout);
-        Self::compute_gui_size(gui_params, new_size)
+            .resize(&self.device, rs, &self.uniform_buf, &self.main_layout);
     }
 
     pub fn set_fullscreen(&self, enable: bool) {
@@ -845,12 +959,14 @@ impl<'w> Gfx<'w> {
         }
     }
 
+    /// `attr{size={w, h}}`, in logical points; a missing one keeps the current
+    /// size. `self.size` is physical pixels, so it's converted first: as it
+    /// was, on a 2x display the dimension left out doubled.
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
+        let now: LogicalSize<f32> = self.size.to_logical(self.win_ref.scale_factor());
         let _ = self.win_ref.request_inner_size(LogicalSize::new(
-            x.unwrap_or(&(self.size.width as f32))
-                .clamp(10., f32::INFINITY) as u32,
-            y.unwrap_or(&(self.size.height as f32))
-                .clamp(10., f32::INFINITY) as u32,
+            x.unwrap_or(&now.width).clamp(10., f32::INFINITY) as u32,
+            y.unwrap_or(&now.height).clamp(10., f32::INFINITY) as u32,
         ));
     }
 
@@ -903,5 +1019,162 @@ impl<'w> Gfx<'w> {
             ],
             label: None,
         });
+    }
+}
+
+/// The skinned render and shadow pipelines: the plain ones plus the skin
+/// vertex buffer and the palette at group 3. Kept in step with the plain
+/// descriptors in `Gfx::new` by hand.
+fn skinned_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    [main, entity, shadow, palette]: [&wgpu::BindGroupLayout; 4],
+    format: wgpu::TextureFormat,
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    let buffers = [
+        crate::model::Vertex::desc(),
+        crate::ent::EntityUniforms::desc(),
+        crate::skeleton::SkinVertex::desc(),
+    ];
+    let primitive = wgpu::PrimitiveState {
+        topology: wgpu::PrimitiveTopology::TriangleList,
+        strip_index_format: None,
+        front_face: wgpu::FrontFace::Ccw,
+        cull_mode: None,
+        polygon_mode: wgpu::PolygonMode::Fill,
+        conservative: false,
+        unclipped_depth: false,
+    };
+    let depth = Some(wgpu::DepthStencilState {
+        format: wgpu::TextureFormat::Depth32Float,
+        depth_write_enabled: Some(true),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+    let multisample = wgpu::MultisampleState {
+        count: 1,
+        mask: !0,
+        alpha_to_coverage_enabled: false,
+    };
+
+    let render_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Skinned Pipeline Layout"),
+        bind_group_layouts: &[Some(main), Some(entity), Some(shadow), Some(palette)],
+        ..Default::default()
+    });
+    let render = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        cache: None,
+        label: Some("Skinned Pipeline"),
+        layout: Some(&render_layout),
+        vertex: wgpu::VertexState {
+            compilation_options: Default::default(),
+            module: shader,
+            entry_point: Some("vs_skinned"),
+            buffers: &buffers,
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            compilation_options: Default::default(),
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive,
+        depth_stencil: depth.clone(),
+        multisample,
+        multiview_mask: None,
+    });
+
+    let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Skinned Shadow Pipeline Layout"),
+        bind_group_layouts: &[Some(main), None, None, Some(palette)],
+        ..Default::default()
+    });
+    let shadow = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        cache: None,
+        label: Some("Skinned Shadow Pipeline"),
+        layout: Some(&shadow_layout),
+        vertex: wgpu::VertexState {
+            compilation_options: Default::default(),
+            module: shader,
+            entry_point: Some("shadow_vs_skinned"),
+            buffers: &buffers,
+        },
+        fragment: None,
+        primitive,
+        depth_stencil: depth,
+        multisample,
+        multiview_mask: None,
+    });
+    (render, shadow)
+}
+
+/// Every backend natively. On the web WebGPU when the page can actually use
+/// it, else WebGL2: a browser can hand out a WebGPU canvas context while
+/// hiding the `GPUCanvasContext` interface (insecure origins), which wgpu
+/// can't recover from, so check up front.
+fn default_backends() -> wgpu::Backends {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let global = js_sys::global();
+        let secure = js_sys::Reflect::get(&global, &"isSecureContext".into())
+            .map(|v| v.as_bool().unwrap_or(false))
+            .unwrap_or(false);
+        let has_ctx = js_sys::Reflect::has(&global, &"GPUCanvasContext".into()).unwrap_or(false);
+        if secure && has_ctx {
+            wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL
+        } else {
+            log::warn!("WebGPU unavailable (secure context: {secure}), using WebGL2");
+            wgpu::Backends::GL
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    wgpu::Backends::all()
+}
+
+/// Limits to ask for: the defaults, or WebGL2's on the GL backend in a
+/// browser, which can't meet them.
+fn base_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    if cfg!(target_arch = "wasm32") && adapter.get_info().backend == wgpu::Backend::Gl {
+        wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+    } else {
+        wgpu::Limits::default()
+    }
+}
+
+/// The main shader. WebGL2's GLSL ES 3.0 has no `noperspective`, so there the
+/// R30 affine UVs fall back to perspective-correct ones.
+fn main_shader_source(adapter: &wgpu::Adapter) -> std::borrow::Cow<'static, str> {
+    let src = include_str!("shaders/shader.wgsl");
+    if cfg!(target_arch = "wasm32") && adapter.get_info().backend == wgpu::Backend::Gl {
+        src.replace("@interpolate(linear) ", "").into()
+    } else {
+        src.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_scene_renders_crt_resolution_wide_at_the_windows_aspect() {
+        let size = |w, h| PhysicalSize::new(w, h);
+        // a 2x (Retina) 640x548 window, and 5K fullscreen: both 720 wide
+        assert_eq!(Gfx::internal_size(720., size(1280, 1096)), size(720, 617));
+        assert_eq!(Gfx::internal_size(720., size(5120, 2880)), size(720, 405));
+        // never wider than the window
+        assert_eq!(Gfx::internal_size(720., size(640, 548)), size(640, 548));
+        // the chip presets
+        assert_eq!(Gfx::internal_size(240., size(1920, 1080)), size(240, 135));
+        // nonsense falls back to the window
+        assert_eq!(Gfx::internal_size(0., size(800, 600)), size(800, 600));
+        assert_eq!(Gfx::internal_size(f32::NAN, size(800, 600)), size(800, 600));
+        // and nothing is ever zero
+        assert_eq!(Gfx::internal_size(720., size(4000, 1)), size(720, 1));
     }
 }

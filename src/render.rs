@@ -101,6 +101,13 @@ fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Optio
 }
 
 pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
+    // the scene renders at crt_resolution (see Gfx::render_size), which attr
+    // and chip() can change at any time
+    core.gfx
+        .set_render_resolution(core.global.screen_effects.crt_resolution);
+    // LCD (modernize) draws the gui at full resolution over the post pass;
+    // the CRT keeps it in the scene so it curves and scanlines with it
+    let gui_on_top = core.global.screen_effects.modernize > 0.;
     // frame!("Render");
     // let output = core.surface.get_current_texture()?;
 
@@ -300,12 +307,27 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             }
             for id in draw_order.iter() {
                 if let Some(batches) = core.instance_buffers.get(id) {
-                    for (model, instance_buffer, size) in batches.iter() {
+                    for (model, instance_buffer, size, palettes) in batches.iter() {
                         shadow_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
                         shadow_pass.set_vertex_buffer(1, instance_buffer.slice(..));
                         shadow_pass
                             .set_index_buffer(model.index_buf.slice(..), model.index_format);
-                        shadow_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                        match (model.skin.as_ref(), palettes) {
+                            (Some(skin), Some(palettes)) => {
+                                // one draw per instance, each with its own palette
+                                shadow_pass.set_pipeline(&gfx.skinned_shadow_pipeline);
+                                shadow_pass.set_vertex_buffer(2, skin.buf.slice(..));
+                                for i in 0..*size as u32 {
+                                    let offset = i * crate::skeleton::PALETTE_STRIDE as u32;
+                                    shadow_pass.set_bind_group(3, palettes, &[offset]);
+                                    shadow_pass.draw_indexed(0..model.index_count as u32, 0, i..i + 1);
+                                }
+                                shadow_pass.set_pipeline(&gfx.shadow_pipeline);
+                            }
+                            _ => {
+                                shadow_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                            }
+                        }
                     }
                 }
             }
@@ -388,12 +410,27 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             // finished scene instead of at a hash-dependent moment inside it.
             for id in draw_order.iter() {
                 if let Some(batches) = core.instance_buffers.get(id) {
-                    for (model, instance_buffer, size) in batches.iter() {
+                    for (model, instance_buffer, size, palettes) in batches.iter() {
                         render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
                         render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
                         render_pass
                             .set_index_buffer(model.index_buf.slice(..), model.index_format);
-                        render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                        match (model.skin.as_ref(), palettes) {
+                            (Some(skin), Some(palettes)) => {
+                                // one draw per instance, each with its own palette
+                                render_pass.set_pipeline(&gfx.skinned_pipeline);
+                                render_pass.set_vertex_buffer(2, skin.buf.slice(..));
+                                for i in 0..*size as u32 {
+                                    let offset = i * crate::skeleton::PALETTE_STRIDE as u32;
+                                    render_pass.set_bind_group(3, palettes, &[offset]);
+                                    render_pass.draw_indexed(0..model.index_count as u32, 0, i..i + 1);
+                                }
+                                render_pass.set_pipeline(&gfx.render_pipeline);
+                            }
+                            _ => {
+                                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                            }
+                        }
                     }
                 }
             }
@@ -409,7 +446,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         }
 
         //gui space
-        {
+        if !gui_on_top {
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
@@ -482,6 +519,12 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         {
             post_pass.set_pipeline(&gfx.post.post_pipeline);
             post_pass.set_bind_group(0, &gfx.post.post_bind_group, &[]);
+            post_pass.draw(0..4, 0..1);
+        }
+        if gui_on_top {
+            post_pass.set_pipeline(&gfx.gui_overlay_pipeline);
+            post_pass.set_bind_group(0, &core.gui.gui_group, &[]);
+            post_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
             post_pass.draw(0..4, 0..1);
         }
     }

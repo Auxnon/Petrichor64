@@ -296,6 +296,13 @@ impl BundleManager {
                 .copied()
                 .filter(|id| self.bundles.get(id).map_or(false, |b| b.overlay)),
         );
+        // On the web the app runs in the VM worker as bundle 0 and has no entry
+        // here. Without this its gui layer was retargeted to nothing every frame
+        // (blank) and none of its entities were drawn.
+        #[cfg(target_arch = "wasm32")]
+        if out.is_empty() {
+            out.push(0);
+        }
         out
     }
 

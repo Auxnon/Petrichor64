@@ -475,3 +475,64 @@ function, multiple return values, `ipairs`/`pairs` (except #9), nested
 constructors with constants, `table.concat`, vec3 `cross`/`dot`/`length`/arithmetic
 and `==`, numeric `for` with a negative step.
 
+---
+
+## 13. Parameters a short call leaves out aren't nil
+
+**Fixed** in `../silt-stable` `f62ccbd` (regression tests: `tests/missing_args.rs`).
+Found in sosh's client, where every `UI.panel(x, y, w, h)` drew white.
+
+A call with fewer arguments than the callee declares left the missing parameter
+slots as whatever was on the stack above the arguments. Reading one directly
+usually happened to give nil; reading it after the callee pushed something gave
+that instead:
+
+```lua
+function panel(x, y, w, h, col)
+    gui:rect(x, y, w, h, col or "141A26C8")   -- col was gui:rect itself
+end
+panel(1, 2, 3, 4)
+```
+
+`get_color` turns a non-colour value into white, so the symptom was a white
+rectangle rather than an error. `CALL` now pushes nils up to the closure's arity
+(or its fixed-parameter count, if variadic) before building the frame.
+
+---
+
+## 14. A field assigned a call with a nested call in its arguments calls the wrong value
+
+**Open.** Found in sosh's client (`farm.lua`), where creating a crop failed
+with `Value 'Value: 1' is not callable`.
+
+In a function with a few locals and early returns, a field assignment whose
+value is a call, with another call nested in its arguments and locals after
+it, ends up calling one of those argument values instead of the function:
+
+```lua
+function mk(name, x, y, z, s) return name end
+function clamp(v, lo, hi) return v end
+T = {}
+function T.set(pos, stage)
+    local x = pos[1]
+    local y = pos[2]
+    local z = pos[3]
+    if stage == nil then
+        return
+    end
+    local s = clamp(stage, 0, 3)
+    local crop = {}
+    crop.ent = mk("carrot" .. tostring(s), x, y, z, 1)  -- "Value: 2 is not callable"
+    return crop.ent
+end
+return T.set({1, 2, 3}, 0)
+```
+
+It fails from the `valeq!` harness too. Each of these makes it pass:
+
+- hoisting the nested call: `local name = "carrot" .. tostring(s)`
+- passing constants instead of the locals `x, y, z`
+
+Smaller cuts (no early return, no `clamp`, a single local) don't reproduce it,
+so it seems to depend on register pressure; the bad callee is one of the
+argument registers. Workaround in sosh: hoist the argument into a local.

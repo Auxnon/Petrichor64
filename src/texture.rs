@@ -21,6 +21,12 @@ const SLASH: char = '/';
 
 const MAX_WIDTH: u32 = 2048;
 const MAX_HEIGHT: u32 = 2048;
+/// Pixels of padding around every texture in the atlas, filled with copies of
+/// its edge pixels. Minified samples are bilinear (`set_filter_mode`) with no
+/// mipmaps, so a sample at a texture's edge blends in the next texel over; without
+/// this that's a neighbouring texture, which shows as dotted lines along block
+/// edges that thicken into the distance. One pixel covers the 2x2 footprint.
+const GUTTER: u32 = 1;
 
 /// The engine's fallback texture, occupying the first slot of the atlas.
 ///
@@ -173,40 +179,46 @@ impl TexManager {
 
     /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
     pub fn locate(&mut self, source: RgbaImage) -> Vec4 {
+        let w = source.width();
+        let h = source.height();
+        // the slot holds the texture and its gutter all round
+        let sw = w + GUTTER * 2;
+        let sh = h + GUTTER * 2;
         assert!(
-            source.width() < self.atlas.width() && source.height() < self.atlas.height(),
+            sw < self.atlas.width() && sh < self.atlas.height(),
             "Texture atlas isnt big enough for this image :("
         );
         let mut found = false;
         let mut cpos = self.atlas_pos.clone();
         let adim = self.atlas_dim;
-        let w = source.width();
-        let h = source.height();
 
-        if self.atlas_pos.x + w <= adim.x && self.atlas_pos.y + h <= adim.y {
+        if self.atlas_pos.x + sw <= adim.x && self.atlas_pos.y + sh <= adim.y {
             found = true;
-            self.atlas_pos.x += w;
+            self.atlas_pos.x += sw;
         } else {
-            if self.atlas_pos.x + w > adim.x {
-                self.atlas_pos.x = w;
+            if self.atlas_pos.x + sw > adim.x {
+                self.atlas_pos.x = sw;
                 self.atlas_pos.y += self.atlas_pos.w;
                 cpos.x = 0;
                 cpos.y = self.atlas_pos.y;
                 found = true;
-            } else if self.atlas_pos.y + h < adim.y {
+            } else if self.atlas_pos.y + sh < adim.y {
                 panic!("Texture atlas couldnt find an empty spot?");
             }
         }
-        if found && self.atlas_pos.w < h {
-            self.atlas_pos.w = h;
+        if found && self.atlas_pos.w < sh {
+            self.atlas_pos.w = sh;
         }
 
         assert!(found, "Texture atlas couldnt find an empty spot?");
         // lg!("found position ({},{}) and ({},{}) ", cpos.x, cpos.y, w, h);
-        stich(&mut self.atlas, source, cpos.x, cpos.y);
+        let x = cpos.x + GUTTER;
+        let y = cpos.y + GUTTER;
+        stich(&mut self.atlas, source, x, y);
+        extrude(&mut self.atlas, x, y, w, h);
         Vec4::new(
-            cpos.x as f32 / adim.x as f32,
-            cpos.y as f32 / adim.y as f32,
+            x as f32 / adim.x as f32,
+            y as f32 / adim.y as f32,
             w as f32 / adim.x as f32,
             h as f32 / adim.y as f32,
         )
@@ -214,24 +226,22 @@ impl TexManager {
 
     /** Locates all tiles within a single provided image, indexing by provided tile dimension, 16x16 by default.
      * Each tile iterates starting at 0. An image named Example with 3 tiles will be accessed via Example0,Example1,Example2.
-     * Returns the tile referenced at index 0 so accessing this texture named Example is still possible without calling Example0  */
+     * Returns the tile referenced at index 0 so accessing this texture named Example is still possible without calling Example0.
+     * Each tile is packed on its own, so each gets its own gutter (see GUTTER). */
     fn tile_locate(
         &mut self,
         world: &mut World,
         bundle_id: u8,
         name: &String,
-        dim: (u32, u32),
-        pos: Vec4,
+        img: &RgbaImage,
         mut tile_dim: u32,
         rename: Option<HashMap<u32, String>>,
     ) -> Vec4 {
         if tile_dim == 0 {
             tile_dim = 16;
         }
-        let dw = dim.0 / tile_dim;
-        let dh = dim.1 / tile_dim;
-        let iw = 1. / dw as f32;
-        let ih = 1. / dh as f32;
+        let dw = img.width() / tile_dim;
+        let dh = img.height() / tile_dim;
 
         let mut first_complete = false;
         let mut first = vec4(0., 0., 1., 1.);
@@ -239,12 +249,10 @@ impl TexManager {
         for y in 0..dh {
             for x in 0..dw {
                 let n = x + (y * dw);
-                let mut p = pos.clone();
-
-                p.z *= iw as f32;
-                p.w *= ih as f32;
-                p.x += p.z * x as f32;
-                p.y += p.w * y as f32;
+                let tile =
+                    image::imageops::crop_imm(img, x * tile_dim, y * tile_dim, tile_dim, tile_dim)
+                        .to_image();
+                let p = self.locate(tile);
                 let key = format!("{}{}", name, n);
                 // println!("🟠made texture {} at {}", key, p);
                 // Key to our texture
@@ -310,9 +318,7 @@ impl TexManager {
             _ => {}
         }
         let pos = if is_tile > 0 {
-            let dim = (img.width(), img.height());
-            let pos = self.locate(img);
-            self.tile_locate(world, bundle_id, &name, dim, pos, tile_dim, rename)
+            self.tile_locate(world, bundle_id, &name, &img, tile_dim, rename)
         } else {
             self.locate(img)
         };
@@ -434,12 +440,14 @@ impl TexManager {
         match self.get_tex_or_not(name) {
             Some(pos) => {
                 // overlay(master_img, &source, x as i64, y as i64);
-                image::imageops::replace(
-                    &mut self.atlas,
-                    &source,
-                    (pos.x * self.atlas_dim.x as f32) as i64,
-                    (pos.y * self.atlas_dim.y as f32) as i64,
-                );
+                let x = (pos.x * self.atlas_dim.x as f32).round() as u32;
+                let y = (pos.y * self.atlas_dim.y as f32).round() as u32;
+                let w = (pos.z * self.atlas_dim.x as f32).round() as u32;
+                let h = (pos.w * self.atlas_dim.y as f32).round() as u32;
+                // only within its slot: a bigger image would paint over neighbours
+                let source = image::imageops::crop_imm(&source, 0, 0, w, h).to_image();
+                image::imageops::replace(&mut self.atlas, &source, x as i64, y as i64);
+                extrude(&mut self.atlas, x, y, w, h);
                 // image::imageops::overlay(master_img, &source, x as i64, y as i64);
             }
             None => {
@@ -634,6 +642,29 @@ fn check_tile_size(str: &str) -> u32 {
         _ => 16,
     }
 }
+/// Fill the GUTTER around the w x h texture at (x, y) with copies of its edge
+/// pixels, corners included.
+fn extrude(atlas: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let (aw, ah) = atlas.dimensions();
+    let x0 = x as i64 - GUTTER as i64;
+    let y0 = y as i64 - GUTTER as i64;
+    for gy in y0..(y + h + GUTTER) as i64 {
+        for gx in x0..(x + w + GUTTER) as i64 {
+            let inside = gx >= x as i64 && gx < (x + w) as i64 && gy >= y as i64 && gy < (y + h) as i64;
+            if inside || gx < 0 || gy < 0 || gx >= aw as i64 || gy >= ah as i64 {
+                continue;
+            }
+            let sx = gx.clamp(x as i64, (x + w - 1) as i64) as u32;
+            let sy = gy.clamp(y as i64, (y + h - 1) as i64) as u32;
+            let p = *atlas.get_pixel(sx, sy);
+            atlas.put_pixel(gx as u32, gy as u32, p);
+        }
+    }
+}
+
 /** Apply an image on to a main image such as the atlas */
 pub fn stich(master_img: &mut RgbaImage, source: RgbaImage, x: u32, y: u32) {
     image::imageops::overlay(master_img, &source, x as i64, y as i64);
@@ -801,7 +832,12 @@ mod tests {
             .dictionary
             .get(DEFAULT_TEX)
             .expect("fallback must exist on a fresh manager");
-        assert_eq!((pos.x, pos.y), (0., 0.), "must be the first slot");
+        // the first slot, inside its gutter
+        assert_eq!(
+            (pos.x, pos.y),
+            (GUTTER as f32 / MAX_WIDTH as f32, GUTTER as f32 / MAX_HEIGHT as f32),
+            "must be the first slot"
+        );
         assert_eq!(pos.z, DEFAULT_TEX_SIZE as f32 / MAX_WIDTH as f32);
         assert_eq!(pos.w, DEFAULT_TEX_SIZE as f32 / MAX_HEIGHT as f32);
 
@@ -818,5 +854,54 @@ mod tests {
         for p in img.pixels() {
             assert_eq!(p.0[3], 255, "every pixel opaque");
         }
+    }
+
+    fn px(tm: &TexManager, pos: Vec4, dx: i64, dy: i64) -> [u8; 4] {
+        let x = (pos.x * MAX_WIDTH as f32).round() as i64 + dx;
+        let y = (pos.y * MAX_HEIGHT as f32).round() as i64 + dy;
+        tm.atlas.get_pixel(x as u32, y as u32).0
+    }
+
+    /// A sample at a texture's edge may blend the texel beyond it (bilinear
+    /// minification): that texel must be a copy of the edge, never a neighbour.
+    #[test]
+    fn every_texture_is_ringed_by_copies_of_its_own_edge() {
+        let mut tm = TexManager::new();
+        let red = RgbaImage::from_pixel(4, 3, image::Rgba([255, 0, 0, 255]));
+        let mut blue = RgbaImage::from_pixel(4, 3, image::Rgba([0, 0, 255, 255]));
+        blue.put_pixel(0, 0, image::Rgba([0, 255, 0, 255]));
+        let a = tm.locate(red);
+        let b = tm.locate(blue);
+        let (w, h) = (4i64, 3i64);
+        for (pos, edge) in [(a, [255, 0, 0, 255]), (b, [0, 0, 255, 255])] {
+            assert_eq!(px(&tm, pos, w, 1), edge, "right gutter");
+            assert_eq!(px(&tm, pos, 1, h), edge, "bottom gutter");
+            assert_eq!(px(&tm, pos, w, h), edge, "corner");
+        }
+        assert_eq!(px(&tm, a, -1, 1), [255, 0, 0, 255], "left gutter");
+        // b's top-left corner pixel is green: its gutter copies that, not red
+        assert_eq!(px(&tm, b, -1, 0), [0, 255, 0, 255]);
+        assert_eq!(px(&tm, b, -1, -1), [0, 255, 0, 255]);
+        assert_eq!(px(&tm, b, 0, -1), [0, 255, 0, 255]);
+    }
+
+    /// Tiles cut from one sheet are packed apart, each with its own gutter, so
+    /// neighbouring tiles in the sheet don't bleed into each other.
+    #[test]
+    fn sheet_tiles_are_packed_apart() {
+        let mut tm = TexManager::new();
+        let mut world = World::new(std::sync::mpsc::channel().0);
+        let mut sheet = RgbaImage::from_pixel(32, 16, image::Rgba([255, 0, 0, 255]));
+        for y in 0..16 {
+            for x in 16..32 {
+                sheet.put_pixel(x, y, image::Rgba([0, 0, 255, 255]));
+            }
+        }
+        tm.tile_locate(&mut world, 0, &"sheet".to_string(), &sheet, 16, None);
+        let t0 = tm.get_tex("sheet0");
+        let t1 = tm.get_tex("sheet1");
+        assert_eq!(t0.z, 16. / MAX_WIDTH as f32);
+        assert_eq!(px(&tm, t0, 16, 8), [255, 0, 0, 255], "red's gutter is red");
+        assert_eq!(px(&tm, t1, -1, 8), [0, 0, 255, 255], "blue's gutter is blue");
     }
 }

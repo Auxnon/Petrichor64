@@ -177,6 +177,15 @@ pub async fn unpack(
     #[cfg(feature = "headed")]
     let mut configs = vec![];
 
+    #[cfg(not(feature = "headed"))]
+    if let Some(dir) = map.get("assets") {
+        for (item_name, item_buffer) in dir {
+            if item_name.ends_with(".glb") || item_name.ends_with(".gltf") {
+                register_skeleton_source(item_name, "", Some(item_buffer.as_slice()), loggy);
+            }
+        }
+    }
+
     #[cfg(feature = "headed")]
     match map.get("assets") {
         Some(dir) => {
@@ -456,6 +465,27 @@ fn eval_bool<T>(res: Result<LuaResponse, T>) -> bool {
             _ => false,
         },
         _ => false,
+    }
+}
+
+/// Register a glb/gltf file's skeleton without building a mesh, so bone
+/// queries (`ent:bone`) work on builds with no GPU (headless, terminal).
+fn register_skeleton_source(name: &str, path: &str, buffer: Option<&[u8]>, loggy: &mut Loggy) {
+    let bytes = match buffer {
+        Some(b) => Some(b.to_vec()),
+        None => std::fs::read(path).ok(),
+    };
+    let stem = Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+    if let Some(bytes) = bytes {
+        if let Err(e) = crate::skeleton::register_from_bytes(stem, &bytes) {
+            loggy.log(
+                LogType::ModelError,
+                &format!("{}: skeleton not loaded, {}", name, e),
+            );
+        }
     }
 }
 
@@ -926,6 +956,12 @@ pub fn walk_files<'a>(
         loggy,
         debug,
     );
+    #[cfg(not(feature = "headed"))]
+    for (name, ext, path, buffer) in sources.values() {
+        if *ext == "glb" || *ext == "gltf" {
+            register_skeleton_source(name, path, buffer.map(|b| b.as_slice()), loggy);
+        }
+    }
 
     for entry in script_items {
         match entry.extension() {
@@ -1144,7 +1180,8 @@ fn parse_assets<'a>(
                         debug,
                     ),
                 },
-                _ => {}
+                // No GPU: no mesh, but still register the skeleton.
+                _ => register_skeleton_source(file_name, path, buffer.map(|b| b.as_slice()), loggy),
             };
         } else if ext == "png" {
             match device {
