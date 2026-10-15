@@ -22,7 +22,7 @@ Harness, in this repo:
 
 ```
 cargo build --features audio
-./target/debug/petrichor64 test/silt-callarg
+./target/debug/chor test/silt-callarg
 ```
 
 It prints `ok`/`FAIL` per check; a miscompile shows up as an `is not callable` error

@@ -9,12 +9,11 @@ description = "Cross platform lua interpreting game engine"
 name = "petrichor64"
 crate-type = ["cdylib", "rlib"]
 
-# Lowercase executable name. It shares the lib's name, so on wasm the cdylib and
-# bin artifacts collide. So the bin needs the default-on `bin` feature, and the
-# web build (web/index.html) turns default features off to build only the lib,
-# whose entry is `wasm_main` in lib.rs.
+# The executable is `chor`. It needs the default-on `bin` feature; the web build
+# (web/index.html) turns default features off to build only the lib, whose
+# entry is `wasm_main` in lib.rs.
 [[bin]]
-name = "petrichor64"
+name = "chor"
 path = "src/main.rs"
 required-features = ["bin"]
 
@@ -41,7 +40,7 @@ inherits = "release"
 [features]
 default=[ "silt","headed","audio","studio","bin"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
-# Builds the `petrichor64` executable. Default on; the web build leaves it off
+# Builds the `chor` executable. Default on; the web build leaves it off
 # (see [[bin]]).
 bin=[]
 online_capable=["rmp-serde", "bytes"]

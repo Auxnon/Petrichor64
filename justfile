@@ -133,6 +133,12 @@ web-deploy game:
     trunk build --release
     cargo run --release -- pack {{game}} web/dist/game.game.png
 
+# Serve a built web dir with chor's own static server (no trunk needed; sends
+# COOP/COEP so wasm-ultra works). Pass `--lan` to bind 0.0.0.0, e.g.
+# `just serve web/dist --lan`.
+serve dir='web/dist' *flags='':
+    cargo run --release -- --web {{dir}} {{flags}}
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -201,7 +207,7 @@ android profile="debug":
     export CXX_aarch64_linux_android="$TC/${TRIPLE}{{android_api}}-clang++"
     export AR_aarch64_linux_android="$TC/llvm-ar"
     FLAG=""; [ "{{profile}}" = "release" ] && FLAG="--release"
-    # --lib only: the `petrichor64` bin has no meaning on Android (the activity
+    # --lib only: the `chor` bin has no meaning on Android (the activity
     # loads the cdylib and calls android_main), and building it just wastes time.
     cargo build --target "$TRIPLE" --lib $FLAG
     OUT="target/$TRIPLE/{{profile}}/libpetrichor64.so"

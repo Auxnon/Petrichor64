@@ -70,6 +70,8 @@ mod ray;
 #[cfg(feature = "headed")]
 mod render;
 mod root;
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+mod serve;
 #[cfg(feature = "audio")]
 mod fx;
 #[cfg(feature = "audio")]
@@ -1260,13 +1262,45 @@ impl ApplicationHandler for App {
     }
 }
 
-/// CLI dispatch, run before launching the engine. Currently handles the
-/// bundler: `Petrichor64 pack <dir> [out]` (alias `bundle`) packs a folder into
-/// a `.game.png` without opening a window. Returns true if a CLI command was
-/// handled, so `main()` should exit instead of starting the engine.
+/// CLI dispatch, run before launching the engine. Handles:
+///  - `chor pack <dir> [out]` (alias `bundle`): pack a folder into a
+///    `.game.png` without opening a window.
+///  - `chor --web|-w [dir] [--lan|-l] [--port|-p N]`: serve `dir` (default `.`,
+///    usually `web/dist`) over HTTP on 127.0.0.1, or 0.0.0.0 with `--lan`.
+/// Returns true if a CLI command was handled, so `main()` should exit instead
+/// of starting the engine.
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn run_cli() -> bool {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().skip(1).any(|a| a == "--web" || a == "-w") {
+        let mut dir = None;
+        let mut lan = false;
+        let mut port = serve::DEFAULT_PORT;
+        let mut rest = args.iter().skip(1);
+        while let Some(a) = rest.next() {
+            match a.as_str() {
+                "--web" | "-w" => {}
+                "--lan" | "-l" => lan = true,
+                "--port" | "-p" => match rest.next().and_then(|p| p.parse().ok()) {
+                    Some(p) => port = p,
+                    None => {
+                        eprintln!("--port needs a number");
+                        std::process::exit(1);
+                    }
+                },
+                _ if dir.is_none() => dir = Some(a.as_str()),
+                _ => {
+                    eprintln!("unexpected argument '{}'", a);
+                    std::process::exit(1);
+                }
+            }
+        }
+        if let Err(e) = serve::run(dir.unwrap_or("."), port, lan) {
+            eprintln!("web server failed: {}", e);
+            std::process::exit(1);
+        }
+        return true;
+    }
     if args.len() >= 2 && (args[1] == "pack" || args[1] == "bundle") {
         let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
         let out = args.get(3).map(|s| s.as_str());
@@ -1328,8 +1362,8 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
 }
 
 /// Web entry point. The web build is the lib's cdylib (web/index.html builds
-/// the lib, not the bin): the lowercase bin shares the lib's name, so on wasm
-/// both would emit `petrichor64.wasm` and trunk can't pick one. Also runs in
+/// the lib, not the `chor` bin, which needs the default-only `bin` feature).
+/// Also runs in
 /// the VM worker's instance, where `start()` finds no window and returns.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]

@@ -628,7 +628,7 @@ pub fn determine_path(directory: Option<&str>) -> PathBuf {
 }
 
 /// Where a game passed to `load` (or on the command line) lives. A path that
-/// exists relative to the working directory wins, so `petrichor64 .` or
+/// exists relative to the working directory wins, so `chor .` or
 /// `load ../game` source the folder (or `name.game.png`) beside where the app
 /// was run; anything else falls back to `determine_path`, which in release
 /// builds is the home directory.

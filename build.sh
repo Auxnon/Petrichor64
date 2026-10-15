@@ -33,7 +33,7 @@ cd "$home"
 rm "$home"/dist/"$a_headless_zip"
 cargo build --release --no-default-features --features online_capable
 cd "$home"/dist
-cp -r ../target/release/Petrichor64 petrichor64_headless
+cp -r ../target/release/chor petrichor64_headless
 codesign -s "$signature" petrichor64_headless
 zip "$a_headless_zip" petrichor64_headless
 rm -rf petrichor64_headless
