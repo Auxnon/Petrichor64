@@ -1,5 +1,9 @@
 # Petrichor64 — notes for agents
 
+Building a game or app *with* the engine (not changing the engine)? Read
+`AGENTS.md`: the silt-safe Lua style, mesh/camera/picking recipes, and how to
+playtest headlessly with a `TEST_HOOK` on a hidden monitor.
+
 ## Lua command naming (core `lua!` natives in `src/command.rs`)
 
 Core Lua command names should be **3–4 letters**. This keeps the scripting API
