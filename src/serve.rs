@@ -3,7 +3,7 @@
 //!
 //! `<dir>` can also be a game folder (one with `scripts/` or `assets/`). Then
 //! the engine comes from a built web dir (`--root`, or found by
-//! [`find_web_root`]) and `/game.game.png` is the game, packed fresh on every
+//! [`web_root_candidates`]) and `/game.game.png` is the game, packed fresh on every
 //! request, so a browser reload picks up edits with no rebuild.
 //!
 //! std-only on purpose: no HTTP crate, so the release binary barely grows. It is
@@ -52,16 +52,35 @@ fn is_game_dir(dir: &Path) -> bool {
         && (dir.join("scripts").is_dir() || dir.join("assets").is_dir())
 }
 
-/// Where a built web dir is likely to be: `web/dist` under the working
-/// directory, `web/` beside the executable (a shipped layout), or the repo's
-/// `web/dist` when running from `target/<profile>/`.
-fn find_web_root() -> Option<PathBuf> {
-    let mut candidates = vec![PathBuf::from("web/dist")];
+/// Where a built web dir may be, in search order: `$CHOR_WEB`, `web/dist`
+/// under the working directory, `web/` beside the executable (a shipped
+/// layout), the repo's `web/dist` when running from `target/<profile>/`, and
+/// the `web/dist` of the checkout chor was built from (covers `cargo install`).
+fn web_root_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = std::env::var_os("CHOR_WEB") {
+        candidates.push(PathBuf::from(dir));
+    }
+    candidates.push(PathBuf::from("web/dist"));
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
         candidates.push(exe_dir.join("web"));
         candidates.push(exe_dir.join("../../web/dist"));
     }
-    candidates.into_iter().find(|c| c.join("index.html").is_file())
+    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("web/dist"));
+    candidates
+}
+
+fn find_web_root() -> Result<PathBuf, String> {
+    let candidates = web_root_candidates();
+    if let Some(found) = candidates.iter().find(|c| c.join("index.html").is_file()) {
+        return Ok(found.clone());
+    }
+    let tried: Vec<String> = candidates.iter().map(|c| format!("  {}", c.display())).collect();
+    Err(format!(
+        "no built web dir found for this game. Looked in:\n{}\n\
+         build one with `just web-build` in the engine repo, set CHOR_WEB, or pass --root <dir>",
+        tried.join("\n")
+    ))
 }
 
 /// Serve `path` until the process is killed: a web dir as-is, or a game folder
@@ -75,10 +94,7 @@ pub fn run(path: &str, root: Option<&str>, port: u16, lan: bool) -> Result<(), S
     let (root, game) = if is_game_dir(&path) || root.is_some() {
         let root = match root {
             Some(r) => PathBuf::from(r),
-            None => find_web_root().ok_or(
-                "no built web dir found for this game (looked for web/dist here, and \
-                 web/ beside chor); build one with `just web-build` or pass --root <dir>",
-            )?,
+            None => find_web_root()?,
         };
         let root = std::fs::canonicalize(&root).map_err(|e| format!("'{}': {}", root.display(), e))?;
         let out = std::env::temp_dir().join(format!("chor-web-{}.game.png", port));
