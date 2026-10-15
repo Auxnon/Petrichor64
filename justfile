@@ -140,6 +140,12 @@ web-deploy game:
 serve dir='web/dist' *flags='':
     cargo run --release -- --web {{dir}} {{flags}}
 
+# Install `chor` with everything (`kitchensink`), including the web build
+# embedded so `chor -w <game dir>` works anywhere. Runs the web build first
+# (needs trunk, wasm-pack, wasm32-unknown-unknown).
+install:
+    cargo install --path . --features kitchensink
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------

@@ -709,3 +709,25 @@ has no soft-keyboard plumbing. Either switch to `game-activity` (a feature swap 
 a Gradle project, see the Android section) or have the overlay **draw its own
 keyboard** — which is cheap here, fits a fantasy console, and works identically on
 desktop and phone. The second option is more in keeping with the engine.
+
+## `chor --web` and the embedded web build
+
+`chor -w <dir>` (src/serve.rs) is a std-only static server: a built web dir is
+served as-is, a game folder is served as `/game.game.png` (repacked per request)
+on top of the engine's web build. That web build comes from `--root`,
+`$CHOR_WEB`, the copy embedded by the `kitchensink` feature (`web-embed`:
+build.rs runs wasm-pack + trunk with its own target dir, gzips `web/dist`, and
+chor serves it with `Content-Encoding: gzip`; ~3MB), or a `web/dist` on disk.
+
+### TODO
+
+- **Opt-in CDN for the wasm payload.** Let `chor -w` (and the web build itself)
+  load the engine's `.wasm`/`.js` from a CDN instead of local or embedded files,
+  so `chor` could skip `web-embed` and still serve games after
+  `cargo install`. Needs: a versioned, hosted copy of each release's web build;
+  a way for index.html/worker.js to take the engine URL (worker.js imports
+  `/Petrichor64.js` by a fixed path today); the CDN must send CORP/CORS headers,
+  since the page runs cross-origin isolated (COEP `require-corp`).
+- `cargo install --git` with `kitchensink` needs trunk, wasm-pack and the
+  wasm32 target on the installing machine (or `CHOR_WEB_DIST`). A prebuilt
+  bundle shipped per release would remove that.

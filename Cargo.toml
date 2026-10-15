@@ -43,6 +43,14 @@ include_auto=["studio"]
 # Builds the `chor` executable. Default on; the web build leaves it off
 # (see [[bin]]).
 bin=[]
+# Everything: default plus the extras that make `chor` bigger. Grows as we add
+# more of those. Build or install with `--features kitchensink`.
+kitchensink=["default", "web-embed"]
+# Embed the web (wasm) build in `chor`, gzipped, so `chor -w <game dir>` needs
+# no web/dist on disk (works after `cargo install`). build.rs runs the web build
+# first (needs trunk, wasm-pack, wasm32-unknown-unknown), or embeds the dir in
+# $CHOR_WEB_DIST instead. Adds ~3MB.
+web-embed=[]
 online_capable=["rmp-serde", "bytes"]
 # WebSocket client for `conn("ws://…")` / `conn("wss://…")`. Separate from
 # `online_capable` (raw TCP + MessagePack, can host): a browser can only speak
@@ -176,6 +184,10 @@ atomicell = "0.2.0"
 # which is what the call sites use — a build-script cfg can't drive dependency
 # resolution, so the condition has to be written out longhand here.
 # ---------------------------------------------------------------------------
+# build.rs gzips the web build for `web-embed`. Build-only: not in the binary.
+[build-dependencies]
+flate2 = "1"
+
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))'.dependencies]
 clipboard = "0.5.0"
 native-dialog = "0.9.0"
