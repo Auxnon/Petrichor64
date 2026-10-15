@@ -382,11 +382,30 @@ impl<'lt> LuaCore {
                     if debug {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
-                    let main_fn =
-                        vm.load_fn(mc, &mut compiler, Some("main_fn"), "main() loop()")?;
-                    let loop_fn = vm.load_fn(mc, &mut compiler, Some("loop_fn"), "loop()")?;
-                    let draw_fn = vm.load_fn(mc, &mut compiler, Some("draw_fn"), "draw()")?;
-                    let drop_fn = vm.load_fn(mc, &mut compiler, Some("drop_fn"), "drop()")?;
+                    let main_fn = vm.load_fn(
+                        mc,
+                        &mut compiler,
+                        Some("main_fn"),
+                        "if main ~= nil then main() end if loop ~= nil then loop() end return",
+                    )?;
+                    let loop_fn = vm.load_fn(
+                        mc,
+                        &mut compiler,
+                        Some("loop_fn"),
+                        "if loop ~= nil then loop() end return",
+                    )?;
+                    let draw_fn = vm.load_fn(
+                        mc,
+                        &mut compiler,
+                        Some("draw_fn"),
+                        "if draw ~= nil then draw() end return",
+                    )?;
+                    let drop_fn = vm.load_fn(
+                        mc,
+                        &mut compiler,
+                        Some("drop_fn"),
+                        "if drop ~= nil then drop() end return",
+                    )?;
 
                     // Persistent, non-'gc state the message handler needs. Built
                     // once here inside the single native enter; the wasm worker
