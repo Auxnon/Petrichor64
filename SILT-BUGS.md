@@ -1,8 +1,9 @@
 # silt bugs found writing the editor overlay
 
 > **Status re-checked 2026-10-14 against `../silt-stable` `main` @ `30fb16b`:** #1,
-> #2, #3, #8, #9, #10, #11, #13 and #14 no longer reproduce. **#5 is still open**, and
-> so is a close relative, **#15** (a field assigned a constructor holding locals).
+> #2, #3, #8, #9, #10, #11, #13 and #14 no longer reproduce. #5 and its relative #15
+> (a field assigned a constructor holding locals) are fixed on silt branch
+> `fix/ctor-assign-locals`, not yet merged.
 > Scientific notation and read-only vec3 fields (#12) are unchanged. Repros are in
 > "Re-check, 2026-10-14" at the end. The 2026-10-10 notes below describe the older
 > `fix/constant-index-u16` build and are kept for the diagnosis trail.
@@ -578,3 +579,14 @@ fail. `e.size = { r.w * k * 2, 1, r.w * k * 2 }` and, on an entity,
 `e.size = { k * 2, 1, k }` work. Constructors of constants only
 (`ent.tint = { 1, 1, 1, 1 }`) are fine. Workaround: build the table in a local
 first, then assign it.
+
+### #5 and #15 fixed on `fix/ctor-assign-locals`
+
+Same root cause for both. The `TABLE_SET` assignment path (`t.f = …`, `t[k] = …`)
+compiled its value with `can_multivar_set` still on, so a local followed by a
+comma inside the constructor started a multivar comma-walk as if it were more
+assignment targets. The plain-variable path already turns it off around the
+value expression. The table path now saves, clears and restores it the same way
+(`src/compiler.rs`, regression tests in `tests/ctor_assign.rs`). All 420 silt
+tests pass, with and without `vector`, and every probe above for #5 and #15
+now gives the right answer in the engine.
