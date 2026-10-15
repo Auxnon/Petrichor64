@@ -1293,15 +1293,36 @@ function mgrab(on) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "shdw",
-        move |_, _, on: Option<bool>| {
+        move |_, _, arg: Value| {
             // Off by default: the shadow pass only runs once a script opts in
             // — same "zero behavior change" discipline as chip()/mon().
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Shdw(on.unwrap_or(true)))));
+            // shdw() / shdw(bool) toggle; shdw{on=, size=, range=} also tunes
+            // the map, leaving any field it omits as it was.
+            let cmd = match arg {
+                Value::Bool(on) => MainCommmand::Shdw(on, None, None),
+                Value::Table(t) => {
+                    let table = t.borrow();
+                    let on = match table.get("on") {
+                        Some(Value::Bool(b)) => *b,
+                        _ => true,
+                    };
+                    let size: Option<f32> = table.get("size").map(|v| v.into());
+                    let range: Option<f32> = table.get("range").map(|v| v.into());
+                    MainCommmand::Shdw(on, size, range)
+                }
+                _ => MainCommmand::Shdw(true, None, None),
+            };
+            lua_err!(pitcher.send((bundle_id, cmd)));
             Ok(())
         },
-        "Enable the shadow map (from the current lum light), or disable it with shdw(false)",
+        "Enable the shadow map (from the current lum light), disable it with shdw(false), or tune it with shdw{size=texels, range=tiles}",
         "
----@param on boolean?
+---@class shdw_params
+---@field on? boolean
+---@field size? integer shadow map edge length in texels (default 128)
+---@field range? number sun shadow half-width around the camera, in tiles (default 25)
+
+---@param on boolean|shdw_params?
 function shdw(on) end"
     );
 
@@ -3763,7 +3784,8 @@ pub enum MainCommmand {
     Fog(glam::Vec4),
     MouseGrab(bool),
     /// Enable/disable the shadow pass — see `guide/shdw.md`.
-    Shdw(bool),
+    /// on, then optional map size (texels) and sun range (tiles)
+    Shdw(bool, Option<f32>, Option<f32>),
     /// Enable/disable Gouraud (per-vertex) shading — see `guide/gour.md`.
     Gour(bool),
     /// Graphics chip preset: 0=R00 (modern), 1=R43 (N64-ish), 2=R30 (PS1-ish).

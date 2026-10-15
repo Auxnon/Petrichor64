@@ -60,12 +60,18 @@ pub enum DrawState {
 /// Light-space view*projection for the shadow map, or `None` if `lum`'s
 /// current shape can't shadow (`sphere` — needs a cube map, not supported;
 /// see `guide/shdw.md`). `cam_pos_world` is the already-×16 world-space
-/// camera position, used to center the sun's frustum around whatever's
-/// actually on screen (this is a small, deliberately blocky shadow map, not a
+/// camera position; the sun's frustum sits just ahead of it (see below), so
+/// it covers what's actually on screen (this is a small, deliberately blocky shadow map, not a
 /// tightly-fit cascade). `Global::light_pos`/`light_range` are tile-space
 /// (the same raw-until-render convention as `cam_pos` itself), scaled ×16
 /// here — see `Global::light_pos`'s field doc.
 fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Option<Mat4> {
+    // Push the sun's box ahead of the camera along its heading so it covers
+    // what's in view rather than the ground under the lens. With a small
+    // shdw{range=} and a camera pulled back from the action, a box centred on
+    // the camera itself missed everything on screen.
+    let yaw = global.smooth_cam_rot.x;
+    let heading = vec3(yaw.cos(), yaw.sin(), 0.);
     let dir = if global.light_dir.length_squared() > 0. {
         global.light_dir.normalize()
     } else {
@@ -77,9 +83,11 @@ fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Optio
     match global.light_shape {
         0 => {
             // Sun: orthographic, centered on the camera, looking along dir.
-            let radius = 400.0;
-            let eye = cam_pos_world - dir * radius;
-            let view = Mat4::look_at_rh(eye, cam_pos_world, up);
+            // shdw{range=} is in tiles; the GPU works at ×16
+            let radius = global.shadow_range * 16.;
+            let center = cam_pos_world + heading * radius * 0.6;
+            let eye = center - dir * radius;
+            let view = Mat4::look_at_rh(eye, center, up);
             let proj = Mat4::orthographic_rh(-radius, radius, -radius, radius, 1.0, radius * 2.5);
             Some(proj * view)
         }
@@ -97,6 +105,29 @@ fn light_view_proj(global: &crate::global::Global, cam_pos_world: Vec3) -> Optio
             Some(proj * view)
         }
         _ => None,
+    }
+}
+
+/// How far fs_main nudges a point along its surface normal before looking it
+/// up in the shadow map (world units, ×16 like everything on the GPU): half a
+/// shadow texel. Sampling that far off the surface keeps it out of
+/// its own shadow on slopes the depth bias alone can't cover. Must match the
+/// frustum sizes in `light_view_proj`.
+fn shadow_normal_offset(global: &crate::global::Global, map_size: u32) -> f32 {
+    let size = map_size as f32;
+    match global.light_shape {
+        0 => global.shadow_range * 16. / size,
+        1 => {
+            // a perspective texel grows with distance; size it for mid-range
+            let range = if global.light_range > 0. {
+                global.light_range * 16.
+            } else {
+                400.0
+            };
+            let fov = (global.light_angle.max(0.05) * 2.0).min(3.0);
+            0.5 * range * (fov * 0.5).tan() / size
+        }
+        _ => 0.,
     }
 }
 
@@ -155,6 +186,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     crate::ray::trace(core, mx_persp, mx_view);
     // Before `gfx` is borrowed for the pass: app first, then overlays.
     let draw_order = core.bundle_manager.layer_order();
+    // shdw{size=} may have asked for a new map size; rebuild it before borrowing gfx
+    let shadow_size = core.gfx.set_shadow_size(core.global.shadow_size);
     let gfx = &core.gfx;
 
     let mx_view_ref: &[f32; 16] = mx_view.as_ref();
@@ -214,7 +247,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             0.
         },
         if core.global.gouraud { 1. } else { 0. },
-        0.,
+        shadow_normal_offset(&core.global, shadow_size),
         0.,
     ];
     let light_view_proj_mat: [[f32; 4]; 4] = lvp.unwrap_or(Mat4::ZERO).to_cols_array_2d();

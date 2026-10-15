@@ -32,11 +32,15 @@ pub struct Gfx<'w> {
     pub main_layout: wgpu::BindGroupLayout,
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
-    /// The shadow map (guide/shdw.md): a small, fixed-size depth target
-    /// rendered from the lum{} light's POV, sampled by fs_main. Not resized
-    /// with the window.
+    /// The shadow map (guide/shdw.md): a square depth target rendered from
+    /// the lum{} light's POV, sampled by fs_main. Not resized with the window;
+    /// `shdw{size=}` sets its edge length (see `set_shadow_size`).
     pub shadow_view: wgpu::TextureView,
     pub shadow_bind_group: wgpu::BindGroup,
+    shadow_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
+    /// Current edge length of the shadow map in texels.
+    pub shadow_size: u32,
     pub shadow_pipeline: wgpu::RenderPipeline,
     /// Skinned-mesh variants of the two pipelines above (src/skeleton.rs).
     pub skinned_pipeline: wgpu::RenderPipeline,
@@ -415,28 +419,12 @@ impl<'w> Gfx<'w> {
         });
 
         // ============ Shadow map (guide/shdw.md) ============
-        // A small, fixed-size, deliberately low-resolution depth target — not
-        // tied to the window size or resized with it — rendered from the
+        // A small, deliberately low-resolution depth target by default — not
+        // tied to the window size; shdw{size=} rebuilds it — rendered from the
         // lum{} light's point of view (shadow_vs_main) and sampled with a
         // hardware comparison sampler in fs_main. Off by default (shdw());
         // when off the pass still runs (a handful of triangles into an
         // unsampled target) rather than branching pipeline setup itself.
-        const SHADOW_MAP_SIZE: u32 = 128;
-        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
-            size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            label: Some("shadow depth"),
-            view_formats: &[],
-        });
-        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -470,20 +458,9 @@ impl<'w> Gfx<'w> {
                 },
             ],
         });
-        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow bind group"),
-            layout: &shadow_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-                },
-            ],
-        });
+        let shadow_size = SHADOW_MAP_SIZE;
+        let (shadow_view, shadow_bind_group) =
+            make_shadow_target(&device, &shadow_layout, &shadow_sampler, shadow_size);
         let shadow_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Shadow Pipeline Layout"),
@@ -518,7 +495,7 @@ impl<'w> Gfx<'w> {
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
+                bias: SHADOW_DEPTH_BIAS,
             }),
             multisample: wgpu::MultisampleState {
                 count: 1,
@@ -803,6 +780,9 @@ impl<'w> Gfx<'w> {
                 palette_layout,
                 shadow_view,
                 shadow_bind_group,
+                shadow_layout,
+                shadow_sampler,
+                shadow_size,
                 shadow_pipeline,
                 // switch_board: Arc::clone(&switch_board),
                 post,
@@ -921,6 +901,26 @@ impl<'w> Gfx<'w> {
 
     /// Size the scene's targets for this `crt_resolution`; a no-op unless it
     /// changed (called every frame, as `attr`/`chip` can change it any time).
+    /// Rebuild the shadow map at `size` texels square if it changed
+    /// (`shdw{size=}`), clamped to what the device can hold. Returns the size
+    /// actually in use.
+    pub fn set_shadow_size(&mut self, size: u32) -> u32 {
+        let max = self.device.limits().max_texture_dimension_2d;
+        let size = size.clamp(SHADOW_MAP_MIN, max.min(SHADOW_MAP_MAX));
+        if size != self.shadow_size {
+            let (view, bind_group) = make_shadow_target(
+                &self.device,
+                &self.shadow_layout,
+                &self.shadow_sampler,
+                size,
+            );
+            self.shadow_view = view;
+            self.shadow_bind_group = bind_group;
+            self.shadow_size = size;
+        }
+        size
+    }
+
     pub fn set_render_resolution(&mut self, crt_resolution: f32) {
         if crt_resolution != self.render_res {
             self.render_res = crt_resolution;
@@ -1025,6 +1025,63 @@ impl<'w> Gfx<'w> {
 /// The skinned render and shadow pipelines: the plain ones plus the skin
 /// vertex buffer and the palette at group 3. Kept in step with the plain
 /// descriptors in `Gfx::new` by hand.
+/// Default edge length of the shadow map (guide/shdw.md), in texels. Small on
+/// purpose: shadows are meant to read as blocky. `shdw{size=}` changes it
+/// within SHADOW_MAP_MIN..=SHADOW_MAP_MAX.
+pub const SHADOW_MAP_SIZE: u32 = 128;
+pub const SHADOW_MAP_MIN: u32 = 16;
+pub const SHADOW_MAP_MAX: u32 = 4096;
+
+/// The shadow depth target and the bind group fs_main samples it through.
+fn make_shadow_target(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    size: u32,
+) -> (wgpu::TextureView, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        label: Some("shadow depth"),
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("shadow bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+    (view, bind_group)
+}
+
+/// Hardware depth bias for the shadow passes. Each of the map's few texels
+/// covers a lot of ground, so a surface's own depth varies across one texel by
+/// more than any fixed offset, and a constant bias alone leaves it shadowing
+/// itself in stripes (acne). The slope term grows the bias with how steeply a
+/// surface faces away from the light; the constant covers the flat-on case.
+const SHADOW_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
+    constant: 1,
+    slope_scale: 1.0,
+    clamp: 0.0,
+};
+
 fn skinned_pipelines(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -1106,7 +1163,10 @@ fn skinned_pipelines(
         },
         fragment: None,
         primitive,
-        depth_stencil: depth,
+        depth_stencil: depth.map(|d| wgpu::DepthStencilState {
+            bias: SHADOW_DEPTH_BIAS,
+            ..d
+        }),
         multisample,
         multiview_mask: None,
     });

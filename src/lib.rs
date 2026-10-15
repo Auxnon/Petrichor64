@@ -2213,8 +2213,18 @@ impl Core {
                     // actual grab (and defers to a click on web).
                     self.global.mouse_grab = on;
                 }
-                MainCommmand::Shdw(on) => {
+                MainCommmand::Shdw(on, size, range) => {
                     self.global.shadow_on = on;
+                    if let Some(sz) = size {
+                        if sz.is_finite() && sz > 0. {
+                            self.global.shadow_size = sz.round() as u32;
+                        }
+                    }
+                    if let Some(r) = range {
+                        if r.is_finite() && r > 0. {
+                            self.global.shadow_range = r.max(1.);
+                        }
+                    }
                 }
                 MainCommmand::Gour(on) => {
                     self.global.gouraud = on;

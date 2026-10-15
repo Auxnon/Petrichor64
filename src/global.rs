@@ -1,5 +1,9 @@
 use std::collections::HashMap;
 
+/// `shdw()` defaults: map edge length (texels) and sun frustum half-width (tiles).
+pub const SHADOW_SIZE_DEFAULT: u32 = 128;
+pub const SHADOW_RANGE_DEFAULT: f32 = 25.0;
+
 #[cfg(feature = "headed")]
 use crate::post::ScreenBinds;
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
@@ -51,6 +55,12 @@ pub struct Global {
     /// see `shdw()`/`guide/shdw.md`. Off by default: zero behavior change for
     /// apps that never call it, same discipline as the chip/mon work.
     pub shadow_on: bool,
+    /// Shadow map edge length in texels, as asked for by `shdw{size=}`; the
+    /// renderer clamps it to what the device supports.
+    pub shadow_size: u32,
+    /// Half-width of the sun's shadow frustum in tiles (`shdw{range=}`): the
+    /// area around the camera that can receive shadows. Smaller = sharper.
+    pub shadow_range: f32,
     /// Whether shading is Gouraud (per-vertex, interpolated) instead of the
     /// default per-fragment "smooth" path — see `gour()`/`guide/gour.md`. Off
     /// by default, matching PLAN.md's original suggested default being
@@ -121,6 +131,8 @@ impl Global {
             light_range: 0.,
             light_angle: 0.,
             shadow_on: false,
+            shadow_size: SHADOW_SIZE_DEFAULT,
+            shadow_range: SHADOW_RANGE_DEFAULT,
             gouraud: false,
 
             smooth_cam_pos: vec3(0., 0., 0.),
@@ -202,6 +214,8 @@ impl Global {
         self.light_range = 0.;
         self.light_angle = 0.;
         self.shadow_on = false;
+        self.shadow_size = SHADOW_SIZE_DEFAULT;
+        self.shadow_range = SHADOW_RANGE_DEFAULT;
         self.gouraud = false;
     }
 
@@ -307,6 +321,22 @@ mod tests {
     /// sets `attr{fog=200}` on its first line, and only the console lock was being
     /// cleared, so every app after it ran with a fog deep enough to hide the scene —
     /// including apps that never mention fog.
+    /// `shdw{size=, range=}` is per-app state like the rest of the lighting:
+    /// a game that sharpens its shadows must not hand that to the next app.
+    #[test]
+    fn shadow_tuning_resets_on_load() {
+        let mut g = Global::new();
+        g.shadow_on = true;
+        g.shadow_size = 2048;
+        g.shadow_range = 6.;
+
+        g.clean_app_attrs();
+
+        assert!(!g.shadow_on);
+        assert_eq!(g.shadow_size, SHADOW_SIZE_DEFAULT);
+        assert_eq!(g.shadow_range, SHADOW_RANGE_DEFAULT);
+    }
+
     #[test]
     #[cfg(feature = "headed")]
     fn app_attrs_do_not_leak_into_the_next_app() {

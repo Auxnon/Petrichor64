@@ -104,18 +104,23 @@ var s_shadow: sampler_comparison;
 // Shared by fs_main (per-fragment, default) and vs_main (per-vertex, when
 // gour() is on — see guide/gour.md) so there's one copy of this math, not two
 // drifting apart.
+// Ambient: flat scalar, or (sun only) L2 hemisphere by N.z. Split out of
+// compute_shade so fs_main can shadow only the direct light on top of it.
+fn compute_ambient(norm: vec3<f32>) -> vec3<f32> {
+	if (globals.light_shape.x < 0.5 && globals.amb_sky.w > 0.) {
+		return mix(globals.amb_ground.rgb, globals.amb_sky.rgb, norm.z * 0.5 + 0.5);
+	}
+	return vec3<f32>(globals.light_color.w);
+}
+
 fn compute_shade(norm: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 	let light_shape = globals.light_shape.x;
 	var ndl: f32;
 	var atten = 1.0;
-	// Ambient: flat scalar, or (sun only) L2 hemisphere by N.z.
-	var ambient = vec3<f32>(globals.light_color.w);
+	let ambient = compute_ambient(norm);
 	if (light_shape < 0.5) {
 		let ldir = normalize(globals.light_dir.xyz);
 		ndl = max(dot(norm, -ldir), 0.0);
-		if (globals.amb_sky.w > 0.) {
-			ambient = mix(globals.amb_ground.rgb, globals.amb_sky.rgb, norm.z * 0.5 + 0.5);
-		}
 	} else {
 		// Cone/sphere: a real position, falls off with distance.
 		let to_light = globals.light_pos.xyz - world_pos;
@@ -335,22 +340,31 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 		shade = compute_shade(norm, in.world_position.xyz);
 	}
 
-	// Shadow map (guide/shdw.md): one hard comparison tap, no PCF — off by
-	// default (shadow_on.x, set by shdw()) and a no-op outside the light's
-	// small frustum (lit=1, not shadowed, rather than clamping artifacts).
-	// Always per-fragment (stays sharp even with Gouraud shading on).
+	// Shadow map (guide/shdw.md): one comparison tap — off by default
+	// (shadow_on.x, set by shdw()) and a no-op outside the light's small
+	// frustum (lit=1, not shadowed, rather than clamping artifacts). Always
+	// per-fragment (stays sharp even with Gouraud shading on).
+	//
+	// The lookup point is pushed off the surface along its normal by about half a
+	// shadow texel (shadow_on.z); together with the shadow pipelines' slope
+	// bias that keeps a surface from shadowing itself in stripes.
 	var lit = 1.0;
 	if (globals.shadow_on.x > 0.5) {
-		let light_clip = globals.light_view_proj * in.world_position;
+		let lookup = vec4<f32>(in.world_position.xyz + norm * globals.shadow_on.z, 1.0);
+		let light_clip = globals.light_view_proj * lookup;
 		let light_ndc = light_clip.xyz / light_clip.w;
 		let shadow_uv = light_ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
 		if (shadow_uv.x >= 0.0 && shadow_uv.x <= 1.0 && shadow_uv.y >= 0.0 && shadow_uv.y <= 1.0 && light_ndc.z >= 0.0 && light_ndc.z <= 1.0) {
 			// The Level variant: plain textureSampleCompare is only legal in uniform
 			// control flow, which Chrome's WGSL compiler enforces (naga doesn't).
-			lit = textureSampleCompareLevel(t_shadow, s_shadow, shadow_uv, light_ndc.z - 0.002);
+			lit = textureSampleCompareLevel(t_shadow, s_shadow, shadow_uv, light_ndc.z - 0.0005);
 		}
 	}
-	shade = shade * lit;
+	// A shadow blocks the light, not the ambient fill: only the direct part
+	// of the shade is scaled (scaling all of it painted shadows pure black).
+	let ambient = compute_ambient(norm);
+	let direct = max(shade - ambient, vec3<f32>(0.0));
+	shade = ambient + direct * lit;
 
 	// R30 chip: snap>0 also selects affine (screen-space linear) UVs instead of
 	// perspective-correct ones — the PS1's characteristic texture warp.
