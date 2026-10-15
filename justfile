@@ -134,8 +134,9 @@ web-deploy game:
     cargo run --release -- pack {{game}} web/dist/game.game.png
 
 # Serve a built web dir with chor's own static server (no trunk needed; sends
-# COOP/COEP so wasm-ultra works). Pass `--lan` to bind 0.0.0.0, e.g.
-# `just serve web/dist --lan`.
+# COOP/COEP so wasm-ultra works). `dir` can also be a game folder: it's served
+# as /game.game.png on top of web/dist, repacked on every reload. Pass `--lan`
+# to bind 0.0.0.0, e.g. `just serve apps/paint --lan`.
 serve dir='web/dist' *flags='':
     cargo run --release -- --web {{dir}} {{flags}}
 

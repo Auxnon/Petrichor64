@@ -1,6 +1,11 @@
 //! `chor --web <dir>`: a tiny static file server for the web build (e.g.
 //! `web/dist`), so testing it needs no trunk, python or node.
 //!
+//! `<dir>` can also be a game folder (one with `scripts/` or `assets/`). Then
+//! the engine comes from a built web dir (`--root`, or found by
+//! [`find_web_root`]) and `/game.game.png` is the game, packed fresh on every
+//! request, so a browser reload picks up edits with no rebuild.
+//!
 //! std-only on purpose: no HTTP crate, so the release binary barely grows. It is
 //! a dev server, not a production one: GET/HEAD only, one thread per request,
 //! `Connection: close`.
@@ -13,16 +18,78 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 pub const DEFAULT_PORT: u16 = 8080;
 
-/// Serve `root` until the process is killed. `lan` binds 0.0.0.0 instead of
-/// 127.0.0.1, so other devices on the network can reach it.
-pub fn run(root: &str, port: u16, lan: bool) -> Result<(), String> {
-    let root = std::fs::canonicalize(root).map_err(|e| format!("'{}': {}", root, e))?;
-    if !root.is_dir() {
-        return Err(format!("'{}' is not a directory", root.display()));
+/// The game served as `/game.game.png`, repacked on every request.
+struct Game {
+    dir: PathBuf,
+    /// Scratch file pack_folder writes to; the lock keeps two requests from
+    /// packing into it at once.
+    out: Mutex<PathBuf>,
+    rt: tokio::runtime::Runtime,
+}
+
+impl Game {
+    fn pack(&self) -> Result<Vec<u8>, String> {
+        let out = self.out.lock().map_err(|e| e.to_string())?;
+        let mut loggy = crate::log::Loggy::new();
+        self.rt
+            .block_on(crate::asset::pack_folder(
+                &self.dir.to_string_lossy(),
+                Some(&out.to_string_lossy()),
+                &mut loggy,
+            ))
+            .map_err(|e| e.to_string())?;
+        std::fs::read(&*out).map_err(|e| e.to_string())
     }
+}
+
+/// A game folder, as opposed to a web dir to serve as-is.
+fn is_game_dir(dir: &Path) -> bool {
+    !dir.join("index.html").is_file()
+        && (dir.join("scripts").is_dir() || dir.join("assets").is_dir())
+}
+
+/// Where a built web dir is likely to be: `web/dist` under the working
+/// directory, `web/` beside the executable (a shipped layout), or the repo's
+/// `web/dist` when running from `target/<profile>/`.
+fn find_web_root() -> Option<PathBuf> {
+    let mut candidates = vec![PathBuf::from("web/dist")];
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        candidates.push(exe_dir.join("web"));
+        candidates.push(exe_dir.join("../../web/dist"));
+    }
+    candidates.into_iter().find(|c| c.join("index.html").is_file())
+}
+
+/// Serve `path` until the process is killed: a web dir as-is, or a game folder
+/// on top of the web dir `root` (searched for when None). `lan` binds 0.0.0.0
+/// instead of 127.0.0.1, so other devices on the network can reach it.
+pub fn run(path: &str, root: Option<&str>, port: u16, lan: bool) -> Result<(), String> {
+    let path = std::fs::canonicalize(path).map_err(|e| format!("'{}': {}", path, e))?;
+    if !path.is_dir() {
+        return Err(format!("'{}' is not a directory", path.display()));
+    }
+    let (root, game) = if is_game_dir(&path) || root.is_some() {
+        let root = match root {
+            Some(r) => PathBuf::from(r),
+            None => find_web_root().ok_or(
+                "no built web dir found for this game (looked for web/dist here, and \
+                 web/ beside chor); build one with `just web-build` or pass --root <dir>",
+            )?,
+        };
+        let root = std::fs::canonicalize(&root).map_err(|e| format!("'{}': {}", root.display(), e))?;
+        let out = std::env::temp_dir().join(format!("chor-web-{}.game.png", port));
+        let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+        let game = Game { dir: path, out: Mutex::new(out), rt };
+        // Pack once up front so a broken game fails here, not in the browser.
+        game.pack()?;
+        (root, Some(std::sync::Arc::new(game)))
+    } else {
+        (path, None)
+    };
     let host = if lan {
         Ipv4Addr::UNSPECIFIED
     } else {
@@ -32,6 +99,9 @@ pub fn run(root: &str, port: u16, lan: bool) -> Result<(), String> {
         .map_err(|e| format!("can't bind {}:{}: {}", host, port, e))?;
 
     println!("serving {}", root.display());
+    if let Some(g) = &game {
+        println!("game    {}  (repacked on each reload)", g.dir.display());
+    }
     println!("  http://localhost:{}/", port);
     if lan {
         match lan_ip() {
@@ -44,8 +114,9 @@ pub fn run(root: &str, port: u16, lan: bool) -> Result<(), String> {
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let root = root.clone();
+        let game = game.clone();
         std::thread::spawn(move || {
-            if let Err(e) = handle(stream, &root) {
+            if let Err(e) = handle(stream, &root, game.as_deref()) {
                 ::log::debug!("serve: {}", e);
             }
         });
@@ -62,7 +133,7 @@ fn lan_ip() -> Option<std::net::IpAddr> {
     (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
 }
 
-fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, root: &Path, game: Option<&Game>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
@@ -78,6 +149,18 @@ fn handle(mut stream: TcpStream, root: &Path) -> std::io::Result<()> {
     let head = method == "HEAD";
     if method != "GET" && !head {
         return respond(&mut stream, "405 Method Not Allowed", "text/plain", b"method not allowed", head);
+    }
+
+    if let Some(game) = game {
+        if target.split(['?', '#']).next() == Some("/game.game.png") {
+            return match game.pack() {
+                Ok(body) => respond(&mut stream, "200 OK", "image/png", &body, head),
+                Err(e) => {
+                    eprintln!("pack failed: {}", e);
+                    respond(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes(), head)
+                }
+            };
+        }
     }
 
     let Some(mut path) = resolve(root, target) else {

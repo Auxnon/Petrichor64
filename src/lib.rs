@@ -1265,8 +1265,10 @@ impl ApplicationHandler for App {
 /// CLI dispatch, run before launching the engine. Handles:
 ///  - `chor pack <dir> [out]` (alias `bundle`): pack a folder into a
 ///    `.game.png` without opening a window.
-///  - `chor --web|-w [dir] [--lan|-l] [--port|-p N]`: serve `dir` (default `.`,
-///    usually `web/dist`) over HTTP on 127.0.0.1, or 0.0.0.0 with `--lan`.
+///  - `chor --web|-w [dir] [--lan|-l] [--port|-p N] [--root|-r web_dir]`: serve
+///    `dir` (default `.`) over HTTP on 127.0.0.1, or 0.0.0.0 with `--lan`.
+///    `dir` is a built web dir (`web/dist`) or a game folder, which is served
+///    as `/game.game.png` on top of a web dir (`--root`, else found nearby).
 /// Returns true if a CLI command was handled, so `main()` should exit instead
 /// of starting the engine.
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
@@ -1276,11 +1278,19 @@ pub fn run_cli() -> bool {
         let mut dir = None;
         let mut lan = false;
         let mut port = serve::DEFAULT_PORT;
+        let mut root = None;
         let mut rest = args.iter().skip(1);
         while let Some(a) = rest.next() {
             match a.as_str() {
                 "--web" | "-w" => {}
                 "--lan" | "-l" => lan = true,
+                "--root" | "-r" => match rest.next() {
+                    Some(r) => root = Some(r.as_str()),
+                    None => {
+                        eprintln!("--root needs a directory");
+                        std::process::exit(1);
+                    }
+                },
                 "--port" | "-p" => match rest.next().and_then(|p| p.parse().ok()) {
                     Some(p) => port = p,
                     None => {
@@ -1295,7 +1305,7 @@ pub fn run_cli() -> bool {
                 }
             }
         }
-        if let Err(e) = serve::run(dir.unwrap_or("."), port, lan) {
+        if let Err(e) = serve::run(dir.unwrap_or("."), root, port, lan) {
             eprintln!("web server failed: {}", e);
             std::process::exit(1);
         }
