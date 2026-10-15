@@ -1,12 +1,11 @@
 # silt bugs found writing the editor overlay
 
-> **Status re-checked 2026-10-10 while building `~/projects/model-chor`: #1, #2 and #3
-> are NOT fixed in the silt the engine builds against**, and #8–#12 below are new.
-> The engine uses `../silt-stable` on branch `fix/constant-index-u16` at `1315850`. The
-> commits named as the fixes below (`9ac21ea`, `0e09035`) don't exist anywhere in that
-> repo (`git cat-file -t` fails on both). So either they live in another checkout or
-> they were never pushed. Until they land, treat the "fixed" line below as wrong and
-> keep every workaround. The repros are in "Re-check" at the end.
+> **Status re-checked 2026-10-14 against `../silt-stable` `main` @ `30fb16b`:** #1,
+> #2, #3, #8, #9, #10, #11, #13 and #14 no longer reproduce. **#5 is still open**, and
+> so is a close relative, **#15** (a field assigned a constructor holding locals).
+> Scientific notation and read-only vec3 fields (#12) are unchanged. Repros are in
+> "Re-check, 2026-10-14" at the end. The 2026-10-10 notes below describe the older
+> `fix/constant-index-u16` build and are kept for the diagnosis trail.
 
 > **#5 and #7 are open; #6 has a fix on branch `fix/constant-index-u16`** (#5 found building `apps/model`; #6 and #7 building `editor/`). #1–#4 are fixed in `../silt-stable` — #1 in `9ac21ea`, #2/#3 in `0e09035`, and #4
 > along with them (the stack accounting it depended on). `test/silt-callarg` now
@@ -536,3 +535,46 @@ It fails from the `valeq!` harness too. Each of these makes it pass:
 Smaller cuts (no early return, no `clamp`, a single local) don't reproduce it,
 so it seems to depend on register pressure; the bad callee is one of the
 argument registers. Workaround in sosh: hoist the argument into a local.
+
+---
+
+## Re-check, 2026-10-14: after silt PRs #26–#31
+
+Probed in the engine (`./target/debug/petrichor64`, rebuilt against `../silt-stable`
+`main` @ `30fb16b`), one check per frame under `pcall`, with the
+syntax-sensitive ones in their own script files.
+
+| bug | probe | result |
+|---|---|---|
+| #1 | `two(cos(az) * fl, 2)`, `three(cos(az), b, b)`, `{ 1 + cos(az) * fl, b }` | fixed |
+| #2 | loop-built `t`, `table.insert(t, 2, 9)` | fixed (`9,2`, `#t == 6`) |
+| #3 | loop-built `t`, `table.remove(t, 2)` | fixed (`t[2] == 3`, `#t == 4`) |
+| #8 | `t[#t] = nil` | fixed (`#t` shrinks) |
+| #9 | `set[5] = true; set[5] = nil`, then `pairs` | fixed (no iterations) |
+| #10 | `local f = function(q) … end`, `pcall(function() error("x") end)` | fixed |
+| #11 | `es[1].z = -5` on an entity | fixed |
+| #13 | `f(1)` for `function f(a, b) return b end` | fixed (`nil`) |
+| #14 | `T.v = mk("crop", clampv(x, 0, 3), y)` then a local | fixed |
+| one-line body with a local | `function onel(d) local t = 5 TMP = d + t end` | fixed |
+| #5 | `x[#x + 1] = { vs, 2 }` (`vs` a local) | **open**: `Cannot perform table operations on a non-table value (integer)` |
+| #12 | `1e3`; `v.x = 5` on a vec3 | **unchanged**: lex error; `Cannot perform table operations on a non-table value (vec3)` |
+
+### #15 new: a field assigned a table constructor holding locals
+
+```lua
+function t_b()
+	local k = 3
+	local e = {}
+	e.size = { k, 1, k }   -- Invalid chunk due compilation corruption (col 11, the `{`)
+	return e.size[1]
+end
+```
+
+Found when Chor's HUD went from `local sz = { … }; e.size = sz` to assigning the
+constructor directly: every frame then failed at that line. Which shapes trip it
+isn't clear yet. `e.size = { r.w * k, 1, k }` and
+`e.size = { r.w * k * grow, 1, r.w * k * grow }` (after another field assignment)
+fail. `e.size = { r.w * k * 2, 1, r.w * k * 2 }` and, on an entity,
+`e.size = { k * 2, 1, k }` work. Constructors of constants only
+(`ent.tint = { 1, 1, 1, 1 }`) are fine. Workaround: build the table in a local
+first, then assign it.
