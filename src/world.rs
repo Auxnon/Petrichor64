@@ -13,7 +13,8 @@ use crate::{
     command::MainCommmand,
     log::LogType,
     model::{Model, ModelManager},
-    tile::{Chunk, ChunkModel, Layer, LayerModel},
+    tile::{apron_in, chunk_key, chunks_below, Chunk, ChunkModel, Layer, LayerModel},
+    tileset::{TilesetDef, Tilesets},
 };
 
 /*
@@ -162,12 +163,17 @@ impl WorldInstance {
 pub struct Mapper {
     tex_map: FxHashMap<u32, Vec4>,
     model_map: FxHashMap<u32, Rc<Model>>,
+    /// tile texture name -> its int index, so tilesets can name their members
+    tex_names: FxHashMap<String, u32>,
+    tilesets: Tilesets,
 }
 impl Mapper {
     pub fn new() -> Mapper {
         Mapper {
             tex_map: FxHashMap::default(),
             model_map: FxHashMap::default(),
+            tex_names: FxHashMap::default(),
+            tilesets: Tilesets::default(),
         }
     }
     // pub fn get_tex(&self, index: u32) -> Vec4{
@@ -253,10 +259,43 @@ impl World {
     /// Record a tile-texture's atlas uv under its int index for a bundle's local
     /// mapper, so `process_sync` can resolve chunk cells. Fed by the worker's
     /// MapTex messages on wasm.
-    pub fn set_local_tex(&mut self, bundle_id: u8, index: u32, uv: glam::Vec4) {
+    pub fn set_local_tex(&mut self, bundle_id: u8, name: String, index: u32, uv: glam::Vec4) {
         if let Some(m) = self.local_mappers.get_mut(&bundle_id) {
             m.tex_map.insert(index, uv);
+            m.tex_names.insert(name.to_lowercase(), index);
         }
+    }
+
+    /// Add, replace or remove (no tiles) one of a bundle's tilesets, and
+    /// re-mesh every chunk it has.
+    pub fn define_tileset(
+        &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        bundle_id: u8,
+        def: TilesetDef,
+        model_manager: &ModelManager,
+    ) {
+        match self.local_mappers.get_mut(&bundle_id) {
+            Some(m) => m.tilesets.define(def),
+            None => return,
+        }
+        // everything, and the chunks below that tileset pieces may have
+        // reached into (or now reach into)
+        let (keys, below) = match self.tile_mirror.get(&bundle_id) {
+            Some(mirror) => (
+                mirror.keys().cloned().collect(),
+                mirror.values().flat_map(chunks_below).collect(),
+            ),
+            None => return,
+        };
+        self.remesh(
+            #[cfg(feature = "headed")]
+            device,
+            bundle_id,
+            keys,
+            below,
+            model_manager,
+        );
     }
 
     pub fn init(
@@ -375,64 +414,111 @@ impl World {
             if let Some(mirror) = self.tile_mirror.get_mut(&bundle_id) {
                 mirror.clear();
             }
-        } else {
-            let mirror = self.tile_mirror.entry(bundle_id).or_default();
-            for chunk in &chunks {
-                mirror.insert(chunk.key.clone(), chunk.clone());
-            }
-        }
-        if let Some(layer) = self.layers.get_mut(&bundle_id) {
-            if dropped && chunks.is_empty() {
+            if let Some(layer) = self.layers.get_mut(&bundle_id) {
                 layer.chunks.clear();
-            } else {
-                if let Some(mapper) = self.local_mappers.get(&bundle_id) {
-                    for chunk in chunks {
-                        // let key = chunk.key.clone();
-                        match layer.chunks.entry(chunk.key.clone()) {
-                            Entry::Occupied(o) => {
-                                let c = o.into_mut();
-                                // println!("rebuild model chunk {}", chunk.key);
-                                c.build_chunk(
-                                    &mapper.tex_map,
-                                    &mapper.model_map,
-                                    model_manager,
-                                    chunk,
-                                );
-                                #[cfg(feature = "headed")]
-                                c.cook(device);
-                            }
-                            Entry::Vacant(v) => {
-                                let ix = chunk.pos.x.div_euclid(16) * 16;
-                                let iy = chunk.pos.y.div_euclid(16) * 16;
-                                let iz = chunk.pos.z.div_euclid(16) * 16;
-                                // println!(
-                                //     "populate new model chunk {} {} {} {}",
-                                //     chunk.key, ix, iy, iz
-                                // );
-                                let mut model = ChunkModel::new(
-                                    #[cfg(feature = "headed")]
-                                    device,
-                                    chunk.key.clone(),
-                                    ix,
-                                    iy,
-                                    iz,
-                                    #[cfg(feature = "headed")]
-                                    false,
-                                );
-                                model.build_chunk(
-                                    &mapper.tex_map,
-                                    &mapper.model_map,
-                                    model_manager,
-                                    chunk,
-                                );
-                                #[cfg(feature = "headed")]
-                                model.cook(device);
-                                v.insert(model);
-                            }
-                        }
-                    }
+            }
+            return;
+        }
+        let tilesets = self
+            .local_mappers
+            .get(&bundle_id)
+            .map_or(false, |m| !m.tilesets.is_empty());
+        let mirror = self.tile_mirror.entry(bundle_id).or_default();
+        let mut keys = vec![];
+        // chunks below a changed one whose dual cubes reach into it, by origin
+        let mut below = vec![];
+        for chunk in chunks {
+            if tilesets {
+                below.extend(chunks_below(&chunk));
+                if let Some(old) = mirror.get(&chunk.key) {
+                    below.extend(chunks_below(old));
                 }
             }
+            keys.push(chunk.key.clone());
+            mirror.insert(chunk.key.clone(), chunk);
+        }
+        self.remesh(
+            #[cfg(feature = "headed")]
+            device,
+            bundle_id,
+            keys,
+            below,
+            model_manager,
+        );
+    }
+
+    /// Rebuild the chunk models for `keys` (chunks in the mirror) and the
+    /// chunks with lowest tile in `below`, mirrored or not: a tileset's dual
+    /// cubes belong to the chunk of their lowest cell, so the chunk below an
+    /// edit can need a model even with no tiles of its own.
+    fn remesh(
+        &mut self,
+        #[cfg(feature = "headed")] device: &Device,
+        bundle_id: u8,
+        keys: Vec<String>,
+        below: Vec<IVec3>,
+        model_manager: &ModelManager,
+    ) {
+        let (Some(layer), Some(mapper), Some(mirror)) = (
+            self.layers.get_mut(&bundle_id),
+            self.local_mappers.get_mut(&bundle_id),
+            self.tile_mirror.get(&bundle_id),
+        ) else {
+            return;
+        };
+        let tilesets = !mapper.tilesets.is_empty();
+        if tilesets {
+            mapper.tilesets.resolve(&mapper.tex_names);
+        }
+        let mut todo: Vec<(String, IVec3)> = vec![];
+        for key in keys {
+            if let Some(c) = mirror.get(&key) {
+                todo.push((key, c.pos));
+            }
+        }
+        for pos in below {
+            let key = chunk_key(pos.x, pos.y, pos.z);
+            if !todo.iter().any(|(k, _)| *k == key) {
+                todo.push((key, pos));
+            }
+        }
+        for (key, pos) in todo {
+            let empty;
+            let chunk = match mirror.get(&key) {
+                Some(c) => c,
+                None => {
+                    empty = Chunk::new(key.clone(), pos.x, pos.y, pos.z);
+                    &empty
+                }
+            };
+            let apron = if tilesets {
+                Some(apron_in(mirror, pos))
+            } else {
+                None
+            };
+            let model = match layer.chunks.entry(key.clone()) {
+                Entry::Occupied(o) => o.into_mut(),
+                Entry::Vacant(v) => v.insert(ChunkModel::new(
+                    #[cfg(feature = "headed")]
+                    device,
+                    key,
+                    pos.x,
+                    pos.y,
+                    pos.z,
+                    #[cfg(feature = "headed")]
+                    false,
+                )),
+            };
+            model.build_chunk_with(
+                &mapper.tex_map,
+                &mapper.model_map,
+                model_manager,
+                chunk,
+                &mapper.tilesets,
+                apron.as_ref(),
+            );
+            #[cfg(feature = "headed")]
+            model.cook(device);
         }
     }
 
@@ -700,6 +786,7 @@ impl World {
                             match self.local_mappers.get_mut(&bundle_id) {
                                 Some(m) => {
                                     m.tex_map.insert(i, uv);
+                                    m.tex_names.insert(name.to_lowercase(), i);
                                 }
                                 _ => {
                                     self.loggy.send((
@@ -747,6 +834,7 @@ impl World {
                                         .unwrap_or(&vec4(0., 0., 1., 1.))
                                         .clone(),
                                 );
+                                m.tex_names.insert(name.to_lowercase(), i);
                             }
                             _ => {
                                 self.loggy.send((

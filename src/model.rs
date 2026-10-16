@@ -720,6 +720,9 @@ pub struct Vertex {
 }
 
 impl Vertex {
+    pub fn new(pos: [i16; 3], nor: [i8; 3], tex: [f32; 2]) -> Vertex {
+        vertex(pos, nor, tex)
+    }
     /// Block-local integer position (raw packed form used by the wgpu vertex
     /// buffer). Exposed read-only for backends that rasterize `vert_data`
     /// directly (e.g. the TUI software renderer) instead of uploading it.

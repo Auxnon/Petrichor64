@@ -11,10 +11,11 @@ use wgpu::{util::DeviceExt, Buffer, Device};
 use crate::ent::EntityUniforms;
 use crate::{
     model::{Model, ModelManager, Vertex},
+    tileset::{Apron, Tilesets},
     world::WorldInstance,
 };
 
-const CHUNK_SIZE: i32 = 32;
+pub const CHUNK_SIZE: i32 = 32;
 pub struct Layer {
     /** if all world tiles were cleared */
     pub dropped: bool,
@@ -337,6 +338,60 @@ pub fn chunk_key(ix: i32, iy: i32, iz: i32) -> String {
     )
 }
 
+/// A chunk's cells plus one more on each high side, from `chunks` (absent
+/// chunks are air): what `tileset::mesh` needs to mesh the dual cubes whose
+/// lowest cell is in it. `origin` is the chunk's lowest tile.
+pub fn apron_in(chunks: &FxHashMap<String, Chunk>, origin: IVec3) -> Apron {
+    let n = CHUNK_SIZE;
+    // this chunk and the 7 above it on some axis, looked up once
+    let mut near: [Option<&Chunk>; 8] = [None; 8];
+    for (i, c) in near.iter_mut().enumerate() {
+        let o = origin + ivec3((i & 1) as i32, ((i >> 1) & 1) as i32, (i >> 2) as i32) * n;
+        *c = chunks.get(&chunk_key(o.x, o.y, o.z));
+    }
+    Apron::new(n, |x, y, z| {
+        let i = (x / n) as usize | ((y / n) as usize) << 1 | ((z / n) as usize) << 2;
+        match near[i] {
+            Some(c) => {
+                let (lx, ly, lz) = (x % n, y % n, z % n);
+                c.cells[((lx * n + ly) * n + lz) as usize].0
+            }
+            None => 0,
+        }
+    })
+}
+
+/// The chunks below `chunk` (on any of x, y, z) whose dual cubes reach into
+/// it: those its lowest layers touch, by their lowest tile. A neighbour is
+/// listed when any non-empty cell lies on the faces it shares.
+pub fn chunks_below(chunk: &Chunk) -> Vec<IVec3> {
+    let n = CHUNK_SIZE;
+    // bit a of the key set when the cell is on the low face of axis a
+    let mut touched = [false; 8];
+    for x in 0..n {
+        for y in 0..n {
+            for z in 0..n {
+                let on = (x == 0) as usize | ((y == 0) as usize) << 1 | ((z == 0) as usize) << 2;
+                if on == 0 {
+                    continue;
+                }
+                if chunk.cells[((x * n + y) * n + z) as usize].0 != 0 {
+                    // every combination of the faces this cell is on
+                    for d in 1..8usize {
+                        if d & on == d {
+                            touched[d] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (1..8usize)
+        .filter(|&d| touched[d])
+        .map(|d| chunk.pos - ivec3((d & 1) as i32, ((d >> 1) & 1) as i32, (d >> 2) as i32) * n)
+        .collect()
+}
+
 /// Direct (non-channel) solid-tile query against an externally-held chunk
 /// map — identical logic to `Layer::is_tile`, but usable against any
 /// `FxHashMap<String, Chunk>` snapshot rather than `Layer`'s own private
@@ -571,6 +626,28 @@ impl ChunkModel {
         model_manager: &ModelManager,
         chunk: Chunk,
     ) {
+        self.build_chunk_with(
+            tex_map,
+            model_map,
+            model_manager,
+            &chunk,
+            &Tilesets::default(),
+            None,
+        );
+    }
+
+    /// `build_chunk`, with tileset members meshed on the dual grid
+    /// (`tileset::mesh`) instead of as cubes. `apron` is the chunk's cells
+    /// plus one more on each high side; without it there are no tilesets.
+    pub fn build_chunk_with(
+        &mut self,
+        tex_map: &FxHashMap<u32, Vec4>,
+        model_map: &FxHashMap<u32, Rc<Model>>,
+        model_manager: &ModelManager,
+        chunk: &Chunk,
+        sets: &Tilesets,
+        apron: Option<&Apron>,
+    ) {
         #[cfg(feature = "headed")]
         {
             self.buffers = None;
@@ -578,9 +655,8 @@ impl ChunkModel {
         self.vert_data = vec![];
         self.ind_data = vec![];
 
-        // we need to mutate teh chunk with vertex data, so we clone it's cell array to build our 3d grid with
-        for (i, cell) in chunk.cells.clone().iter().enumerate() {
-            if (*cell).0 > 0u32 {
+        for (i, cell) in chunk.cells.iter().enumerate() {
+            if (*cell).0 > 0u32 && (apron.is_none() || sets.member(cell.0).is_none()) {
                 _add_tile_model(
                     tex_map,
                     model_map,
@@ -593,6 +669,19 @@ impl ChunkModel {
                     i as i32 % CHUNK_SIZE,
                 );
             }
+        }
+        if let Some(apron) = apron {
+            // a cell's centre sits at 16 * its index in the chunk mesh, as
+            // _add_tile_model's cube spans it -8..8
+            crate::tileset::mesh(
+                sets,
+                apron,
+                tex_map,
+                model_manager,
+                IVec3::ZERO,
+                &mut self.vert_data,
+                &mut self.ind_data,
+            );
         }
     }
 

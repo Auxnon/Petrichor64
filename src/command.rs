@@ -776,6 +776,62 @@ function tile(asset, x, y, z, rot) end"
 function dtile( x, y, z) end"
     );
 
+    let pitcher = main_pitcher.clone();
+    lua!(
+        "tileset",
+        move |_, _, (name, tiles, opts): (String, Option<Value>, Option<Value>)| {
+            let tiles = match tiles {
+                Some(Value::Table(t)) => t
+                    .borrow()
+                    .iter()
+                    .filter_map(|(_, v)| match v {
+                        Value::String(s) => Some(s.to_owned()),
+                        _ => None,
+                    })
+                    .collect(),
+                Some(Value::String(s)) => vec![s],
+                _ => vec![],
+            };
+            let mut look = crate::tileset::Look::Block;
+            let mut pieces = vec![];
+            if let Some(Value::Table(t)) = opts {
+                let t = t.borrow();
+                if let Some(Value::String(s)) = t.get("look") {
+                    look = crate::tileset::Look::parse(s);
+                }
+                if let Some(Value::Table(p)) = t.get("pieces") {
+                    for (k, v) in p.borrow().iter() {
+                        let case = match k {
+                            Value::String(s) => crate::tileset::parse_case(&s),
+                            Value::Integer(i) if (0..256).contains(&i) => Some(i as u8),
+                            _ => None,
+                        };
+                        match (case, v) {
+                            (Some(c), Value::String(m)) => pieces.push((c, m.to_owned())),
+                            _ => {
+                                return Err(make_err(&format!(
+                                    "tileset {}: a piece is [case] = \"model\", case as 8 corner bits like \"1111 0000\" or 0..255",
+                                    name
+                                )))
+                            }
+                        }
+                    }
+                }
+            }
+            lua_err!(pitcher.send((
+                bundle_id,
+                MainCommmand::Tileset(crate::tileset::TilesetDef { name, tiles, look, pieces })
+            )));
+            Ok(())
+        },
+        "Mesh tiles together on the dual grid: blocky, smooth, or your own model pieces",
+        "
+---@param name string
+---@param tiles string[]|nil
+---@param opts {look?: 'block'|'smooth', pieces?: table<string|integer, string>}?
+function tileset(name, tiles, opts) end"
+    );
+
     // MARK
     // BLUE TODO this function is expensive? if called twice in one cycle it ruins key press checks??
     let sender = world_sender.clone();
@@ -3834,6 +3890,8 @@ pub enum MainCommmand {
     Load(String),
     Subload(String, bool),
     WorldSync(Vec<Chunk>, bool),
+    /// `tileset(...)`: tiles that mesh together on the dual grid.
+    Tileset(crate::tileset::TilesetDef),
     /// Microphone capture. `Some(id)` starts a capture of `secs` seconds into
     /// sample slot `id`, replying whether it actually started (false = no input
     /// device, or one is already running). `None` is a **query only** — it never
@@ -3900,6 +3958,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             })
         }
         MainCommmand::Fog(v) => Some(VmToHost::Fog([v.x, v.y, v.z, v.w])),
+        MainCommmand::Tileset(def) => Some(VmToHost::Tileset(def)),
         MainCommmand::MouseGrab(on) => Some(VmToHost::MouseGrab(on)),
         MainCommmand::Globals(table) => Some(VmToHost::Globals(
             table

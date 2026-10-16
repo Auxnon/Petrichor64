@@ -85,6 +85,7 @@ mod template;
 mod texture;
 mod tile;
 mod tile_grid;
+mod tileset;
 #[cfg(all(feature = "render-tui", not(target_arch = "wasm32")))]
 mod tui;
 mod types;
@@ -2142,8 +2143,13 @@ impl Core {
                 #[cfg(feature = "headed")]
                 {
                     let uv = self.tex_manager.get_tex(&name);
-                    self.world.set_local_tex(0, index, uv);
+                    self.world.set_local_tex(0, name, index, uv);
                 }
+            }
+            VmToHost::Tileset(def) => {
+                #[cfg(feature = "headed")]
+                self.world
+                    .define_tileset(&self.gfx.device, 0, def, &self.model_manager);
             }
             VmToHost::Globals(_) => {
                 // TODO: Globals → screen effects.
@@ -2775,6 +2781,15 @@ impl Core {
                         id,
                         chunks,
                         dropped,
+                        &self.model_manager,
+                    );
+                }
+                MainCommmand::Tileset(def) => {
+                    self.world.define_tileset(
+                        #[cfg(feature = "headed")]
+                        &self.gfx.device,
+                        id,
+                        def,
                         &self.model_manager,
                     );
                 }
