@@ -72,6 +72,8 @@ mod render;
 mod root;
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 mod serve;
+#[cfg(all(feature = "tui-embed", desktop))]
+mod tui_embed;
 #[cfg(feature = "audio")]
 mod fx;
 #[cfg(feature = "audio")]
@@ -1275,6 +1277,30 @@ impl ApplicationHandler for App {
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn run_cli() -> bool {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().skip(1).any(|a| a == "--tui" || a == "-t") {
+        // Everything but the flag goes to the TUI build, which reads the game
+        // dir as its first argument like chor does.
+        let rest: Vec<String> = args
+            .iter()
+            .skip(1)
+            .filter(|a| *a != "--tui" && *a != "-t")
+            .cloned()
+            .collect();
+        #[cfg(all(feature = "tui-embed", desktop))]
+        {
+            let e = tui_embed::run(&rest);
+            eprintln!("couldn't start the terminal build: {}", e);
+        }
+        #[cfg(not(all(feature = "tui-embed", desktop)))]
+        {
+            let _ = rest;
+            eprintln!(
+                "this chor was built without the terminal build; \
+                 rebuild with --features tui-embed (or kitchensink)"
+            );
+        }
+        std::process::exit(1);
+    }
     if args.iter().skip(1).any(|a| a == "--web" || a == "-w") {
         let mut dir = None;
         let mut lan = false;

@@ -45,12 +45,18 @@ include_auto=["studio"]
 bin=[]
 # Everything: default plus the extras that make `chor` bigger. Grows as we add
 # more of those. Build or install with `--features kitchensink`.
-kitchensink=["default", "web-embed"]
+kitchensink=["default", "web-embed", "tui-embed"]
 # Embed the web (wasm) build in `chor`, gzipped, so `chor -w <game dir>` needs
 # no web/dist on disk (works after `cargo install`). build.rs runs the web build
 # first (needs trunk, wasm-pack, wasm32-unknown-unknown), or embeds the dir in
 # $CHOR_WEB_DIST instead. Adds ~3MB.
 web-embed=[]
+# Embed the terminal (render-tui) build in `chor`, gzipped, so `chor -t <game
+# dir>` runs a game in the terminal. headed and render-tui are separate builds of
+# the core, so build.rs builds a second, TUI-only chor and embeds that; it's
+# unpacked to the user cache dir on first run. Or set $CHOR_TUI_BIN to embed an
+# already-built one. Adds ~2MB.
+tui-embed=["dep:flate2"]
 online_capable=["rmp-serde", "bytes"]
 # WebSocket client for `conn("ws://…")` / `conn("wss://…")`. Separate from
 # `online_capable` (raw TCP + MessagePack, can host): a browser can only speak
@@ -174,6 +180,8 @@ piccolo = { git="https://github.com/kyren/piccolo", optional=true } # version="0
 # gc-arena = {git="https://github.com/kyren/gc-arena"}
 crossbeam = "0.8.4"
 atomicell = "0.2.0"
+# Unpacks the TUI build embedded by `tui-embed`. Already in the tree via png.
+flate2 = { version = "1", optional = true }
 
 # ---------------------------------------------------------------------------
 # Desktop-only dependencies: crates that need a desktop OS, not merely a native
@@ -184,7 +192,7 @@ atomicell = "0.2.0"
 # which is what the call sites use — a build-script cfg can't drive dependency
 # resolution, so the condition has to be written out longhand here.
 # ---------------------------------------------------------------------------
-# build.rs gzips the web build for `web-embed`. Build-only: not in the binary.
+# build.rs gzips the web build for `web-embed` and the TUI build for `tui-embed`.
 [build-dependencies]
 flate2 = "1"
 
