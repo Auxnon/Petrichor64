@@ -11,8 +11,8 @@ use std::io::{stdout, Write};
 /// between backends. Both terrain and entities get real per-triangle
 /// geometry: an entity's `asset` is resolved through `ModelManager` (falling
 /// back to a cube for a sprite/billboard asset with no 3D shape) and drawn
-/// with its actual rotation and scale, mirroring `Ent::build_meta`'s
-/// translation * scale * rotation composition.
+/// with the same transform as the wgpu path (`lua_ent::entity_matrix`, plus
+/// the parent's matrix).
 pub struct TuiRenderer {
     cols: u16,
     rows: u16,
@@ -69,9 +69,18 @@ impl TuiRenderer {
         }
         let mut fb = Framebuffer::new(w, h);
 
-        let cam_pos = core.global.cam_pos * 16.0;
-        let mouse = core.global.smooth_cam_rot;
-        let vp = camera_matrix(w as f32 / h as f32, cam_pos, mouse);
+        // Same camera state as `render::render_loop`. The wgpu renderer is the
+        // only place `cam{}`'s rotation (`simple_cam_rot`) is copied into
+        // `smooth_cam_rot`, so reading `smooth_cam_rot` alone here left the
+        // terminal camera stuck at yaw 0, pitch 0 whatever the game asked for.
+        core.global.smooth_cam_pos = core.global.cam_pos;
+        core.global.smooth_cam_rot = core.global.simple_cam_rot;
+        let cam = if core.global.debug {
+            core.global.smooth_cam_pos + core.global.debug_camera_pos
+        } else {
+            core.global.smooth_cam_pos
+        };
+        let vp = camera_matrix(w as f32 / h as f32, cam * 16.0, core.global.smooth_cam_rot);
 
         for chunk in core.world.get_chunk_models() {
             if chunk.ind_data.len() < 3 || chunk.vert_data.is_empty() {
@@ -90,6 +99,9 @@ impl TuiRenderer {
 
         {
             let cube = core.model_manager.cube_model();
+            // Parents sit earlier in their bundle's array than their children
+            // (`EntManager` keeps that order), so one pass resolves them.
+            let mut mats: std::collections::HashMap<u64, Mat4> = Default::default();
             for wrapper in core
                 .ent_manager
                 .bundles
@@ -102,9 +114,15 @@ impl TuiRenderer {
                     {
                         return Ok(());
                     }
-                    // Real model + rotation, mirroring `Ent::build_meta`
-                    // (translation * scale * rotation) — falls back to the
-                    // cube when `asset` doesn't resolve to a model (e.g. a
+                    // The wgpu path's transform (`Ent::build_meta`): includes
+                    // `size`, `offset` and the parent's matrix, which a
+                    // hand-rolled translate * scale * rotate here dropped.
+                    let mut model_mat = crate::lua_ent::entity_matrix(lent);
+                    if let Some(p) = lent.parent.and_then(|id| mats.get(&id)) {
+                        model_mat = *p * model_mat;
+                    }
+                    mats.insert(lent.get_id(), model_mat);
+                    // The real model — falls back to the cube when `asset` doesn't resolve to a model (e.g. a
                     // billboard sprite has no 3D shape to show here).
                     let model = core
                         .model_manager
@@ -114,18 +132,7 @@ impl TuiRenderer {
                     let Some((verts, inds)) = model.data.as_ref() else {
                         return Ok(());
                     };
-                    let pos = vec3(lent.x as f32, lent.y as f32, lent.z as f32) * 16.0;
-                    let scale = (lent.scale as f32).max(0.1);
-                    let quat = glam::Quat::from_euler(
-                        glam::EulerRot::XYZ,
-                        lent.rot_x as f32,
-                        lent.rot_y as f32,
-                        lent.rot_z as f32,
-                    );
-                    let mvp = vp
-                        * Mat4::from_translation(pos)
-                        * Mat4::from_scale(Vec3::splat(scale))
-                        * Mat4::from_quat(quat);
+                    let mvp = vp * model_mat;
                     for tri in inds.chunks_exact(3) {
                         let tri_verts = [
                             &verts[tri[0] as usize],
@@ -146,9 +153,9 @@ impl TuiRenderer {
 /// Mirrors `render::generate_matrix`'s camera math (that module is wgpu-only
 /// and not compiled under `render-tui`) combined straight to a view-projection
 /// matrix, since this rasterizer only needs the combined transform.
-fn camera_matrix(aspect: f32, mut camera_pos: Vec3, mouse: glam::Vec2) -> Mat4 {
+/// `camera_pos` is already ×16, as `generate_matrix` does to its argument.
+fn camera_matrix(aspect: f32, camera_pos: Vec3, mouse: glam::Vec2) -> Mat4 {
     let persp = Mat4::perspective_rh(0.785398, aspect.max(0.01), 1., 24800.0);
-    camera_pos *= 1.0; // already scaled by caller (matches render.rs's *16 on cam_pos)
     let r = mouse.x;
     let azimuth = mouse.y;
     let az = azimuth.cos() * 100.;
