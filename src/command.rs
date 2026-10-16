@@ -3931,8 +3931,10 @@ pub enum MainCommmand {
 /// after each dispatched message and posts the results to the main thread.
 ///
 /// Only the fire-and-forget subset is mapped: `Cam`, `Globals`, `LoopComplete`,
-/// `AsyncError`, `Spawn`. Blocking request/response commands (GetImg/SetImg/Make/
-/// Group/GetGlobal/Read/Write/Die — they carry a SyncSender) and host-internal
+/// `AsyncError`, `Spawn`, and `Model`/`Make` (the `mod` native sends a reply
+/// channel but never reads it, so they're acked here and forwarded). Blocking
+/// request/response commands (GetImg/Group/GetGlobal/Read/Write/Die — they
+/// carry a SyncSender that is read) and host-internal
 /// ones return `None` and are handled in the read-back phase. Compiled on all
 /// targets so a new `MainCommmand` variant or `VmToHost` change is type-checked
 /// everywhere, not just on wasm.
@@ -3984,6 +3986,33 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             .downcast_ref::<crate::lua_ent::LuaEnt, _, _>(|lent| Ok(lent.clone()))
             .ok()
             .map(VmToHost::Spawn),
+        MainCommmand::Model(m) => {
+            // Nobody waits on the ack (see the `mod` native).
+            let _ = m.sender.send(0);
+            let ModelPacket {
+                asset,
+                textures,
+                vecs,
+                norms,
+                inds,
+                uvs,
+                style,
+                ..
+            } = *m;
+            Some(VmToHost::Model {
+                asset,
+                textures,
+                vecs,
+                norms,
+                inds,
+                uvs,
+                style,
+            })
+        }
+        MainCommmand::Make(m, tx) => {
+            let _ = tx.send(0);
+            Some(VmToHost::Make(m))
+        }
         _ => None,
     }
 }

@@ -65,6 +65,38 @@ struct WorkerVm {
     last_xforms: std::collections::HashMap<u64, EntXform>,
     /// Same, for skeletal animation state.
     last_skels: std::collections::HashMap<u64, Option<crate::skeleton::SkelState>>,
+    /// Same, for what an entity looks like (`EntLook`).
+    last_looks: std::collections::HashMap<u64, EntLook>,
+}
+
+/// The non-transform state main's render mirror needs: everything `EntUpdate`
+/// doesn't carry that changes what is drawn. A change sends the whole entity
+/// (`VmToHost::EntProps`); it's rare (a TV channel, a cat falling asleep).
+#[derive(PartialEq)]
+struct EntLook {
+    asset: String,
+    tex: String,
+    anim: bool,
+    flipped: bool,
+    parent: Option<u64>,
+    size: [f64; 3],
+    offset: [f64; 3],
+    tint: [f64; 4],
+}
+
+impl EntLook {
+    fn of(l: &LuaEnt) -> Self {
+        EntLook {
+            asset: l.get_asset(),
+            tex: l.get_tex().clone(),
+            anim: l.is_anim(),
+            flipped: l.flipped,
+            parent: l.parent,
+            size: l.size,
+            offset: l.offset,
+            tint: l.tint,
+        }
+    }
 }
 
 thread_local! {
@@ -208,6 +240,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         entities,
         last_xforms,
         last_skels,
+        last_looks,
     } = worker;
 
     // Kept alive through the enter below so Load's reply send doesn't hit a
@@ -349,6 +382,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // mostly-static entities streams almost nothing; main keeps the last value.
     let mut ent_bytes = Vec::new();
     let mut skel_changes = Vec::new();
+    let mut look_changes = Vec::new();
     let mut alive: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let mut removed: std::collections::HashSet<u64> = std::collections::HashSet::new();
     entities.retain(|w| {
@@ -358,6 +392,13 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                     skel_changes.push((l.get_id(), l.skel.clone()));
                     last_skels.insert(l.get_id(), l.skel.clone());
                 }
+            }
+            // The first sighting counts as a change: Spawn carried the entity
+            // as it was at spawn(), and the script may have restyled it since.
+            let look = EntLook::of(l);
+            if last_looks.get(&l.get_id()) != Some(&look) {
+                look_changes.push(l.clone());
+                last_looks.insert(l.get_id(), look);
             }
             Ok((
                 l.is_dead(),
@@ -399,6 +440,10 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     }
     last_xforms.retain(|id, _| alive.contains(id));
     last_skels.retain(|id, _| alive.contains(id));
+    last_looks.retain(|id, _| alive.contains(id));
+    if !look_changes.is_empty() {
+        out.push(VmToHost::EntProps(look_changes));
+    }
     if !skel_changes.is_empty() {
         out.push(VmToHost::EntSkel(skel_changes));
     }
@@ -512,6 +557,7 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         entities: Vec::new(),
         last_xforms: std::collections::HashMap::new(),
         last_skels: std::collections::HashMap::new(),
+        last_looks: std::collections::HashMap::new(),
     })
 }
 

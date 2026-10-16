@@ -14,6 +14,7 @@ use crate::{
     world::World,
 };
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
 pub enum TextureStyle {
     Tri,
     Quad,

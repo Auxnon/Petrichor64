@@ -2032,6 +2032,70 @@ impl Core {
         }
     }
 
+    /// `mod(name, {...})` mesh form: build or replace a model. Shared by the
+    /// native command loop and the wasm worker bridge.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_model(
+        &mut self,
+        bundle_id: u8,
+        asset: &str,
+        textures: Vec<String>,
+        vecs: Vec<[f32; 3]>,
+        norms: Vec<[f32; 3]>,
+        inds: Vec<u32>,
+        uvs: Vec<[f32; 2]>,
+        style: crate::model::TextureStyle,
+    ) {
+        let res = self.model_manager.upsert_model(
+            #[cfg(feature = "headed")]
+            &self.gfx.device,
+            #[cfg(feature = "headed")]
+            &self.tex_manager,
+            &mut self.world,
+            bundle_id,
+            asset,
+            textures,
+            vecs,
+            norms,
+            inds,
+            uvs,
+            style,
+            &mut self.loggy,
+            self.global.debug,
+        );
+        if let Some(m) = res {
+            self.global.state_changes.push(StateChange::ModelChange(m));
+            self.global.is_state_changed = true;
+        }
+    }
+
+    /// `mod(name, {t = ...})` texture-cube form; `m` is `MainCommmand::Make`'s
+    /// name + six textures.
+    fn apply_make(&mut self, bundle_id: u8, m: &[String]) {
+        if m.len() != 7 {
+            return;
+        }
+        // change order to match expectations from the front end
+        let m2 = vec![
+            m[1].clone(),
+            m[6].clone(),
+            m[2].clone(),
+            m[4].clone(),
+            m[3].clone(),
+            m[5].clone(),
+        ];
+        self.model_manager.edit_cube(
+            #[cfg(feature = "headed")]
+            &self.gfx.device,
+            #[cfg(feature = "headed")]
+            &self.tex_manager,
+            &mut self.world,
+            bundle_id,
+            m[0].clone(),
+            m2,
+        );
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
@@ -2095,6 +2159,40 @@ impl Core {
                 // Desired grab state; the frame loop mirrors it into the
                 // pointer-lock intent (actual lock waits for a canvas click).
                 self.global.mouse_grab = on;
+            }
+            VmToHost::Model {
+                asset,
+                textures,
+                vecs,
+                norms,
+                inds,
+                uvs,
+                style,
+            } => {
+                // The worker VM is always bundle 0 (see WorldSync below).
+                self.apply_model(0, &asset, textures, vecs, norms, inds, uvs, style);
+            }
+            VmToHost::Make(m) => self.apply_make(0, &m),
+            VmToHost::EntProps(lents) => {
+                // Replace each mirror wholesale. The worker never clears an
+                // entity's ASSET/TEX flags (nothing renders there), so the
+                // copy arrives flagged and dirty, and check_ents re-resolves
+                // its model and texture.
+                #[cfg(feature = "headed")]
+                for lent in lents {
+                    let id = lent.get_id();
+                    let mut lent = Some(lent);
+                    self.ent_manager.each_ent(|eref| {
+                        let _ = eref.with_mut(|l| {
+                            if l.get_id() == id {
+                                if let Some(new) = lent.take() {
+                                    *l = new;
+                                }
+                            }
+                            Ok(())
+                        });
+                    });
+                }
             }
             VmToHost::SetImg { name, w, h, px } => {
                 #[cfg(feature = "headed")]
@@ -2425,12 +2523,11 @@ impl Core {
                     }
                 }
                 MainCommmand::Model(model) => {
-                    let res = self.model_manager.upsert_model(
-                        #[cfg(feature = "headed")]
-                        &self.gfx.device,
-                        #[cfg(feature = "headed")]
-                        &self.tex_manager,
-                        &mut self.world,
+                    let model = *model;
+                    // Nobody waits on this ack any more (see the `mod` native);
+                    // a dropped receiver is the normal case, not an error.
+                    let _ = model.sender.send(0);
+                    self.apply_model(
                         id,
                         &model.asset,
                         model.textures,
@@ -2439,17 +2536,7 @@ impl Core {
                         model.inds,
                         model.uvs,
                         model.style,
-                        &mut self.loggy,
-                        self.global.debug,
                     );
-                    if let Some(m) = res {
-                        self.global.state_changes.push(StateChange::ModelChange(m));
-                        self.global.is_state_changed = true;
-                    }
-
-                    // Nobody waits on this ack any more (see the `mod` native);
-                    // a dropped receiver is the normal case, not an error.
-                    let _ = model.sender.send(0);
                 }
                 MainCommmand::ListModel(s, bundles, tx) => {
                     let list = self.model_manager.search_model(&s, bundles);
@@ -2457,26 +2544,7 @@ impl Core {
                 }
                 MainCommmand::Make(m, tx) => {
                     if m.len() == 7 {
-                        // change order to match expectations from the front end
-                        let m2 = vec![
-                            m[1].clone(),
-                            m[6].clone(),
-                            m[2].clone(),
-                            m[4].clone(),
-                            m[3].clone(),
-                            m[5].clone(),
-                        ];
-                        self.model_manager.edit_cube(
-                            #[cfg(feature = "headed")]
-                            &self.gfx.device,
-                            #[cfg(feature = "headed")]
-                            &self.tex_manager,
-                            &mut self.world,
-                            id,
-                            m[0].clone(),
-                            m2,
-                        );
-
+                        self.apply_make(id, &m);
                         let _ = tx.send(0); // unread ack (see the `mod` native)
                     }
                 }

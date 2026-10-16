@@ -63,6 +63,24 @@ pub enum VmToHost {
     /// Create a render entity from this VM-owned entity (the VM already minted
     /// the id and owns the handle; this just tells the GPU side to build it).
     Spawn(LuaEnt),
+    /// `mod(name, {...})` mesh data: build or replace the model `asset`.
+    /// Must reach main before a Spawn that uses it; both travel in VM order.
+    Model {
+        asset: String,
+        textures: Vec<String>,
+        vecs: Vec<[f32; 3]>,
+        norms: Vec<[f32; 3]>,
+        inds: Vec<u32>,
+        uvs: Vec<[f32; 2]>,
+        style: crate::model::TextureStyle,
+    },
+    /// `mod(name, {t = ...})` texture-cube form, in `MainCommmand::Make`'s
+    /// order: name, then the six face textures.
+    Make(Vec<String>),
+    /// Entities whose look changed in the VM (asset, tex, size, offset, tint,
+    /// parent, flip). `EntUpdate` only streams transforms; main replaces its
+    /// mirror with these and re-resolves model and texture.
+    EntProps(Vec<LuaEnt>),
     /// Upload/replace a named texture's pixels (RGBA8, row-major).
     SetImg {
         name: String,
