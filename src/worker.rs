@@ -482,40 +482,12 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             LocalPool::new(),
         )?;
 
-        let main_fn = vm.load_fn(
-            mc,
-            &mut compiler,
-            Some("main_fn"),
-            "if main ~= nil then main() end if loop ~= nil then loop() end return",
-        )?;
-        let loop_fn = vm.load_fn(
-            mc,
-            &mut compiler,
-            Some("loop_fn"),
-            "if loop ~= nil then loop() end return",
-        )?;
-        let draw_fn = vm.load_fn(
-            mc,
-            &mut compiler,
-            Some("draw_fn"),
-            "if draw ~= nil then draw() end return",
-        )?;
-        let drop_fn = vm.load_fn(
-            mc,
-            &mut compiler,
-            Some("drop_fn"),
-            "if drop ~= nil then drop() end return",
-        )?;
 
         Ok(LuaContext {
             bundle_id,
             compiler,
             scripts: Vec::new(),
             loggy: loggy_tx.clone(),
-            main_fn,
-            loop_fn,
-            draw_fn,
-            drop_fn,
             keys_mutex,
             diff_keys_mutex,
             mice_mutex,

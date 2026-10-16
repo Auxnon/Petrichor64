@@ -382,30 +382,6 @@ impl<'lt> LuaCore {
                     if debug {
                         loggy.send((LogType::LuaSys, "begin lua system listener".to_owned()))?;
                     }
-                    let main_fn = vm.load_fn(
-                        mc,
-                        &mut compiler,
-                        Some("main_fn"),
-                        "if main ~= nil then main() end if loop ~= nil then loop() end return",
-                    )?;
-                    let loop_fn = vm.load_fn(
-                        mc,
-                        &mut compiler,
-                        Some("loop_fn"),
-                        "if loop ~= nil then loop() end return",
-                    )?;
-                    let draw_fn = vm.load_fn(
-                        mc,
-                        &mut compiler,
-                        Some("draw_fn"),
-                        "if draw ~= nil then draw() end return",
-                    )?;
-                    let drop_fn = vm.load_fn(
-                        mc,
-                        &mut compiler,
-                        Some("drop_fn"),
-                        "if drop ~= nil then drop() end return",
-                    )?;
 
                     // Persistent, non-'gc state the message handler needs. Built
                     // once here inside the single native enter; the wasm worker
@@ -415,10 +391,6 @@ impl<'lt> LuaCore {
                         compiler,
                         scripts,
                         loggy: loggy.clone(),
-                        main_fn,
-                        loop_fn,
-                        draw_fn,
-                        drop_fn,
                         keys_mutex,
                         diff_keys_mutex,
                         mice_mutex,
@@ -757,10 +729,6 @@ pub(crate) struct LuaContext {
     pub(crate) scripts: Vec<Option<String>>,
     pub(crate) loggy: Sender<(LogType, String)>,
     /// External-function indices from load_fn; persist in the VM across enters.
-    pub(crate) main_fn: usize,
-    pub(crate) loop_fn: usize,
-    pub(crate) draw_fn: usize,
-    pub(crate) drop_fn: usize,
     pub(crate) keys_mutex: Rc<RefCell<[bool; 256]>>,
     pub(crate) diff_keys_mutex: Rc<RefCell<[bool; 256]>>,
     pub(crate) mice_mutex: Rc<RefCell<[f32; 13]>>,
@@ -856,11 +824,15 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             }
         }
         LuaTalk::Main => {
-            if let Err(er) = vm.call_fn(mc, Some("main_fn_call"), ctx.main_fn, ()) {
-                // Runtime error inside main() points into the loaded app source.
-                let s = error_string(er.into(), &ctx.scripts);
-                ctx.loggy.send((LogType::LuaError, s))?;
-            };
+            // Hooks are optional: `call_global` gives `None` when the game didn't
+            // define one. main() is followed by a first loop(), as before.
+            for hook in ["main", "loop"] {
+                if let Some(Err(er)) = vm.call_global(mc, hook, ()) {
+                    // Runtime error inside the hook points into the loaded app source.
+                    let s = error_string(er.into(), &ctx.scripts);
+                    ctx.loggy.send((LogType::LuaError, s))?;
+                }
+            }
         }
         LuaTalk::Die(sync) => {
             println!(
@@ -906,11 +878,11 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             ];
             drop(mm);
 
-            if let Err(e) = vm.call_fn(mc, Some("loop_fn_call"), ctx.loop_fn, ()) {
+            if let Some(Err(e)) = vm.call_global(mc, "loop", ()) {
                 // Runtime error inside loop() points into the loaded app source.
                 let s = error_string(e.into(), &ctx.scripts);
                 ctx.loggy.send((LogType::LuaError, s))?;
-            };
+            }
 
             local_pool.check_lock(shared);
 
@@ -948,14 +920,13 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
         LuaTalk::Resize(w, h) => {
             println!("resize {} {}", w, h);
             // A throwing draw() must not kill the runtime; log and continue.
-            if let Err(e) = vm.call_fn(mc, Some("redraw_fn"), ctx.draw_fn, (w, h)) {
+            if let Some(Err(e)) = vm.call_global(mc, "draw", (w, h)) {
                 let s = error_string(e.into(), &ctx.scripts);
                 ctx.loggy.send((LogType::LuaError, s))?;
             }
         }
         LuaTalk::Drop(s) => {
-            let res = vm.call_fn(mc, Some("drop"), ctx.drop_fn, s);
-            if let Err(e) = res {
+            if let Some(Err(e)) = vm.call_global(mc, "drop", s) {
                 let msg = error_string(e.into(), &ctx.scripts);
                 ctx.async_sender
                     .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;
