@@ -569,6 +569,7 @@ impl Gui {
         }
     }
 
+    #[cfg(feature = "headed")]
     pub fn mark_bundle_dirty(&mut self, bundle_id: u8, sky: bool) {
         if sky {
             if self.sky_layer.bundle_target == Some(bundle_id) {

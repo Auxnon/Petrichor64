@@ -20,7 +20,7 @@ use crate::{
 };
 
 use std::sync::mpsc::{channel, Receiver, Sender};
-#[cfg(feature = "headed")]
+#[cfg(any(feature = "headed", all(feature = "audio", not(target_arch = "wasm32"))))]
 use std::sync::Arc;
 
 // use tracy::frame;
@@ -318,6 +318,10 @@ impl<'core> Core {
             global,
             #[cfg(feature = "audio")]
             _stream: None,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_stream: None,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            mic_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(feature = "audio")]
             singer: channel().0,
             world,
