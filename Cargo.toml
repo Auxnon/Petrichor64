@@ -38,7 +38,7 @@ panic ="abort"
 inherits = "release"
 
 [features]
-default=[ "silt","headed","audio","studio","bin","tui-embed"] # "online_capable" ,  "headed" , "include_auto"
+default=[ "silt","headed","audio","studio","bin"] # "online_capable" ,  "headed" , "include_auto"
 include_auto=["studio"]
 # Builds the `chor` executable. Default on; the web build leaves it off
 # (see [[bin]]).
@@ -55,9 +55,8 @@ web-embed=[]
 # dir>` runs a game in the terminal. headed and render-tui are separate builds of
 # the core, so build.rs builds a second, TUI-only chor and embeds that; it's
 # unpacked to the user cache dir on first run. Or set $CHOR_TUI_BIN to embed an
-# already-built one. Adds ~2MB (12MB -> 14MB release). Default on, so a `chor`
-# started over SSH has somewhere to go; costs a second release build of the
-# core the first time (set $CHOR_TUI_BIN, or --no-default-features, to skip).
+# already-built one. Adds ~2MB (12MB -> 14MB release) and a second release
+# build of the core. Part of `kitchensink`.
 tui-embed=["dep:flate2"]
 online_capable=["rmp-serde", "bytes"]
 # WebSocket client for `conn("ws://…")` / `conn("wss://…")`. Separate from

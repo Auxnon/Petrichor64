@@ -1488,7 +1488,7 @@ fn no_display_hint() {
     #[cfg(not(all(feature = "tui-embed", desktop)))]
     eprintln!(
         "chor: this build can't play in the terminal; reinstall with \
-         `--features tui-embed`, then run:  chor -t {game}"
+         `--features kitchensink` (or just `tui-embed`), then run:  chor -t {game}"
     );
 }
 
