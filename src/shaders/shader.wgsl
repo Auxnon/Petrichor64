@@ -16,6 +16,8 @@ struct VertexOutput {
 	// per-fragment computation when gour() is on. Always computed — cheap
 	// relative to per-fragment, and this way there's no shader permutation.
 	@location(8) shade: vec3<f32>,
+	// effects.w > 0: unlit — the texel as-is, no shading or fog (guide/entity.md).
+	@location(9) @interpolate(flat) unlit: f32,
 };
 
 struct InstanceInput {
@@ -295,6 +297,7 @@ fn vs_common(
 	out.specs=globals.specs;
 	out.time=globals.adjustments[0][0];
 	out.tint=instance.color;
+	out.unlit=instance.effects[3];
 	// Gouraud (guide/gour.md): always computed, cheap relative to
 	// per-fragment — fs_main picks this or its own per-fragment shade based
 	// on gour()'s toggle (shadow_on.y), no shader permutation needed.
@@ -390,9 +393,12 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 
 	// Vertex-colour tint (guide/entity.md): {1,1,1,1} default is a no-op.
 	var rgb = e3.rgb * shade * in.tint.rgb;
+	if (in.unlit > 0.5) {
+		rgb = e3.rgb * in.tint.rgb;
+	}
 	// L2 distance fog: blend toward fog rgb as the fragment approaches the fog
 	// far distance (fog_color.w). specs.xyz is the camera's world position.
-	if (globals.fog_color.w > 0.) {
+	if (globals.fog_color.w > 0. && in.unlit < 0.5) {
 		let fog_t = clamp(length(in.world_position.xyz - in.specs.xyz) / globals.fog_color.w, 0., 1.);
 		rgb = mix(rgb, globals.fog_color.rgb, fog_t);
 	}

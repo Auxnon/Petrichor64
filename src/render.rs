@@ -184,8 +184,16 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // unprojected cursor one frame stale.
     core.global.last_cam_matrices = Some((mx_persp, mx_view));
     crate::ray::trace(core, mx_persp, mx_view);
-    // Before `gfx` is borrowed for the pass: app first, then overlays.
-    let draw_order = core.bundle_manager.layer_order();
+    // Before `gfx` is borrowed for the pass: app first, then overlays. Bundles
+    // that asked for `attr{front=true}` are held back for the front pass.
+    let (front_order, draw_order): (Vec<u8>, Vec<u8>) = core
+        .bundle_manager
+        .layer_order()
+        .into_iter()
+        .partition(|id| core.bundle_manager.is_front(*id));
+    let has_front = front_order
+        .iter()
+        .any(|id| core.instance_buffers.get(id).map_or(false, |b| !b.is_empty()));
     // shdw{size=} may have asked for a new map size; rebuild it before borrowing gfx
     let shadow_size = core.gfx.set_shadow_size(core.global.shadow_size);
     let gfx = &core.gfx;
@@ -443,28 +451,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             // finished scene instead of at a hash-dependent moment inside it.
             for id in draw_order.iter() {
                 if let Some(batches) = core.instance_buffers.get(id) {
-                    for (model, instance_buffer, size, palettes) in batches.iter() {
-                        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
-                        render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                        render_pass
-                            .set_index_buffer(model.index_buf.slice(..), model.index_format);
-                        match (model.skin.as_ref(), palettes) {
-                            (Some(skin), Some(palettes)) => {
-                                // one draw per instance, each with its own palette
-                                render_pass.set_pipeline(&gfx.skinned_pipeline);
-                                render_pass.set_vertex_buffer(2, skin.buf.slice(..));
-                                for i in 0..*size as u32 {
-                                    let offset = i * crate::skeleton::PALETTE_STRIDE as u32;
-                                    render_pass.set_bind_group(3, palettes, &[offset]);
-                                    render_pass.draw_indexed(0..model.index_count as u32, 0, i..i + 1);
-                                }
-                                render_pass.set_pipeline(&gfx.render_pipeline);
-                            }
-                            _ => {
-                                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
-                            }
-                        }
-                    }
+                    draw_entity_batches(&mut render_pass, gfx, batches);
                 }
             }
 
@@ -478,8 +465,9 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
             }
         }
 
-        //gui space
-        if !gui_on_top {
+        //gui space — after the front pass instead, when there is one, so the
+        // gui layers stay on top of everything
+        if !gui_on_top && !has_front {
             render_pass.set_pipeline(&core.gui.gui_pipeline);
             render_pass.set_bind_group(0, &core.gui.gui_group, &[]);
             render_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
@@ -489,6 +477,52 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     }
     // drop(render_pass);
     encoder.pop_debug_group();
+
+    // Front pass: `attr{front=true}` bundles (an overlay's 3D panels), through
+    // the same camera but over a cleared depth buffer, so they are never buried
+    // in the scene they annotate. Skipped entirely when nobody asked.
+    if has_front {
+        encoder.push_debug_group("Front Render");
+        {
+            let mut front_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Front Pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    depth_slice: None,
+                    view: &gfx.post.post_texture_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &gfx.depth_texture,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Clear(1.0),
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            front_pass.set_pipeline(&gfx.render_pipeline);
+            front_pass.set_bind_group(0, &gfx.main_bind_group, &[]);
+            front_pass.set_bind_group(1, &gfx.entity_bind_group, &[]);
+            front_pass.set_bind_group(2, &gfx.shadow_bind_group, &[]);
+            for id in front_order.iter() {
+                if let Some(batches) = core.instance_buffers.get(id) {
+                    draw_entity_batches(&mut front_pass, gfx, batches);
+                }
+            }
+            if !gui_on_top {
+                front_pass.set_pipeline(&core.gui.gui_pipeline);
+                front_pass.set_bind_group(0, &core.gui.gui_group, &[]);
+                front_pass.set_bind_group(1, &core.gui.gui_aux_group, &[]);
+                front_pass.draw(0..4, 0..1);
+            }
+        }
+        encoder.pop_debug_group();
+    }
     // frame!("pop_debug_group");
 
     // TODO screen grab
@@ -563,8 +597,55 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     }
     encoder.pop_debug_group();
 
+    // CHOR_SNAP test grabs (src/snap.rs): the presented frame when the
+    // swapchain allows copying from it (it has the gui composited on top),
+    // otherwise the scene texture.
+    #[cfg(not(target_arch = "wasm32"))]
+    let snap = crate::snap::wanted(core.global.iteration).map(|path| {
+        let src = if output.texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+            &output.texture
+        } else {
+            &gfx.post.post_texture
+        };
+        crate::snap::record(&gfx.device, &mut encoder, src, path)
+    });
+
     gfx.queue.submit(std::iter::once(encoder.finish()));
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(p) = snap {
+        crate::snap::save(&gfx.device, p);
+    }
     output.present();
 
     DrawState::Success
+}
+
+/// One bundle's entity batches into a pass that already has `render_pipeline`
+/// and the main/entity/shadow bind groups set.
+fn draw_entity_batches<'a>(
+    render_pass: &mut wgpu::RenderPass<'a>,
+    gfx: &'a crate::gfx::Gfx<'_>,
+    batches: &'a crate::ent_manager::InstanceBuffer,
+) {
+    for (model, instance_buffer, size, palettes) in batches.iter() {
+        render_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
+        render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+        render_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
+        match (model.skin.as_ref(), palettes) {
+            (Some(skin), Some(palettes)) => {
+                // one draw per instance, each with its own palette
+                render_pass.set_pipeline(&gfx.skinned_pipeline);
+                render_pass.set_vertex_buffer(2, skin.buf.slice(..));
+                for i in 0..*size as u32 {
+                    let offset = i * crate::skeleton::PALETTE_STRIDE as u32;
+                    render_pass.set_bind_group(3, palettes, &[offset]);
+                    render_pass.draw_indexed(0..model.index_count as u32, 0, i..i + 1);
+                }
+                render_pass.set_pipeline(&gfx.render_pipeline);
+            }
+            _ => {
+                render_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+            }
+        }
+    }
 }

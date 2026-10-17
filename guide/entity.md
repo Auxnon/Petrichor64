@@ -23,6 +23,7 @@ The following fields directly modify the entity when set:
 - `hit_size: number[3]` - collision half-extents override, local space: `{x, y, z}` for a box, or `{radius, radius, half_height}` for a cylinder (only the first and third entries are read). `{0, 0, 0}` (the default) means "use the computed default" instead
 - `hit_offset: number[3]` - collision center offset override, local space, on top of `hit_size`
 - `tint: number[4]` - vertex-colour tint, rgba 0..1, multiplied into the entity's shaded output. `{1,1,1,1}` (the default) is a no-op. Plain numbers only — not the hex-string/0..255-table forms `fog`/`lum`'s colours accept
+- `unlit: boolean` - draw the texture at its own colours, ignoring lights, shading and fog. For UI that lives in the 3D scene (signs, an editor's floating panels). Off by default
 
 **Methods**
 

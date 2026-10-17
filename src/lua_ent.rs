@@ -55,6 +55,10 @@ pub struct LuaEnt {
     /// Vertex-colour tint, rgba 0..1 — multiplies the entity's shaded output.
     /// Default `[1,1,1,1]` (opaque white) is a no-op. See `guide/entity.md`.
     pub tint: [f64; 4],
+    /// Draw at the texture's own colours: no lighting, no fog. For UI that
+    /// lives in the 3D scene (an editor's panels, signage). See guide/entity.md.
+    #[serde(default)]
+    pub unlit: bool,
     /// This entity's own tile grid, if it has one — set by calling `tile`/
     /// `ent:tile(...)` on a grid-less entity, which lazily creates one (see
     /// `TileGrid`, `guide/entity.md`). `Box` keeps this off the common
@@ -441,6 +445,8 @@ impl UserData for LuaEnt {
         // Vertex-colour tint, rgba 0..1 — see guide/entity.md.
         fields.add_field_method_get("tint", |_, _, this| Ok(this.tint));
         fields.add_field_method_set("tint", |_, _, this, tint: [f64; 4]| Ok(this.tint = tint));
+        fields.add_field_method_get("unlit", |_, _, this| Ok(this.unlit));
+        fields.add_field_method_set("unlit", |_, _, this, unlit: bool| Ok(this.unlit = unlit));
 
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
@@ -549,6 +555,7 @@ impl LuaEnt {
             hit_size: [0., 0., 0.],
             hit_offset: [0., 0., 0.],
             tint: [1., 1., 1., 1.],
+            unlit: false,
             grid: None,
             skel: None,
         }
@@ -624,6 +631,7 @@ impl Clone for LuaEnt {
             hit_size: self.hit_size,
             hit_offset: self.hit_offset,
             tint: self.tint,
+            unlit: self.unlit,
             // Deep clone, same as everything else here — cheap when None
             // (the common case), and grids are expected to be moving-
             // platform-sized (small, sparse), not world-sized, so this

@@ -145,7 +145,12 @@ pub fn controls_evaluate(
         }
 
         if held_cmd {
-            if key_pressed(KeyCode::KeyR) {
+            if key_pressed(KeyCode::KeyP) {
+                // The paint overlay. Handled here, on the engine's own snapshot
+                // before any Lua loop runs, so an app can neither see nor
+                // swallow the chord — only refuse it with attr{lock=true}.
+                crate::command::toggle_paint_overlay(core);
+            } else if key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if key_pressed(KeyCode::Enter) {
                 core.global.fullscreen = !core.global.fullscreen;

@@ -246,23 +246,54 @@ impl UserData for LuaImg {
 
         methods.add_method_mut(
             "img",
-            |_, _, this_res, (img, x, y): (Value, Option<Value>, Option<Value>)| {
+            |_,
+             _,
+             this_res,
+             (img, x, y, scale): (Value, Option<Value>, Option<Value>, Option<Value>)| {
                 let this = safe_unwrap!(this_res);
                 this.dirty = true;
+                // Optional whole-number zoom, nearest-neighbour: a pixel-art
+                // canvas view without drawing every texel as its own rect.
+                let scale = match scale {
+                    Some(Value::Integer(i)) if i > 1 => i as u32,
+                    Some(Value::Number(f)) if f >= 2. => f as u32,
+                    _ => 1,
+                };
                 img.apply_userdata(|limg: &LuaImg| {
-                    direct_image(
-                        &mut this.image,
-                        &limg.image,
-                        numop(x),
-                        numop(y),
-                        this.width,
-                        this.height,
-                    );
+                    if scale > 1 {
+                        let big = image::imageops::resize(
+                            &limg.image,
+                            limg.image.width() * scale,
+                            limg.image.height() * scale,
+                            image::imageops::FilterType::Nearest,
+                        );
+                        direct_image(&mut this.image, &big, numop(x), numop(y), this.width, this.height);
+                    } else {
+                        direct_image(
+                            &mut this.image,
+                            &limg.image,
+                            numop(x),
+                            numop(y),
+                            this.width,
+                            this.height,
+                        );
+                    }
                     Ok(())
                 });
                 Ok(())
             },
         );
+
+        // Read one pixel back, as an `rrggbbaa` string any colour argument
+        // takes; nil outside the image.
+        methods.add_method("get", |_, _mc, this_res, (x, y): (i64, i64)| {
+            let this = safe_unwrap!(this_res);
+            if x < 0 || y < 0 || x >= this.image.width() as i64 || y >= this.image.height() as i64 {
+                return Ok(None);
+            }
+            let p = this.image.get_pixel(x as u32, y as u32).0;
+            Ok(Some(crate::command::hex_rgba(p)))
+        });
 
         methods.add_method_mut(
             "pixel",
@@ -308,8 +339,9 @@ impl UserData for LuaImg {
 
         methods.add_method_mut("copy", |vm, mc, this_res, (): ()| {
             let this = safe_unwrap!(this_res);
-            vm.create_userdata(mc, this.clone());
-            Ok(())
+            // Returned: this used to build the copy and drop it, so `copy()`
+            // always gave back nil.
+            Ok(vm.create_userdata(mc, this.clone()))
         });
 
         // TODO from raw

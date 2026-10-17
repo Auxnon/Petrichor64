@@ -1,5 +1,14 @@
 ## UNRELEASED
 
+- **Ctrl+P paint overlay**: over any app that isn't `attr{lock=true}`, pauses it, lets you click a mesh, sprite or tile and paint its texture in place, with a tool panel floating beside it in 3D and a zoomed pixel canvas mode. Built into the engine (`apps/paint3d`)
+- Overlay `app.*` additions: `pick` (what's under the pointer, down to the texture and texel), `pause`, `view` (the app's camera and the pointer ray), `colors`, `project`, `close`
+- `attr{front=true}`: a bundle's entities draw over the scene instead of inside it
+- Entity `unlit` field: draw at the texture's own colours, no lighting or fog
+- Image `get(x, y)` reads a pixel back; `img(src, x, y, scale)` zooms; `copy()` now actually returns the copy
+- `tex()` on an existing texture uploads just that texture's atlas slot, not the whole atlas
+- Opening an overlay no longer resets the app's sounds or unlocks it
+- `CHOR_SNAP=prefix CHOR_SNAP_AT=frames` saves frames to PNG, for testing on a locked or headless session
+
 - Public repo! More documentation!
 - `No signal` app as basic runtime default
 - io.get and io.set to load and save utf8 to local file

@@ -543,6 +543,15 @@ impl World {
         // self.layer.chunks.values()
     }
 
+    /// One bundle's meshed chunks, without pinging the world threads — for
+    /// reading what was last drawn (`pick`), not for driving a rebuild.
+    pub fn chunk_models_for(&self, bundle: u8) -> Vec<&ChunkModel> {
+        self.layers
+            .get(&bundle)
+            .map(|l| l.chunks.values().collect())
+            .unwrap_or_default()
+    }
+
     pub fn set_tile(
         sender: &Sender<(TileCommand, SyncSender<TileResponse>)>,
         t: String,

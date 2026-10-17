@@ -82,6 +82,7 @@ struct EntLook {
     size: [f64; 3],
     offset: [f64; 3],
     tint: [f64; 4],
+    unlit: bool,
 }
 
 impl EntLook {
@@ -95,6 +96,7 @@ impl EntLook {
             size: l.size,
             offset: l.offset,
             tint: l.tint,
+            unlit: l.unlit,
         }
     }
 }

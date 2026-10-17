@@ -43,11 +43,22 @@ im:rrect(x,y,width,height,ro,"000")
 
 ### img
 
-draw another image on this image
+draw another image on this image, optionally zoomed by a whole number (nearest-neighbour, so pixel art stays crisp)
 
 ```lua
---- @field img fun(self:image, source_image:image, x?:gunit, y?:gunit)
+--- @field img fun(self:image, source_image:image, x?:gunit, y?:gunit, scale?:integer)
 im:img(source_image,x,y)
+gui:img(sprite,10,10,4) -- 4x bigger
+```
+
+### get
+
+read one pixel back as an `rrggbbaa` hex string, which any colour argument accepts. `nil` outside the image
+
+```lua
+--- @field get fun(self:image, x:integer, y:integer):string|nil
+local c = im:get(3, 4)
+im:pixel(5, 5, c)
 ```
 
 ### text
@@ -88,7 +99,7 @@ im:fill("F0F")
 
 ### copy
 
-clones image to a new image userdata instance
+clones image to a new image userdata instance (it used to return nil)
 
 ```lua
 --- @field copy fun(self:image):image

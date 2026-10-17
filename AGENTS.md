@@ -181,6 +181,14 @@ grep -E 'rror|not callable|corrupt|panic|Invalid|attempt' game.log
 grep fps game.log | tail -3
 ```
 
+If the session is **locked** (or there's no compositor at all), `grim` only
+captures the lock screen. Have the engine save its own frames instead:
+
+```sh
+env CHOR_SNAP=/tmp/shot CHOR_SNAP_AT=200,400 chor path/to/game
+# -> /tmp/shot-200.png, /tmp/shot-400.png (frame counts since start)
+```
+
 ### 3. Gotchas while testing
 
 - **Kill by exact name** (`pkill -x chor`). A `pkill -f` pattern that matches your
@@ -195,6 +203,36 @@ grep fps game.log | tail -3
   screenshot.
 - What this can't cover: real keyboard focus and real mouse events. Tell the user
   those still need a hands-on check.
+- Entity `scale` is write-only: reading `e.scale` errors with "UserData field
+  getter does not exist". Keep your own copy if you need it.
+
+### 4. Testing an overlay
+
+Overlays (editors that run over an app) load with
+`chor path/to/game --overlay path/to/overlay`. Give the overlay's `loop` the
+same `TEST_HOOK` call and drop a `zz_test.lua` into a scratch copy of it.
+Overlay code can aim the picker at fixed screen points, so a test never needs
+the real mouse: `app.pick(false, 0.5, 0.6)` returns what's under that point in
+the app, and `app.pick(true, x, y)` hits the overlay's own 3D panels (with
+`app.project(x, y, z)` to find where they are on screen).
+
+## Overlays: editing a running app
+
+**Ctrl+P** opens the built-in paint overlay (`apps/paint3d`) over any app that
+hasn't set `attr{lock=true}`. It pauses the app and paints textures straight
+onto the meshes. It's also the worked example for writing your own overlay.
+Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
+`view.md`, `colors.md`, `project.md`, `close.md`):
+
+- `app.pick()` ray-casts what's actually drawn (model triangles, billboard
+  sprites, tiles) and reports the texture and texel under the pointer. Edit
+  that texture with `gimg`/`tex` and every mesh using it updates live.
+- An overlay that never calls `cam` draws through the app's camera. Set
+  `attr{front=true}` so its entities draw over the scene instead of inside it,
+  and `e.unlit = true` so the app's lights and fog don't shade your UI.
+- Build a 3D panel as one image on a billboard (`make(texname, ...)`). The
+  texel `app.pick(true)` returns *is* the panel pixel, so button hit-testing is
+  plain 2D maths in image space.
 
 ## Suggested game layout
 

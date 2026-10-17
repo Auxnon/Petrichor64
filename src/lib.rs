@@ -29,6 +29,7 @@ use root::Core;
 use types::{ControlState, GlobalMap};
 
 mod asset;
+mod builtin;
 mod bundle;
 mod collide;
 mod command;
@@ -65,6 +66,10 @@ mod parse;
 mod pool;
 #[cfg(feature = "headed")]
 mod post;
+#[cfg(feature = "headed")]
+mod pick;
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+mod snap;
 #[cfg(feature = "headed")]
 mod ray;
 #[cfg(feature = "headed")]
@@ -2032,6 +2037,67 @@ impl Core {
         }
     }
 
+    /// `app.pick` for overlay `id`: its own entities (`own`) or the app's scene,
+    /// along the pointer ray or through screen point `at`.
+    #[cfg(feature = "headed")]
+    fn app_pick(
+        &self,
+        id: u8,
+        own: bool,
+        at: Option<(f32, f32)>,
+    ) -> Option<crate::command::PickOut> {
+        use crate::pick::PickKind;
+        let target = if own {
+            id
+        } else {
+            self.bundle_manager.edit_target()?
+        };
+        let ray = match at {
+            Some((x, y)) => crate::pick::screen_ray(self, x, y),
+            None => crate::pick::cursor_ray(self),
+        }?;
+        let hit = crate::pick::pick(self, target, !own, ray)?;
+        let (kind, ent_id, asset, cell) = match hit.kind {
+            PickKind::Ent { id, asset } => ("ent", id, asset, [0, 0, 0]),
+            PickKind::Tile { x, y, z } => ("tile", 0, String::new(), [x, y, z]),
+        };
+        Some(crate::command::PickOut {
+            kind,
+            id: ent_id,
+            asset,
+            cell,
+            dist: hit.dist,
+            point: hit.point.to_array(),
+            normal: hit.normal.to_array(),
+            tex: hit.tex.map(|t| (t.name, t.x, t.y, t.w, t.h, t.rgba)),
+        })
+    }
+    #[cfg(not(feature = "headed"))]
+    fn app_pick(
+        &self,
+        _id: u8,
+        _own: bool,
+        _at: Option<(f32, f32)>,
+    ) -> Option<crate::command::PickOut> {
+        None
+    }
+
+    /// `app.view`: the camera the scene was drawn with, and the pointer ray.
+    #[cfg(feature = "headed")]
+    fn app_view(&self) -> Option<crate::command::CamOut> {
+        let (o, d) = crate::pick::cursor_ray(self)?;
+        Some(crate::command::CamOut {
+            pos: self.global.smooth_cam_pos.to_array(),
+            rot: self.global.smooth_cam_rot.to_array(),
+            ray_origin: (o / 16.).to_array(),
+            ray_dir: d.to_array(),
+        })
+    }
+    #[cfg(not(feature = "headed"))]
+    fn app_view(&self) -> Option<crate::command::CamOut> {
+        None
+    }
+
     /// `mod(name, {...})` mesh form: build or replace a model. Shared by the
     /// native command loop and the wasm worker bridge.
     #[allow(clippy::too_many_arguments)]
@@ -2476,6 +2542,10 @@ impl Core {
                 MainCommmand::SetImg(s, im, tx) => {
                     #[cfg(feature = "headed")]
                     {
+                        // Overwriting an existing slot only touches that slot, so
+                        // only it needs uploading; a new texture may have moved
+                        // things in the atlas, so that uploads the lot.
+                        let existed = self.tex_manager.get_tex_or_not(&s).is_some();
                         self.tex_manager.overwrite_texture(
                             &s,
                             im,
@@ -2483,8 +2553,16 @@ impl Core {
                             id,
                             &mut self.loggy,
                         );
-                        self.tex_manager
-                            .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+                        if !existed
+                            || !self.tex_manager.refinalize_tex(
+                                &self.gfx.queue,
+                                &self.gfx.master_texture,
+                                &s,
+                            )
+                        {
+                            self.tex_manager
+                                .refinalize(&self.gfx.queue, &self.gfx.master_texture);
+                        }
                     }
                     // Ack unconditionally: `tex()` blocks on this reply (see
                     // src/command.rs), and without it every non-headed backend
@@ -2599,6 +2677,9 @@ impl Core {
                                 self.global.fullscreen_state = self.global.fullscreen;
                             }
                             "mouse_grab" => self.global.mouse_grab = Self::val2bool(v),
+                            // Per bundle, not global: draw the *sender's* entities in
+                            // the front pass (see `Bundle::front`).
+                            "front" => self.bundle_manager.set_front(id, Self::val2bool(v)),
                             "size" => {
                                 let arr = Self::val2array(v);
 
@@ -2850,6 +2931,61 @@ impl Core {
                         }
                     };
                     self.log_check(tx.send(res));
+                }
+                // The scene half of `app.*`. Same gate as the file arms: only an
+                // engine-marked overlay with a real app under it gets an answer.
+                MainCommmand::AppPick(own, at, tx) => {
+                    let out = match self.bundle_manager.is_overlay(id) {
+                        true => self.app_pick(id, own, at),
+                        false => None,
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppPause(on) => {
+                    // Not `overlay_edit_target`: that wants the app's directory,
+                    // and an app loaded from a payload has none but can still pause.
+                    if self.bundle_manager.is_overlay(id) {
+                        if let Some(target) = self.bundle_manager.edit_target() {
+                            self.bundle_manager.set_paused(target, on);
+                        }
+                    }
+                }
+                MainCommmand::AppCam(tx) => {
+                    let out = match self.bundle_manager.is_overlay(id) {
+                        true => self.app_view(),
+                        false => None,
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppColors(name, tx) => {
+                    #[cfg(feature = "headed")]
+                    let out = match self.bundle_manager.is_overlay(id) {
+                        true => crate::pick::texture_colors(self, &name, 16),
+                        false => vec![],
+                    };
+                    #[cfg(not(feature = "headed"))]
+                    let out = {
+                        let _ = name;
+                        vec![]
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppProject(p, tx) => {
+                    #[cfg(feature = "headed")]
+                    let out = match self.bundle_manager.is_overlay(id) {
+                        true => crate::pick::project(self, glam::Vec3::from_array(p))
+                            .map(|(x, y, d)| [x, y, d]),
+                        false => None,
+                    };
+                    #[cfg(not(feature = "headed"))]
+                    let out = {
+                        let _ = p;
+                        None
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppClose => {
+                    crate::command::close_overlay(self, id);
                 }
                 MainCommmand::BundleDropped(b) => {
                     self.completed_bundles.remove(&id);

@@ -214,11 +214,12 @@ impl<'lua> Ent {
     ) -> EntityUniforms {
         let flipped = lua.flipped;
         // self.matrix = model;
+        // effects.w: 1 draws unlit (fs_main skips shading and fog).
         let effects = [
             self.effects.x * lua.scale as f32,
             lua.rot_z as f32,
             self.effects.z,
-            self.effects.w,
+            if lua.unlit { 1. } else { self.effects.w },
         ];
         let uv_mod = match &self.anim {
             Some(anim) => {

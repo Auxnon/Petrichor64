@@ -3111,6 +3111,159 @@ function app.reload() end",
             &mut app
         );
 
+        // The 3D editing half: look into the app's scene rather than its files.
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "pick",
+            move |vm, mc, (own, x, y): (Option<Value>, Option<Value>, Option<Value>)| {
+                let own = matches!(own, Some(Value::Bool(true)));
+                let at = match (x.as_ref().and_then(value_f32), y.as_ref().and_then(value_f32)) {
+                    (Some(x), Some(y)) => Some((x, y)),
+                    _ => None,
+                };
+                let (tx, rx) = sync_channel::<Option<PickOut>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppPick(own, at, tx))));
+                let Ok(Some(hit)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set("kind", hit.kind);
+                t.set("id", hit.id as i64);
+                t.set("asset", hit.asset);
+                t.set("cx", hit.cell[0] as i64);
+                t.set("cy", hit.cell[1] as i64);
+                t.set("cz", hit.cell[2] as i64);
+                t.set("dist", hit.dist as f64);
+                t.set("x", hit.point[0] as f64);
+                t.set("y", hit.point[1] as f64);
+                t.set("z", hit.point[2] as f64);
+                t.set("nx", hit.normal[0] as f64);
+                t.set("ny", hit.normal[1] as f64);
+                t.set("nz", hit.normal[2] as f64);
+                if let Some((name, u, v, w, h, c)) = hit.tex {
+                    t.set("tex", name);
+                    t.set("u", u as i64);
+                    t.set("v", v as i64);
+                    t.set("tw", w as i64);
+                    t.set("th", h as i64);
+                    t.set("color", hex_rgba(c));
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: what's under the pointer — the entity or tile, and the texture and texel it shows",
+            "
+---@param own? boolean pick the overlay's own 3D instead of the app's scene
+---@param x? number screen x 0..1 (default: the pointer)
+---@param y? number screen y 0..1
+---@return {kind:string,id:integer,asset:string,cx:integer,cy:integer,cz:integer,dist:number,x:number,y:number,z:number,nx:number,ny:number,nz:number,tex:string?,u:integer?,v:integer?,tw:integer?,th:integer?,color:string?}|nil
+function app.pick(own, x, y) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "pause",
+            move |_, _, on: Option<Value>| {
+                let on = !matches!(on, Some(Value::Bool(false)));
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppPause(on))));
+                Ok(Value::Nil)
+            },
+            "overlay only: freeze (or with false, resume) the app's loop; closing the overlay resumes it",
+            "
+---@param on? boolean
+function app.pause(on) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "view",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Option<CamOut>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppCam(tx))));
+                let Ok(Some(c)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set("x", c.pos[0] as f64);
+                t.set("y", c.pos[1] as f64);
+                t.set("z", c.pos[2] as f64);
+                t.set("yaw", c.rot[0] as f64);
+                t.set("pitch", c.rot[1] as f64);
+                t.set("ox", c.ray_origin[0] as f64);
+                t.set("oy", c.ray_origin[1] as f64);
+                t.set("oz", c.ray_origin[2] as f64);
+                t.set("dx", c.ray_dir[0] as f64);
+                t.set("dy", c.ray_dir[1] as f64);
+                t.set("dz", c.ray_dir[2] as f64);
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the app's camera (x,y,z,yaw,pitch) and the pointer ray (ox..oz, dx..dz)",
+            "
+---@return table|nil
+function app.view() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "colors",
+            move |vm, mc, name: String| {
+                let (tx, rx) = sync_channel::<Vec<[u8; 4]>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppColors(name, tx))));
+                let cols = rx.recv().unwrap_or_default();
+                let mut t = vm.raw_table();
+                for (i, c) in cols.iter().enumerate() {
+                    t.set(i as i64 + 1, hex_rgba(*c));
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: a texture's most common colours (rrggbbaa), most frequent first",
+            "
+---@param texture string
+---@return string[]
+function app.colors(texture) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "project",
+            move |vm, mc, (x, y, z): (f64, f64, f64)| {
+                let (tx, rx) = sync_channel::<Option<[f32; 3]>>(0);
+                lua_err!(pitcher.send((
+                    bundle_id,
+                    MainCommmand::AppProject([x as f32, y as f32, z as f32], tx)
+                )));
+                let Ok(Some(p)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set("x", p[0] as f64);
+                t.set("y", p[1] as f64);
+                t.set("depth", p[2] as f64);
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: a world point's screen position (0..1) and depth, or nil behind the camera",
+            "
+---@return {x:number,y:number,depth:number}|nil
+function app.project(x, y, z) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "close",
+            move |_, _, (): ()| {
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppClose)));
+                Ok(Value::Nil)
+            },
+            "overlay only: close this overlay (resuming the app if nothing else holds it)",
+            "
+function app.close() end",
+            &mut app
+        );
+
         vm_init
             .globals
             .borrow_mut(mc_in)
@@ -3303,6 +3456,39 @@ pub fn close_overlays(core: &mut Core) -> usize {
     ids.len()
 }
 
+/// Close one overlay and drop what it drew.
+pub fn close_overlay(core: &mut Core, id: u8) -> bool {
+    if !core.bundle_manager.close_overlay(id) {
+        return false;
+    }
+    core.ent_manager.reset_by_bundle(id);
+    core.world.destroy(id);
+    true
+}
+
+/// Directory name of the built-in paint overlay (`src/builtin.rs`).
+pub const PAINT_OVERLAY: &str = "builtin:paint";
+
+/// Ctrl+P: open the paint overlay over the running app, or close it if it's
+/// up. Refused while the app has `attr{lock=true}` — locking out the engine's
+/// own surfaces is what a lock is for.
+pub fn toggle_paint_overlay(core: &mut Core) {
+    if let Some(id) = core.bundle_manager.find_by_directory(PAINT_OVERLAY) {
+        close_overlay(core, id);
+        return;
+    }
+    if core.global.locked {
+        return;
+    }
+    if core.bundle_manager.edit_target().is_none() {
+        return; // nothing to paint on
+    }
+    if let Err(e) = load_overlay(core, PAINT_OVERLAY) {
+        core.loggy
+            .log(LogType::ConfigError, &format!("paint overlay failed: {}", e));
+    }
+}
+
 /// Bring an app up as an **overlay**: an editing surface over the running app, which
 /// owns input, draws on its own gui layer, and gets the privileged `app.*` table.
 ///
@@ -3373,16 +3559,23 @@ async fn async_load_app(
     // loaded after it used to inherit the lock and stay unreachable. This only
     // clears the lock; whether the console is *open* is left exactly as it was
     // (an open console captures all keyboard input).
-    core.global.clean_app_attrs();
+    //
+    // None of this applies to an overlay (`privileged`): it loads *over* the app,
+    // and resetting the app's attrs dropped its lock, while the sound reset
+    // wiped every instrument the app had registered — opening an editor
+    // silenced the game for good.
+    if !privileged {
+        core.global.clean_app_attrs();
 
-    // App (re)load: clear any instruments/samples a previous run registered so
-    // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
-    #[cfg(feature = "audio")]
-    let _ = core.singer.send(SoundCommand::Reset);
-    // MIDI hardware outlives a reload (like the audio stream), but the new app
-    // shouldn't inherit the old one's queued events or held notes.
-    #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
-    crate::midi::reset(&core.singer);
+        // App (re)load: clear any instruments/samples a previous run registered so
+        // a since-removed `smpl`/`instr` doesn't keep playing the stale definition.
+        #[cfg(feature = "audio")]
+        let _ = core.singer.send(SoundCommand::Reset);
+        // MIDI hardware outlives a reload (like the audio stream), but the new app
+        // shouldn't inherit the old one's queued events or held notes.
+        #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
+        crate::midi::reset(&core.singer);
+    }
 
     let shared = bundle.pool.clone().unwrap();
     bundle.lua_ctx_handle = Some(bundle.lua.start(
@@ -3407,7 +3600,21 @@ async fn async_load_app(
     // The first-line `--! 0xNN` chip+monitor header (see guide/mon.md), if any
     // loaded script declared one — applied below, same effect as calling
     // chip()/mon() once before main() runs.
+    let builtin = bundle.get_directory().and_then(crate::builtin::scripts);
     let header: Option<(u8, u8)> = match bundle.get_directory() {
+        // Engine-embedded apps (the Ctrl+P paint overlay): scripts compiled into
+        // the binary, so an overlay's code never comes from the app it edits or
+        // from whatever directory chor happens to run in.
+        Some(_) if builtin.is_some() => {
+            for (name, src) in builtin.unwrap_or(&[]) {
+                let mut reader: &[u8] = src.as_bytes();
+                if let Err(e) = bundle.lua.async_load(name.to_string(), &mut reader) {
+                    core.loggy
+                        .log(LogType::LuaError, &format!("!!{}: {}", name, e));
+                }
+            }
+            None
+        }
         Some(s) => match payload {
             Some(p) => {
                 let h = crate::asset::unpack(
@@ -3918,12 +4125,61 @@ pub enum MainCommmand {
     AppWrite(String, String, SyncSender<bool>),
     AppList(SyncSender<Vec<String>>),
     AppReload(SyncSender<bool>),
+    /// `app.pick(own, x, y)`: what's under the pointer (or screen point x, y) —
+    /// in the app's scene, or in the overlay's own 3D (`own`).
+    AppPick(bool, Option<(f32, f32)>, SyncSender<Option<PickOut>>),
+    /// `app.pause(on)`: freeze or resume the app's loop.
+    AppPause(bool),
+    /// `app.view()`: the camera the scene was drawn with, and the pointer ray.
+    AppCam(SyncSender<Option<CamOut>>),
+    /// `app.colors(texture)`: its most common colours, most frequent first.
+    AppColors(String, SyncSender<Vec<[u8; 4]>>),
+    /// `app.project(x, y, z)`: a world point on screen (0..1) and its depth.
+    AppProject([f32; 3], SyncSender<Option<[f32; 3]>>),
+    /// `app.close()`: an overlay dismissing itself.
+    AppClose,
     Copy(String),
     LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
     InitBack(Box<(WeakWrapper, WeakWrapper)>),
     Quit(u8),
+}
+
+/// An `app.pick` hit, as plain data for the trip back to the VM. Built from
+/// `pick::PickHit` on the main thread (which only exists in headed builds).
+pub struct PickOut {
+    /// `"ent"` or `"tile"`.
+    pub kind: &'static str,
+    pub id: u64,
+    pub asset: String,
+    pub cell: [i32; 3],
+    pub dist: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+    /// Texture name, texel x/y, texture w/h, and the texel's colour.
+    pub tex: Option<(String, u32, u32, u32, u32, [u8; 4])>,
+}
+
+/// `app.view()`: camera position, yaw/pitch, and the pointer ray in world units.
+pub struct CamOut {
+    pub pos: [f32; 3],
+    pub rot: [f32; 2],
+    pub ray_origin: [f32; 3],
+    pub ray_dir: [f32; 3],
+}
+
+fn value_f32(v: &Value) -> Option<f32> {
+    match v {
+        Value::Number(f) => Some(*f as f32),
+        Value::Integer(i) => Some(*i as f32),
+        _ => None,
+    }
+}
+
+/// `rrggbbaa`, which every colour argument accepts.
+pub fn hex_rgba(c: [u8; 4]) -> String {
+    format!("{:02x}{:02x}{:02x}{:02x}", c[0], c[1], c[2], c[3])
 }
 
 /// Translate a VM→host command into the serializable worker message for the

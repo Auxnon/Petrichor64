@@ -57,6 +57,14 @@ pub struct Bundle {
     /// Overlays used to share one global camera with the app, so an editor calling
     /// `cam` swung the game's view out from under it.
     pub cam: Option<BundleCam>,
+    /// Frozen by an overlay (`app.pause`): its loop isn't called, so the scene
+    /// holds still while it's inspected and edited. Cleared when overlays close.
+    pub paused: bool,
+    /// Draw this bundle's entities after the scene, over a cleared depth buffer
+    /// (`attr{front=true}`), so an overlay's 3D panels are never buried inside
+    /// the geometry they annotate. Off by default: an overlay that never asks
+    /// keeps the interleaved "focus" behaviour.
+    pub front: bool,
 }
 
 pub type BundleResources = PreGuiMorsel;
@@ -77,6 +85,8 @@ impl Bundle {
             pool: None,
             overlay: false,
             cam: None,
+            paused: false,
+            front: false,
         }
     }
 
@@ -167,6 +177,12 @@ impl BundleManager {
         let owner = self.input_owner();
         let quiet = ControlState::default();
         for (id, bundle) in &mut self.bundles.iter_mut() {
+            if bundle.paused {
+                // Not even a skipped-frame record: input that arrives while an
+                // overlay is editing belongs to the overlay, and replaying it
+                // into the app on resume would be a surprise.
+                continue;
+            }
             let bits = if *id == owner { bits } else { &quiet };
             if !if let Some(updated) = updated_bundles.get_mut(id) {
                 if *updated {
@@ -356,6 +372,33 @@ impl BundleManager {
             .iter()
             .copied()
             .find(|id| self.bundles.get(id).map_or(false, |b| !b.overlay))
+    }
+
+    /// Pause or resume a bundle's loop (see `Bundle::paused`).
+    pub fn set_paused(&mut self, id: u8, paused: bool) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            b.paused = paused;
+        }
+    }
+
+    pub fn set_front(&mut self, id: u8, front: bool) {
+        if let Some(b) = self.bundles.get_mut(&id) {
+            b.front = front;
+        }
+    }
+
+    /// Bundles whose entities draw in the front pass.
+    pub fn is_front(&self, id: u8) -> bool {
+        self.bundles.get(&id).map_or(false, |b| b.front)
+    }
+
+    /// The bundle loaded from `directory`, if any. Built-in overlays are found
+    /// this way (`builtin:paint`) to toggle them.
+    pub fn find_by_directory(&self, directory: &str) -> Option<u8> {
+        self.bundles
+            .values()
+            .find(|b| b.directory.as_deref() == Some(directory))
+            .map(|b| b.id)
     }
 
     /// Mark a bundle as an overlay. Engine-only by construction: this is not reachable
@@ -549,7 +592,21 @@ impl BundleManager {
             .filter(|(_, b)| b.overlay)
             .map(|(id, _)| *id)
             .collect();
-        for id in &ids {
+        self.close_overlay_ids(&ids);
+        ids
+    }
+
+    /// Close one overlay. Nothing happens for a bundle that isn't one.
+    pub fn close_overlay(&mut self, id: u8) -> bool {
+        if !self.is_overlay(id) {
+            return false;
+        }
+        self.close_overlay_ids(&[id]);
+        true
+    }
+
+    fn close_overlay_ids(&mut self, ids: &[u8]) {
+        for id in ids {
             if let Some(mut b) = self.bundles.remove(id) {
                 if let Err(e) = b.shutdown() {
                     eprintln!("failed to shut down overlay {}: {}", id, e);
@@ -559,7 +616,14 @@ impl BundleManager {
         if !ids.is_empty() {
             self.rebuild_call_order();
         }
-        ids
+        // Only overlays pause anything, so with the last one gone nothing may
+        // stay frozen — an editor that closed without resuming the app (or
+        // crashed) must not leave it stuck.
+        if !self.bundles.values().any(|b| b.overlay) {
+            for b in self.bundles.values_mut() {
+                b.paused = false;
+            }
+        }
     }
 
     pub fn hard_reset(&mut self) {
@@ -788,6 +852,40 @@ mod tests {
             }
         }
         ran
+    }
+
+    /// An overlay pauses the app (`app.pause`): its loop stops being called, and
+    /// closing the last overlay resumes it even if the editor never said so —
+    /// a crashed or careless editor must not leave the game frozen.
+    #[test]
+    fn a_paused_app_skips_its_loop_until_the_last_overlay_closes() {
+        let mut bm = BundleManager::new();
+        let game = app(&mut bm, "game");
+        let tool = app(&mut bm, "tool");
+        bm.mark_overlay(tool);
+
+        bm.set_paused(game, true);
+        assert_eq!(ticks_over(&mut bm, game, 5), 0, "paused: no frames run");
+
+        assert!(!bm.close_overlay(game), "closing a non-overlay does nothing");
+        assert!(bm.get(game).unwrap().paused, "and leaves the pause alone");
+
+        assert!(bm.close_overlay(tool));
+        assert!(!bm.get(game).unwrap().paused, "last overlay gone: resumed");
+        assert_eq!(ticks_over(&mut bm, game, 5), 5);
+    }
+
+    /// Built-in overlays are found by the directory they load under, which is
+    /// how Ctrl+P knows whether to open or close the paint overlay.
+    #[test]
+    fn find_by_directory_finds_the_bundle_loaded_from_it() {
+        let mut bm = BundleManager::new();
+        // as `async_load_app` makes them: the path is the name and the directory
+        let game = bm.make_bundle(Some("game"), None, Some("game")).id;
+        let paint = bm.make_bundle(Some("builtin:paint"), None, Some("builtin:paint")).id;
+        assert_eq!(bm.find_by_directory("builtin:paint"), Some(paint));
+        assert_eq!(bm.find_by_directory("game"), Some(game));
+        assert_eq!(bm.find_by_directory("nope"), None);
     }
 
     /// `frame_split` is a divisor, so the default of 1 has to tick on every frame.

@@ -177,6 +177,50 @@ impl TexManager {
         write_tex(queue, texture, &self.atlas);
     }
 
+    /// Upload just one texture's slot (and its extruded gutter) instead of the
+    /// whole atlas. Painting rewrites a texture every frame of a stroke, and a
+    /// full 2048² upload each time is 16MB per frame for a few changed pixels.
+    /// False if the name isn't in the atlas.
+    #[cfg(feature = "headed")]
+    pub fn refinalize_tex(&self, queue: &Queue, texture: &Texture, name: &str) -> bool {
+        let Some(pos) = self.get_tex_or_not(name) else {
+            return false;
+        };
+        let (aw, ah) = (self.atlas_dim.x, self.atlas_dim.y);
+        let x = (pos.x * aw as f32).round() as u32;
+        let y = (pos.y * ah as f32).round() as u32;
+        let w = (pos.z * aw as f32).round() as u32;
+        let h = (pos.w * ah as f32).round() as u32;
+        let x0 = x.saturating_sub(GUTTER);
+        let y0 = y.saturating_sub(GUTTER);
+        let x1 = (x + w + GUTTER).min(aw);
+        let y1 = (y + h + GUTTER).min(ah);
+        if x1 <= x0 || y1 <= y0 {
+            return false;
+        }
+        let region = image::imageops::crop_imm(&self.atlas, x0, y0, x1 - x0, y1 - y0).to_image();
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfoBase {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: x0, y: y0, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &region,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * region.width()),
+                rows_per_image: Some(region.height()),
+            },
+            wgpu::Extent3d {
+                width: region.width(),
+                height: region.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        true
+    }
+
     /**locate a position in the  master texture atlas, return a v4 of the tex coord x y offset and the scaleX scaleY to multiply the uv by to get the intended texture */
     pub fn locate(&mut self, source: RgbaImage) -> Vec4 {
         let w = source.width();
@@ -797,10 +841,11 @@ pub fn make_render_tex(
         format,
         // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders
         // COPY_DST means that we want to copy data to this texture
+        // COPY_SRC so a test grab (src/snap.rs) can read the frame back.
         usage: wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_DST
-            | wgpu::TextureUsages::RENDER_ATTACHMENT,
-        // | wgpu::TextureUsages::COPY_SRC,
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC,
         label: Some("post_texture"),
         view_formats: &[],
     });

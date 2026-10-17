@@ -698,9 +698,43 @@ Each is independently useful, and phase 0 is what unlocks the rest.
 |-------|------|-------------|
 | **0** | assign `bundle_target`, drop the Secondary/Trinary early-out, generalize input focus | a "hello overlay" drawing over a running app and taking input — the unlock |
 | **1** | ✅ target handle: `app.list`/`read`/`write`/`reload` | the engine half is in; the **source editor** UI on top of it is next |
-| **2** | target handle: texture get/set | **image editor** — Fresco's brush engine pointed at the target's texture instead of its own canvas |
+| **2** | ✅ (in its scene-first form) `app.pick` + `gimg`/`tex` | **image editor**: the Ctrl+P paint overlay (`apps/paint3d`, see below) |
 | **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
 | **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
+
+### Done: the Ctrl+P paint overlay (3D, scene-first)
+
+The image editor came out scene-first rather than file-first: you point at
+what's on screen, not at a texture name.
+
+- **Picking** (`src/pick.rs`, `app.pick`): a ray cast against what is drawn —
+  each entity's model triangles through its current instance matrix, billboards
+  as the camera-facing quad `vs_common` builds, the app's tile chunks. The
+  interpolated uv goes through the entity's `uv_mod`, as in the vertex shader,
+  onto the atlas; the atlas uv names the texture (smallest containing rect) and
+  the texel. Transparent texels pass through, as the fragment shader discards
+  them.
+- **Editing** needed no new target handle. Texture names are one global atlas
+  dictionary, so `gimg`/`tex` already reach the app's textures, and `tex` on an
+  existing name now uploads only that slot. That's still a reach any bundle has,
+  not an overlay privilege; scoping textures per bundle would be its own change.
+- **3D panels**: neither of the two modes in the table above fits a tool panel.
+  Interleaved, the app's walls poke through it; its own camera, it's no longer
+  beside the mesh. So `attr{front=true}` adds a third mode: the app's camera,
+  but drawn after the scene over a cleared depth buffer (one extra pass, only
+  when some bundle asks). Entity `unlit` keeps the app's lights off the UI.
+- **Provenance**: the overlay is compiled into the engine (`src/builtin.rs`,
+  loaded as `builtin:paint`), never read from disk or from the app. The trigger
+  sits in `controls_evaluate` and is refused under `attr{lock}`.
+- **Pause** is per bundle (`Bundle::paused`); closing the last overlay always
+  resumes, so a crashed editor can't leave the game frozen.
+- Loading an overlay used to run the app-load resets (attrs and the sound
+  system), which unlocked the app and wiped its instruments; overlays now skip
+  them.
+
+Not done: saving edits back to the app's asset files (they live in the atlas
+until the app reloads its textures), large-texture panning in canvas mode, and
+the mobile trigger.
 
 ### A mobile wrinkle for the source editor
 

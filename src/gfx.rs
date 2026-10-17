@@ -244,8 +244,20 @@ impl<'w> Gfx<'w> {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
+        // CHOR_SNAP test grabs read the presented frame back, which needs
+        // COPY_SRC on the swapchain; only asked for when grabbing.
+        #[cfg(not(target_arch = "wasm32"))]
+        let snap_usage = if crate::snap::enabled()
+            && surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            wgpu::TextureUsages::COPY_SRC
+        } else {
+            wgpu::TextureUsages::empty()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let snap_usage = wgpu::TextureUsages::empty();
         let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | snap_usage,
             desired_maximum_frame_latency: 1,
             format: surface_format,
             width: size.width,
