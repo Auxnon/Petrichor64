@@ -58,6 +58,10 @@ web-embed=[]
 # already-built one. Adds ~2MB (12MB -> 14MB release) and a second release
 # build of the core. Part of `kitchensink`.
 tui-embed=["dep:flate2"]
+# A terminal-only `chor` (no wgpu/winit, ~5MB): `chor <game dir>` plays in the
+# terminal directly, no `-t`. Build with --no-default-features (headed, in the
+# defaults, can't be combined with render-tui). `just install-tui`.
+bin-tui=["silt","studio","bin","render-tui","audio"]
 online_capable=["rmp-serde", "bytes"]
 # WebSocket client for `conn("ws://…")` / `conn("wss://…")`. Separate from
 # `online_capable` (raw TCP + MessagePack, can host): a browser can only speak
@@ -87,7 +91,7 @@ headed=["wgpu", "winit", "winit_input_helper"]
 # Pi Zero 2 W over SSH). Independent of `headed` — reads raw tile/entity data
 # directly rather than the wgpu-cooked chunk/entity buffers, so it doesn't
 # depend on (or conflict with) the wgpu renderer.
-render-tui=["crossterm"]
+render-tui=["crossterm", "dep:libc"]
 # The synth itself lives in the `petrichor-synth` workspace crate (shared with the
 # browser AudioWorklet build); `host-io` pulls in its cpal/WebAudio glue, and cpal
 # stays listed here for the wasm feature-union noted below.
@@ -231,6 +235,11 @@ tokio = { version = "1.43.0", features = ["full"] }
 # eventually want — switching to `game-activity` later is a feature swap here plus
 # a Gradle project, and nothing in the engine's own code depends on which is used.
 # ---------------------------------------------------------------------------
+# TUI backend: redirects the engine's stdout/stderr off the terminal picture
+# (src/tui/capture.rs). Already in the tree via cpal/alsa/dirs.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30.13", features = ["android-native-activity"], optional = true }
 # The `AndroidApp` handed to `android_main`, which the event loop is built from.

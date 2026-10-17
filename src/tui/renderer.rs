@@ -1,7 +1,7 @@
 use crate::model::Vertex;
 use crate::root::Core;
 use glam::{vec3, vec4, Mat4, Vec3, Vec4};
-use std::io::{stdout, Write};
+use std::io::Write;
 
 /// Software rasterizer + terminal presenter for the `render-tui` backend.
 ///
@@ -55,12 +55,15 @@ impl TuiRenderer {
         Self { cols, rows }
     }
 
-    pub fn render_frame(&mut self, core: &mut Core) {
+    /// `log`: recent engine output, shown in a strip between the picture and
+    /// the status line (the picture shrinks to make room).
+    pub fn render_frame(&mut self, core: &mut Core, out: &mut dyn Write, log: &[String]) {
         if let Ok((cols, rows)) = crossterm::terminal::size() {
             self.cols = cols;
-            // Leave the bottom row for a status line so the frame never
-            // scrolls the terminal.
-            self.rows = rows.saturating_sub(1).max(1);
+            // Leave the bottom row for a status line, plus the log strip, so
+            // the frame never scrolls the terminal.
+            let reserved = 1 + log.len() as u16;
+            self.rows = rows.saturating_sub(reserved).max(1);
         }
         let w = self.cols as usize;
         let h = (self.rows as usize) * 2; // half-block trick: 2 pixel rows / char row
@@ -146,7 +149,7 @@ impl TuiRenderer {
             }
         }
 
-        present(&fb, self.cols, self.rows, core.global.fps as f32);
+        present(out, &fb, self.cols, self.rows, core.global.fps as f32, log);
     }
 }
 
@@ -258,7 +261,7 @@ fn rasterize_tri(fb: &mut Framebuffer, mvp: &Mat4, verts: [&Vertex; 3], base_col
 /// pixel, background = bottom pixel — doubling effective vertical resolution.
 /// Redraws in full each frame (no cell diffing yet); a single buffered write
 /// keeps that from being a separate syscall per cell.
-fn present(fb: &Framebuffer, cols: u16, rows: u16, fps: f32) {
+fn present(so: &mut dyn Write, fb: &Framebuffer, cols: u16, rows: u16, fps: f32, log: &[String]) {
     let mut out = String::with_capacity(fb.width * fb.height * 4 + 64);
     out.push_str("\x1b[H");
     let mut last_fg: Option<[u8; 3]> = None;
@@ -286,8 +289,15 @@ fn present(fb: &Framebuffer, cols: u16, rows: u16, fps: f32) {
         last_fg = None;
         last_bg = None;
     }
-    out.push_str(&format!("\x1b[0mpetrichor64 (tui) — fps: {:.0}  esc to quit", fps));
-    let mut so = stdout();
+    // Log lines, clipped to one row each (a wrapped line would scroll), on a
+    // dim background so they read as separate from the picture.
+    for line in log {
+        let clipped: String = line.chars().take(cols as usize).collect();
+        out.push_str("\x1b[0m\x1b[48;2;24;20;32m\x1b[38;2;232;160;160m");
+        out.push_str(&clipped);
+        out.push_str("\x1b[K\x1b[0m\r\n");
+    }
+    out.push_str(&format!("\x1b[0mpetrichor64 (tui) — fps: {:.0}  esc to quit\x1b[K", fps));
     let _ = so.write_all(out.as_bytes());
     let _ = so.flush();
 }

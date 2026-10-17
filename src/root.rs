@@ -313,17 +313,38 @@ impl<'core> Core {
             }
         });
 
+        // Sound needs no window: start the same cpal stream the windowed build
+        // does. This used to hand out `channel().0`, a sender whose receiver was
+        // already dropped, so the first `instr()`/`sfx()` failed with "sending
+        // on a closed channel" and took the app's main() down with it (TUI
+        // Roomer never got past its sound setup).
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        let (stream, singer) = sound::init();
+        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+        let stream_result = match stream {
+            Ok(stream) => Some(stream),
+            Err(e) => {
+                loggy.log(
+                    LogType::CoreError,
+                    &format!("sound stream error, continuing in silence!: {}", e),
+                );
+                None
+            }
+        };
+        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
+        let singer = channel().0;
+
         let (pitcher, catcher) = channel::<MainPacket>();
         let core = Self {
             global,
-            #[cfg(feature = "audio")]
-            _stream: None,
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            _stream: stream_result,
             #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
             mic_stream: None,
             #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
             mic_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(feature = "audio")]
-            singer: channel().0,
+            singer,
             world,
             pitcher,
             gui,

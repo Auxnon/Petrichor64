@@ -146,6 +146,13 @@ serve dir='web/dist' *flags='':
 install:
     cargo install --path . --features kitchensink
 
+# Terminal-only build, beside the normal `chor`: cargo can only install it as
+# `chor`, so it goes in its own root and is linked in as `chor-tui`.
+install-tui:
+    cargo install --path . --no-default-features --features bin-tui --root ~/.local/chor-tui
+    ln -sf ~/.local/chor-tui/bin/chor ~/.local/bin/chor-tui
+    @echo "Installed as chor-tui"
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------

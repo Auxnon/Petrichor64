@@ -1,3 +1,5 @@
+#[cfg(unix)]
+mod capture;
 mod input;
 mod renderer;
 
@@ -45,9 +47,22 @@ pub fn start() {
         core.loggy.log(LogType::CoreError, &format!("{}", e));
     }
 
-    let mut out = stdout();
+    // From here on the engine's printing goes to the log strip, not over the
+    // picture (see capture.rs); frames are drawn on `term`.
+    #[cfg(unix)]
+    let capture = capture::Capture::start();
+    #[cfg(unix)]
+    if let Some(c) = &capture {
+        capture::restore_on_panic(c.saved_err());
+    }
+    let mut term: Box<dyn std::io::Write> = Box::new(stdout());
+    #[cfg(unix)]
+    if let Some(Ok(f)) = capture.as_ref().map(|c| c.term.try_clone()) {
+        term = Box::new(f);
+    }
+
     let raw_mode_enabled = enable_raw_mode().is_ok();
-    let _ = execute!(out, EnterAlternateScreen, Hide);
+    let _ = execute!(term, EnterAlternateScreen, Hide);
 
     let mut tui_input = TuiInput::new();
     let mut renderer = TuiRenderer::new();
@@ -55,6 +70,7 @@ pub fn start() {
 
     loop {
         let start = Instant::now();
+        core.loop_helper.loop_start();
 
         while let Ok(line) = core.cli_thread_receiver.try_recv() {
             crate::core_console_command(&mut core, line.trim(), Some(&catcher));
@@ -78,15 +94,23 @@ pub fn start() {
         if let Some(fps) = core.loop_helper.report_rate() {
             core.global.fps = fps;
         }
-        renderer.render_frame(&mut core);
+        #[cfg(unix)]
+        let log = capture.as_ref().map(|c| c.tail.recent(4)).unwrap_or_default();
+        #[cfg(not(unix))]
+        let log: Vec<String> = Vec::new();
+        renderer.render_frame(&mut core, &mut term, &log);
 
         if let Some(rem) = frame.checked_sub(start.elapsed()) {
             std::thread::sleep(rem);
         }
     }
 
-    let _ = execute!(out, Show, LeaveAlternateScreen);
+    let _ = execute!(term, Show, LeaveAlternateScreen);
     if raw_mode_enabled {
         let _ = disable_raw_mode();
+    }
+    #[cfg(unix)]
+    if let Some(c) = capture {
+        c.finish();
     }
 }

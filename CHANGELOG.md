@@ -9,6 +9,8 @@
 - Opening an overlay no longer resets the app's sounds or unlocks it
 - `CHOR_SNAP=prefix CHOR_SNAP_AT=frames` saves frames to PNG, for testing on a locked or headless session
 - `chor` with no display (e.g. over SSH) says so and suggests `chor -t <game>`, instead of exiting silently
+- `bin-tui` feature and `just install-tui`: a terminal-only `chor` (~5MB), installed beside the normal one as `chor-tui`
+- Terminal mode: sound works (it was never started, so the first `instr()` broke the app's `main()`), engine output and Lua errors show in a strip under the picture instead of scrolling over it, fps counter fixed
 
 - Public repo! More documentation!
 - `No signal` app as basic runtime default
