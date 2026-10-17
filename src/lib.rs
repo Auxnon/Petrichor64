@@ -2581,6 +2581,12 @@ impl Core {
                         // only it needs uploading; a new texture may have moved
                         // things in the atlas, so that uploads the lot.
                         let existed = self.tex_manager.get_tex_or_not(&s).is_some();
+                        // The app redrawing a texture from code: its image file no
+                        // longer describes it, so it isn't saveable any more. An
+                        // overlay painting it is the edit that saving is for.
+                        if !self.bundle_manager.is_overlay(id) {
+                            self.tex_manager.sources.remove(&s);
+                        }
                         self.tex_manager.overwrite_texture(
                             &s,
                             im,
@@ -3022,6 +3028,33 @@ impl Core {
                 MainCommmand::AppClose => {
                     crate::command::close_overlay(self, id);
                 }
+                MainCommmand::AppSource(name, tx) => {
+                    let out = match self.overlay_edit_target(id) {
+                        Some((target, dir)) => self
+                            .tex_manager
+                            .saveable_source(&name, target, &dir)
+                            .map(|src| relative_to(&src.path, &dir)),
+                        None => Err("overlay only".into()),
+                    };
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppSave(name, tx) => {
+                    // Only ever the edited app's own files: saveable_source checks
+                    // the texture was loaded by that app, from inside its folder.
+                    let out = match self.overlay_edit_target(id) {
+                        Some((target, dir)) => self
+                            .tex_manager
+                            .save_to_source(&name, target, &dir)
+                            .map(|path| relative_to(&path, &dir)),
+                        None => Err("overlay only".into()),
+                    };
+                    match &out {
+                        // the overlay reports success itself; only failures pop up
+                        Ok(p) => self.loggy.log(LogType::Config, &format!("saved {} to {}", name, p)),
+                        Err(e) => self.log(LogType::ConfigError, &format!("couldn't save {}: {}", name, e)),
+                    }
+                    self.log_check(tx.send(out));
+                }
                 MainCommmand::BundleDropped(b) => {
                     self.completed_bundles.remove(&id);
                     self.bundle_manager.reclaim_resources(b);
@@ -3156,6 +3189,16 @@ lazy_static::lazy_static! {
 /// Advance the shared animation clock (see `skeleton::clock`) once a frame.
 fn publish_clock() {
     crate::skeleton::set_clock(BOOT.elapsed().as_secs_f64());
+}
+
+/// `path` shown relative to an app's folder (`assets/wall.png`), for messages.
+fn relative_to(path: &str, dir: &str) -> String {
+    let (Ok(p), Ok(d)) = (std::fs::canonicalize(path), std::fs::canonicalize(dir)) else {
+        return path.to_string();
+    };
+    p.strip_prefix(&d)
+        .map(|r| r.display().to_string())
+        .unwrap_or_else(|_| path.to_string())
 }
 
 pub fn error_window(e: Box<dyn std::error::Error>) {

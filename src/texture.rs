@@ -81,7 +81,25 @@ pub struct TexManager {
     pub dictionary: HashMap<String, Vec4>,
     pub animations: HashMap<String, Anim>,
     pub bundle_lookup: FxHashMap<u8, Vec<(String, glam::Vec4)>>,
+    /// Where a texture loaded from an image file came from, so an overlay's
+    /// edits can be written back (`save_to_source`). Only `load_tex` (a file on
+    /// disk) records one: packed games load from buffers and have no file.
+    /// Survives `reset`/`rebuild_atlas`, which re-pack the same textures.
+    pub sources: HashMap<String, TexSource>,
 }
+
+/// A texture's place in the image file it was loaded from: the whole file, or
+/// one tile of a sheet (`name.16.png` tiles are `name0`, `name1`, ...).
+#[derive(Clone, Debug)]
+pub struct TexSource {
+    pub path: String,
+    pub bundle: u8,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
 pub struct Anim {
     pub frames: Vec<Vec4>,
     pub speed: u32,
@@ -116,6 +134,7 @@ impl TexManager {
             dictionary: HashMap::new(),
             animations: HashMap::default(),
             bundle_lookup: FxHashMap::default(),
+            sources: HashMap::new(),
         };
         // Through reset so there is one place that installs the fallback.
         t.reset();
@@ -427,15 +446,11 @@ impl TexManager {
         loggy.log(LogType::Texture, &format!("apply texture {}", name_like));
 
         match load_img_nopath(name_like, loggy) {
-            Ok(img) => self.sort_image(
-                world,
-                name_like,
-                img.into_rgba8(),
-                bundle_id,
-                template,
-                false,
-                loggy,
-            ),
+            Ok(img) => {
+                let img = img.into_rgba8();
+                self.record_sources(name_like, &img, bundle_id, template);
+                self.sort_image(world, name_like, img, bundle_id, template, false, loggy)
+            }
             Err(err) => {
                 loggy.log(
                     LogType::TextureError,
@@ -571,6 +586,110 @@ impl TexManager {
     }
     pub fn remove_bundle_content(&mut self, bundle_id: u8) {
         self.bundle_lookup.remove(&bundle_id);
+        self.sources.retain(|_, s| s.bundle != bundle_id);
+    }
+
+    /// Note which file (and which part of it) each texture `sort_image` is
+    /// about to make from `path` comes from. Mirrors its naming: the whole
+    /// image under its stem, or a sheet's tiles as `stem0`, `stem1`, ... plus
+    /// any template renames.
+    fn record_sources(
+        &mut self,
+        path: &str,
+        img: &RgbaImage,
+        bundle: u8,
+        template: Option<&AssetTemplate>,
+    ) {
+        let (name, mut is_tile) = get_name(path, false);
+        let mut tile_dim = if is_tile > 0 { is_tile } else { 16u32 };
+        let mut rename = None;
+        if let Some(t) = template {
+            if t.tiles.len() > 0 || t.size > 0 {
+                is_tile = 16;
+            }
+            rename = Some(&t.tiles);
+            tile_dim = t.size;
+        }
+        let at = |x, y, w, h| TexSource {
+            path: path.to_string(),
+            bundle,
+            x,
+            y,
+            w,
+            h,
+        };
+        if is_tile == 0 {
+            self.sources.insert(name, at(0, 0, img.width(), img.height()));
+            return;
+        }
+        let d = if tile_dim == 0 { 16 } else { tile_dim };
+        let dw = img.width() / d;
+        for y in 0..img.height() / d {
+            for x in 0..dw {
+                let n = x + y * dw;
+                let src = at(x * d, y * d, d, d);
+                if let Some(alias) = rename.and_then(|r| r.get(&n)) {
+                    self.sources.insert(alias.clone(), src.clone());
+                }
+                self.sources.insert(format!("{}{}", name, n), src);
+            }
+        }
+    }
+
+    /// The file a texture can be saved back to, if it was loaded from one by
+    /// `bundle` and the file sits inside `dir` (the app's own folder).
+    pub fn saveable_source(&self, name: &str, bundle: u8, dir: &str) -> Result<&TexSource, String> {
+        let src = self
+            .sources
+            .get(name)
+            .ok_or_else(|| "made by code".to_string())?;
+        if src.bundle != bundle {
+            return Err("not loaded by this app".into());
+        }
+        let file = std::fs::canonicalize(&src.path).map_err(|e| format!("{}: {}", src.path, e))?;
+        let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {}", dir, e))?;
+        if !file.starts_with(&root) {
+            return Err("file is outside the app's folder".into());
+        }
+        let png = file
+            .extension()
+            .map_or(false, |e| e.eq_ignore_ascii_case("png"));
+        if !png {
+            return Err("not a png".into());
+        }
+        Ok(src)
+    }
+
+    /// Write a texture's current pixels back into the image file it came from,
+    /// leaving the rest of the file (other tiles of a sheet) untouched. The
+    /// file is replaced via a temp file and rename, so a failed write can't
+    /// leave it half written. Returns the path written.
+    pub fn save_to_source(&self, name: &str, bundle: u8, dir: &str) -> Result<String, String> {
+        let src = self.saveable_source(name, bundle, dir)?.clone();
+        // checked first: get_img hands back the whole atlas for an unknown name
+        if self.get_tex_or_not(name).is_none() {
+            return Err("no such texture".into());
+        }
+        let (w, h, pixels) = self.get_img(&name.to_string());
+        if (w, h) != (src.w, src.h) {
+            return Err(format!("size changed ({}x{}, file has {}x{})", w, h, src.w, src.h));
+        }
+        let mut file = image::open(&src.path)
+            .map_err(|e| format!("{}: {}", src.path, e))?
+            .into_rgba8();
+        if src.x + w > file.width() || src.y + h > file.height() {
+            return Err("the file changed size since it was loaded".into());
+        }
+        image::imageops::replace(&mut file, &pixels, src.x as i64, src.y as i64);
+        let path = std::path::Path::new(&src.path);
+        let tmp = path.with_extension("png.saving");
+        file.save_with_format(&tmp, image::ImageFormat::Png)
+            .map_err(|e| format!("{}: {}", tmp.display(), e))?;
+        std::fs::rename(&tmp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{}: {}", src.path, e)
+        })?;
+        Ok(src.path)
     }
 
     pub fn rebuild_atlas(&mut self, world: &mut World, loggy: &mut Loggy) {
@@ -866,6 +985,65 @@ pub fn make_render_tex(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("p64-save-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("assets")).unwrap();
+        d
+    }
+
+    /// A tile's edits land in its own square of the sheet; nothing else in the
+    /// file changes.
+    #[test]
+    fn saving_a_tile_writes_only_its_square_of_the_sheet() {
+        let dir = scratch_dir("tile");
+        let path = dir.join("assets").join("sheet.16.png");
+        let sheet = RgbaImage::from_pixel(32, 16, image::Rgba([10, 20, 30, 255]));
+        sheet.save(&path).unwrap();
+        let path = path.to_str().unwrap().to_string();
+
+        let mut tm = TexManager::new();
+        tm.record_sources(&path, &sheet, 3, None);
+        let src = tm.sources.get("sheet1").unwrap();
+        assert_eq!((src.x, src.y, src.w, src.h), (16, 0, 16, 16));
+
+        // stand in for the atlas slot sort_image would have made
+        let pos = tm.locate(RgbaImage::from_pixel(16, 16, image::Rgba([200, 0, 0, 255])));
+        tm.dictionary.insert("sheet1".into(), pos);
+
+        let dir_s = dir.to_str().unwrap();
+        tm.save_to_source("sheet1", 3, dir_s).unwrap();
+        let out = image::open(&path).unwrap().into_rgba8();
+        assert_eq!(out.get_pixel(20, 5).0, [200, 0, 0, 255], "tile 1 written");
+        assert_eq!(out.get_pixel(5, 5).0, [10, 20, 30, 255], "tile 0 untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Only the edited app's own files: not another app's, not a file outside
+    /// its folder, and not a texture its code drew.
+    #[test]
+    fn only_the_edited_apps_own_image_files_are_saveable() {
+        let dir = scratch_dir("guard");
+        let other = scratch_dir("guard-other");
+        let inside = dir.join("assets").join("wall.png");
+        let outside = other.join("assets").join("wall.png");
+        let img = RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]));
+        img.save(&inside).unwrap();
+        img.save(&outside).unwrap();
+        let dir_s = dir.to_str().unwrap();
+
+        let mut tm = TexManager::new();
+        tm.record_sources(inside.to_str().unwrap(), &img, 1, None);
+        assert!(tm.saveable_source("wall", 1, dir_s).is_ok());
+        assert!(tm.saveable_source("wall", 2, dir_s).is_err(), "another app's texture");
+        assert!(tm.saveable_source("codey", 1, dir_s).is_err(), "made by code");
+
+        tm.record_sources(outside.to_str().unwrap(), &img, 1, None);
+        assert!(tm.saveable_source("wall", 1, dir_s).is_err(), "outside the app's folder");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
+    }
 
     /// The fallback has to be present before any app loads and has to occupy the first
     /// slot, so app textures pack after it and can never displace it. `rebuild_atlas`

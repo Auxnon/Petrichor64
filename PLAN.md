@@ -732,9 +732,18 @@ what's on screen, not at a texture name.
   system), which unlocked the app and wiped its instruments; overlays now skip
   them.
 
-Not done: saving edits back to the app's asset files (they live in the atlas
-until the app reloads its textures), large-texture panning in canvas mode, and
-the mobile trigger.
+- **Saving** (`app.source`/`app.save`, the SAVE button and confirm dialog):
+  `TexManager.sources` records, for every texture `load_tex` reads from a file,
+  the file and the rect inside it (a tile's square of its sheet). Saving crops
+  the atlas slot and pastes it into a fresh read of the file, via a temp file
+  and rename. Allowed only for the edit target's own textures, from inside its
+  folder; the app redrawing a texture with `tex` drops its record, since the
+  file no longer describes it. Packed games load from buffers and have no
+  files to save to.
+
+Not done: saving textures an app drew from code (there's no file; exporting
+one would need the app's code changed to load it), large-texture panning in
+canvas mode, and the mobile trigger.
 
 ### A mobile wrinkle for the source editor
 

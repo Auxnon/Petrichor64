@@ -20,5 +20,6 @@ static PAINT: &[(&str, &str)] = &[
     ("paint.lua", include_str!("../apps/paint3d/scripts/paint.lua")),
     ("pal.lua", include_str!("../apps/paint3d/scripts/pal.lua")),
     ("panel.lua", include_str!("../apps/paint3d/scripts/panel.lua")),
+    ("save.lua", include_str!("../apps/paint3d/scripts/save.lua")),
     ("scene.lua", include_str!("../apps/paint3d/scripts/scene.lua")),
 ];

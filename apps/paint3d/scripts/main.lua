@@ -12,6 +12,10 @@
 -- Keys: B pen  F fill  I pick colour  1-3 brush size  Z undo  C canvas
 --       Esc steps back (canvas -> focus -> close)  Ctrl+P closes
 --
+-- A dithered frame marks the overlay as open. Once something is painted, a
+-- SAVE button in the lower right asks to write the edits back into the app's
+-- image files (save.lua).
+--
 -- Written in the restricted style AGENTS.md asks for (silt): calls hoisted out
 -- of argument lists, no anonymous functions, no table deletion.
 
@@ -44,7 +48,10 @@ function main()
 end
 
 function loop(dt)
-	keys_update()
+	local dialog = dialog_keys()
+	if not dialog then
+		keys_update()
+	end
 	local m = mus()
 	local click = false
 	if m.m1 and not U.last_m1 then
@@ -55,15 +62,28 @@ function loop(dt)
 		U.painting = false
 		U.lastu = -1
 	end
-	if P.mode == "canvas" then
-		canvas_update(m, click)
-	else
-		scene_update(m, click)
+	-- the frame's button and dialog sit over everything, so they see clicks first
+	if click then
+		local gx = flr(m.x * gui.w)
+		local gy = flr(m.y * gui.h)
+		local took = chrome_click(gx, gy)
+		if took then
+			click = false
+		end
+	end
+	-- while the dialog is up nothing underneath reacts
+	if not D.open and not dialog then
+		if P.mode == "canvas" then
+			canvas_update(m, click)
+		else
+			scene_update(m, click)
+		end
 	end
 	if U.msg_t > 0 then
 		U.msg_t = U.msg_t - 1
 	end
 	status_draw()
+	chrome_draw()
 	-- scripted playtests drop a zz_test.lua defining this (see AGENTS.md)
 	if TEST_HOOK ~= nil then
 		TEST_HOOK(dt)
@@ -169,7 +189,8 @@ function status_draw()
 	end
 	clr()
 	local w = gui.w
-	gui:rect(0, 0, w, 11, "151722ff")
+	local bw = w - 2 * INSET
+	gui:rect(INSET, INSET, bw, 11, "151722ff")
 	local s = "PAINT"
 	if F.on then
 		local t = short(F.tex, 20)
@@ -180,7 +201,9 @@ function status_draw()
 		s = s .. "  "
 		s = s .. U.msg
 	end
-	gui:text(s, 3, 2, "e8e8f0")
-	local hx = w - 84
-	gui:text("ESC/CTRL+P", hx, 2, "8a8fa8")
+	local tx = INSET + 3
+	local ty = INSET + 2
+	gui:text(s, tx, ty, "e8e8f0")
+	local hx = w - 84 - INSET
+	gui:text("ESC/CTRL+P", hx, ty, "8a8fa8")
 end

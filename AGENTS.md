@@ -222,7 +222,7 @@ the app, and `app.pick(true, x, y)` hits the overlay's own 3D panels (with
 hasn't set `attr{lock=true}`. It pauses the app and paints textures straight
 onto the meshes. It's also the worked example for writing your own overlay.
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
-`view.md`, `colors.md`, `project.md`, `close.md`):
+`view.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`):
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit
@@ -233,6 +233,12 @@ Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
 - Build a 3D panel as one image on a billboard (`make(texname, ...)`). The
   texel `app.pick(true)` returns *is* the panel pixel, so button hit-testing is
   plain 2D maths in image space.
+- `app.save(texture)` writes an edited texture back into the image file the
+  app loaded it from (a tile only into its square of the sheet). Only the
+  edited app's own png files qualify: a texture the app drew from code
+  (`nimg` + `tex`) has no file, and `app.source` says so before you ask. The
+  paint overlay's SAVE button (lower right, once something's painted) does
+  this behind a confirm dialog.
 
 ## Suggested game layout
 

@@ -3,13 +3,14 @@
 -- panel uses, so nothing resets switching between the two, and the scene stays
 -- visible where the gui is clear — the mesh repaints as you draw here.
 
-C = { x = 6, y = 16, scale = 1, w = 0, h = 0, px = 0, py = 16 }
+C = { x = 10, y = 20, scale = 1, w = 0, h = 0, px = 0, py = 20 }
 
 function canvas_layout()
 	local gw = gui.w
 	local gh = gui.h
-	local avail_h = gh - 22
-	local avail_w = gw - PANEL_W - 18
+	-- inside the dithered frame (INSET on each side)
+	local avail_h = gh - 22 - 2 * INSET
+	local avail_w = gw - PANEL_W - 18 - 2 * INSET
 	local avail = avail_h
 	if avail_w < avail then
 		avail = avail_w
@@ -25,8 +26,8 @@ function canvas_layout()
 	C.scale = s
 	C.w = F.tw * s
 	C.h = F.th * s
-	C.px = gw - PANEL_W - 6
-	C.py = 16
+	C.px = gw - PANEL_W - 6 - INSET
+	C.py = 20
 end
 
 function canvas_update(m, click)
@@ -73,13 +74,16 @@ end
 function canvas_draw(hu, hv)
 	clr()
 	local gw = gui.w
-	gui:rect(0, 0, gw, 11, "151722ff")
+	local bw = gw - 2 * INSET
+	gui:rect(INSET, INSET, bw, 11, "151722ff")
 	local title = short(F.tex, 24)
 	local s = "ZOOM  "
 	s = s .. title
-	gui:text(s, 3, 2, "e8e8f0")
-	local hx = gw - 84
-	gui:text("ESC: BACK", hx, 2, "8a8fa8")
+	local tx = INSET + 3
+	local ty = INSET + 2
+	gui:text(s, tx, ty, "e8e8f0")
+	local hx = gw - 84 - INSET
+	gui:text("ESC: BACK", hx, ty, "8a8fa8")
 
 	-- frame, a mid grey under transparent texels, then the texture itself
 	local fx = C.x - 2

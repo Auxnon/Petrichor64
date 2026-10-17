@@ -3228,6 +3228,62 @@ function app.colors(texture) end",
 
         let pitcher = main_pitcher.clone();
         lua_lib!(
+            "source",
+            move |vm, mc, name: String| {
+                let (tx, rx) = sync_channel::<Result<String, String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppSource(name, tx))));
+                let r = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
+                let mut t = vm.raw_table();
+                match r {
+                    Ok(path) => {
+                        t.set("ok", true);
+                        t.set("path", path);
+                    }
+                    Err(e) => {
+                        t.set("ok", false);
+                        t.set("err", e);
+                    }
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the app's image file a texture was loaded from, if it can be saved back there",
+            "
+---@param texture string
+---@return {ok:boolean, path:string?, err:string?}
+function app.source(texture) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "save",
+            move |vm, mc, name: String| {
+                let (tx, rx) = sync_channel::<Result<String, String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppSave(name, tx))));
+                let r = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
+                let mut t = vm.raw_table();
+                match r {
+                    Ok(path) => {
+                        t.set("ok", true);
+                        t.set("path", path);
+                    }
+                    Err(e) => {
+                        t.set("ok", false);
+                        t.set("err", e);
+                    }
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: write a texture's current pixels back into the app's image file it came from",
+            "
+---@param texture string
+---@return {ok:boolean, path:string?, err:string?}
+function app.save(texture) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
             "project",
             move |vm, mc, (x, y, z): (f64, f64, f64)| {
                 let (tx, rx) = sync_channel::<Option<[f32; 3]>>(0);
@@ -4138,6 +4194,11 @@ pub enum MainCommmand {
     AppProject([f32; 3], SyncSender<Option<[f32; 3]>>),
     /// `app.close()`: an overlay dismissing itself.
     AppClose,
+    /// `app.source(texture)`: the app's image file a texture can be saved to
+    /// (path relative to the app), or why it can't.
+    AppSource(String, SyncSender<Result<String, String>>),
+    /// `app.save(texture)`: write a texture's pixels back into that file.
+    AppSave(String, SyncSender<Result<String, String>>),
     Copy(String),
     LuaClose(),
     //for testing

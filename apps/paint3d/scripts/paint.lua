@@ -45,6 +45,7 @@ end
 
 function commit()
 	tex(F.tex, F.img)
+	mark_edited(F.tex)
 end
 
 -- A square brush of P.size texels, centred on (u, v).
@@ -206,6 +207,7 @@ function undo()
 	local name = H.tex[H.n]
 	H.n = H.n - 1
 	tex(name, snap)
+	mark_edited(name)
 	if F.on and F.tex == name then
 		F.img = snap:copy()
 	end
