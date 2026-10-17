@@ -8,6 +8,8 @@
 - `tex()` on an existing texture uploads just that texture's atlas slot, not the whole atlas
 - Opening an overlay no longer resets the app's sounds or unlocks it
 - `CHOR_SNAP=prefix CHOR_SNAP_AT=frames` saves frames to PNG, for testing on a locked or headless session
+- `chor` with no display (e.g. over SSH) says so and suggests `chor -t <game>`, instead of exiting silently
+- `tui-embed` is a default feature now, so `chor -t` works from a plain `cargo install` (+2MB)
 
 - Public repo! More documentation!
 - `No signal` app as basic runtime default

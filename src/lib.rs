@@ -1439,8 +1439,18 @@ pub fn start() {
         match builder.build() {
             Ok(el) => el,
             Err(e) => {
+                // Usually no display at all (an SSH session, a bare tty): say so on
+                // the terminal and point at the mode that works there, rather than
+                // only trying a dialog that has nowhere to appear either.
+                if std::env::var_os("WAYLAND_DISPLAY").is_none()
+                    && std::env::var_os("DISPLAY").is_none()
+                {
+                    no_display_hint();
+                    std::process::exit(1);
+                }
+                eprintln!("chor: can't open a window: {e}");
                 error_window(Box::new(e));
-                return;
+                std::process::exit(1);
             }
         }
     };
@@ -1455,6 +1465,31 @@ pub fn start() {
             _ => eprintln!("unknown window exit error"),
         }
     };
+}
+
+/// Point a windowless launch (usually SSH) at the terminal renderer, spelled
+/// out with the game the user just asked for.
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+fn no_display_hint() {
+    let game: Vec<String> = std::env::args().skip(1).collect();
+    let game = if game.is_empty() {
+        "<game dir>".to_string()
+    } else {
+        game.join(" ")
+    };
+    let ssh = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+    if ssh {
+        eprintln!("chor: this is an SSH session with no display to open a window on.");
+    } else {
+        eprintln!("chor: no display found (WAYLAND_DISPLAY and DISPLAY are unset).");
+    }
+    #[cfg(all(feature = "tui-embed", desktop))]
+    eprintln!("chor: play it right here in the terminal instead:  chor -t {game}");
+    #[cfg(not(all(feature = "tui-embed", desktop)))]
+    eprintln!(
+        "chor: this build can't play in the terminal; reinstall with \
+         `--features tui-embed`, then run:  chor -t {game}"
+    );
 }
 
 /// Web entry point, invoked from `main()` (wasm-bindgen wraps the bin's `main`
@@ -3142,15 +3177,21 @@ pub fn error_window(e: Box<dyn std::error::Error>) {
     //         );
     //     }
     // }
+    // Always on the terminal too: the dialog needs a desktop to appear on, and
+    // when it can't show, the error was otherwise lost without a trace.
     #[cfg(desktop)]
-    native_dialog::DialogBuilder::message()
-        .set_level(native_dialog::MessageLevel::Error)
-        .set_title("Petrichor64 Error")
-        // .set_text(&format!("{:#?}", path))
-        .set_text(&e.to_string())
-        .confirm()
-        .show()
-        .unwrap();
+    {
+        eprintln!("Petrichor64 Error: {}", e);
+        if let Err(de) = native_dialog::DialogBuilder::message()
+            .set_level(native_dialog::MessageLevel::Error)
+            .set_title("Petrichor64 Error")
+            .set_text(&e.to_string())
+            .confirm()
+            .show()
+        {
+            eprintln!("(couldn't show the error dialog: {})", de);
+        }
+    }
     // No native dialog on the web; surface the error to the JS console instead.
     #[cfg(target_arch = "wasm32")]
     web_sys::console::error_1(&format!("Petrichor64 Error: {}", e).into());
