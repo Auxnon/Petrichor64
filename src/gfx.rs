@@ -406,6 +406,7 @@ impl<'w> Gfx<'w> {
             size.width as f32 / size.height as f32,
             vec3(0., 0., 0.),
             vec2(0., 0.),
+            0.,
         );
 
         let render_uniforms = GlobalUniforms {

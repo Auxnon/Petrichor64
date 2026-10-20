@@ -2214,9 +2214,12 @@ impl Core {
                 self.ent_manager
                     .create_from_lua_ent(&self.tex_manager, &self.model_manager, lent);
             }
-            VmToHost::Cam { pos, rot } => {
+            VmToHost::Cam { pos, rot, ortho } => {
                 if let Some(p) = pos {
                     self.global.cam_pos = glam::vec3(p[0], p[1], p[2]);
+                }
+                if let Some(o) = ortho {
+                    self.global.cam_ortho = o;
                 }
                 if let Some(r) = rot {
                     self.global.simple_cam_rot = glam::vec2(r[0], r[1]);
@@ -2438,7 +2441,7 @@ impl Core {
         catcher.try_iter().for_each(|(id, p)| {
             // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
             match p {
-                MainCommmand::Cam(p, r) => {
+                MainCommmand::Cam(p, r, o) => {
                     // A camera belongs to the bundle that set it. This used to write
                     // straight into the one global camera, so an overlay calling `cam`
                     // swung the app's view out from under it — and an overlay wanting
@@ -2453,6 +2456,9 @@ impl Core {
                         }
                         if let Some(rot) = r {
                             self.global.simple_cam_rot = rot;
+                        }
+                        if let Some(ortho) = o {
+                            self.global.cam_ortho = ortho;
                         }
                     }
                 }

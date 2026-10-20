@@ -28,6 +28,8 @@ pub struct Global {
     pub game_controller: bool,
     pub console: bool,
     pub cam_pos: Vec3,
+    /// Orthographic half-height of the view, in world units; 0 is perspective.
+    pub cam_ortho: f32,
     /// Directional "sun" for the 3D pass (L0 retro lighting). Defaults leave the
     /// scene fullbright (color 0 + ambient 1 => unchanged) so apps opt in via
     /// the `lum` native.
@@ -119,6 +121,7 @@ impl Global {
             mouse_buttons: [0.; 4],
             mouse_delta: vec2(0., 0.),
             cam_pos: vec3(0., 0., 0.),
+            cam_ortho: 0.,
             // Fullbright by default: color 0 + ambient 1 => shade stays 1.
             light_dir: vec3(-0.3, -0.5, -0.8),
             light_color: vec3(0., 0., 0.),
@@ -178,6 +181,7 @@ impl Global {
         self.cam_pos.x = 0.;
         self.cam_pos.y = 0.;
         self.cam_pos.z = 0.;
+        self.cam_ortho = 0.;
         self.smooth_cam_pos.x = 0.;
         self.smooth_cam_pos.y = 0.;
         self.smooth_cam_pos.z = 0.;

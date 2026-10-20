@@ -92,6 +92,8 @@ pub enum VmToHost {
     Cam {
         pos: Option<[f32; 3]>,
         rot: Option<[f32; 2]>,
+        /// Orthographic half-height, world units; 0 is perspective.
+        ortho: Option<f32>,
     },
     /// The one light `lum{}` sets. Each field optional so a call can set just
     /// one aspect; `ambient` is flat fill. `shape`: 0=sun (default), 1=cone,

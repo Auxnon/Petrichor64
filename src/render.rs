@@ -4,9 +4,20 @@ use wgpu::{
     Color, CommandEncoderDescriptor, IndexFormat, LoadOp, Operations, RenderPassColorAttachment,
     RenderPassDepthStencilAttachment, RenderPassDescriptor, StoreOp,
 };
-/** create rotation matrix from camera position and simple rotation */
-pub fn generate_matrix(aspect_ratio: f32, mut camera_pos: Vec3, mouse: Vec2) -> (Mat4, Mat4, Mat4) {
-    let mx_projection = Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0);
+/** create rotation matrix from camera position and simple rotation; `ortho` is
+the orthographic half-height in world units, 0 for perspective */
+pub fn generate_matrix(
+    aspect_ratio: f32,
+    mut camera_pos: Vec3,
+    mouse: Vec2,
+    ortho: f32,
+) -> (Mat4, Mat4, Mat4) {
+    let mx_projection = if ortho > 0. {
+        let h = ortho * 16.;
+        Mat4::orthographic_rh(-h * aspect_ratio, h * aspect_ratio, -h, h, 1., 24800.0)
+    } else {
+        Mat4::perspective_rh(0.785398, aspect_ratio, 1., 24800.0)
+    };
 
     camera_pos *= 16.;
 
@@ -177,6 +188,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         // *v * 2. * std::f32::consts::PI,
         cam_pos,
         core.global.smooth_cam_rot,
+        core.global.cam_ortho,
     );
 
     // Cache these so the ray can be re-traced at the top of the next frame, before

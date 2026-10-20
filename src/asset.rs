@@ -1373,6 +1373,7 @@ pub fn make_codex_file<'a>(
 ---@class cam_params
 ---@field pos number[]? x, y, z
 ---@field rot number[]? azimuth, altitude
+---@field ortho (number|boolean)? orthographic half-height in world units; 0 or false for perspective
 
 --- @class model_data
 --- @field t (string|string[])? texture asset(s)

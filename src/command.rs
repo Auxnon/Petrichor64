@@ -1269,7 +1269,17 @@ function attr(attributes) end"
                     _ => None,
                 };
 
-                lua_err!(pitcher.send((bundle_id, MainCommmand::Cam(pos, rot))));
+                // a half-height in world units, or false / 0 for perspective
+                let ortho = match table.get("ortho") {
+                    Some(Value::Bool(_)) => Some(0.),
+                    Some(v) => {
+                        let h: f32 = v.into();
+                        Some(h.max(0.))
+                    }
+                    None => None,
+                };
+
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Cam(pos, rot, ortho))));
             }
 
             Ok(())
@@ -4138,7 +4148,8 @@ pub type NumCouple = (bool, f32);
 pub enum MainCommmand {
     GetImg(String, SyncSender<(u32, u32, RgbaImage)>),
     SetImg(String, RgbaImage, SyncSender<()>),
-    Cam(Option<glam::Vec3>, Option<glam::Vec2>),
+    /// (pos, rot, ortho half-height: 0 is perspective)
+    Cam(Option<glam::Vec3>, Option<glam::Vec2>, Option<f32>),
     /// The one light `lum{}` sets — (dir, sun rgb, flat ambient, sky rgb,
     /// ground rgb, shape, pos, range, angle), each optional so a call can set
     /// just one aspect. sky+ground present => hemisphere ambient (sun only);
@@ -4315,9 +4326,10 @@ pub fn hex_rgba(c: [u8; 4]) -> String {
 pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol::VmToHost> {
     use crate::worker_protocol::{ValueWire, VmToHost};
     match cmd {
-        MainCommmand::Cam(pos, rot) => Some(VmToHost::Cam {
+        MainCommmand::Cam(pos, rot, ortho) => Some(VmToHost::Cam {
             pos: pos.map(|v| [v.x, v.y, v.z]),
             rot: rot.map(|v| [v.x, v.y]),
+            ortho,
         }),
         MainCommmand::Light(dir, color, ambient, sky, ground, shape, pos, range, angle) => {
             Some(VmToHost::Light {
