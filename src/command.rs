@@ -573,6 +573,50 @@ fn parse_sound_cfg(cfg: Option<&Value>, scalar_key: &str) -> (Envelope, Option<f
     (env, scalar)
 }
 
+thread_local! {
+    /// Every command `init_lua_sys` last registered on this thread, as (name,
+    /// (description, LSP stub)): what `ignore.lua` is made of (`command_docs`).
+    static COMMAND_DOCS: RefCell<Vec<(String, (String, String))>> = RefCell::new(Vec::new());
+}
+
+/// Every Lua command with its description and LSP stub, for writing
+/// `ignore.lua` without a running game: builds a throwaway VM, wired to
+/// nothing, just to register them.
+#[cfg(all(feature = "silt", not(target_arch = "wasm32")))]
+pub fn command_docs() -> Result<HashMap<String, (String, String)>, P64Error> {
+    let size = [1, 1];
+    let letters = crate::gui::Gui::letter_init(&mut crate::log::Loggy::new());
+    let gui = Rc::new(RefCell::new(GuiMorsel::new(letters, size)));
+    let (pitcher, _catcher) = std::sync::mpsc::channel::<MainPacket>();
+    let (loggy, _loggy_rx) = std::sync::mpsc::channel::<(LogType, String)>();
+    let (world, _world_rx) = std::sync::mpsc::channel::<(TileCommand, SyncSender<TileResponse>)>();
+    #[cfg(feature = "audio")]
+    let (singer, _singer_rx) = std::sync::mpsc::channel::<SoundCommand>();
+
+    let mut lua = silt_lua::Lua::new_with_standard();
+    lua.enter::<_, Result<(), P64Error>>(|vm, mc| {
+        init_lua_sys(
+            vm,
+            mc,
+            0,
+            false,
+            pitcher.clone(),
+            world.clone(),
+            Rc::clone(&gui),
+            #[cfg(feature = "audio")]
+            singer.clone(),
+            Rc::new(RefCell::new([false; 256])),
+            Rc::new(RefCell::new([false; 256])),
+            Rc::new(RefCell::new([0f32; 13])),
+            Rc::new(RefCell::new(Pad::new())),
+            Rc::new(Mutex::new(2u64)),
+            loggy.clone(),
+            LocalPool::new(),
+        )
+    })?;
+    Ok(COMMAND_DOCS.with(|d| d.borrow().iter().cloned().collect()))
+}
+
 pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "picc")] ctx: &Context<'gc>,
     #[cfg(feature = "silt")] vm_init: &mut VM<'gc>,
@@ -3335,6 +3379,8 @@ function app.close() end",
             .borrow_mut(mc_in)
             .set("app", vm_init.wrap_table(mc_in, app));
     }
+
+    COMMAND_DOCS.with(|d| *d.borrow_mut() = command_map.clone());
 
     vm_init.build_and_run(
         mc_in,

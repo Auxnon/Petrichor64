@@ -30,6 +30,7 @@ use types::{ControlState, GlobalMap};
 
 mod asset;
 mod builtin;
+mod cli;
 mod bundle;
 mod collide;
 mod command;
@@ -1279,6 +1280,9 @@ impl ApplicationHandler for App {
 ///    as `/game.game.png` on top of a web dir (`--root`, else found nearby).
 /// Returns true if a CLI command was handled, so `main()` should exit instead
 /// of starting the engine.
+#[cfg(not(target_arch = "wasm32"))]
+pub use cli::run_tool_cli;
+
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 pub fn run_cli() -> bool {
     let args: Vec<String> = std::env::args().collect();
@@ -1575,7 +1579,11 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
     let mut scripts = Vec::new();
     if let Some(v) = map.get("scripts") {
         for (name, bytes) in v {
-            if name.ends_with(".lua") && !name.ends_with("ignore.lua") {
+            let ext = std::path::Path::new(name)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if crate::asset::is_script_ext(ext) && !name.ends_with("ignore.lua") {
                 scripts.push((stem(name), String::from_utf8_lossy(bytes).to_string()));
             }
         }

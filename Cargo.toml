@@ -42,7 +42,7 @@ default=[ "silt","headed","audio","studio","bin"] # "online_capable" ,  "headed"
 include_auto=["studio"]
 # Builds the `chor` executable. Default on; the web build leaves it off
 # (see [[bin]]).
-bin=[]
+bin=["dep:libc"]
 # Everything: default plus the extras that make `chor` bigger. Grows as we add
 # more of those. Build or install with `--features kitchensink`.
 kitchensink=["default", "web-embed", "tui-embed"]
@@ -236,7 +236,8 @@ tokio = { version = "1.43.0", features = ["full"] }
 # a Gradle project, and nothing in the engine's own code depends on which is used.
 # ---------------------------------------------------------------------------
 # TUI backend: redirects the engine's stdout/stderr off the terminal picture
-# (src/tui/capture.rs). Already in the tree via cpal/alsa/dirs.
+# (src/tui/capture.rs); `chor ignore -` keeps the engine's chatter out of the
+# file it prints (src/cli.rs). Already in the tree via cpal/alsa/dirs.
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
 

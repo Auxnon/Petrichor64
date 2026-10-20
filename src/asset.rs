@@ -244,7 +244,7 @@ pub async fn unpack(
                     //     Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
                     // };
                     let mut bufreader = BufReader::new(item_buffer.as_slice());
-                    if e == "lua" {
+                    if e.to_str().is_some_and(is_script_ext) {
                         if debug {
                             loggy.log(
                                 LogType::LuaSys,
@@ -489,6 +489,12 @@ fn register_skeleton_source(name: &str, path: &str, buffer: Option<&[u8]>, loggy
     }
 }
 
+/// A script the loader runs: `.lua`, or `.silt` (the same code, named so a silt
+/// language server picks it up).
+pub fn is_script_ext(e: &str) -> bool {
+    e.eq_ignore_ascii_case("lua") || e.eq_ignore_ascii_case("silt")
+}
+
 pub fn is_valid_type(s: &str) -> bool {
     s == "gltf" || s == "glb" || s == "png" || s == "ron" || s == "json"
 }
@@ -533,7 +539,7 @@ pub fn collect_packable_sources<'a>(
         let is_lua = entry
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("lua"))
+            .map(is_script_ext)
             .unwrap_or(false);
         if is_lua {
             if let Some(p) = entry.to_str() {
@@ -968,15 +974,13 @@ pub fn walk_files<'a>(
             Some(e) => {
                 let s = e.to_ascii_lowercase();
                 let file_name = entry.to_str().unwrap();
-                if s == "lua" {
+                if s.to_str().is_some_and(is_script_ext) {
                     if file_name.ends_with("ignore.lua") {
                         loggy.log(LogType::Config, "skipping ignore script");
                     } else {
                         loggy.log(LogType::Config, &format!("reading script {}", file_name));
 
-                        let input_path = Path::new("")
-                            .join(file_name.to_owned())
-                            .with_extension("lua");
+                        let input_path = Path::new("").join(file_name.to_owned());
 
                         // let name = crate::asset::get_file_name(input_path.to_owned());
                         let reader = fs::File::open(input_path);
@@ -1327,7 +1331,9 @@ pub fn simple_square(size: u32, path: PathBuf, loggy: &mut Loggy) {
 //     crate::log::log(format!("📦assets::{}", str));
 //     println!("📦assets::{}", str);
 // }
-pub fn make_codex_file(command_map: &HashMap<String, (String, String)>) -> String {
+pub fn make_codex_file<'a>(
+    command_map: impl IntoIterator<Item = (&'a String, &'a (String, String))>,
+) -> String {
     let mut s = get_codex_version_string()
         + "
 ---@diagnostic disable: duplicate-doc-field, missing-return
