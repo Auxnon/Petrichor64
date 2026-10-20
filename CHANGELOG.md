@@ -1,5 +1,6 @@
 ## UNRELEASED
 
+- `atan2(y, x)`: the angle of a point from the +x axis, in radians (-pi to pi). Games no longer need their own fitted version for facing and aiming
 - **Ctrl+P paint overlay**: over any app that isn't `attr{lock=true}`, pauses it, lets you click a mesh, sprite or tile and paint its texture in place, with a tool panel floating beside it in 3D and a zoomed pixel canvas mode. Built into the engine (`apps/paint3d`)
 - Paint overlay: a dithered frame while it's open, and a SAVE button (lower right, once something's painted) that confirms, then writes the edits back into the app's image files. `app.source`/`app.save` for overlays
 - Overlay `app.*` additions: `pick` (what's under the pointer, down to the texture and texel), `pause`, `view` (the app's camera and the pointer ray), `colors`, `project`, `close`

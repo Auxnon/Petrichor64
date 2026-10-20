@@ -2823,6 +2823,16 @@ function sin(f) end"
 ---@return number
 function sqrt(f) end"
     );
+    lua!(
+        "atan2",
+        move |_, _, (y, x): (f64, f64)| { Ok(y.atan2(x)) },
+        "Angle of the point (x, y) from the +x axis",
+        "
+---@param y number
+---@param x number
+---@return number
+function atan2(y, x) end"
+    );
 
     lua!(
         "pow",

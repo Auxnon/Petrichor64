@@ -84,6 +84,41 @@ corruption`, or a whole file silently not loading).
 - The sky is a raster you can paint (gradients, stars, a moon). Roomer's
   `scripts/env.lua` does day and night.
 
+## Skinned, animated glTF characters
+
+The engine plays real skeletal animation from glTF, so characters don't have to be
+rigid parts or sprite flipbooks. Full API: `guide/entity.md`, **Skeletons**.
+
+- Drop a skinned `.glb` into `assets/`; it loads as a model named after the file.
+  `make("farmer", x, y, z)`, then `e:anim("walk")` plays the clip of that name
+  (names are lowercased). Clips loop. `e:anim("walk", true, 1.5)` restarts it at
+  1.5× speed, and `e:anim("")` goes back to the rest pose. For a one-shot like a
+  death, time it in your script and then switch to a held clip (`die`, then `dead`).
+- `e.bones` lists the joints. `e:bone("hand.r")` reads a bone's world position, so
+  you can attach a sprite to it. `e:bone("head", {rx, ry, rz})` adds a rotation on
+  top of the clip, which is enough for things like aiming a head at the player.
+- **It's true smooth skinning**: up to 4 joints and weights per vertex
+  (`JOINTS_0`/`WEIGHTS_0`), up to 64 joints, with inverse bind matrices.
+  Use it. If every vertex has weight 1 on a single bone, the model is a stack of
+  rigid boxes and looks like Minecraft. Instead, make each arm one tube from
+  shoulder to wrist and each leg one tube from hip to ankle, and give the rings
+  either side of the elbow or knee a 50/50 or 85/15 split between the two bones.
+  Do the same at the waist (hips/spine) and the neck (spine/head). Then joints
+  crease instead of scissoring apart. Keep props like weapons rigid.
+- What the loader needs: an **indexed** mesh, the texture as the **first embedded
+  image** (nearest filtering suits the look), and **Z-up** vertex data. In Blender,
+  untick "+Y Up" when exporting. Vertices pack at 1/16 unit, so author the model
+  at 4× and show it with `e.scale = 0.25`.
+- You can generate them in code with no Blender at all. Barrow
+  (`~/projects/dark`, `tools/gen_assets.py`) is a dependency-free Python
+  generator you can copy. It has a rig builder, `tube()` lofts with blended ring
+  weights, a palette texture with hand-drawn face pictures, pose/blend helpers,
+  and a glTF writer that bakes LINEAR quaternion keys plus a root translation per
+  clip. The result is about 850 triangles per character with idle, walk, run,
+  attack, hit and die clips.
+- Facing: `e.rz = atan2(dy, dx)` turns an entity toward a target. Use the native
+  `atan2(y, x)`; older engines lacked it, which is why old games carry a Lua one.
+
 ## Picking and input
 
 - `mus()` returns a table: `x, y` (0–1 across the screen), `m1`/`m2`/`m3`
