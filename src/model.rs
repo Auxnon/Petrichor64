@@ -191,6 +191,17 @@ impl ModelManager {
                     loggy,
                 );
 
+                // A glb the engine wrote itself (one mesh, one image) can take
+                // the paint overlay's edits back: rewriting it loses nothing.
+                #[cfg(feature = "headed")]
+                if image_data.len() == 1
+                    && nodes.as_json().asset.generator.as_deref() == Some(crate::gltf_io::GENERATOR)
+                    && std::path::Path::new(str).is_file()
+                {
+                    let (w, h) = (image_data[0].width, image_data[0].height);
+                    tex_manager.record_glb_source(&base_name, str, bundle_id, w, h);
+                }
+
                 #[cfg(feature = "headed")]
                 let uv_adjust = if uv_arr.len() == 0 {
                     vec![vec4(0., 0., 1., 1.)]

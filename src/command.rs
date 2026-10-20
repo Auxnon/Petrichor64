@@ -2636,6 +2636,75 @@ function mod(asset, t) end"
 function lmod(model, bundle) end"
     );
 
+    // Lay a mesh flat onto an image: the paint overlay's NEW uses the same
+    // layout. Vertices on chart borders are split, so the result has its own
+    // vertex list; `from` says which input vertex each came from.
+    lua!(
+        "unwrap",
+        move |vm, mc, (mesh, opts): (Value, Value)| {
+            let Value::Table(m) = &mesh else {
+                return Err(static_err("unwrap: first argument must be a mesh table {v, i}"));
+            };
+            let m = m.borrow();
+            let pos = ordered_list::<[f32; 3]>(&m, "v", vm, mc).unwrap_or_default();
+            let norm = ordered_list::<[f32; 3]>(&m, "n", vm, mc).unwrap_or_default();
+            let mut ind = ordered_list::<u32>(&m, "i", vm, mc).unwrap_or_default();
+            drop(m);
+            if ind.is_empty() {
+                ind = (0..pos.len() as u32).collect();
+            }
+            let (mut w, mut h, mut pad, mut mode) = (64u32, 64u32, 1u32, crate::unwrap::Mode::Box);
+            if let Value::Table(o) = &opts {
+                let o = o.borrow();
+                let num = |k: &str| value_f32(&o.get_value(&k.into())).map(|f| f.max(0.) as u32);
+                w = num("w").unwrap_or(w).max(1);
+                h = num("h").unwrap_or(h).max(1);
+                pad = num("pad").unwrap_or(pad);
+                if let Value::String(s) = o.get_value(&"mode".into()) {
+                    mode = crate::unwrap::Mode::parse(&s.to_string())
+                        .ok_or_else(|| static_err("unwrap: mode is \"box\" or \"flat\""))?;
+                }
+            }
+            let un = crate::unwrap::unwrap(&pos, &ind, mode, w, h, pad);
+            let v: Vec<Value> = un
+                .pos
+                .iter()
+                .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64, p[2] as f64]))
+                .collect();
+            let u: Vec<Value> = un
+                .uv
+                .iter()
+                .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64]))
+                .collect();
+            let i: Vec<Value> = un.ind.iter().map(|i| Value::Integer(*i as i64)).collect();
+            let from: Vec<Value> = un.from.iter().map(|i| Value::Integer(*i as i64)).collect();
+            let mut out = vm.raw_table();
+            out.set("v", vm.table_from_array(mc, v));
+            out.set("u", vm.table_from_array(mc, u));
+            out.set("i", vm.table_from_array(mc, i));
+            out.set("from", vm.table_from_array(mc, from));
+            if norm.len() == pos.len() {
+                let n: Vec<Value> = un
+                    .from
+                    .iter()
+                    .map(|&f| {
+                        let p = norm[f as usize];
+                        vm.table_from_array(mc, [p[0] as f64, p[1] as f64, p[2] as f64])
+                    })
+                    .collect();
+                out.set("n", vm.table_from_array(mc, n));
+            }
+            out.set("charts", un.charts as i64);
+            Ok(vm.wrap_table(mc, out))
+        },
+        "Lay a mesh's triangles flat onto a w x h image: new v/n/u/i to pass to mod() <mesh:{v,i,n?}, opts?:{w,h,pad,mode}>",
+        "
+---@param mesh {v:number[3][], i?:integer[], n?:number[3][]}
+---@param opts? {w?:integer, h?:integer, pad?:integer, mode?:string}
+---@return {v:number[3][], n:number[3][]?, u:number[2][], i:integer[], from:integer[], charts:integer}
+function unwrap(mesh, opts) end"
+    );
+
     // glTF out of, and back into, the same arrays mod() takes. Writing is how a
     // modelling tool saves its work as an asset the engine (or anything else) can
     // load; reading hands a file's triangles back as tables so a tool can edit an
@@ -3343,6 +3412,111 @@ function app.source(texture) end",
 ---@param texture string
 ---@return {ok:boolean, path:string?, err:string?}
 function app.save(texture) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "info",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Option<AppInfoOut>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppInfo(tx))));
+                let Ok(Some(i)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set("dir", i.dir);
+                t.set("packed", i.packed);
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the edited app's folder, and whether it's packed (nothing can be saved)",
+            "
+---@return {dir:string, packed:boolean}|nil
+function app.info() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "texinfo",
+            move |vm, mc, name: String| {
+                let (tx, rx) = sync_channel::<Option<TexInfoOut>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppTexInfo(name, tx))));
+                let Ok(Some(i)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set("w", i.w as i64);
+                t.set("h", i.h as i64);
+                if i.tile > 0 {
+                    t.set("tile", i.tile as i64);
+                }
+                t.set("new", i.new);
+                match i.save {
+                    Ok(path) => {
+                        t.set("ok", true);
+                        t.set("path", path);
+                    }
+                    Err(e) => {
+                        t.set("ok", false);
+                        t.set("err", e);
+                    }
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: a texture's size, its sheet's tile size if it's a tile, and the file it saves into",
+            "
+---@param texture string
+---@return {w:integer, h:integer, tile:integer?, new:boolean, ok:boolean, path:string?, err:string?}|nil
+function app.texinfo(texture) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "newtex",
+            move |vm, mc, (ent, name, w, h, mode): (Value, String, Value, Value, Option<String>)| {
+                let n = |v: &Value| value_f32(v).unwrap_or(0.).max(0.) as u32;
+                let mode = match mode.as_deref() {
+                    None => crate::unwrap::Mode::Box,
+                    Some(m) => crate::unwrap::Mode::parse(m)
+                        .ok_or_else(|| static_err("newtex: mode is \"box\" or \"flat\""))?,
+                };
+                let req = NewTexIn {
+                    ent: value_f32(&ent).unwrap_or(-1.) as i64 as u64,
+                    name,
+                    w: n(&w),
+                    h: n(&h),
+                    mode,
+                };
+                let (tx, rx) = sync_channel::<Result<NewTexOut, String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppNewTex(Box::new(req), tx))));
+                let r = rx.recv().unwrap_or_else(|_| Err("no reply".into()));
+                let mut t = vm.raw_table();
+                match r {
+                    Ok(o) => {
+                        t.set("ok", true);
+                        t.set("tex", o.tex);
+                        t.set("path", o.path);
+                        t.set("unwrapped", o.unwrapped);
+                        t.set("charts", o.charts as i64);
+                    }
+                    Err(e) => {
+                        t.set("ok", false);
+                        t.set("err", e);
+                    }
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: give an entity a fresh image, unwrapping its mesh onto it; saved as a new file",
+            "
+---@param ent integer entity id (app.pick's id)
+---@param name string a-z, 0-9 and _
+---@param w integer
+---@param h integer
+---@param mode? string \"box\" (default) or \"flat\"
+---@return {ok:boolean, tex:string?, path:string?, unwrapped:boolean?, charts:integer?, err:string?}
+function app.newtex(ent, name, w, h, mode) end",
             &mut app
         );
 
@@ -4266,6 +4440,14 @@ pub enum MainCommmand {
     AppSource(String, SyncSender<Result<String, String>>),
     /// `app.save(texture)`: write a texture's pixels back into that file.
     AppSave(String, SyncSender<Result<String, String>>),
+    /// `app.info()`: where the edited app lives and whether its files can be
+    /// written at all (a packed game can't).
+    AppInfo(SyncSender<Option<AppInfoOut>>),
+    /// `app.texinfo(texture)`: its size, the sheet tile it is, its file.
+    AppTexInfo(String, SyncSender<Option<TexInfoOut>>),
+    /// `app.newtex(ent, name, w, h, mode)`: a fresh image for one entity,
+    /// unwrapping its mesh onto it.
+    AppNewTex(Box<NewTexIn>, SyncSender<Result<NewTexOut, String>>),
     Copy(String),
     LuaClose(),
     //for testing
@@ -4287,6 +4469,46 @@ pub struct PickOut {
     pub normal: [f32; 3],
     /// Texture name, texel x/y, texture w/h, and the texel's colour.
     pub tex: Option<(String, u32, u32, u32, u32, [u8; 4])>,
+}
+
+/// `app.info()`.
+pub struct AppInfoOut {
+    pub dir: String,
+    /// Loaded from a packed `.game.png` (or anything but a folder): nothing to
+    /// save into.
+    pub packed: bool,
+}
+
+/// `app.texinfo(texture)`.
+pub struct TexInfoOut {
+    pub w: u32,
+    pub h: u32,
+    /// Its sheet's tile size if it's one tile of a sheet, else 0.
+    pub tile: u32,
+    /// The file it saves into (relative to the app), or why it can't.
+    pub save: Result<String, String>,
+    /// Made by NEW and not written yet.
+    pub new: bool,
+}
+
+/// `app.newtex(...)`'s request.
+pub struct NewTexIn {
+    pub ent: u64,
+    pub name: String,
+    pub w: u32,
+    pub h: u32,
+    pub mode: crate::unwrap::Mode,
+}
+
+/// `app.newtex(...)`'s result.
+pub struct NewTexOut {
+    /// The new texture's name (and, for a mesh, the new model's).
+    pub tex: String,
+    /// The file the first save will create, relative to the app.
+    pub path: String,
+    /// The mesh was unwrapped (false: a sprite or `tex` cube keeps its mapping).
+    pub unwrapped: bool,
+    pub charts: usize,
 }
 
 /// `app.view()`: camera position, yaw/pitch, and the pointer ray in world units.

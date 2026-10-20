@@ -10,18 +10,22 @@
 -- and the scene stays visible beside it so you can watch the mesh update.
 --
 -- Keys: B pen  F fill  I pick colour  1-3 brush size  Z undo  C canvas
---       Esc steps back (canvas -> focus -> close)  Ctrl+P closes
+--       N new image  Esc steps back (canvas -> focus -> close)  Ctrl+P closes
 --
 -- A dithered frame marks the overlay as open. Once something is painted, a
 -- SAVE button in the lower right asks to write the edits back into the app's
--- image files (save.lua).
+-- image files (save.lua); it says so when they can't be, and a packed game
+-- shows READ ONLY from the start. NEW gives the focused thing a fresh image of
+-- its own, unwrapping a mesh onto it (newtex.lua).
 --
 -- Written in the restricted style AGENTS.md asks for (silt): calls hoisted out
 -- of argument lists, no anonymous functions, no table deletion.
 
 -- Shared state lives in a few tables (see pal.lua/panel.lua/paint.lua).
 P = { tool = "pen", color = "ffffffff", size = 1, mode = "scene" }
-F = { on = false, key = "", tex = "", tw = 1, th = 1, x = 0, y = 0, z = 0, img = nil }
+F = { on = false, key = "", id = -1, tex = "", tw = 1, th = 1, x = 0, y = 0, z = 0, img = nil }
+-- app.info(): whether the app is packed (nothing can be saved)
+INFO = { packed = false, dir = "" }
 U = { last_m1 = false, painting = false, lastu = -1, lastv = -1, msg = "", msg_t = 0, panel_side = 1 }
 H = { n = 0, img = {}, tex = {} }
 
@@ -44,11 +48,22 @@ function main()
 	c.unlit = true
 	pal_reset()
 	panel_draw()
-	say("CLICK SOMETHING TO PAINT IT")
+	local info = app.info()
+	if info ~= nil then
+		INFO = info
+	end
+	if INFO.packed then
+		say("PACKED GAME, READ ONLY")
+	else
+		say("CLICK SOMETHING TO PAINT IT")
+	end
 end
 
 function loop(dt)
 	local dialog = dialog_keys()
+	if not dialog then
+		dialog = newtex_keys()
+	end
 	if not dialog then
 		keys_update()
 	end
@@ -72,7 +87,7 @@ function loop(dt)
 		end
 	end
 	-- while the dialog is up nothing underneath reacts
-	if not D.open and not dialog then
+	if not D.open and not NT.open and not dialog then
 		if P.mode == "canvas" then
 			canvas_update(m, click)
 		else
@@ -124,6 +139,9 @@ function keys_update()
 	end
 	if key("c", true) then
 		toggle_canvas()
+	end
+	if key("n", true) then
+		newtex_open()
 	end
 end
 
@@ -203,7 +221,10 @@ function status_draw()
 	end
 	local tx = INSET + 3
 	local ty = INSET + 2
-	gui:text(s, tx, ty, "e8e8f0")
 	local hx = w - 84 - INSET
+	-- stop short of the key hint on the right
+	local room = (hx - tx - 8) // GLYPH
+	local fit = string.sub(s, 1, room)
+	gui:text(fit, tx, ty, "e8e8f0")
 	gui:text("ESC/CTRL+P", hx, ty, "8a8fa8")
 end

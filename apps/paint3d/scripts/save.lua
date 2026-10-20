@@ -4,9 +4,10 @@
 -- edited textures back into the app's own image files (app.save); textures the
 -- app drew from code have no file, and the dialog says so instead.
 
--- Edited textures, in the order first touched. `seen` is replaced, never
--- emptied key by key (silt: no table deletion).
-E = { n = 0, names = {}, seen = {} }
+-- Edited textures, in the order first touched, and whether each can be saved
+-- (`ok`, asked once when first touched; `ok_n` counts the true ones). `seen`
+-- and `ok` are replaced, never emptied key by key (silt: no table deletion).
+E = { n = 0, names = {}, seen = {}, ok = {}, ok_n = 0 }
 -- The dialog: what can be saved (ok) and what can't (bad), and its buttons.
 D = { open = false, ok = {}, ok_n = 0, bad = {}, bad_n = 0, btn = {}, btn_n = 0 }
 -- The save button's rectangle, set when drawn.
@@ -24,6 +25,11 @@ function mark_edited(name)
 	E.seen[name] = true
 	E.n = E.n + 1
 	E.names[E.n] = name
+	local r = app.source(name)
+	E.ok[name] = r.ok
+	if r.ok then
+		E.ok_n = E.ok_n + 1
+	end
 end
 
 -- Ordered dots thinning out from the screen edge: solid, every other pixel,
@@ -85,17 +91,48 @@ function chrome_draw()
 	gui:img(FRAME.right, rx, 0)
 
 	SB.on = false
-	if D.open then
+	if NT.open then
+		newtex_draw()
+	elseif D.open then
 		dialog_draw()
-	elseif E.n > 0 then
+	elseif E.n > 0 or INFO.packed then
 		save_button_draw()
 	end
 end
 
-function save_button_draw()
+-- What the button says: how much will save, and plainly when nothing can.
+function save_label()
 	local n = tostring(E.n)
-	local label = "SAVE "
-	label = label .. n
+	if INFO.packed then
+		return "READ ONLY: PACKED GAME"
+	end
+	if E.ok_n == 0 then
+		local s = "CAN'T SAVE "
+		s = s .. n
+		return s
+	end
+	local okn = tostring(E.ok_n)
+	local s = "SAVE "
+	s = s .. okn
+	if E.ok_n < E.n then
+		local bad = E.n - E.ok_n
+		local bs = tostring(bad)
+		s = s .. " ("
+		s = s .. bs
+		s = s .. " CAN'T)"
+	end
+	return s
+end
+
+function save_button_draw()
+	local label = save_label()
+	local can = E.ok_n > 0 and not INFO.packed
+	local edge = FRAME_COL
+	local fg = "f8e8b0"
+	if not can then
+		edge = "f08070ff"
+		fg = "f0b0a0"
+	end
 	local len = string.len(label)
 	local w = len * GLYPH + 8
 	local h = GLYPH + 6
@@ -107,7 +144,7 @@ function save_button_draw()
 	local sx = SB.x + 1
 	local sy = SB.y + 1
 	gui:rect(sx, sy, w, h, "0a0b12ff")
-	gui:rect(SB.x, SB.y, w, h, FRAME_COL)
+	gui:rect(SB.x, SB.y, w, h, edge)
 	local ix = SB.x + 1
 	local iy = SB.y + 1
 	local iw = w - 2
@@ -115,7 +152,7 @@ function save_button_draw()
 	gui:rect(ix, iy, iw, ih, "232637ff")
 	local tx = SB.x + 4
 	local ty = SB.y + 3
-	gui:text(label, tx, ty, "f8e8b0")
+	gui:text(label, tx, ty, fg)
 end
 
 function inside(x, y, rx, ry, rw, rh)
@@ -124,6 +161,10 @@ end
 
 -- A click in gui pixels; true if the chrome took it.
 function chrome_click(x, y)
+	if NT.open then
+		newtex_click(x, y)
+		return true
+	end
 	if D.open then
 		dialog_click(x, y)
 		return true
@@ -145,8 +186,13 @@ function dialog_open()
 	for i = 1, E.n do
 		local name = E.names[i]
 		local r = app.source(name)
+		local info = app.texinfo(name)
 		local item = {}
 		item.name = name
+		item.new = false
+		if info ~= nil then
+			item.new = info.new
+		end
 		if r.ok then
 			item.path = r.path
 			D.ok_n = D.ok_n + 1
@@ -166,6 +212,14 @@ end
 function dialog_lines()
 	local lines = {}
 	local n = 0
+	if INFO.packed then
+		lines[1] = "THIS GAME IS PACKED (.GAME.PNG)"
+		lines[2] = "  ITS FILES CAN'T BE CHANGED, SO"
+		lines[3] = "  EDITS LAST UNTIL IT CLOSES."
+		lines[4] = "  OPEN ITS FOLDER TO SAVE THEM."
+		D.lines_n = 4
+		return lines
+	end
 	if D.ok_n > 0 then
 		local c = tostring(D.ok_n)
 		local s = "SAVE "
@@ -185,6 +239,9 @@ function dialog_lines()
 			local it = D.ok[i]
 			local p = "  "
 			p = p .. it.path
+			if it.new then
+				p = p .. " (NEW)"
+			end
 			n = n + 1
 			lines[n] = p
 		end
@@ -345,9 +402,13 @@ function dialog_commit()
 	E.names = keep
 	E.n = kn
 	E.seen = {}
+	E.ok = {}
+	E.ok_n = 0
 	for i = 1, kn do
 		local nm = keep[i]
 		E.seen[nm] = true
+		E.ok[nm] = true
+		E.ok_n = E.ok_n + 1
 	end
 	D.open = false
 	local s = "SAVED "

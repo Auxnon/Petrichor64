@@ -39,7 +39,7 @@ function panel_draw()
 
 	local name = "NOTHING FOCUSED"
 	if F.on then
-		name = short(F.tex, 14)
+		name = short(F.tex, 10)
 	end
 	im:text(name, 6, 6, "f4f0e4ff")
 	if F.on then
@@ -48,6 +48,8 @@ function panel_draw()
 		local th = tostring(F.th)
 		dim = dim .. th
 		im:text(dim, 6, 16, "8a90b0ff")
+		im_button(PANEL_IMG, 92, 12, 30, 13, "NEW")
+		btn_add(92, 12, 30, 13, "new", nil)
 	end
 
 	-- tools
@@ -151,6 +153,8 @@ function panel_act(act, arg)
 		set_color(arg)
 	elseif act == "undo" then
 		undo()
+	elseif act == "new" then
+		newtex_open()
 	elseif act == "zoom" then
 		toggle_canvas()
 	elseif act == "done" then

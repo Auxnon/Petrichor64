@@ -107,6 +107,7 @@ mod web_worker;
 #[cfg(target_arch = "wasm32")]
 mod worker;
 mod worker_protocol;
+mod unwrap;
 #[cfg(feature = "picc")]
 mod userdata_util;
 mod world;
@@ -2141,6 +2142,200 @@ impl Core {
         None
     }
 
+    /// `app.texinfo(texture)`: size, sheet tile and file of one of the edited
+    /// app's textures.
+    fn app_texinfo(&self, id: u8, name: &str) -> Option<crate::command::TexInfoOut> {
+        let (target, _) = self.overlay_edit_target(id)?;
+        let r = self.tex_manager.get_tex_or_not(name)?;
+        let dim = self.tex_manager.atlas_dim;
+        let src = self.tex_manager.sources.get(name).filter(|s| s.bundle == target);
+        Some(crate::command::TexInfoOut {
+            w: (r.z * dim.x as f32).round() as u32,
+            h: (r.w * dim.y as f32).round() as u32,
+            tile: src.map_or(0, |s| s.tile),
+            new: src.map_or(false, |s| s.kind.is_new()),
+            save: self.overlay_files(id).and_then(|(target, dir)| {
+                self.tex_manager
+                    .saveable_source(name, target, &dir)
+                    .map(|s| relative_to(&s.path, &dir))
+            }),
+        })
+    }
+
+    /// `app.newtex`: a fresh `w` x `h` image for one of the edited app's
+    /// entities, painted to look the way it does now. A mesh is unwrapped onto
+    /// it and becomes a new model of the same name, which the entity switches
+    /// to (others sharing the old model are left alone); a sprite, or a model
+    /// drawn with a `tex`, keeps its mapping and just shows the new image. The
+    /// first save writes it as a png, or for a mesh as a glb carrying the new
+    /// uvs too, since the app's own code still describes the old ones.
+    #[cfg(feature = "headed")]
+    fn app_newtex(
+        &mut self,
+        id: u8,
+        req: crate::command::NewTexIn,
+    ) -> Result<crate::command::NewTexOut, String> {
+        use crate::texture::SourceKind;
+        let (target, dir) = self.overlay_edit_target(id).ok_or("overlay only")?;
+        let name = req.name.trim().to_lowercase();
+        let ok_char = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_';
+        if name.is_empty() || name.len() > 32 || !name.chars().all(ok_char) {
+            return Err("names are a-z, 0-9 and _".into());
+        }
+        if !(1..=512).contains(&req.w) || !(1..=512).contains(&req.h) {
+            return Err("sizes are 1 to 512".into());
+        }
+        if self.tex_manager.get_tex_or_not(&name).is_some()
+            || self.model_manager.get_model_or_not(&name).is_some()
+        {
+            return Err(format!("{} is taken", name));
+        }
+        let assets = crate::asset::resolve_app_path(&dir).join("assets");
+        for ext in ["png", "glb"] {
+            if assets.join(format!("{}.{}", name, ext)).exists() {
+                return Err(format!("assets/{}.{} exists", name, ext));
+            }
+        }
+
+        let found = self.ent_manager.bundles.get(&target).and_then(|b| {
+            b.array.iter().find_map(|(e, ent, uni)| {
+                let alive = e.with_ref(|l| Ok(l.get_id() == req.ent && !l.is_dead())).unwrap_or(false);
+                alive.then(|| {
+                    let u = uni.borrow();
+                    (std::rc::Rc::clone(&ent.model), glam::Vec4::from_array(u.uv_mod), u.effects[0] > 0.)
+                })
+            })
+        });
+        let (model, uv_mod, billboard) = found.ok_or("pick something in the app first")?;
+
+        let atlas = &self.tex_manager.atlas;
+        let (aw, ah) = (atlas.width(), atlas.height());
+        let sample = |uv: [f32; 2]| {
+            let x = ((uv[0] * aw as f32).floor().max(0.) as u32).min(aw - 1);
+            let y = ((uv[1] * ah as f32).floor().max(0.) as u32).min(ah - 1);
+            atlas.get_pixel(x, y).0
+        };
+        let (w, h) = (req.w, req.h);
+        let mapped = billboard || uv_mod != glam::vec4(0., 0., 1., 1.);
+
+        if mapped {
+            // a flipped sprite has a negative width; the entity flips the new
+            // image itself, so read the rect the right way round
+            let (x0, rw) = if uv_mod.z < 0. { (uv_mod.x + uv_mod.z, -uv_mod.z) } else { (uv_mod.x, uv_mod.z) };
+            let img = image::RgbaImage::from_fn(w, h, |x, y| {
+                let u = x0 + (x as f32 + 0.5) / w as f32 * rw;
+                let v = uv_mod.y + (y as f32 + 0.5) / h as f32 * uv_mod.w;
+                image::Rgba(sample([u, v]))
+            });
+            self.tex_manager
+                .overwrite_texture(&name, img, &mut self.world, target, &mut self.loggy);
+            let path = assets.join(format!("{}.png", name));
+            self.tex_manager
+                .record_new_source(&name, &path.display().to_string(), target, w, h, SourceKind::NewPng);
+            self.set_ent(target, req.ent, |l| l.set_tex(name.clone()));
+            return Ok(crate::command::NewTexOut {
+                path: format!("assets/{}.png", name),
+                tex: name,
+                unwrapped: false,
+                charts: 0,
+            });
+        }
+
+        if model.skin.is_some() {
+            return Err("skinned models can't be unwrapped yet".into());
+        }
+        let (verts, inds) = model.data.as_ref().ok_or("this model keeps no mesh to unwrap")?;
+        let pos: Vec<[f32; 3]> = verts
+            .iter()
+            .map(|v| {
+                let p = v.pos();
+                [p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]
+            })
+            .collect();
+        // No padding between charts: the engine samples the nearest texel and
+        // charts sit on whole texels, so nothing bleeds across, and at 16x16 a
+        // texel of padding a side would cost a cube more than half its faces.
+        let un = crate::unwrap::unwrap(&pos, inds, req.mode, w, h, 0);
+        if un.ind.is_empty() {
+            return Err("this model has no triangles".into());
+        }
+        let old: Vec<[f32; 2]> = un.from.iter().map(|&f| verts[f as usize].tex()).collect();
+        let img = crate::unwrap::bake(&un, &old, w, h, sample);
+        let norm: Vec<[f32; 3]> = un
+            .from
+            .iter()
+            .map(|&f| {
+                let n = verts[f as usize].normal();
+                [n[0] as f32 / 100., n[1] as f32 / 100., n[2] as f32 / 100.]
+            })
+            .collect();
+
+        self.tex_manager
+            .overwrite_texture(&name, img, &mut self.world, target, &mut self.loggy);
+        self.model_manager.upsert_model(
+            &self.gfx.device,
+            &self.tex_manager,
+            &mut self.world,
+            target,
+            &name,
+            vec![name.clone()],
+            un.pos.clone(),
+            norm.clone(),
+            un.ind.clone(),
+            un.uv.clone(),
+            crate::model::TextureStyle::Tri,
+            &mut self.loggy,
+            self.global.debug,
+        );
+        let mesh = crate::gltf_io::MeshData {
+            pos: un.pos,
+            norm,
+            uv: un.uv,
+            ind: un.ind,
+        };
+        let path = assets.join(format!("{}.glb", name));
+        self.tex_manager.record_new_source(
+            &name,
+            &path.display().to_string(),
+            target,
+            w,
+            h,
+            SourceKind::NewGlb(Box::new(mesh)),
+        );
+        self.set_ent(target, req.ent, |l| l.set_asset(name.clone()));
+        Ok(crate::command::NewTexOut {
+            path: format!("assets/{}.glb", name),
+            tex: name,
+            unwrapped: true,
+            charts: un.charts,
+        })
+    }
+
+    #[cfg(not(feature = "headed"))]
+    fn app_newtex(
+        &mut self,
+        _id: u8,
+        _req: crate::command::NewTexIn,
+    ) -> Result<crate::command::NewTexOut, String> {
+        Err("needs the windowed build".into())
+    }
+
+    /// Change one of a bundle's entities from the main thread, as its own Lua
+    /// would.
+    #[cfg(feature = "headed")]
+    fn set_ent(&mut self, bundle: u8, ent: u64, f: impl Fn(&mut crate::lua_ent::LuaEnt)) {
+        if let Some(b) = self.ent_manager.bundles.get_mut(&bundle) {
+            for (e, _, _) in b.array.iter_mut() {
+                let _ = e.with_mut(|l: &mut crate::lua_ent::LuaEnt| {
+                    if l.get_id() == ent {
+                        f(l);
+                    }
+                    Ok(())
+                });
+            }
+        }
+    }
+
     /// `mod(name, {...})` mesh form: build or replace a model. Shared by the
     /// native command loop and the wasm worker bridge.
     #[allow(clippy::too_many_arguments)]
@@ -3043,29 +3238,46 @@ impl Core {
                     crate::command::close_overlay(self, id);
                 }
                 MainCommmand::AppSource(name, tx) => {
-                    let out = match self.overlay_edit_target(id) {
-                        Some((target, dir)) => self
-                            .tex_manager
+                    let out = self.overlay_files(id).and_then(|(target, dir)| {
+                        self.tex_manager
                             .saveable_source(&name, target, &dir)
-                            .map(|src| relative_to(&src.path, &dir)),
-                        None => Err("overlay only".into()),
-                    };
+                            .map(|src| relative_to(&src.path, &dir))
+                    });
                     self.log_check(tx.send(out));
                 }
                 MainCommmand::AppSave(name, tx) => {
                     // Only ever the edited app's own files: saveable_source checks
                     // the texture was loaded by that app, from inside its folder.
-                    let out = match self.overlay_edit_target(id) {
-                        Some((target, dir)) => self
-                            .tex_manager
+                    let out = self.overlay_files(id).and_then(|(target, dir)| {
+                        self.tex_manager
                             .save_to_source(&name, target, &dir)
-                            .map(|path| relative_to(&path, &dir)),
-                        None => Err("overlay only".into()),
-                    };
+                            .map(|path| relative_to(&path, &dir))
+                    });
                     match &out {
                         // the overlay reports success itself; only failures pop up
                         Ok(p) => self.loggy.log(LogType::Config, &format!("saved {} to {}", name, p)),
                         Err(e) => self.log(LogType::ConfigError, &format!("couldn't save {}: {}", name, e)),
+                    }
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppInfo(tx) => {
+                    let out = self.overlay_edit_target(id).map(|(_, dir)| {
+                        let root = crate::asset::resolve_app_path(&dir);
+                        crate::command::AppInfoOut {
+                            packed: !root.is_dir(),
+                            dir,
+                        }
+                    });
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppTexInfo(name, tx) => {
+                    let out = self.app_texinfo(id, &name);
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppNewTex(req, tx) => {
+                    let out = self.app_newtex(id, *req);
+                    if let Err(e) = &out {
+                        self.loggy.log(LogType::Config, &format!("new image: {}", e));
                     }
                     self.log_check(tx.send(out));
                 }
@@ -3207,7 +3419,13 @@ fn publish_clock() {
 
 /// `path` shown relative to an app's folder (`assets/wall.png`), for messages.
 fn relative_to(path: &str, dir: &str) -> String {
-    let (Ok(p), Ok(d)) = (std::fs::canonicalize(path), std::fs::canonicalize(dir)) else {
+    // a file NEW hasn't written yet can't be canonicalized; its folder is
+    let p = std::fs::canonicalize(path).or_else(|_| {
+        let p = std::path::Path::new(path);
+        let parent = p.parent().ok_or(std::io::ErrorKind::NotFound)?;
+        std::fs::canonicalize(parent).map(|d| d.join(p.file_name().unwrap_or_default()))
+    });
+    let (Ok(p), Ok(d)) = (p, std::fs::canonicalize(dir)) else {
         return path.to_string();
     };
     p.strip_prefix(&d)

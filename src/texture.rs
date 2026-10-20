@@ -98,6 +98,30 @@ pub struct TexSource {
     pub y: u32,
     pub w: u32,
     pub h: u32,
+    /// The sheet's tile size when this is one tile of a sheet, else 0.
+    pub tile: u32,
+    pub kind: SourceKind,
+}
+
+/// What sort of file a texture is saved into.
+#[derive(Clone, Debug)]
+pub enum SourceKind {
+    Png,
+    /// The one image embedded in a glb the engine wrote itself (`glb()` or a
+    /// saved NEW). Saving rewrites the glb around the same mesh.
+    Glb,
+    /// Made by the paint overlay's NEW and not written yet: the first save
+    /// creates the png, refusing to overwrite a file that appeared meanwhile.
+    NewPng,
+    /// NEW on a mesh: the first save writes this mesh (with its new uvs) and
+    /// the image together as a glb.
+    NewGlb(Box<crate::gltf_io::MeshData>),
+}
+
+impl SourceKind {
+    pub fn is_new(&self) -> bool {
+        matches!(self, SourceKind::NewPng | SourceKind::NewGlb(_))
+    }
 }
 
 pub struct Anim {
@@ -610,6 +634,7 @@ impl TexManager {
             rename = Some(&t.tiles);
             tile_dim = t.size;
         }
+        let d = if tile_dim == 0 { 16 } else { tile_dim };
         let at = |x, y, w, h| TexSource {
             path: path.to_string(),
             bundle,
@@ -617,12 +642,13 @@ impl TexManager {
             y,
             w,
             h,
+            tile: if is_tile == 0 { 0 } else { d },
+            kind: SourceKind::Png,
         };
         if is_tile == 0 {
             self.sources.insert(name, at(0, 0, img.width(), img.height()));
             return;
         }
-        let d = if tile_dim == 0 { 16 } else { tile_dim };
         let dw = img.width() / d;
         for y in 0..img.height() / d {
             for x in 0..dw {
@@ -636,6 +662,42 @@ impl TexManager {
         }
     }
 
+    /// The glb's embedded image as a saveable texture, when the glb is one the
+    /// engine wrote (a single mesh and image, so rewriting it loses nothing).
+    pub fn record_glb_source(&mut self, name: &str, path: &str, bundle: u8, w: u32, h: u32) {
+        self.sources.insert(
+            name.to_string(),
+            TexSource {
+                path: path.to_string(),
+                bundle,
+                x: 0,
+                y: 0,
+                w,
+                h,
+                tile: 0,
+                kind: SourceKind::Glb,
+            },
+        );
+    }
+
+    /// A texture the paint overlay just made, to be written to `path` (not
+    /// there yet) on the first save.
+    pub fn record_new_source(&mut self, name: &str, path: &str, bundle: u8, w: u32, h: u32, kind: SourceKind) {
+        self.sources.insert(
+            name.to_string(),
+            TexSource {
+                path: path.to_string(),
+                bundle,
+                x: 0,
+                y: 0,
+                w,
+                h,
+                tile: 0,
+                kind,
+            },
+        );
+    }
+
     /// The file a texture can be saved back to, if it was loaded from one by
     /// `bundle` and the file sits inside `dir` (the app's own folder).
     pub fn saveable_source(&self, name: &str, bundle: u8, dir: &str) -> Result<&TexSource, String> {
@@ -646,25 +708,45 @@ impl TexManager {
         if src.bundle != bundle {
             return Err("not loaded by this app".into());
         }
-        let file = std::fs::canonicalize(&src.path).map_err(|e| format!("{}: {}", src.path, e))?;
         let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {}", dir, e))?;
+        let path = std::path::Path::new(&src.path);
+        let file = if src.kind.is_new() {
+            if path.exists() {
+                return Err(format!("{} appeared since", src.path));
+            }
+            // the folder may not exist yet either; the name was checked when made
+            let parent = path.parent().unwrap_or(std::path::Path::new(dir));
+            let mut up = parent;
+            while !up.exists() {
+                up = up.parent().unwrap_or(std::path::Path::new(dir));
+            }
+            std::fs::canonicalize(up).map_err(|e| format!("{}: {}", src.path, e))?
+        } else {
+            std::fs::canonicalize(path).map_err(|e| format!("{}: {}", src.path, e))?
+        };
         if !file.starts_with(&root) {
             return Err("file is outside the app's folder".into());
         }
-        let png = file
+        let ext = path
             .extension()
-            .map_or(false, |e| e.eq_ignore_ascii_case("png"));
-        if !png {
-            return Err("not a png".into());
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let want = match src.kind {
+            SourceKind::Png | SourceKind::NewPng => "png",
+            SourceKind::Glb | SourceKind::NewGlb(_) => "glb",
+        };
+        if ext != want {
+            return Err(format!("not a {}", want));
         }
         Ok(src)
     }
 
     /// Write a texture's current pixels back into the image file it came from,
-    /// leaving the rest of the file (other tiles of a sheet) untouched. The
-    /// file is replaced via a temp file and rename, so a failed write can't
-    /// leave it half written. Returns the path written.
-    pub fn save_to_source(&self, name: &str, bundle: u8, dir: &str) -> Result<String, String> {
+    /// leaving the rest of the file (other tiles of a sheet) untouched, or into
+    /// the new file NEW planned for it. The file is replaced via a temp file and
+    /// rename, so a failed write can't leave it half written. Returns the path
+    /// written.
+    pub fn save_to_source(&mut self, name: &str, bundle: u8, dir: &str) -> Result<String, String> {
         let src = self.saveable_source(name, bundle, dir)?.clone();
         // checked first: get_img hands back the whole atlas for an unknown name
         if self.get_tex_or_not(name).is_none() {
@@ -674,21 +756,51 @@ impl TexManager {
         if (w, h) != (src.w, src.h) {
             return Err(format!("size changed ({}x{}, file has {}x{})", w, h, src.w, src.h));
         }
-        let mut file = image::open(&src.path)
-            .map_err(|e| format!("{}: {}", src.path, e))?
-            .into_rgba8();
-        if src.x + w > file.width() || src.y + h > file.height() {
-            return Err("the file changed size since it was loaded".into());
-        }
-        image::imageops::replace(&mut file, &pixels, src.x as i64, src.y as i64);
         let path = std::path::Path::new(&src.path);
-        let tmp = path.with_extension("png.saving");
-        file.save_with_format(&tmp, image::ImageFormat::Png)
-            .map_err(|e| format!("{}: {}", tmp.display(), e))?;
+        let bytes = match &src.kind {
+            SourceKind::Png | SourceKind::NewPng => {
+                let mut file = match src.kind {
+                    SourceKind::NewPng => RgbaImage::new(w, h),
+                    _ => image::open(&src.path)
+                        .map_err(|e| format!("{}: {}", src.path, e))?
+                        .into_rgba8(),
+                };
+                if src.x + w > file.width() || src.y + h > file.height() {
+                    return Err("the file changed size since it was loaded".into());
+                }
+                image::imageops::replace(&mut file, &pixels, src.x as i64, src.y as i64);
+                let mut png = vec![];
+                image::DynamicImage::ImageRgba8(file)
+                    .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                    .map_err(|e| format!("{}: {}", src.path, e))?;
+                png
+            }
+            SourceKind::Glb => {
+                let old = std::fs::read(path).map_err(|e| format!("{}: {}", src.path, e))?;
+                let mesh = crate::gltf_io::read(&old)?;
+                crate::gltf_io::to_glb(&mesh, Some(&pixels))?
+            }
+            SourceKind::NewGlb(mesh) => crate::gltf_io::to_glb(mesh, Some(&pixels))?,
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {}", parent.display(), e))?;
+        }
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".saving");
+        let tmp = std::path::PathBuf::from(tmp);
+        std::fs::write(&tmp, &bytes).map_err(|e| format!("{}: {}", tmp.display(), e))?;
         std::fs::rename(&tmp, path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
             format!("{}: {}", src.path, e)
         })?;
+        // written once, it's an ordinary file from now on
+        if let Some(s) = self.sources.get_mut(name) {
+            s.kind = match s.kind {
+                SourceKind::NewPng => SourceKind::Png,
+                SourceKind::NewGlb(_) => SourceKind::Glb,
+                _ => return Ok(src.path),
+            };
+        }
         Ok(src.path)
     }
 
@@ -1043,6 +1155,59 @@ mod tests {
         assert!(tm.saveable_source("wall", 1, dir_s).is_err(), "outside the app's folder");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&other);
+    }
+
+    /// NEW's png is created on the first save and is an ordinary file after;
+    /// a file that turned up under its name meanwhile is never overwritten.
+    #[test]
+    fn a_new_image_is_created_once_and_never_over_a_stranger() {
+        let dir = scratch_dir("new");
+        let dir_s = dir.to_str().unwrap();
+        let path = dir.join("assets").join("fresh.png");
+        let mut tm = TexManager::new();
+        let pos = tm.locate(RgbaImage::from_pixel(8, 8, image::Rgba([9, 8, 7, 255])));
+        tm.dictionary.insert("fresh".into(), pos);
+        tm.record_new_source("fresh", path.to_str().unwrap(), 1, 8, 8, SourceKind::NewPng);
+
+        tm.save_to_source("fresh", 1, dir_s).unwrap();
+        assert_eq!(image::open(&path).unwrap().into_rgba8().get_pixel(3, 3).0, [9, 8, 7, 255]);
+        assert!(matches!(tm.sources["fresh"].kind, SourceKind::Png));
+        tm.save_to_source("fresh", 1, dir_s).expect("then saves like any png");
+
+        let other = dir.join("assets").join("taken.png");
+        tm.record_new_source("taken", other.to_str().unwrap(), 1, 8, 8, SourceKind::NewPng);
+        std::fs::write(&other, b"someone else's").unwrap();
+        assert!(tm.saveable_source("taken", 1, dir_s).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// NEW on a mesh writes a glb holding the mesh and the image; later saves
+    /// keep the mesh and swap the image.
+    #[test]
+    fn a_new_mesh_image_saves_as_a_glb_that_keeps_its_mesh() {
+        let dir = scratch_dir("glb");
+        let dir_s = dir.to_str().unwrap();
+        let path = dir.join("assets").join("crate.glb");
+        let mesh = crate::gltf_io::MeshData {
+            pos: vec![[0., 0., 0.], [1., 0., 0.], [1., 1., 0.]],
+            norm: vec![[0., 0., 1.]; 3],
+            uv: vec![[0., 0.], [1., 0.], [1., 1.]],
+            ind: vec![0, 1, 2],
+        };
+        let mut tm = TexManager::new();
+        let pos = tm.locate(RgbaImage::from_pixel(4, 4, image::Rgba([50, 60, 70, 255])));
+        tm.dictionary.insert("crate".into(), pos);
+        let kind = SourceKind::NewGlb(Box::new(mesh.clone()));
+        tm.record_new_source("crate", path.to_str().unwrap(), 1, 4, 4, kind);
+        tm.save_to_source("crate", 1, dir_s).unwrap();
+        assert_eq!(crate::gltf_io::read(&std::fs::read(&path).unwrap()).unwrap().uv, mesh.uv);
+
+        let pos = tm.locate(RgbaImage::from_pixel(4, 4, image::Rgba([1, 1, 1, 255])));
+        tm.dictionary.insert("crate".into(), pos);
+        tm.save_to_source("crate", 1, dir_s).unwrap();
+        let again = crate::gltf_io::read(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(again.pos, mesh.pos);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The fallback has to be present before any app loads and has to occupy the first

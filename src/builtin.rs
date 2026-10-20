@@ -17,6 +17,7 @@ pub fn scripts(directory: &str) -> Option<&'static [(&'static str, &'static str)
 static PAINT: &[(&str, &str)] = &[
     ("canvas.lua", include_str!("../apps/paint3d/scripts/canvas.lua")),
     ("main.lua", include_str!("../apps/paint3d/scripts/main.lua")),
+    ("newtex.lua", include_str!("../apps/paint3d/scripts/newtex.lua")),
     ("paint.lua", include_str!("../apps/paint3d/scripts/paint.lua")),
     ("pal.lua", include_str!("../apps/paint3d/scripts/pal.lua")),
     ("panel.lua", include_str!("../apps/paint3d/scripts/panel.lua")),

@@ -589,6 +589,19 @@ impl LuaEnt {
         self.dirty = false;
         self.flags = 0;
     }
+    /// Show texture `tex`, as `ent.tex = tex` from Lua would.
+    pub fn set_tex(&mut self, tex: String) {
+        self.tex = tex;
+        self.anim = false;
+        self.dirty = true;
+        self.flags |= lua_ent_flags::TEX;
+    }
+    /// Use model (or sprite) `asset`, as `ent.asset = asset` from Lua would.
+    pub fn set_asset(&mut self, asset: String) {
+        self.asset = asset;
+        self.dirty = true;
+        self.flags |= lua_ent_flags::ASSET;
+    }
     pub fn kill(&mut self) {
         self.flags |= lua_ent_flags::DEAD;
         self.dirty = true;

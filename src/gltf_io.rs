@@ -15,6 +15,10 @@
 use image::RgbaImage;
 use serde_json::{json, Value};
 
+/// What the engine signs its own glTF files with; a file carrying it is one
+/// mesh and at most one image, so it can be rewritten without losing anything.
+pub const GENERATOR: &str = "Petrichor64 glb()";
+
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct MeshData {
     pub pos: Vec<[f32; 3]>,
@@ -221,7 +225,7 @@ fn build(mesh: &MeshData, image: Option<&RgbaImage>, uri: Option<&dyn Fn(&[u8]) 
     });
 
     let mut root = json!({
-        "asset": { "version": "2.0", "generator": "Petrichor64 glb()" },
+        "asset": { "version": "2.0", "generator": GENERATOR },
         "scene": 0,
         "scenes": [{ "nodes": [0] }],
         "nodes": [{ "mesh": 0, "name": "mesh" }],

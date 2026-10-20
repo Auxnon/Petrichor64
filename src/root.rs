@@ -523,6 +523,18 @@ impl<'core> Core {
         Some((target, dir.to_string()))
     }
 
+    /// The edited app's folder (resolved), when its files can be written: the
+    /// sender is an overlay and the app was loaded from a folder. A packed game
+    /// has no files to write into.
+    pub fn overlay_files(&self, id: u8) -> Result<(u8, String), String> {
+        let (target, dir) = self.overlay_edit_target(id).ok_or("overlay only")?;
+        let root = crate::asset::resolve_app_path(&dir);
+        if !root.is_dir() {
+            return Err("packed game, its files can't be changed".into());
+        }
+        Ok((target, root.display().to_string()))
+    }
+
     pub fn log_channel_error(&mut self) {
         self.log(LogType::LuaSysError, "!!Channel error");
     }

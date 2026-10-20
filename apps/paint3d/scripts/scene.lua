@@ -52,6 +52,7 @@ function focus(h)
 	end
 	F.on = true
 	F.key = target_key(h)
+	F.id = h.id
 	F.tex = h.tex
 	F.tw = h.tw
 	F.th = h.th
@@ -71,6 +72,20 @@ function focus(h)
 	local s = "FOCUS "
 	s = s .. t
 	say(s)
+end
+
+-- Point the focus at another texture of the same thing (after NEW).
+function focus_texture(name)
+	local info = app.texinfo(name)
+	if info == nil then
+		return
+	end
+	F.tex = name
+	F.tw = info.w
+	F.th = info.h
+	F.img = gimg(name)
+	pal_from_texture(name, nil)
+	panel_draw()
 end
 
 function unfocus()

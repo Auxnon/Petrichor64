@@ -257,7 +257,8 @@ the app, and `app.pick(true, x, y)` hits the overlay's own 3D panels (with
 hasn't set `attr{lock=true}`. It pauses the app and paints textures straight
 onto the meshes. It's also the worked example for writing your own overlay.
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
-`view.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`):
+`view.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
+`info.md`, `texinfo.md`, `newtex.md`):
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit
@@ -273,7 +274,15 @@ Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
   edited app's own png files qualify: a texture the app drew from code
   (`nimg` + `tex`) has no file, and `app.source` says so before you ask. The
   paint overlay's SAVE button (lower right, once something's painted) does
-  this behind a confirm dialog.
+  this behind a confirm dialog. A packed game (`app.info().packed`) has no
+  files: every save refuses, and the overlay shows READ ONLY.
+- `app.newtex(ent, name, w, h, mode)` gives one entity a fresh image, painted
+  to look the way it does now. A mesh is unwrapped onto it and becomes a new
+  model `name` that the entity switches to; the first save writes
+  `assets/name.glb` (mesh, new uvs, image). A sprite gets `assets/name.png`.
+  The paint overlay's NEW button opens a modal for this.
+- `unwrap(mesh, {w, h, pad, mode})` (any app, not just overlays) works out uvs
+  for a mesh: pass its `v`/`n`/`u`/`i` straight to `mod()`.
 
 ## Suggested game layout
 

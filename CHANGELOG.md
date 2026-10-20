@@ -3,6 +3,10 @@
 - `atan2(y, x)`: the angle of a point from the +x axis, in radians (-pi to pi). Games no longer need their own fitted version for facing and aiming
 - **Ctrl+P paint overlay**: over any app that isn't `attr{lock=true}`, pauses it, lets you click a mesh, sprite or tile and paint its texture in place, with a tool panel floating beside it in 3D and a zoomed pixel canvas mode. Built into the engine (`apps/paint3d`)
 - Paint overlay: a dithered frame while it's open, and a SAVE button (lower right, once something's painted) that confirms, then writes the edits back into the app's image files. `app.source`/`app.save` for overlays
+- Paint overlay: the SAVE button says when edits can't be saved (`CAN'T SAVE`, `SAVE 2 (1 CAN'T)`), and a packed game shows READ ONLY from the start
+- Paint overlay: NEW (panel button, or N) gives the focused thing a fresh image, 16x16 or its sheet's tile size, starting from how it looks now. A mesh is unwrapped onto it; saving writes `assets/name.png`, or `assets/name.glb` (mesh with its new uvs) for a mesh
+- `unwrap(mesh, {w, h, pad, mode})`: lay a mesh's triangles flat onto an image, for passing straight to `mod()`. Overlays also get `app.info`, `app.texinfo`, `app.newtex`
+- glbs the engine wrote itself keep their image saveable: painting one and saving rewrites the glb
 - Overlay `app.*` additions: `pick` (what's under the pointer, down to the texture and texel), `pause`, `view` (the app's camera and the pointer ray), `colors`, `project`, `close`
 - `attr{front=true}`: a bundle's entities draw over the scene instead of inside it
 - Entity `unlit` field: draw at the texture's own colours, no lighting or fog

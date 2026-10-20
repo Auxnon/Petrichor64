@@ -739,11 +739,33 @@ what's on screen, not at a texture name.
   and rename. Allowed only for the edit target's own textures, from inside its
   folder; the app redrawing a texture with `tex` drops its record, since the
   file no longer describes it. Packed games load from buffers and have no
-  files to save to.
+  files to save to: `Core::overlay_files` refuses them up front, `app.info()`
+  reports `packed`, and the overlay shows READ ONLY instead of SAVE.
+- **NEW** (`app.newtex`, the panel's NEW button or N): a fresh image for the
+  focused entity, 16x16 or the sheet's tile size, painted to look the way the
+  entity does now (`unwrap::bake` samples the old mapping). A mesh is unwrapped
+  onto it (`src/unwrap.rs`) and becomes a new model of the same name that this
+  entity switches to; a sprite or `tex`-drawn model keeps its mapping. The
+  first save creates `assets/name.png`, or for a mesh `assets/name.glb` with
+  the new uvs and image together, since the app's code still describes the old
+  uvs. The engine's own glbs (`gltf_io::GENERATOR`) record their image as a
+  saveable source, so a saved NEW mesh stays paintable after a reload.
 
 Not done: saving textures an app drew from code (there's no file; exporting
-one would need the app's code changed to load it), large-texture panning in
-canvas mode, and the mobile trigger.
+one would need the app's code changed to load it; NEW is the way round it),
+large-texture panning in canvas mode, NEW on tiles (they share images), NEW
+on skinned models, and the mobile trigger.
+
+### UV unwrapping (`src/unwrap.rs`, the `unwrap` native)
+
+Box mode groups connected triangles that face the same way (±x ±y ±z) into
+charts; Flat mode projects everything along the thinnest axis. Charts share
+one scale (even texel density), start on whole texels, and are shelf-packed
+tallest first, with the scale bisected to the largest that fits and nudged to
+make the biggest chart a whole number of texels. Room to grow for the model
+editor: angle-based charts (split where the surface bends past a threshold
+instead of by six directions), rotating charts to pack tighter, seams the
+author marks, and a per-chart scale for spending texels on what's seen most.
 
 ### A mobile wrinkle for the source editor
 
