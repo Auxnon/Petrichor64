@@ -278,7 +278,7 @@ fn mime(path: &Path) -> &'static str {
         "wav" => "audio/wav",
         "glb" => "model/gltf-binary",
         "gltf" => "model/gltf+json",
-        "lua" | "txt" | "md" => "text/plain; charset=utf-8",
+        "lua" | "silt" | "txt" | "md" => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
 }
