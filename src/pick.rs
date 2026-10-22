@@ -32,7 +32,15 @@ pub struct PickHit {
     pub point: Vec3,
     pub normal: Vec3,
     pub tex: Option<PickTex>,
+    /// What was hit, as a world-space box: the tile's cell, or the entity's
+    /// model bounds (a sprite's quad) through its transform.
+    pub bounds: Option<(Vec3, Vec3)>,
 }
+
+/// How far (internal units, a sixteenth of a world unit) an entity may sit
+/// behind a tile and still be the one picked: something standing on, or set
+/// into, a tile is what the pointer means, not the floor at the same depth.
+const ENT_LEAD: f32 = 1.;
 
 #[derive(Clone, Debug)]
 pub struct PickTex {
@@ -90,7 +98,7 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            if dead {
+            if dead || b.hidden.contains(&id) {
                 continue;
             }
             let u = uni.borrow();
@@ -149,7 +157,11 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
         }
     }
 
-    hits.sort_by(|a, b| a.t.total_cmp(&b.t));
+    let depth = |h: &RawHit| match h.kind {
+        PickKind::Ent { .. } => h.t - ENT_LEAD,
+        PickKind::Tile { .. } => h.t,
+    };
+    hits.sort_by(|a, b| depth(a).total_cmp(&depth(b)));
     for h in hits {
         let tex = texel_at(core, h.atlas_uv);
         if let Some(t) = &tex {
@@ -157,13 +169,57 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
                 continue; // transparent: the shader discards it, so look behind
             }
         }
+        let bounds = match &h.kind {
+            PickKind::Ent { id, .. } => ent_bounds(core, bundle, *id),
+            PickKind::Tile { x, y, z } => {
+                let c = vec3(*x as f32, *y as f32, *z as f32);
+                Some((c - Vec3::splat(0.5), c + Vec3::splat(0.5)))
+            }
+        };
         return Some(PickHit {
             kind: h.kind,
             dist: h.t / 16.,
             point: (origin + dir * h.t) / 16.,
             normal: h.normal,
             tex,
+            bounds,
         });
+    }
+    None
+}
+
+/// Entity `id`'s world-space box, in world units: its model's bounds through
+/// its current transform, or for a billboard sprite the square its quad turns
+/// within. `None` if there's no such live entity.
+pub fn ent_bounds(core: &Core, bundle: u8, id: u64) -> Option<(Vec3, Vec3)> {
+    let b = core.ent_manager.bundles.get(&bundle)?;
+    for (eref, ent, uni) in b.array.iter() {
+        let alive = eref
+            .with_ref(|l| Ok(l.get_id() == id && !l.is_dead()))
+            .unwrap_or(false);
+        if !alive {
+            continue;
+        }
+        let u = uni.borrow();
+        let m = Mat4::from_cols_array_2d(&u.model);
+        if u.effects[0] > 0. {
+            // the quad spans ±8 internal units, scaled by effects.x
+            let c = m.transform_point3(Vec3::ZERO) / 16.;
+            let r = Vec3::splat(u.effects[0] * 0.5);
+            return Some((c - r, c + r));
+        }
+        let (lo, hi) = (ent.model.bounds_min * 16., ent.model.bounds_max * 16.);
+        let mut out = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for k in 0..8 {
+            let p = vec3(
+                if k & 1 == 0 { lo.x } else { hi.x },
+                if k & 2 == 0 { lo.y } else { hi.y },
+                if k & 4 == 0 { lo.z } else { hi.z },
+            );
+            let w = m.transform_point3(p) / 16.;
+            out = (out.0.min(w), out.1.max(w));
+        }
+        return Some(out);
     }
     None
 }
@@ -274,14 +330,11 @@ fn billboard_hit(
     })
 }
 
-/// The named texture containing an atlas uv, and the texel there. When rects
-/// overlap the smallest wins — the most specific name for what's drawn.
-pub fn texel_at(core: &Core, uv: Vec2) -> Option<PickTex> {
-    let tm = &core.tex_manager;
-    let aw = tm.atlas_dim.x as f32;
-    let ah = tm.atlas_dim.y as f32;
+/// The named texture whose atlas rect holds an atlas uv, and that rect. When
+/// rects overlap the smallest wins — the most specific name for what's drawn.
+pub fn tex_rect_at(core: &Core, uv: Vec2) -> Option<(&String, &Vec4)> {
     let mut best: Option<(&String, &Vec4)> = None;
-    for (name, r) in tm.dictionary.iter() {
+    for (name, r) in core.tex_manager.dictionary.iter() {
         if r.z <= 0. || r.w <= 0. {
             continue;
         }
@@ -295,7 +348,15 @@ pub fn texel_at(core: &Core, uv: Vec2) -> Option<PickTex> {
             }
         }
     }
-    let (name, r) = best?;
+    best
+}
+
+/// The named texture containing an atlas uv, and the texel there.
+pub fn texel_at(core: &Core, uv: Vec2) -> Option<PickTex> {
+    let tm = &core.tex_manager;
+    let aw = tm.atlas_dim.x as f32;
+    let ah = tm.atlas_dim.y as f32;
+    let (name, r) = tex_rect_at(core, uv)?;
     let w = (r.z * aw).round().max(1.) as u32;
     let h = (r.w * ah).round().max(1.) as u32;
     let x = (((uv.x - r.x) / r.z) * w as f32).floor().clamp(0., (w - 1) as f32) as u32;

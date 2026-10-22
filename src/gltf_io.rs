@@ -26,6 +26,9 @@ pub struct MeshData {
     pub uv: Vec<[f32; 2]>,
     /// 0-based, three per triangle — the same convention as `mod()`'s `i`.
     pub ind: Vec<u32>,
+    /// Which texture each vertex samples, as an index into a list the caller
+    /// keeps (the polygon form's `ft`). Empty: one texture for everything.
+    pub tex: Vec<u32>,
 }
 
 impl MeshData {
@@ -111,7 +114,17 @@ impl MeshData {
     /// points out; each face is fanned from its first vertex (exact for convex
     /// faces) and gets its own copies of its vertices, carrying the face normal
     /// and `face_uv[face]` (a texel to colour it from; 0,0 if absent).
-    pub fn from_polygons(pos: &[[f32; 3]], faces: &[Vec<u32>], face_uv: &[[f32; 2]]) -> Result<Self, String> {
+    ///
+    /// `corner_uv[face]`, when it has one uv per corner, maps a texture across
+    /// the face instead, and `face_tex[face]` picks which texture (see `tex`).
+    /// Leave both empty for the one-texture, one-uv-per-face form.
+    pub fn from_polygons(
+        pos: &[[f32; 3]],
+        faces: &[Vec<u32>],
+        face_uv: &[[f32; 2]],
+        corner_uv: &[Vec<[f32; 2]>],
+        face_tex: &[u32],
+    ) -> Result<Self, String> {
         let mut m = MeshData::default();
         for (fi, face) in faces.iter().enumerate() {
             if face.len() < 3 {
@@ -122,17 +135,73 @@ impl MeshData {
             }
             let n = polygon_normal(pos, face).to_array();
             let uv = face_uv.get(fi).copied().unwrap_or([0., 0.]);
+            let corners = corner_uv.get(fi).filter(|c| c.len() == face.len());
             let base = m.pos.len() as u32;
-            for &i in face {
+            for (k, &i) in face.iter().enumerate() {
                 m.pos.push(pos[i as usize]);
                 m.norm.push(n);
-                m.uv.push(uv);
+                m.uv.push(corners.map_or(uv, |c| c[k]));
+                if !face_tex.is_empty() {
+                    m.tex.push(face_tex.get(fi).copied().unwrap_or(0));
+                }
             }
             for k in 1..face.len() as u32 - 1 {
                 m.ind.extend_from_slice(&[base, base + k, base + k + 1]);
             }
         }
         Ok(m)
+    }
+
+    /// The triangles as a plain list, three unshared vertices each in order,
+    /// and each triangle's texture index — the layout `mod()`'s texture list
+    /// cycles through (a texture per three vertices), so a mesh textured per
+    /// face can be built without the model code knowing about faces.
+    pub fn soup(&self) -> (MeshData, Vec<u32>) {
+        let mut out = MeshData::default();
+        let mut tri_tex = Vec::with_capacity(self.ind.len() / 3);
+        for tri in self.ind.chunks_exact(3) {
+            for &i in tri {
+                let i = i as usize;
+                out.pos.push(self.pos[i]);
+                out.norm.push(self.norm.get(i).copied().unwrap_or([0., 0., 1.]));
+                out.uv.push(self.uv.get(i).copied().unwrap_or([0., 0.]));
+            }
+            tri_tex.push(self.tex.get(tri[0] as usize).copied().unwrap_or(0));
+        }
+        (out, tri_tex)
+    }
+
+    /// Pack the textures a mesh samples (`images[tex]`, by its `tex` indices)
+    /// side by side into one image and move every uv onto its texture's part
+    /// of it: a glTF the engine loads carries one image, so a mesh textured per
+    /// face is saved this way. A missing image is a 1×1 white square. Uvs are
+    /// clamped to their texture, which can't repeat once it shares an image.
+    pub fn bake(&mut self, images: &[Option<RgbaImage>]) -> RgbaImage {
+        let white = RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
+        let parts: Vec<&RgbaImage> = images.iter().map(|i| i.as_ref().unwrap_or(&white)).collect();
+        let w: u32 = parts.iter().map(|i| i.width()).sum::<u32>().max(1);
+        let h: u32 = parts.iter().map(|i| i.height()).max().unwrap_or(1).max(1);
+        let mut out = RgbaImage::new(w, h);
+        let mut rects = vec![];
+        let mut x = 0;
+        for p in &parts {
+            image::imageops::replace(&mut out, *p, x as i64, 0);
+            rects.push([
+                x as f32 / w as f32,
+                p.width() as f32 / w as f32,
+                p.height() as f32 / h as f32,
+            ]);
+            x += p.width();
+        }
+        for (i, uv) in self.uv.iter_mut().enumerate() {
+            let t = self.tex.get(i).copied().unwrap_or(0) as usize;
+            let Some(r) = rects.get(t) else { continue };
+            let u = uv[0].clamp(0., 1.);
+            let v = uv[1].clamp(0., 1.);
+            *uv = [r[0] + u * r[1], v * r[2]];
+        }
+        self.tex.clear();
+        out
     }
 
     /// Square beams along line segments — the `mod()` line form, for wireframes,
@@ -384,6 +453,7 @@ mod tests {
             norm: vec![],
             uv: vec![[0., 0.], [1., 0.], [1., 1.], [0., 1.]],
             ind: vec![0, 1, 2, 0, 2, 3],
+            tex: vec![],
         }
     }
 
@@ -443,15 +513,56 @@ mod tests {
     fn polygons_fan_and_carry_face_normals() {
         let pos = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.]];
         let faces = vec![vec![0, 1, 2, 3], vec![0, 4, 1]];
-        let m = MeshData::from_polygons(&pos, &faces, &[[0.5, 0.25]]).unwrap();
+        let m = MeshData::from_polygons(&pos, &faces, &[[0.5, 0.25]], &[], &[]).unwrap();
         assert_eq!(m.pos.len(), 7); // 4 + 3, unshared
         assert_eq!(m.ind, vec![0, 1, 2, 0, 2, 3, 4, 5, 6]);
         assert_eq!(m.norm[0], [0., 0., 1.]);
         assert_eq!(m.norm[4], [0., 1., 0.]); // (z then x): right-hand rule gives +y
         assert_eq!(m.uv[0], [0.5, 0.25]);
         assert_eq!(m.uv[4], [0., 0.]); // no uv given for face 2
-        let bad = MeshData::from_polygons(&pos, &[vec![0, 1, 9]], &[]);
+        let bad = MeshData::from_polygons(&pos, &[vec![0, 1, 9]], &[], &[], &[]);
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn polygons_take_corner_uvs_and_a_texture_per_face() {
+        let pos = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.]];
+        let faces = vec![vec![0, 1, 2, 3], vec![0, 4, 1]];
+        let corners = vec![vec![[0., 1.], [1., 1.], [1., 0.], [0., 0.]], vec![[0.5, 0.5]]];
+        let m = MeshData::from_polygons(&pos, &faces, &[], &corners, &[1, 0]).unwrap();
+        assert_eq!(m.uv[..4], [[0., 1.], [1., 1.], [1., 0.], [0., 0.]]);
+        // a corner list of the wrong length falls back to the face uv (0,0)
+        assert_eq!(m.uv[4], [0., 0.]);
+        assert_eq!(m.tex, vec![1, 1, 1, 1, 0, 0, 0]);
+        let (soup, tri_tex) = m.soup();
+        assert_eq!(soup.pos.len(), 9);
+        assert_eq!(soup.pos[3], [0., 0., 0.]); // second triangle starts at corner 0
+        assert_eq!(tri_tex, vec![1, 1, 0]);
+    }
+
+    #[test]
+    fn bake_packs_textures_side_by_side() {
+        let mut m = MeshData::from_polygons(
+            &[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.]],
+            &[vec![0, 1, 2], vec![0, 1, 2]],
+            &[],
+            &[vec![[0., 0.], [1., 0.], [1., 1.]], vec![[0., 0.], [1., 0.], [2., 0.5]]],
+            &[0, 1],
+        )
+        .unwrap();
+        let a = RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));
+        let b = RgbaImage::from_pixel(6, 4, image::Rgba([0, 0, 255, 255]));
+        let img = m.bake(&[Some(a), Some(b)]);
+        assert_eq!(img.dimensions(), (8, 4));
+        assert_eq!(img.get_pixel(1, 1).0, [255, 0, 0, 255]);
+        assert_eq!(img.get_pixel(2, 3).0, [0, 0, 255, 255]);
+        assert!(m.tex.is_empty());
+        // texture 0 is the left quarter, top half
+        assert_eq!(m.uv[1], [0.25, 0.]);
+        assert_eq!(m.uv[2], [0.25, 0.5]);
+        // texture 1 starts a quarter in; the out-of-range u clamps to its edge
+        assert_eq!(m.uv[4], [1., 0.]);
+        assert_eq!(m.uv[5], [1., 0.5]);
     }
 
     #[test]

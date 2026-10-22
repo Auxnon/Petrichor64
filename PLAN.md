@@ -718,6 +718,20 @@ check (`app ~= nil`). It didn't need the separate overlay-camera pass above:
   entities. It's scoped to the sender's bundle now.
 - **Shipping**: build.rs's editor fetcher is shared by image-chor and
   model-chor, and takes `.silt` scripts too (minus `ignore.lua`).
+- **Editing the app's own models**: the overlay picks a tile or entity
+  (`app.pick` now reports its box, and an entity wins a tie with a tile) and
+  opens it through `app.mesh`, which recovers each triangle's texture from its
+  atlas uvs (`pick::tex_rect_at`), or reads a glb-loaded model back from its
+  file (`ModelManager::sources`). `app.hide` takes the original out of the
+  scene while its copy is edited in place. Saving goes out through the polygon
+  form's new `ft`/`fc` (a texture per face, a uv per corner): `mod()` builds
+  them as a triangle soup with a texture per triangle, the cycling the model
+  code already did, and `glb()` bakes them into one image, since a glb loads
+  one. Or as a `mod()` script written with `app.write`.
+- **Tile race fix**: `mod()` reaches the main thread later than a `tile()`
+  right after it reaches the world thread, so the tile found no model by that
+  name and drew the fallback texture. `mod()` now maps the name on the world
+  thread first, and the world keeps that index when the model lands.
 
 ### Done: the Ctrl+P paint overlay (3D, scene-first)
 

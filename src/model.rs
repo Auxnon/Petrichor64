@@ -38,6 +38,11 @@ pub struct ModelManager {
     pub CUBE: Rc<Model>,
     pub PLANE: Rc<Model>,
     pub DICTIONARY: HashMap<String, Rc<Model>>,
+    /// Models loaded from a glb/gltf file: name -> (bundle, the path it was
+    /// loaded from; empty for a packed game). A model `mod()` (re)defines is
+    /// dropped from here, so anything missing was made by code. The model
+    /// editor overlay reads the file itself rather than the packed mesh.
+    pub sources: HashMap<String, (u8, String)>,
 }
 
 impl ModelManager {
@@ -115,6 +120,7 @@ impl ModelManager {
             PLANE,
             // CUSTOM,
             DICTIONARY,
+            sources: HashMap::new(),
         }
     }
 
@@ -460,6 +466,7 @@ impl ModelManager {
                 ),
             );
         }
+        self.sources.remove(&name.to_lowercase());
         let t_count = texture.len();
         let uvs_match_v = uvs.len() == verts.len();
         let norms = if fnorms.len() != verts.len() {
@@ -588,6 +595,7 @@ impl ModelManager {
     ) {
         match gltf::import_slice(slice) {
             Ok((nodes, buffers, image_data)) => {
+                self.record_source(bundle_id, str, "");
                 self.load(
                     #[cfg(feature = "headed")]
                     device,
@@ -622,6 +630,7 @@ impl ModelManager {
 
         match gltf::import(&target) {
             Ok((nodes, buffers, image_data)) => {
+                self.record_source(bundle_id, str, str);
                 self.load(
                     #[cfg(feature = "headed")]
                     device,
@@ -646,6 +655,15 @@ impl ModelManager {
         }
     }
 
+    /// Note that the model named after `file`'s stem (how `load` names it) came
+    /// from `path`.
+    fn record_source(&mut self, bundle_id: u8, file: &str, path: &str) {
+        if let Some(stem) = std::path::Path::new(file).file_stem() {
+            let name = stem.to_string_lossy().to_lowercase();
+            self.sources.insert(name, (bundle_id, path.to_string()));
+        }
+    }
+
     // TODO make this a cleaner function
     pub fn edit_cube(
         &mut self,
@@ -656,6 +674,7 @@ impl ModelManager {
         name: String,
         textures: Vec<String>,
     ) {
+        self.sources.remove(&name);
         let m = self.CUBE.clone();
         let (verts, inds) = (m).data.as_ref().unwrap().clone();
 
@@ -717,6 +736,7 @@ impl ModelManager {
 
     pub fn reset(&mut self) {
         self.DICTIONARY.clear();
+        self.sources.clear();
         self.DICTIONARY
             .insert("cube".to_string(), self.cube_model());
         self.DICTIONARY

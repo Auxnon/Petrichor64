@@ -2405,6 +2405,8 @@ function nimg(w, h) end"
     );
 
     let pitcher = main_pitcher.clone();
+    let tiles = world_sender.clone();
+    let tile_named = std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::<String>::new()));
     lua!(
             "mod",
             move |vm,mc, (asset, tval): (String, Value)| {
@@ -2417,14 +2419,35 @@ function nimg(w, h) end"
                 let t=if let Value::Table(t)=tval{t.borrow()}else{return 
 
                                 Err(static_err("expecting table for param 2"));};
+                // Name the model to this app's tiles now, on the channel tile()
+                // uses: the model itself reaches the main thread later, and a
+                // tile() placed in between found no model by that name and drew
+                // the fallback texture instead. The main thread's own mapping,
+                // when the model lands, reuses this index. Once per name: a
+                // tool rebuilding a mesh every frame asks only the first time.
+                let low = asset.to_lowercase();
+                if tile_named.borrow_mut().insert(low.clone()) {
+                    let (mtx, mrx) = sync_channel::<TileResponse>(1);
+                    if tiles.send((TileCommand::MapModel(low), mtx)).is_ok() {
+                        let _ = mrx.recv();
+                    }
+                }
 
                 if let Some(built) = mesh_from_table(&t, vm, mc) {
-                    let mesh = built.map_err(static_err)?;
+                    let (mut mesh, names) = built.map_err(static_err)?;
                     if mesh.pos.len() < 3 {
                         return Err(static_err("mod: nothing to build (no faces or segments)"));
                     }
-                    let textures = ordered_list::<String>(&t, "t", vm, mc)
+                    let mut textures = ordered_list::<String>(&t, "t", vm, mc)
                         .unwrap_or_else(|| vec![crate::texture::DEFAULT_TEX.to_string()]);
+                    if !names.is_empty() {
+                        // A texture per face: the model code cycles its texture
+                        // list one per three vertices, so hand it unshared
+                        // triangles and a name for each.
+                        let (soup, tri_tex) = mesh.soup();
+                        textures = tri_tex.iter().map(|&i| names[i as usize].clone()).collect();
+                        mesh = soup;
+                    }
                     lua_err!(pitcher.send((
                         bundle_id,
                         MainCommmand::Model(Box::new(ModelPacket {
@@ -2731,8 +2754,17 @@ function unwrap(mesh, opts) end"
             let shaped = opts.as_ref().and_then(|t| mesh_from_table(t, vm, mc));
             if let Some(built) = shaped {
                 let t = opts.unwrap();
-                let mut mesh = built.map_err(static_err)?;
-                let texture = ordered_list::<String>(&t, "t", vm, mc).and_then(|v| v.into_iter().next());
+                let (mut mesh, names) = built.map_err(static_err)?;
+                // ft names every texture the faces use (baked into one image on
+                // write); otherwise t is the one texture
+                let texture = if names.is_empty() {
+                    ordered_list::<String>(&t, "t", vm, mc)
+                        .and_then(|v| v.into_iter().next())
+                        .into_iter()
+                        .collect()
+                } else {
+                    names
+                };
                 drop(t);
                 if let Err(e) = mesh.complete() {
                     return Err(static_err(e));
@@ -2755,8 +2787,12 @@ function unwrap(mesh, opts) end"
                     norm: ordered_list::<[f32; 3]>(&t, "n", vm, mc).unwrap_or_default(),
                     uv: ordered_list::<[f32; 2]>(&t, "u", vm, mc).unwrap_or_default(),
                     ind: ordered_list::<u32>(&t, "i", vm, mc).unwrap_or_default(),
+                    tex: vec![],
                 };
-                let texture = ordered_list::<String>(&t, "t", vm, mc).and_then(|v| v.into_iter().next());
+                let texture: Vec<String> = ordered_list::<String>(&t, "t", vm, mc)
+                    .and_then(|v| v.into_iter().next())
+                    .into_iter()
+                    .collect();
                 drop(t);
                 if let Err(e) = mesh.complete() {
                     return Err(static_err(e));
@@ -3208,6 +3244,26 @@ function app.write(path, contents) end",
 
         let pitcher = main_pitcher.clone();
         lua_lib!(
+            "png",
+            move |_, _, (texture, file): (String, String)| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppPng(texture, file, tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "overlay only: write a texture out as a png file in the app being edited",
+            "
+---@param texture string
+---@param path string
+---@return boolean
+function app.png(texture, path) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
             "list",
             move |vm, mc, (): ()| {
                 let (tx, rx) = sync_channel::<Vec<String>>(0);
@@ -3273,6 +3329,14 @@ function app.reload() end",
                 t.set("nx", hit.normal[0] as f64);
                 t.set("ny", hit.normal[1] as f64);
                 t.set("nz", hit.normal[2] as f64);
+                if let Some((lo, hi)) = hit.bounds {
+                    t.set("x0", lo[0] as f64);
+                    t.set("y0", lo[1] as f64);
+                    t.set("z0", lo[2] as f64);
+                    t.set("x1", hi[0] as f64);
+                    t.set("y1", hi[1] as f64);
+                    t.set("z1", hi[2] as f64);
+                }
                 if let Some((name, u, v, w, h, c)) = hit.tex {
                     t.set("tex", name);
                     t.set("u", u as i64);
@@ -3288,8 +3352,78 @@ function app.reload() end",
 ---@param own? boolean pick the overlay's own 3D instead of the app's scene
 ---@param x? number screen x 0..1 (default: the pointer)
 ---@param y? number screen y 0..1
----@return {kind:string,id:integer,asset:string,cx:integer,cy:integer,cz:integer,dist:number,x:number,y:number,z:number,nx:number,ny:number,nz:number,tex:string?,u:integer?,v:integer?,tw:integer?,th:integer?,color:string?}|nil
+---@return {kind:string,id:integer,asset:string,cx:integer,cy:integer,cz:integer,dist:number,x:number,y:number,z:number,nx:number,ny:number,nz:number,x0:number,y0:number,z0:number,x1:number,y1:number,z1:number,tex:string?,u:integer?,v:integer?,tw:integer?,th:integer?,color:string?}|nil
 function app.pick(own, x, y) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "hide",
+            move |_, _, (hit, on): (Value, Option<Value>)| {
+                let req = mesh_in(&hit)?;
+                let on = !matches!(on, Some(Value::Bool(false)));
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppHide(req, on, tx))));
+                Ok(Value::Bool(rx.recv().unwrap_or(false)))
+            },
+            "overlay only: hide (or show again) a tile or entity app.pick returned, while it's edited",
+            "
+---@param hit table what app.pick returned
+---@param on? boolean false shows it again
+---@return boolean
+function app.hide(hit, on) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "mesh",
+            move |vm, mc, hit: Value| {
+                let req = mesh_in(&hit)?;
+                let (tx, rx) = sync_channel::<Result<MeshOut, String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppMesh(req, tx))));
+                let m = match rx.recv() {
+                    Ok(Ok(m)) => m,
+                    Ok(Err(e)) => {
+                        let mut t = vm.raw_table();
+                        t.set("err", e);
+                        return Ok(vm.wrap_table(mc, t));
+                    }
+                    Err(_) => return Ok(Value::Nil),
+                };
+                let p: Vec<Value> = m
+                    .pos
+                    .iter()
+                    .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64, p[2] as f64]))
+                    .collect();
+                let u: Vec<Value> = m
+                    .uv
+                    .iter()
+                    .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64]))
+                    .collect();
+                let mut t = vm.raw_table();
+                t.set("kind", m.kind);
+                t.set("asset", m.asset);
+                t.set("source", m.source);
+                if let Some(path) = m.path {
+                    t.set("path", path);
+                }
+                t.set("x", m.origin[0] as f64);
+                t.set("y", m.origin[1] as f64);
+                t.set("z", m.origin[2] as f64);
+                t.set("rz", m.rz as f64);
+                t.set("scale", m.scale as f64);
+                t.set("p", vm.table_from_array(mc, p));
+                t.set("u", vm.table_from_array(mc, u));
+                t.set("t", vm.table_from_array(mc, m.tex));
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the triangles of a tile or entity app.pick returned, with their textures, for editing",
+            "
+---@param hit table what app.pick returned
+---@return {kind:string, asset:string, source:string, path:string?, x:number, y:number, z:number, rz:number, scale:number, p:number[3][], u:number[2][], t:string[], err:string?}|nil
+function app.mesh(hit) end",
             &mut app
         );
 
@@ -3760,6 +3894,9 @@ pub fn load_app(
 /// alive, kept drawn, and walked every frame by a bundle that no longer existed.
 pub fn close_overlays(core: &mut Core) -> usize {
     let ids = core.bundle_manager.close_overlays();
+    if !ids.is_empty() {
+        core.unhide_all();
+    }
     for id in &ids {
         core.release_view(*id);
         core.ent_manager.reset_by_bundle(*id);
@@ -3773,6 +3910,7 @@ pub fn close_overlay(core: &mut Core, id: u8) -> bool {
     if !core.bundle_manager.close_overlay(id) {
         return false;
     }
+    core.unhide_all();
     core.release_view(id);
     core.ent_manager.reset_by_bundle(id);
     core.world.destroy(id);
@@ -4451,9 +4589,10 @@ pub enum MainCommmand {
     Stats(),
     Read(String, SyncSender<Option<String>>),
     Write(String, String, SyncSender<bool>),
-    /// `glb(path, data)`: path, mesh, and the name of a texture to embed.
+    /// `glb(path, data)`: path, mesh, and the textures to embed — one, or
+    /// one per `tex` index of the mesh, baked into a single image.
     GlbWrite(
-        Box<(String, crate::gltf_io::MeshData, Option<String>)>,
+        Box<(String, crate::gltf_io::MeshData, Vec<String>)>,
         SyncSender<bool>,
     ),
     /// `glb(path)`: the file's triangles, or None if it can't be read.
@@ -4469,6 +4608,12 @@ pub enum MainCommmand {
     /// `app.pick(own, x, y)`: what's under the pointer (or screen point x, y) —
     /// in the app's scene, or in the overlay's own 3D (`own`).
     AppPick(bool, Option<(f32, f32)>, SyncSender<Option<PickOut>>),
+    /// `app.png(texture, path)`: a texture written out as a png in the app.
+    AppPng(String, String, SyncSender<bool>),
+    /// `app.mesh(hit)`: the triangles of a picked tile or entity.
+    AppMesh(MeshIn, SyncSender<Result<MeshOut, String>>),
+    /// `app.hide(hit, on)`: hide or show a picked tile or entity.
+    AppHide(MeshIn, bool, SyncSender<bool>),
     /// `app.pause(on)`: freeze or resume the app's loop.
     AppPause(bool),
     /// `app.drive(on)`: draw the scene through this overlay's camera.
@@ -4515,6 +4660,56 @@ pub struct PickOut {
     pub normal: [f32; 3],
     /// Texture name, texel x/y, texture w/h, and the texel's colour.
     pub tex: Option<(String, u32, u32, u32, u32, [u8; 4])>,
+    /// The thing's world-space box (min, max).
+    pub bounds: Option<([f32; 3], [f32; 3])>,
+}
+
+/// The tile or entity an `app.pick` result names, for `app.mesh`/`app.hide`.
+fn mesh_in(hit: &Value) -> Result<MeshIn, LuaError> {
+    let Value::Table(h) = hit else {
+        return Err(static_err("pass the table app.pick returned"));
+    };
+    let h = h.borrow();
+    let int = |k: &str| match h.get_value(&k.into()) {
+        Value::Integer(n) => n,
+        Value::Number(n) => n as i64,
+        _ => 0,
+    };
+    let ent = matches!(h.get_value(&"kind".into()), Value::String(s) if s.to_string() == "ent");
+    Ok(MeshIn {
+        ent,
+        id: int("id") as u64,
+        cell: [int("cx") as i32, int("cy") as i32, int("cz") as i32],
+    })
+}
+
+/// `app.mesh(hit)`'s request: an entity id, or a tile cell.
+pub struct MeshIn {
+    pub ent: bool,
+    pub id: u64,
+    pub cell: [i32; 3],
+}
+
+/// `app.mesh(hit)`: the thing's triangles in its own model space, three
+/// corners each, with a texture name per triangle and a uv per corner in that
+/// texture's own 0..1. World = `origin` + (turned `rz` about z) model space.
+#[derive(Default)]
+pub struct MeshOut {
+    /// `"model"`, `"cube"` (a tile that's only a texture) or `"sprite"`.
+    pub kind: &'static str,
+    pub asset: String,
+    /// `"file"` (a glb/gltf, at `path`), `"code"` (`mod()`), `"texture"`
+    /// (cube or sprite), `"packed"` (a file inside a packed game) or
+    /// `"engine"` (the built-in cube and plane).
+    pub source: &'static str,
+    /// The file, relative to the app, for `"file"`.
+    pub path: Option<String>,
+    pub origin: [f32; 3],
+    pub rz: f32,
+    pub scale: f32,
+    pub pos: Vec<[f32; 3]>,
+    pub uv: Vec<[f32; 2]>,
+    pub tex: Vec<String>,
 }
 
 /// `app.info()`.
@@ -4870,20 +5065,25 @@ fn point_list<'v>(t: &Table<'v>, key: &str) -> Option<Vec<[f32; 3]>> {
 /// None if the table is neither, so the caller falls through to its other forms.
 ///
 /// - polygon: `p` positions, `f` faces as lists of **1-based** indices into `p`
-///   (Lua's own convention, unlike `i`), `fu` one uv per face
+///   (Lua's own convention, unlike `i`), `fu` one uv per face, or `fc` a uv
+///   per corner of each face with `ft` a texture name per face
 /// - line: `l` segment endpoints in pairs, `lw` width (one, or per segment),
 ///   `lu` one uv per segment
 /// - either: `scale` multiplies positions (see guide/mod.md on precision)
+///
+/// Alongside the mesh: the textures `ft` names, in the order the mesh's `tex`
+/// indices count them (empty without `ft`).
 fn mesh_from_table<'v>(
     t: &Table<'v>,
     vm: &VM<'v>,
     mc: &Mutation<'v>,
-) -> Option<Result<crate::gltf_io::MeshData, String>> {
+) -> Option<Result<(crate::gltf_io::MeshData, Vec<String>), String>> {
     let scale = match t.get_value(&"scale".into()) {
         Value::Integer(n) => n as f32,
         Value::Number(n) => n as f32,
         _ => 1.,
     };
+    let mut names: Vec<String> = vec![];
     let mut mesh = if let Value::Table(ft) = t.get_value(&"f".into()) {
         let pos = point_list(t, "p").unwrap_or_default();
         let ftb = ft.borrow();
@@ -4909,7 +5109,37 @@ fn mesh_from_table<'v>(
             i += 1;
         }
         let fu = ordered_list::<[f32; 2]>(t, "fu", vm, mc).unwrap_or_default();
-        match crate::gltf_io::MeshData::from_polygons(&pos, &faces, &fu) {
+        // fc: per face, a list of {u, v} for its corners
+        let mut fc: Vec<Vec<[f32; 2]>> = vec![];
+        if let Value::Table(ct) = t.get_value(&"fc".into()) {
+            let ctb = ct.borrow();
+            let mut i = 1;
+            while let Some(face) = ctb.getn(i) {
+                let mut corners = vec![];
+                if let Value::Table(face) = face {
+                    let fb = face.borrow();
+                    let mut k = 1;
+                    while let Some(Value::Table(uv)) = fb.getn(k) {
+                        corners.push(uv.borrow().to_array::<f32, 2>());
+                        k += 1;
+                    }
+                }
+                fc.push(corners);
+                i += 1;
+            }
+        }
+        let mut face_tex: Vec<u32> = vec![];
+        for name in ordered_list::<String>(t, "ft", vm, mc).unwrap_or_default() {
+            let at = match names.iter().position(|n| *n == name) {
+                Some(at) => at,
+                None => {
+                    names.push(name);
+                    names.len() - 1
+                }
+            };
+            face_tex.push(at as u32);
+        }
+        match crate::gltf_io::MeshData::from_polygons(&pos, &faces, &fu, &fc, &face_tex) {
             Ok(m) => m,
             Err(e) => return Some(Err(e)),
         }
@@ -4925,7 +5155,7 @@ fn mesh_from_table<'v>(
             *p = [p[0] * scale, p[1] * scale, p[2] * scale];
         }
     }
-    Some(Ok(mesh))
+    Some(Ok((mesh, names)))
 }
 
 fn convert_quads(q: Vec<[f32; 3]>) -> (Vec<[f32; 3]>, Vec<[f32; 3]>, Vec<[f32; 2]>, Vec<u32>) {

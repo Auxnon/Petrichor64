@@ -6,7 +6,7 @@ _set model_
 ---@alias regular_data {v:number[3][], u?:number[2][]}, i?:integer[], n?:number[3][], t?:string|string[]}
 ---@alias quad_data {q:number[3][], u?:number[2][], n?:number[3][], t?:string|string[]}
 ---@alias cube_data {t:string|string[]}
----@alias polygon_data {p:(number[3]|vec3)[], f:integer[][], fu?:number[2][], t?:string, scale?:number}
+---@alias polygon_data {p:(number[3]|vec3)[], f:integer[][], fu?:number[2][], fc?:number[2][][], ft?:string[], t?:string, scale?:number}
 ---@alias line_data {l:(number[3]|vec3)[], lw?:number|number[], lu?:number[2][], t?:string, scale?:number}
 ---@type fun(asset:string, data:regular_data|quad_data|cube_data|polygon_data|line_data)
 function mod(asset,data)
@@ -50,6 +50,22 @@ rebuilding a model this way every frame is cheap.
 mod("wedge", {
     p = { vec3(0, 0, 0), vec3(1, 0, 0), vec3(1, 1, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(0, 1, 1) },
     f = { { 1, 4, 3, 2 }, { 1, 2, 5 }, { 4, 6, 3 }, { 1, 5, 6, 4 }, { 2, 3, 6, 5 } },
+})
+```
+
+To texture faces properly instead, give `ft`, a texture name per face, and
+`fc`, per face a list of `{u, v}` for its corners (in that texture's own 0–1,
+v running down the image). Each face shows its own texture; faces can share
+one or each have their own. A face whose `fc` entry doesn't have one uv per
+corner falls back to `fu`. This is what the model editor (Ctrl+M) writes when
+it saves a model as code.
+
+```lua
+mod("crate", {
+    p = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 }, { 0, 1, 1 }, { 1, 1, 1 } },
+    f = { { 1, 2, 3, 4 }, { 4, 3, 6, 5 } },
+    ft = { "wood", "lid" },
+    fc = { { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } }, { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } } },
 })
 ```
 

@@ -250,6 +250,9 @@ pub struct BundleEnts {
         ),
     >,
     pub hash_dirty: bool,
+    /// Entities an overlay has hidden (`app.hide`): drawn as nothing and
+    /// skipped by picking, until it shows them again or closes.
+    pub hidden: rustc_hash::FxHashSet<u64>,
 }
 
 #[cfg(feature = "headed")]
@@ -834,7 +837,13 @@ impl EntManager {
                     // println!("not dirty");
                 }
                 let mat = ent.build_meta(&l, parent);
-                let uni = ent.get_uniforms_with_mat(&l, iteration, mat);
+                let mut uni = ent.get_uniforms_with_mat(&l, iteration, mat);
+                if b.hidden.contains(&l.get_id()) {
+                    // collapsed to a point, and not a billboard (which would
+                    // still draw its quad wherever the matrix put it)
+                    uni.model = [[0.; 4]; 4];
+                    uni.effects[0] = 0.;
+                }
                 uni_ref.replace(uni);
                 if ent.model.skin.is_some() {
                     if let Some(sk) = crate::skeleton::lookup(&ent.model.name) {

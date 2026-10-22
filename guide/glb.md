@@ -23,6 +23,11 @@ file landed.
 - Instead of `v`/`i`, the polygon form from [mod](#mod) works too: `p` points, `f`
   faces of 1-based indices, `fu` one uv per face. Each face is exported flat with
   its own normal.
+- With the polygon form's `ft` (a texture per face) and `fc` (a uv per corner),
+  every texture the faces use is baked side by side into the one image the file
+  carries, and the uvs moved onto it. The engine loads a glb's image as a
+  texture named after the file, so naming a file after a texture you use
+  elsewhere replaces that texture.
 - `up="y"` rotates the file to glTF's usual Y-up for tools like Blender. Leave it
   out to keep the engine's Z-up, which is what the engine itself loads.
 

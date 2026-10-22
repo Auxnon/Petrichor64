@@ -2114,6 +2114,7 @@ impl Core {
             point: hit.point.to_array(),
             normal: hit.normal.to_array(),
             tex: hit.tex.map(|t| (t.name, t.x, t.y, t.w, t.h, t.rgba)),
+            bounds: hit.bounds.map(|(lo, hi)| (lo.to_array(), hi.to_array())),
         })
     }
     #[cfg(not(feature = "headed"))]
@@ -2124,6 +2125,226 @@ impl Core {
         _at: Option<(f32, f32)>,
     ) -> Option<crate::command::PickOut> {
         None
+    }
+
+    /// `app.mesh(hit)`: the mesh of a tile or entity `app.pick` returned, for the
+    /// model editor to open. A model loaded from a glb/gltf file is read back
+    /// from that file; anything else comes out of the packed model with each
+    /// triangle's texture recovered from its atlas uvs. A tile that's only a
+    /// texture is the textured cube it's drawn as, and a sprite the quad.
+    #[cfg(feature = "headed")]
+    fn app_mesh(&self, id: u8, req: crate::command::MeshIn) -> Result<crate::command::MeshOut, String> {
+        use crate::command::MeshOut;
+        use glam::{vec2, vec3, Vec3};
+        let (target, dir) = self.overlay_edit_target(id).ok_or("overlay only")?;
+
+        // the packed triangles of a model, with uv_mod the way an entity draws it
+        let from_model = |model: &crate::model::Model, uv_mod: glam::Vec4, out: &mut MeshOut| {
+            let Some((verts, inds)) = model.data.as_ref() else { return };
+            for tri in inds.chunks_exact(3) {
+                let vs: Vec<_> = tri.iter().filter_map(|&i| verts.get(i as usize)).collect();
+                if vs.len() < 3 {
+                    continue;
+                }
+                let atlas: Vec<glam::Vec2> = vs
+                    .iter()
+                    .map(|v| {
+                        let t = v.tex();
+                        vec2(t[0], t[1]) * vec2(uv_mod.z, uv_mod.w) + vec2(uv_mod.x, uv_mod.y)
+                    })
+                    .collect();
+                let mid = (atlas[0] + atlas[1] + atlas[2]) / 3.;
+                let (name, r) = match crate::pick::tex_rect_at(self, mid) {
+                    Some((n, r)) => (n.clone(), *r),
+                    None => (String::new(), glam::vec4(0., 0., 1., 1.)),
+                };
+                for (v, a) in vs.iter().zip(atlas) {
+                    let p = v.pos();
+                    out.pos.push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
+                    out.uv.push([(a.x - r.x) / r.z, (a.y - r.y) / r.w]);
+                }
+                out.tex.push(name);
+            }
+        };
+        // a model from a file: that file's triangles, all on the texture it
+        // brought (named after it)
+        let from_file = |name: &str, path: &str, out: &mut MeshOut| -> Result<(), String> {
+            let bytes = std::fs::read(path).map_err(|e| format!("{}: {}", path, e))?;
+            let m = crate::gltf_io::read(&bytes)?;
+            let tex = if self.tex_manager.get_tex_or_not(name).is_some() {
+                name.to_string()
+            } else {
+                String::new()
+            };
+            for tri in m.ind.chunks_exact(3) {
+                for &i in tri {
+                    out.pos.push(m.pos[i as usize]);
+                    out.uv.push(m.uv.get(i as usize).copied().unwrap_or([0., 0.]));
+                }
+                out.tex.push(tex.clone());
+            }
+            out.source = "file";
+            out.path = Some(relative_to(path, &dir));
+            Ok(())
+        };
+        // a named model: from its file if it came from one, else packed
+        let named = |name: &str, uv_mod: glam::Vec4, out: &mut MeshOut| -> Result<bool, String> {
+            let Some(model) = self.model_manager.get_model_or_not(&name.to_string()) else {
+                return Ok(false);
+            };
+            out.kind = "model";
+            match self.model_manager.sources.get(&model.base_name) {
+                Some((_, path)) if !path.is_empty() => from_file(&model.base_name, path, out)?,
+                Some(_) => {
+                    out.source = "packed";
+                    from_model(model, uv_mod, out);
+                }
+                None => {
+                    out.source = if name == "cube" || name == "plane" { "engine" } else { "code" };
+                    from_model(model, uv_mod, out);
+                }
+            }
+            Ok(true)
+        };
+
+        let mut out = MeshOut::default();
+        if req.ent {
+            let b = self.ent_manager.bundles.get(&target).ok_or("no app")?;
+            let found = b.array.iter().find_map(|(e, ent, uni)| {
+                e.with_ref(|l| {
+                    Ok((l.get_id() == req.id && !l.is_dead()).then(|| {
+                        (l.get_asset(), [l.x as f32, l.y as f32, l.z as f32], l.rot_z as f32, l.scale as f32)
+                    }))
+                })
+                .ok()
+                .flatten()
+                .map(|l| (l, ent.model.clone(), uni.borrow().effects, uni.borrow().uv_mod))
+            });
+            let ((asset, pos, rz, scale), model, effects, uv_mod) = found.ok_or("no such entity")?;
+            let uv_mod = glam::Vec4::from_array(uv_mod);
+            out.asset = asset;
+            out.origin = pos;
+            out.rz = rz;
+            out.scale = scale;
+            if effects[0] > 0. {
+                // a sprite: the quad it turns to face the camera, stood up
+                // facing -y, at its unscaled size (one unit)
+                out.kind = "sprite";
+                out.source = "texture";
+                let mid = vec2(uv_mod.x + uv_mod.z * 0.5, uv_mod.y + uv_mod.w * 0.5);
+                let name = crate::pick::tex_rect_at(self, mid).map(|(n, _)| n.clone()).unwrap_or_default();
+                let quad = [
+                    ([-0.5, 0., -0.5], [0., 1.]),
+                    ([0.5, 0., -0.5], [1., 1.]),
+                    ([0.5, 0., 0.5], [1., 0.]),
+                    ([-0.5, 0., 0.5], [0., 0.]),
+                ];
+                for tri in [[0, 1, 2], [0, 2, 3]] {
+                    for k in tri {
+                        out.pos.push(quad[k].0);
+                        out.uv.push(quad[k].1);
+                    }
+                    out.tex.push(name.clone());
+                }
+            } else {
+                let base = model.base_name.clone();
+                if !named(&base, uv_mod, &mut out)? {
+                    out.kind = "model";
+                    out.source = "code";
+                    from_model(&model, uv_mod, &mut out);
+                }
+            }
+        } else {
+            let [x, y, z] = req.cell;
+            let sender = self.world.senders.get(&target).ok_or("the app has no tiles")?;
+            let (asset, rot) = crate::world::World::get_tile(sender, x, y, z).ok_or("no tile there")?;
+            out.asset = asset.clone();
+            // A tile's mesh spans its cell from the low corner, turned a
+            // quarter turn per `rot` about the cell's vertical centre line.
+            out.rz = rot as f32 * std::f32::consts::FRAC_PI_2;
+            out.scale = 1.;
+            let corner = vec3(x as f32, y as f32, z as f32) - Vec3::splat(0.5);
+            let pivot = vec3(0.5, 0.5, 0.);
+            let origin = corner + pivot - glam::Quat::from_rotation_z(out.rz) * pivot;
+            out.origin = origin.to_array();
+            if !named(&asset, glam::vec4(0., 0., 1., 1.), &mut out)? {
+                if self.tex_manager.get_tex_or_not(&asset).is_none() {
+                    return Err(format!("{} is neither a model nor a texture", asset));
+                }
+                out.kind = "cube";
+                out.source = "texture";
+                let cube = self.model_manager.cube_model();
+                let (verts, inds) = cube.data.as_ref().ok_or("no cube")?;
+                for tri in inds.chunks_exact(3) {
+                    for &i in tri {
+                        let v = verts[i as usize];
+                        let p = v.pos();
+                        out.pos.push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
+                        out.uv.push(v.tex());
+                    }
+                    out.tex.push(asset.clone());
+                }
+            }
+        }
+        Ok(out)
+    }
+    #[cfg(not(feature = "headed"))]
+    fn app_mesh(&self, _id: u8, _req: crate::command::MeshIn) -> Result<crate::command::MeshOut, String> {
+        Err("no renderer".into())
+    }
+
+    /// `app.hide(hit, on)`: hide (or show again) one of the app's entities or
+    /// tiles while an overlay edits a copy of it in place. An entity is left
+    /// alone and just not drawn or picked; a tile is emptied in the app's world
+    /// and put back as it was. Everything hidden comes back when the overlay
+    /// closes (`unhide_all`).
+    pub fn app_hide(&mut self, id: u8, req: &crate::command::MeshIn, on: bool) -> bool {
+        let Some((target, _)) = self.overlay_edit_target(id) else {
+            return false;
+        };
+        if req.ent {
+            let Some(b) = self.ent_manager.bundles.get_mut(&target) else {
+                return false;
+            };
+            if on {
+                b.hidden.insert(req.id);
+            } else {
+                b.hidden.remove(&req.id);
+            }
+            return true;
+        }
+        let Some(sender) = self.world.senders.get(&target).cloned() else {
+            return false;
+        };
+        let [x, y, z] = req.cell;
+        let at = self.world.hidden.iter().position(|h| h.0 == target && h.1 == req.cell);
+        match (on, at) {
+            (true, None) => {
+                let Some((asset, rot)) = crate::world::World::get_tile(&sender, x, y, z) else {
+                    return false;
+                };
+                crate::world::World::set_tile(&sender, String::new(), x, y, z, 0);
+                self.world.hidden.push((target, req.cell, asset, rot));
+            }
+            (false, Some(i)) => {
+                let (_, _, asset, rot) = self.world.hidden.remove(i);
+                crate::world::World::set_tile(&sender, asset, x, y, z, rot);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Show everything overlays hid with `app.hide`.
+    pub fn unhide_all(&mut self) {
+        for b in self.ent_manager.bundles.values_mut() {
+            b.hidden.clear();
+        }
+        for (target, [x, y, z], asset, rot) in std::mem::take(&mut self.world.hidden) {
+            if let Some(sender) = self.world.senders.get(&target) {
+                crate::world::World::set_tile(sender, asset, x, y, z, rot);
+            }
+        }
     }
 
     /// `app.drive(true)`: the scene is drawn through overlay `id`'s camera from
@@ -2328,6 +2549,7 @@ impl Core {
             norm,
             uv: un.uv,
             ind: un.ind,
+            tex: vec![],
         };
         let path = assets.join(format!("{}.glb", name));
         self.tex_manager.record_new_source(
@@ -3091,15 +3313,22 @@ impl Core {
                     self.log_check(res);
                 }
                 MainCommmand::GlbWrite(job, tx) => {
-                    let (file, mesh, texture) = *job;
-                    // Embed the named texture by cutting it back out of the atlas —
-                    // the same pixels the model shows in the engine. An unknown name
-                    // exports untextured rather than failing the whole write.
-                    let image = texture.and_then(|t| {
+                    let (file, mut mesh, textures) = *job;
+                    // Embed the named textures by cutting them back out of the
+                    // atlas — the same pixels the model shows in the engine. An
+                    // unknown name exports untextured (or, baked, white) rather
+                    // than failing the whole write.
+                    let cut = |t: &String| {
                         self.tex_manager
-                            .get_tex_or_not(&t)
-                            .map(|_| self.tex_manager.get_img(&t).2)
-                    });
+                            .get_tex_or_not(t)
+                            .map(|_| self.tex_manager.get_img(t).2)
+                    };
+                    let image = if mesh.tex.is_empty() {
+                        textures.first().and_then(cut)
+                    } else {
+                        let images: Vec<_> = textures.iter().map(cut).collect();
+                        Some(mesh.bake(&images))
+                    };
                     let bytes = if file.to_ascii_lowercase().ends_with(".gltf") {
                         crate::gltf_io::to_gltf(&mesh, image.as_ref()).map(|s| s.into_bytes())
                     } else {
@@ -3223,6 +3452,8 @@ impl Core {
                 MainCommmand::AppReload(tx) => {
                     let res = match self.overlay_edit_target(id) {
                         Some((target, _)) => {
+                            // the app sets its own tiles again; nothing to restore
+                            self.world.hidden.retain(|h| h.0 != target);
                             crate::command::reload(self, target);
                             true
                         }
@@ -3235,6 +3466,35 @@ impl Core {
                 }
                 // The scene half of `app.*`. Same gate as the file arms: only an
                 // engine-marked overlay with a real app under it gets an answer.
+                MainCommmand::AppPng(texture, file, tx) => {
+                    let res = match self.overlay_files(id) {
+                        Ok((_, dir)) if self.tex_manager.get_tex_or_not(&texture).is_some() => {
+                            let img = self.tex_manager.get_img(&texture).2;
+                            let mut png: Vec<u8> = vec![];
+                            image::DynamicImage::ImageRgba8(img)
+                                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                                .map_err(|e| e.to_string())
+                                .and_then(|_| {
+                                    crate::file_util::write_file_bytes_scrubbed(&dir, &file, &png)
+                                        .map_err(|e| e.to_string())
+                                })
+                        }
+                        Ok(_) => Err(format!("no texture {}", texture)),
+                        Err(e) => Err(e),
+                    };
+                    if let Err(e) = &res {
+                        self.log(LogType::IoError, &format!("!!app.png: {}", e));
+                    }
+                    self.log_check(tx.send(res.is_ok()));
+                }
+                MainCommmand::AppHide(req, on, tx) => {
+                    let res = self.app_hide(id, &req, on);
+                    self.log_check(tx.send(res));
+                }
+                MainCommmand::AppMesh(req, tx) => {
+                    let out = self.app_mesh(id, req);
+                    self.log_check(tx.send(out));
+                }
                 MainCommmand::AppPick(own, at, tx) => {
                     let out = match self.bundle_manager.is_overlay(id) {
                         true => self.app_pick(id, own, at),

@@ -1193,6 +1193,7 @@ mod tests {
             norm: vec![[0., 0., 1.]; 3],
             uv: vec![[0., 0.], [1., 0.], [1., 1.]],
             ind: vec![0, 1, 2],
+            tex: vec![],
         };
         let mut tm = TexManager::new();
         let pos = tm.locate(RgbaImage::from_pixel(4, 4, image::Rgba([50, 60, 70, 255])));

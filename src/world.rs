@@ -142,8 +142,13 @@ impl WorldInstance {
         }
     }
 
-    /** Create a simple numerical key for our model and map it, returning that numerical key*/
+    /** Create a simple numerical key for our model and map it, returning that numerical key.
+     * A name already mapped keeps its key: `mod()` maps it from the Lua thread
+     * ahead of the model, and tiles placed meanwhile already hold that key. */
     fn index_model(&mut self, key: String) -> u32 {
+        if let Some(ind) = self.INT_MODEL_DICTIONARY.get(&key) {
+            return *ind;
+        }
         let ind = self.COUNTER;
         self.INT_MODEL_DICTIONARY.insert(key.clone(), ind);
         self.INT_MODEL_REVERSE_DICTIONARY.insert(ind, key);
@@ -208,6 +213,9 @@ pub struct World {
     /// state by up to one `Check()` cycle; fine for collision, which already
     /// re-checks every frame.
     pub tile_mirror: FxHashMap<u8, FxHashMap<String, Chunk>>,
+    /// Tiles an overlay has hidden (`app.hide`), emptied in their bundle's
+    /// world until shown again: (bundle, cell, asset, rotation).
+    pub hidden: Vec<(u8, [i32; 3], String, u8)>,
     loggy: Sender<(LogType, String)>,
 }
 
@@ -220,6 +228,7 @@ impl World {
             senders: FxHashMap::default(),
             local_mappers: FxHashMap::default(),
             tile_mirror: FxHashMap::default(),
+            hidden: vec![],
             loggy,
         }
     }

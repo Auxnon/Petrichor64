@@ -267,11 +267,14 @@ scene. Its code is [model-chor](https://github.com/Auxnon/model-chor)
 (locally `~/projects/model-chor`), fetched like image-chor; build a local
 checkout with `MODEL_CHOR_DIR=~/projects/model-chor`, or run it from disk with
 `chor game --overlay ~/projects/model-chor`. `chor game --overlay builtin:model`
-opens the built-in copy without a key press, which is how to test it.
+opens the built-in copy without a key press, which is how to test it. It edits
+the app's own tiles and entities: click one and `app.mesh` hands it over with
+its textures; it's saved back as a glb/gltf in `assets/` or as a `mod()` script
+in `scripts/`. model-chor's `tests/overlay.sh` runs it end to end.
 
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
 `view.md`, `drive.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
-`info.md`, `texinfo.md`, `newtex.md`):
+`info.md`, `texinfo.md`, `newtex.md`, `mesh.md`, `hide.md`, `png.md`):
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit
@@ -299,6 +302,13 @@ Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
   The paint overlay's NEW button opens a modal for this.
 - `unwrap(mesh, {w, h, pad, mode})` (any app, not just overlays) works out uvs
   for a mesh: pass its `v`/`n`/`u`/`i` straight to `mod()`.
+- `app.mesh(hit)` returns a picked tile's or entity's triangles in its model
+  space, a texture name per triangle (recovered from the atlas uvs) and a uv
+  per corner, plus where model space sits in the world. A model loaded from a
+  glb is read from the file instead (`ModelManager::sources` knows which).
+  `app.hide(hit)` hides the original meanwhile (a tile is emptied and put back;
+  everything returns when the overlay closes). `app.png(texture, path)` writes
+  a texture out as a png.
 
 ## Suggested game layout
 

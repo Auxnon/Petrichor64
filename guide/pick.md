@@ -8,7 +8,8 @@ function app.pick(own, x, y)
 ```
 
 Ray-casts the app's scene through the camera it was last drawn with and returns
-the nearest thing under the pointer (or under screen point `x, y`, each 0..1
+the nearest thing under the pointer (an entity standing on or set into a tile
+wins over the tile at the same depth) (or under screen point `x, y`, each 0..1
 from the top left), or `nil`. It tests what is actually drawn: model triangles
 through each entity's current transform, billboard sprites as the camera-facing
 quad they render as, and the app's tiles. Fully transparent texels are skipped,
@@ -22,6 +23,7 @@ works out which of its buttons the pointer is over.
 | `kind` | `"ent"` or `"tile"` |
 | `id`, `asset` | the entity's id and asset (entities) |
 | `cx`, `cy`, `cz` | the tile cell (tiles) |
+| `x0`, `y0`, `z0`, `x1`, `y1`, `z1` | the thing's world box: the tile's cell, or the entity's model bounds through its transform (a sprite's quad) |
 | `x`, `y`, `z`, `dist` | hit point and distance, in world units |
 | `nx`, `ny`, `nz` | surface normal, facing the camera |
 | `tex` | the texture name drawn there, if any |
@@ -30,6 +32,9 @@ works out which of its buttons the pointer is over.
 
 Paint the texel by editing the texture with `gimg` / `tex`; the change shows on
 every mesh using it.
+
+Pass the result to [app.mesh](#mesh) for the thing's triangles, or
+[app.hide](#hide) to hide it.
 
 Only exists inside an overlay.
 
