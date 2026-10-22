@@ -253,9 +253,14 @@ the app, and `app.pick(true, x, y)` hits the overlay's own 3D panels (with
 
 ## Overlays: editing a running app
 
-**Ctrl+P** opens the built-in paint overlay (`apps/paint3d`) over any app that
+**Ctrl+P** opens the built-in paint overlay over any app that
 hasn't set `attr{lock=true}`. It pauses the app and paints textures straight
 onto the meshes. It's also the worked example for writing your own overlay.
+Its code lives in its own repo, [image-chor](https://github.com/Auxnon/image-chor)
+(locally `~/projects/image-chor`): the `studio` feature makes build.rs fetch
+its latest `main` and compile `scripts/*.lua` in (src/builtin.rs). Work on it
+from disk with `chor game --overlay ~/projects/image-chor`, or build `chor`
+with a local checkout via `IMAGE_CHOR_DIR=~/projects/image-chor`.
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
 `view.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
 `info.md`, `texinfo.md`, `newtex.md`):

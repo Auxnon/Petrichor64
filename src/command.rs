@@ -3779,6 +3779,13 @@ pub fn toggle_paint_overlay(core: &mut Core) {
     if core.bundle_manager.edit_target().is_none() {
         return; // nothing to paint on
     }
+    if crate::builtin::scripts(PAINT_OVERLAY).is_none() {
+        core.loggy.log(
+            LogType::ConfigError,
+            "the image editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/image-chor at build time)",
+        );
+        return;
+    }
     if let Err(e) = load_overlay(core, PAINT_OVERLAY) {
         core.loggy
             .log(LogType::ConfigError, &format!("paint overlay failed: {}", e));

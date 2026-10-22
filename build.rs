@@ -24,6 +24,13 @@ fn main() {
         println!("cargo::rustc-cfg=desktop");
     }
 
+    // Before the embeds: their nested builds reuse the checkout this fetches.
+    if std::env::var_os("CARGO_FEATURE_STUDIO").is_some() {
+        image_chor::run();
+    } else {
+        image_chor::write_empty();
+    }
+
     // Not for the wasm build itself, which build_web below runs from inside
     // this script: that would recurse.
     if std::env::var_os("CARGO_FEATURE_WEB_EMBED").is_some() && arch != "wasm32" {
@@ -58,7 +65,129 @@ fn nested_command(program: &str, manifest: &std::path::Path, target_dir: &std::p
         c.env_remove(key);
     }
     c.current_dir(manifest).env("CARGO_TARGET_DIR", target_dir);
+    // The nested build compiles the same image editor this one did, without
+    // fetching it again.
+    if let Some(dir) = image_chor::fetched() {
+        c.env(image_chor::DIR_ENV, dir);
+    }
     c
+}
+
+/// `studio`: the image editor (the Ctrl+P paint overlay) lives in its own repo,
+/// github.com/Auxnon/image-chor. Fetch its latest `main` and compile its
+/// `scripts/*.lua` into the engine (src/builtin.rs includes the generated
+/// $OUT_DIR/image_chor.rs). This runs again whenever the engine's sources
+/// change, so any rebuild picks up the newest version; `just image-chor` forces
+/// one.
+///
+/// - `IMAGE_CHOR_DIR`: use this local checkout instead; nothing is fetched.
+/// - `IMAGE_CHOR_REF`: a branch, tag or commit instead of `main`.
+/// - Offline, the copy fetched last time is used. With none at all the build
+///   still succeeds, with a warning, and Ctrl+P says the editor isn't built in.
+mod image_chor {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    pub const DIR_ENV: &str = "IMAGE_CHOR_DIR";
+    const REF_ENV: &str = "IMAGE_CHOR_REF";
+    const URL: &str = "https://github.com/Auxnon/image-chor";
+
+    fn checkout() -> PathBuf {
+        PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("image-chor")
+    }
+
+    /// The checkout this build compiled in, once run() has fetched it.
+    pub fn fetched() -> Option<PathBuf> {
+        std::env::var_os("CARGO_FEATURE_STUDIO")?;
+        let dir = std::env::var_os(DIR_ENV).map(PathBuf::from).unwrap_or_else(checkout);
+        dir.join("scripts").is_dir().then_some(dir)
+    }
+
+    pub fn run() {
+        println!("cargo::rerun-if-env-changed={}", DIR_ENV);
+        println!("cargo::rerun-if-env-changed={}", REF_ENV);
+        let dir = match std::env::var_os(DIR_ENV) {
+            Some(dir) => {
+                // Absolute, since the generated include_str!s resolve from OUT_DIR.
+                let dir = std::fs::canonicalize(&dir).unwrap_or_else(|_| PathBuf::from(dir));
+                println!("cargo::rerun-if-changed={}", dir.join("scripts").display());
+                dir
+            }
+            None => {
+                // Printing any rerun-if-changed replaces cargo's default of
+                // rerunning on every change in the package, so name the inputs
+                // that should trigger a fetch: the engine's own sources.
+                for input in ["build.rs", "Cargo.toml", "src"] {
+                    println!("cargo::rerun-if-changed={}", input);
+                }
+                let dir = checkout();
+                let want = std::env::var(REF_ENV).unwrap_or_else(|_| "main".into());
+                if let Err(e) = fetch(&dir, &want) {
+                    let old = if dir.join("scripts").is_dir() { "; using the copy fetched last time" } else { "" };
+                    println!("cargo::warning=image-chor: couldn't fetch {} from {}: {}{}", want, URL, e, old);
+                }
+                dir
+            }
+        };
+        write(&dir);
+    }
+
+    fn fetch(dir: &Path, want: &str) -> Result<(), String> {
+        if !dir.join(".git").is_dir() {
+            git(None, &["init", "-q", &dir.to_string_lossy()])?;
+        }
+        git(Some(dir), &["fetch", "-q", "--depth", "1", URL, want])?;
+        git(Some(dir), &["checkout", "-q", "--force", "--detach", "FETCH_HEAD"])?;
+        Ok(())
+    }
+
+    fn git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+        let mut c = Command::new("git");
+        if let Some(dir) = dir {
+            c.arg("-C").arg(dir);
+        }
+        // Never stop the build to ask for credentials.
+        c.args(args).env("GIT_TERMINAL_PROMPT", "0");
+        let out = c.output().map_err(|e| format!("git: {}", e))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().replace('\n', " "))
+        }
+    }
+
+    fn write(dir: &Path) {
+        let mut scripts: Vec<PathBuf> = std::fs::read_dir(dir.join("scripts"))
+            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+            .unwrap_or_default();
+        scripts.retain(|p| p.extension().is_some_and(|x| x == "lua"));
+        scripts.sort();
+        if scripts.is_empty() {
+            println!("cargo::warning=image-chor: no scripts in {}; building without the image editor", dir.display());
+        }
+        let mut src = String::from("pub static PAINT: &[(&str, &str)] = &[\n");
+        for path in &scripts {
+            let name = path.file_name().unwrap().to_string_lossy();
+            src += &format!("    ({:?}, include_str!({:?})),\n", name, path.to_string_lossy());
+        }
+        src += "];\n";
+        let rev = git(Some(dir), &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+        src += &format!("pub const PAINT_REV: &str = {:?};\n", rev);
+        emit(&src);
+    }
+
+    /// Without `studio`: no image editor.
+    pub fn write_empty() {
+        emit("pub static PAINT: &[(&str, &str)] = &[];\npub const PAINT_REV: &str = \"\";\n");
+    }
+
+    fn emit(src: &str) {
+        let path = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("image_chor.rs");
+        // Only when it changed, so an unchanged editor doesn't look new to cargo.
+        if std::fs::read_to_string(&path).ok().as_deref() != Some(src) {
+            std::fs::write(&path, src).unwrap();
+        }
+    }
 }
 
 /// `web-embed` (part of `kitchensink`): build the web (wasm) version of the

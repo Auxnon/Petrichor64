@@ -698,7 +698,7 @@ Each is independently useful, and phase 0 is what unlocks the rest.
 |-------|------|-------------|
 | **0** | assign `bundle_target`, drop the Secondary/Trinary early-out, generalize input focus | a "hello overlay" drawing over a running app and taking input — the unlock |
 | **1** | ✅ target handle: `app.list`/`read`/`write`/`reload` | the engine half is in; the **source editor** UI on top of it is next |
-| **2** | ✅ (in its scene-first form) `app.pick` + `gimg`/`tex` | **image editor**: the Ctrl+P paint overlay (`apps/paint3d`, see below) |
+| **2** | ✅ (in its scene-first form) `app.pick` + `gimg`/`tex` | **image editor**: the Ctrl+P paint overlay ([image-chor](https://github.com/Auxnon/image-chor), see below) |
 | **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
 | **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
 

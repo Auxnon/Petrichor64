@@ -23,6 +23,9 @@ pub fn run_tool_cli() -> bool {
     }
     if args.iter().any(|a| a == "--version" || a == "-v") {
         println!("chor {} ({})", VERSION, codex_name());
+        if !crate::builtin::PAINT_REV.is_empty() {
+            println!("image-chor {}", crate::builtin::PAINT_REV);
+        }
         return true;
     }
     if args.first().map(|a| a.as_str()) == Some("ignore") {
