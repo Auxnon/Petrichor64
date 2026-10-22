@@ -1,5 +1,8 @@
 ## UNRELEASED
 
+- **Ctrl+M model editor overlay**: over any app that isn't `attr{lock=true}`, pauses it and opens [model-chor](https://github.com/Auxnon/model-chor), the polygon modeller, starting from the app's camera angle with a bare grid over the scene. Esc (with nothing selected) or Ctrl+M closes it and the app's camera comes back. Saves land in the app's `models/`, exports in its `assets/`. Built in with `studio` like the image editor: `MODEL_CHOR_DIR` / `MODEL_CHOR_REF`, and `chor --version` names the commit
+- `app.drive(on)` (overlays): draw the scene through the overlay's own `cam`; the app's camera is kept and put back when it lets go or closes
+- Fix: `lot()` from an overlay could attach one of the app's entities instead of its own, since entity ids are counted per VM. It only looks in the caller's bundle now
 - `atan2(y, x)`: the angle of a point from the +x axis, in radians (-pi to pi). Games no longer need their own fitted version for facing and aiming
 - **Ctrl+P paint overlay**: over any app that isn't `attr{lock=true}`, pauses it, lets you click a mesh, sprite or tile and paint its texture in place, with a tool panel floating beside it in 3D and a zoomed pixel canvas mode. Built into the engine with the `studio` feature
 - Paint overlay: a dithered frame while it's open, and a SAVE button (lower right, once something's painted) that confirms, then writes the edits back into the app's image files. `app.source`/`app.save` for overlays

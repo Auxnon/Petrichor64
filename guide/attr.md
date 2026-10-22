@@ -30,7 +30,7 @@ Tweak monitor properties, lock mouse, disable console, etc. If there's a global 
 
 **Misc**
 
-- lock: boolean - Prevent the console from being open, and the Ctrl+P paint overlay from opening. Technically an anti-cheat but probably not
+- lock: boolean - Prevent the console from being open, and the Ctrl+P / Ctrl+M editor overlays from opening. Technically an anti-cheat but probably not
 - front: boolean - draw *this app's* entities after the rest of the scene, over a cleared depth buffer, so nothing in the scene can hide them. Meant for overlays, whose 3D panels should float over the app they edit rather than poke through its walls
 - fog: number - sets a simple draw distance based fog that fades into the skybox raster
 

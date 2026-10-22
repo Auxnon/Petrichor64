@@ -25,10 +25,12 @@ fn main() {
     }
 
     // Before the embeds: their nested builds reuse the checkout this fetches.
-    if std::env::var_os("CARGO_FEATURE_STUDIO").is_some() {
-        image_chor::run();
-    } else {
-        image_chor::write_empty();
+    for ed in editors::ALL {
+        if std::env::var_os("CARGO_FEATURE_STUDIO").is_some() {
+            ed.run();
+        } else {
+            ed.write_empty();
+        }
     }
 
     // Not for the wasm build itself, which build_web below runs from inside
@@ -65,78 +67,159 @@ fn nested_command(program: &str, manifest: &std::path::Path, target_dir: &std::p
         c.env_remove(key);
     }
     c.current_dir(manifest).env("CARGO_TARGET_DIR", target_dir);
-    // The nested build compiles the same image editor this one did, without
-    // fetching it again.
-    if let Some(dir) = image_chor::fetched() {
-        c.env(image_chor::DIR_ENV, dir);
+    // The nested build compiles the same editors this one did, without
+    // fetching them again.
+    for ed in editors::ALL {
+        if let Some(dir) = ed.fetched() {
+            c.env(ed.dir_env, dir);
+        }
     }
     c
 }
 
-/// `studio`: the image editor (the Ctrl+P paint overlay) lives in its own repo,
-/// github.com/Auxnon/image-chor. Fetch its latest `main` and compile its
-/// `scripts/*.lua` into the engine (src/builtin.rs includes the generated
-/// $OUT_DIR/image_chor.rs). This runs again whenever the engine's sources
-/// change, so any rebuild picks up the newest version; `just image-chor` forces
-/// one.
+/// `studio`: the editors that open over a running app live in their own repos
+/// and are compiled into the engine as overlays (src/builtin.rs includes the
+/// generated $OUT_DIR/<name>.rs):
 ///
-/// - `IMAGE_CHOR_DIR`: use this local checkout instead; nothing is fetched.
-/// - `IMAGE_CHOR_REF`: a branch, tag or commit instead of `main`.
+/// - the image editor (Ctrl+P), github.com/Auxnon/image-chor
+/// - the model editor (Ctrl+M), github.com/Auxnon/model-chor
+///
+/// Each build fetches the repo's latest `main` and compiles its `scripts/`
+/// (`.lua` and `.silt`; `ignore.lua`, the LSP stubs, is left out). This runs
+/// again whenever the engine's sources change, so any rebuild picks up the
+/// newest version; `just editors` forces one.
+///
+/// - `IMAGE_CHOR_DIR` / `MODEL_CHOR_DIR`: use this local checkout instead;
+///   nothing is fetched.
+/// - `IMAGE_CHOR_REF` / `MODEL_CHOR_REF`: a branch, tag or commit instead of
+///   `main`.
 /// - Offline, the copy fetched last time is used. With none at all the build
-///   still succeeds, with a warning, and Ctrl+P says the editor isn't built in.
-mod image_chor {
+///   still succeeds, with a warning, and the shortcut says the editor isn't
+///   built in.
+mod editors {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    pub const DIR_ENV: &str = "IMAGE_CHOR_DIR";
-    const REF_ENV: &str = "IMAGE_CHOR_REF";
-    const URL: &str = "https://github.com/Auxnon/image-chor";
-
-    fn checkout() -> PathBuf {
-        PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("image-chor")
+    pub struct Editor {
+        /// repo name, and the folder it's fetched into under OUT_DIR
+        name: &'static str,
+        pub dir_env: &'static str,
+        ref_env: &'static str,
+        url: &'static str,
+        /// the generated file's statics: the script list and the commit
+        scripts_static: &'static str,
+        rev_const: &'static str,
     }
 
-    /// The checkout this build compiled in, once run() has fetched it.
-    pub fn fetched() -> Option<PathBuf> {
-        std::env::var_os("CARGO_FEATURE_STUDIO")?;
-        let dir = std::env::var_os(DIR_ENV).map(PathBuf::from).unwrap_or_else(checkout);
-        dir.join("scripts").is_dir().then_some(dir)
-    }
+    pub const ALL: [Editor; 2] = [
+        Editor {
+            name: "image-chor",
+            dir_env: "IMAGE_CHOR_DIR",
+            ref_env: "IMAGE_CHOR_REF",
+            url: "https://github.com/Auxnon/image-chor",
+            scripts_static: "PAINT",
+            rev_const: "PAINT_REV",
+        },
+        Editor {
+            name: "model-chor",
+            dir_env: "MODEL_CHOR_DIR",
+            ref_env: "MODEL_CHOR_REF",
+            url: "https://github.com/Auxnon/model-chor",
+            scripts_static: "MODEL",
+            rev_const: "MODEL_REV",
+        },
+    ];
 
-    pub fn run() {
-        println!("cargo::rerun-if-env-changed={}", DIR_ENV);
-        println!("cargo::rerun-if-env-changed={}", REF_ENV);
-        let dir = match std::env::var_os(DIR_ENV) {
-            Some(dir) => {
-                // Absolute, since the generated include_str!s resolve from OUT_DIR.
-                let dir = std::fs::canonicalize(&dir).unwrap_or_else(|_| PathBuf::from(dir));
-                println!("cargo::rerun-if-changed={}", dir.join("scripts").display());
-                dir
-            }
-            None => {
-                // Printing any rerun-if-changed replaces cargo's default of
-                // rerunning on every change in the package, so name the inputs
-                // that should trigger a fetch: the engine's own sources.
-                for input in ["build.rs", "Cargo.toml", "src"] {
-                    println!("cargo::rerun-if-changed={}", input);
+    impl Editor {
+        fn checkout(&self) -> PathBuf {
+            PathBuf::from(std::env::var("OUT_DIR").unwrap()).join(self.name)
+        }
+
+        /// The checkout this build compiled in, once run() has fetched it.
+        pub fn fetched(&self) -> Option<PathBuf> {
+            std::env::var_os("CARGO_FEATURE_STUDIO")?;
+            let dir = std::env::var_os(self.dir_env).map(PathBuf::from).unwrap_or_else(|| self.checkout());
+            dir.join("scripts").is_dir().then_some(dir)
+        }
+
+        pub fn run(&self) {
+            println!("cargo::rerun-if-env-changed={}", self.dir_env);
+            println!("cargo::rerun-if-env-changed={}", self.ref_env);
+            let dir = match std::env::var_os(self.dir_env) {
+                Some(dir) => {
+                    // Absolute, since the generated include_str!s resolve from OUT_DIR.
+                    let dir = std::fs::canonicalize(&dir).unwrap_or_else(|_| PathBuf::from(dir));
+                    println!("cargo::rerun-if-changed={}", dir.join("scripts").display());
+                    dir
                 }
-                let dir = checkout();
-                let want = std::env::var(REF_ENV).unwrap_or_else(|_| "main".into());
-                if let Err(e) = fetch(&dir, &want) {
-                    let old = if dir.join("scripts").is_dir() { "; using the copy fetched last time" } else { "" };
-                    println!("cargo::warning=image-chor: couldn't fetch {} from {}: {}{}", want, URL, e, old);
+                None => {
+                    // Printing any rerun-if-changed replaces cargo's default of
+                    // rerunning on every change in the package, so name the inputs
+                    // that should trigger a fetch: the engine's own sources.
+                    for input in ["build.rs", "Cargo.toml", "src"] {
+                        println!("cargo::rerun-if-changed={}", input);
+                    }
+                    let dir = self.checkout();
+                    let want = std::env::var(self.ref_env).unwrap_or_else(|_| "main".into());
+                    if let Err(e) = fetch(&dir, self.url, &want) {
+                        let old = if dir.join("scripts").is_dir() { "; using the copy fetched last time" } else { "" };
+                        println!("cargo::warning={}: couldn't fetch {} from {}: {}{}", self.name, want, self.url, e, old);
+                    }
+                    dir
                 }
-                dir
+            };
+            self.write(&dir);
+        }
+
+        fn write(&self, dir: &Path) {
+            let mut scripts: Vec<PathBuf> = std::fs::read_dir(dir.join("scripts"))
+                .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
+                .unwrap_or_default();
+            scripts.retain(|p| {
+                let script = p.extension().is_some_and(|x| x == "lua" || x == "silt");
+                // ignore.lua is `chor ignore`'s API stubs for the LSP: empty
+                // functions that would shadow the real natives
+                script && !p.to_string_lossy().ends_with("ignore.lua")
+            });
+            scripts.sort();
+            if scripts.is_empty() {
+                println!("cargo::warning={}: no scripts in {}; building without it", self.name, dir.display());
             }
-        };
-        write(&dir);
+            let mut src = format!("pub static {}: &[(&str, &str)] = &[\n", self.scripts_static);
+            for path in &scripts {
+                let name = path.file_name().unwrap().to_string_lossy();
+                src += &format!("    ({:?}, include_str!({:?})),\n", name, path.to_string_lossy());
+            }
+            src += "];\n";
+            let rev = git(Some(dir), &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+            src += &format!("pub const {}: &str = {:?};\n", self.rev_const, rev);
+            self.emit(&src);
+        }
+
+        /// Without `studio`: not built in.
+        pub fn write_empty(&self) {
+            let src = format!(
+                "pub static {}: &[(&str, &str)] = &[];\npub const {}: &str = \"\";\n",
+                self.scripts_static, self.rev_const
+            );
+            self.emit(&src);
+        }
+
+        fn emit(&self, src: &str) {
+            let file = format!("{}.rs", self.name.replace('-', "_"));
+            let path = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join(file);
+            // Only when it changed, so an unchanged editor doesn't look new to cargo.
+            if std::fs::read_to_string(&path).ok().as_deref() != Some(src) {
+                std::fs::write(&path, src).unwrap();
+            }
+        }
     }
 
-    fn fetch(dir: &Path, want: &str) -> Result<(), String> {
+    fn fetch(dir: &Path, url: &str, want: &str) -> Result<(), String> {
         if !dir.join(".git").is_dir() {
             git(None, &["init", "-q", &dir.to_string_lossy()])?;
         }
-        git(Some(dir), &["fetch", "-q", "--depth", "1", URL, want])?;
+        git(Some(dir), &["fetch", "-q", "--depth", "1", url, want])?;
         git(Some(dir), &["checkout", "-q", "--force", "--detach", "FETCH_HEAD"])?;
         Ok(())
     }
@@ -153,39 +236,6 @@ mod image_chor {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
             Err(String::from_utf8_lossy(&out.stderr).trim().replace('\n', " "))
-        }
-    }
-
-    fn write(dir: &Path) {
-        let mut scripts: Vec<PathBuf> = std::fs::read_dir(dir.join("scripts"))
-            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).collect())
-            .unwrap_or_default();
-        scripts.retain(|p| p.extension().is_some_and(|x| x == "lua"));
-        scripts.sort();
-        if scripts.is_empty() {
-            println!("cargo::warning=image-chor: no scripts in {}; building without the image editor", dir.display());
-        }
-        let mut src = String::from("pub static PAINT: &[(&str, &str)] = &[\n");
-        for path in &scripts {
-            let name = path.file_name().unwrap().to_string_lossy();
-            src += &format!("    ({:?}, include_str!({:?})),\n", name, path.to_string_lossy());
-        }
-        src += "];\n";
-        let rev = git(Some(dir), &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
-        src += &format!("pub const PAINT_REV: &str = {:?};\n", rev);
-        emit(&src);
-    }
-
-    /// Without `studio`: no image editor.
-    pub fn write_empty() {
-        emit("pub static PAINT: &[(&str, &str)] = &[];\npub const PAINT_REV: &str = \"\";\n");
-    }
-
-    fn emit(src: &str) {
-        let path = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("image_chor.rs");
-        // Only when it changed, so an unchanged editor doesn't look new to cargo.
-        if std::fs::read_to_string(&path).ok().as_deref() != Some(src) {
-            std::fs::write(&path, src).unwrap();
         }
     }
 }

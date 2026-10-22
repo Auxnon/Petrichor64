@@ -480,8 +480,13 @@ impl EntManager {
     /// that bundle's own pass, so a parent in another bundle could never be found
     /// anyway. Cross-bundle attachment is meant to go through `app.*` instead (an
     /// overlay reads the target's transform and positions its own entity).
-    pub fn group(&mut self, target_id: u64, child_id: u64) {
-        for b in self.bundles.values_mut() {
+    ///
+    /// Only the sender's bundle is searched: entity ids are counted per VM, so the
+    /// same id names an entity in every bundle, and searching them all set the
+    /// parent on whichever bundle the map happened to visit first. An overlay's
+    /// camera-parented HUD was attaching the app's entities instead of its own.
+    pub fn group(&mut self, bundle_id: u8, target_id: u64, child_id: u64) {
+        if let Some(b) = self.bundles.get_mut(&bundle_id) {
             let mut child_index: i64 = -1;
             let mut parent_index: i64 = -1;
             for (i, e) in b.array.iter().enumerate() {
@@ -498,7 +503,7 @@ impl EntManager {
                 }
             }
             if child_index < 0 {
-                continue;
+                return;
             }
 
             #[cfg(feature = "headed")]

@@ -2126,6 +2126,42 @@ impl Core {
         None
     }
 
+    /// `app.drive(true)`: the scene is drawn through overlay `id`'s camera from
+    /// now on, starting where the app's is (or where the overlay last put its
+    /// own). The app's camera is kept aside for release_view.
+    pub fn take_view(&mut self, id: u8) {
+        if self.bundle_manager.drives_view(id) {
+            return;
+        }
+        // another overlay driving hands over, but the app's camera stays the
+        // one saved
+        let saved = match self.bundle_manager.view_driver {
+            Some((_, saved)) => saved,
+            None => crate::bundle::SavedView {
+                pos: self.global.cam_pos,
+                rot: self.global.simple_cam_rot,
+                ortho: self.global.cam_ortho,
+            },
+        };
+        self.bundle_manager.view_driver = Some((id, saved));
+        if let Some(c) = self.bundle_manager.camera(id) {
+            self.global.cam_pos = c.pos;
+            self.global.simple_cam_rot = c.rot;
+        }
+    }
+
+    /// Give the view back to the app, if overlay `id` was driving it.
+    pub fn release_view(&mut self, id: u8) {
+        if !self.bundle_manager.drives_view(id) {
+            return;
+        }
+        if let Some((_, saved)) = self.bundle_manager.view_driver.take() {
+            self.global.cam_pos = saved.pos;
+            self.global.simple_cam_rot = saved.rot;
+            self.global.cam_ortho = saved.ortho;
+        }
+    }
+
     /// `app.view`: the camera the scene was drawn with, and the pointer ray.
     #[cfg(feature = "headed")]
     fn app_view(&self) -> Option<crate::command::CamOut> {
@@ -2645,7 +2681,22 @@ impl Core {
                     // The scene is still drawn from the app's camera; an overlay's is
                     // recorded for its own pass (see PLAN.md, overlay 3D) and does not
                     // touch the view.
-                    if !self.bundle_manager.is_overlay(id) {
+                    // ... unless it drives the view (`app.drive`), and then the
+                    // app's camera is the one kept aside for when it lets go.
+                    let overlay = self.bundle_manager.is_overlay(id);
+                    if !overlay && self.bundle_manager.view_driver.is_some() {
+                        if let Some((_, saved)) = self.bundle_manager.view_driver.as_mut() {
+                            if let Some(pos) = p {
+                                saved.pos = pos;
+                            }
+                            if let Some(rot) = r {
+                                saved.rot = rot;
+                            }
+                            if let Some(ortho) = o {
+                                saved.ortho = ortho;
+                            }
+                        }
+                    } else if !overlay || self.bundle_manager.drives_view(id) {
                         if let Some(pos) = p {
                             self.global.cam_pos = pos;
                         }
@@ -2894,7 +2945,7 @@ impl Core {
                     let _ = lent;
                 }
                 MainCommmand::Group(parent, child, tx) => {
-                    self.ent_manager.group(parent, child);
+                    self.ent_manager.group(id, parent, child);
                     self.log_check(tx.send(true));
                 }
                 MainCommmand::Globals(table) => {
@@ -3197,6 +3248,15 @@ impl Core {
                     if self.bundle_manager.is_overlay(id) {
                         if let Some(target) = self.bundle_manager.edit_target() {
                             self.bundle_manager.set_paused(target, on);
+                        }
+                    }
+                }
+                MainCommmand::AppDrive(on) => {
+                    if self.bundle_manager.is_overlay(id) {
+                        if on {
+                            self.take_view(id);
+                        } else {
+                            self.release_view(id);
                         }
                     }
                 }

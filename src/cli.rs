@@ -26,6 +26,9 @@ pub fn run_tool_cli() -> bool {
         if !crate::builtin::PAINT_REV.is_empty() {
             println!("image-chor {}", crate::builtin::PAINT_REV);
         }
+        if !crate::builtin::MODEL_REV.is_empty() {
+            println!("model-chor {}", crate::builtin::MODEL_REV);
+        }
         return true;
     }
     if args.first().map(|a| a.as_str()) == Some("ignore") {

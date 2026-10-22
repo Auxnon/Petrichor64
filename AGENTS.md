@@ -261,14 +261,25 @@ Its code lives in its own repo, [image-chor](https://github.com/Auxnon/image-cho
 its latest `main` and compile `scripts/*.lua` in (src/builtin.rs). Work on it
 from disk with `chor game --overlay ~/projects/image-chor`, or build `chor`
 with a local checkout via `IMAGE_CHOR_DIR=~/projects/image-chor`.
+**Ctrl+M** opens the built-in model editor overlay the same way: it pauses the
+app, takes the view from the app's camera (`app.drive`) and models over the
+scene. Its code is [model-chor](https://github.com/Auxnon/model-chor)
+(locally `~/projects/model-chor`), fetched like image-chor; build a local
+checkout with `MODEL_CHOR_DIR=~/projects/model-chor`, or run it from disk with
+`chor game --overlay ~/projects/model-chor`. `chor game --overlay builtin:model`
+opens the built-in copy without a key press, which is how to test it.
+
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
-`view.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
+`view.md`, `drive.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
 `info.md`, `texinfo.md`, `newtex.md`):
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit
   that texture with `gimg`/`tex` and every mesh using it updates live.
-- An overlay that never calls `cam` draws through the app's camera. Set
+- An overlay that never calls `cam` draws through the app's camera. One that
+  wants to fly around the app calls `app.drive(true)` and the scene is drawn
+  through its `cam`; the app's camera comes back when it lets go or closes.
+  Start from `app.view()` to keep the angle the app had. Set
   `attr{front=true}` so its entities draw over the scene instead of inside it,
   and `e.unlit = true` so the app's lights and fog don't shade your UI.
 - Build a 3D panel as one image on a billboard (`make(texname, ...)`). The

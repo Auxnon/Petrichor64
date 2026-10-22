@@ -7,8 +7,9 @@
 #   render-tui     = software renderer for terminals (no GPU/window)
 #   wasm           = browser build (no shared memory; CDN-friendly)
 #   wasm-ultra     = wasm + SharedArrayBuffer (needs COOP/COEP headers)
-#   studio         = the logo boot and the image editor (Ctrl+P), fetched from
-#                    github.com/Auxnon/image-chor at build time (see build.rs)
+#   studio         = the logo boot and the editors, fetched at build time (see
+#                    build.rs): image editor (Ctrl+P) github.com/Auxnon/image-chor,
+#                    model editor (Ctrl+M) github.com/Auxnon/model-chor
 #   include_auto   = bake auto.game.png into the binary (implies studio)
 #   online_capable = networking (used by the headless server build)
 
@@ -155,11 +156,15 @@ install-tui:
     ln -sf ~/.local/chor-tui/bin/chor ~/.local/bin/chor-tui
     @echo "Installed as chor-tui"
 
-# Pull the latest image editor (github.com/Auxnon/image-chor) into the next
-# build. Any change to the engine's sources does this too. To build with a
-# local checkout instead: IMAGE_CHOR_DIR=~/projects/image-chor cargo build
-image-chor:
+# Pull the latest editors (github.com/Auxnon/image-chor and model-chor) into
+# the next build. Any change to the engine's sources does this too. To build
+# with a local checkout instead: IMAGE_CHOR_DIR=~/projects/image-chor or
+# MODEL_CHOR_DIR=~/projects/model-chor cargo build
+editors:
     touch build.rs
+
+# Old name for `editors`.
+image-chor: editors
 
 # ---------------------------------------------------------------------------
 # Tools

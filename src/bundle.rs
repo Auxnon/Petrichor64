@@ -24,6 +24,14 @@ pub struct BundleCam {
     pub rot: glam::Vec2,
 }
 
+/// The app's camera, put aside while an overlay drives the view (`app.drive`).
+#[derive(Clone, Copy, Debug)]
+pub struct SavedView {
+    pub pos: glam::Vec3,
+    pub rot: glam::Vec2,
+    pub ortho: f32,
+}
+
 /**
  * Represent a bundle of scripts and assets occupying a single lua instance or game.
  */
@@ -127,6 +135,9 @@ pub struct BundleManager {
     pub call_order: Vec<u8>,
     main_rasters: Vec<Rc<RefCell<RgbaImage>>>,
     sky_rasters: Vec<Rc<RefCell<RgbaImage>>>,
+    /// The overlay whose camera the scene is drawn through (`app.drive`), and
+    /// the app's camera to put back when it lets go or closes.
+    pub view_driver: Option<(u8, SavedView)>,
 }
 
 impl BundleManager {
@@ -140,7 +151,13 @@ impl BundleManager {
             call_order: Vec::new(),
             main_rasters: Vec::new(),
             sky_rasters: Vec::new(),
+            view_driver: None,
         }
+    }
+
+    /// Is this bundle the overlay driving the view?
+    pub fn drives_view(&self, id: u8) -> bool {
+        self.view_driver.is_some_and(|(d, _)| d == id)
     }
 
     /// The lowest id no live bundle is using.

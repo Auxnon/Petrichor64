@@ -3310,6 +3310,21 @@ function app.pause(on) end",
 
         let pitcher = main_pitcher.clone();
         lua_lib!(
+            "drive",
+            move |_, _, on: Option<Value>| {
+                let on = !matches!(on, Some(Value::Bool(false)));
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppDrive(on))));
+                Ok(Value::Nil)
+            },
+            "overlay only: draw the scene through this overlay's cam (or with false, the app's again); closing the overlay gives the view back",
+            "
+---@param on? boolean
+function app.drive(on) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
             "view",
             move |vm, mc, (): ()| {
                 let (tx, rx) = sync_channel::<Option<CamOut>>(0);
@@ -3746,6 +3761,7 @@ pub fn load_app(
 pub fn close_overlays(core: &mut Core) -> usize {
     let ids = core.bundle_manager.close_overlays();
     for id in &ids {
+        core.release_view(*id);
         core.ent_manager.reset_by_bundle(*id);
         core.world.destroy(*id);
     }
@@ -3757,6 +3773,7 @@ pub fn close_overlay(core: &mut Core, id: u8) -> bool {
     if !core.bundle_manager.close_overlay(id) {
         return false;
     }
+    core.release_view(id);
     core.ent_manager.reset_by_bundle(id);
     core.world.destroy(id);
     true
@@ -3764,12 +3781,33 @@ pub fn close_overlay(core: &mut Core, id: u8) -> bool {
 
 /// Directory name of the built-in paint overlay (`src/builtin.rs`).
 pub const PAINT_OVERLAY: &str = "builtin:paint";
+/// Directory name of the built-in model editor overlay (`src/builtin.rs`).
+pub const MODEL_OVERLAY: &str = "builtin:model";
 
 /// Ctrl+P: open the paint overlay over the running app, or close it if it's
 /// up. Refused while the app has `attr{lock=true}` — locking out the engine's
 /// own surfaces is what a lock is for.
 pub fn toggle_paint_overlay(core: &mut Core) {
-    if let Some(id) = core.bundle_manager.find_by_directory(PAINT_OVERLAY) {
+    toggle_builtin_overlay(
+        core,
+        PAINT_OVERLAY,
+        "the image editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/image-chor at build time)",
+    );
+}
+
+/// Ctrl+M: the model editor overlay (github.com/Auxnon/model-chor), the same
+/// way. It takes the view (`app.drive`) starting from the app's camera, so the
+/// app's camera comes back when it closes.
+pub fn toggle_model_overlay(core: &mut Core) {
+    toggle_builtin_overlay(
+        core,
+        MODEL_OVERLAY,
+        "the model editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/model-chor at build time)",
+    );
+}
+
+fn toggle_builtin_overlay(core: &mut Core, dir: &str, missing: &str) {
+    if let Some(id) = core.bundle_manager.find_by_directory(dir) {
         close_overlay(core, id);
         return;
     }
@@ -3777,18 +3815,15 @@ pub fn toggle_paint_overlay(core: &mut Core) {
         return;
     }
     if core.bundle_manager.edit_target().is_none() {
-        return; // nothing to paint on
+        return; // nothing to edit
     }
-    if crate::builtin::scripts(PAINT_OVERLAY).is_none() {
-        core.loggy.log(
-            LogType::ConfigError,
-            "the image editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/image-chor at build time)",
-        );
+    if crate::builtin::scripts(dir).is_none() {
+        core.loggy.log(LogType::ConfigError, missing);
         return;
     }
-    if let Err(e) = load_overlay(core, PAINT_OVERLAY) {
+    if let Err(e) = load_overlay(core, dir) {
         core.loggy
-            .log(LogType::ConfigError, &format!("paint overlay failed: {}", e));
+            .log(LogType::ConfigError, &format!("{} overlay failed: {}", dir, e));
     }
 }
 
@@ -4434,6 +4469,8 @@ pub enum MainCommmand {
     AppPick(bool, Option<(f32, f32)>, SyncSender<Option<PickOut>>),
     /// `app.pause(on)`: freeze or resume the app's loop.
     AppPause(bool),
+    /// `app.drive(on)`: draw the scene through this overlay's camera.
+    AppDrive(bool),
     /// `app.view()`: the camera the scene was drawn with, and the pointer ray.
     AppCam(SyncSender<Option<CamOut>>),
     /// `app.colors(texture)`: its most common colours, most frequent first.

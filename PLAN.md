@@ -700,7 +700,24 @@ Each is independently useful, and phase 0 is what unlocks the rest.
 | **1** | ✅ target handle: `app.list`/`read`/`write`/`reload` | the engine half is in; the **source editor** UI on top of it is next |
 | **2** | ✅ (in its scene-first form) `app.pick` + `gimg`/`tex` | **image editor**: the Ctrl+P paint overlay ([image-chor](https://github.com/Auxnon/image-chor), see below) |
 | **3** | `DumpSample` read-back | **sound editor**: waveform view, trim, gain, re-bind; reuses the mic-capture path |
-| **4** | mesh/chunk representation Lua can build | **model editor** — the moveable-chunk design is the natural substrate here, not glTF |
+| **4** | ✅ (as a polygon modeller) `mod()` polygon form + `app.drive` | **model editor**: the Ctrl+M overlay ([model-chor](https://github.com/Auxnon/model-chor), see below) |
+
+### Done: the Ctrl+M model editor overlay
+
+model-chor was a standalone app first; the overlay is the same code with a mode
+check (`app ~= nil`). It didn't need the separate overlay-camera pass above:
+
+- **The view**: `app.drive(true)` lets the overlay's `cam` drive the one scene
+  camera (`BundleManager::view_driver`). The app's camera is set aside when the
+  overlay takes over (an app `cam` meanwhile updates the set-aside copy), and
+  put back on `app.drive(false)` or close. So the app's scene is seen through
+  the editor's orbit camera, interleaving stays coherent, and nothing extra is
+  drawn. `attr{front=true}` keeps the editor's mesh and HUD over the scene.
+- **Grouping fix**: `EntManager::group` searched every bundle for the child id,
+  but ids are counted per VM, so an overlay's `lot` parented one of the app's
+  entities. It's scoped to the sender's bundle now.
+- **Shipping**: build.rs's editor fetcher is shared by image-chor and
+  model-chor, and takes `.silt` scripts too (minus `ignore.lua`).
 
 ### Done: the Ctrl+P paint overlay (3D, scene-first)
 
