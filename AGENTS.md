@@ -257,14 +257,15 @@ the app, and `app.pick(true, x, y)` hits the overlay's own 3D panels (with
 hasn't set `attr{lock=true}`. It pauses the app and paints textures straight
 onto the meshes. It's also the worked example for writing your own overlay.
 Its code lives in its own repo, [image-chor](https://github.com/Auxnon/image-chor)
-(locally `~/projects/image-chor`): the `studio` feature makes build.rs fetch
-its latest `main` and compile `scripts/*.lua` in (src/builtin.rs). Work on it
+(locally `~/projects/image-chor`): with the `studio` feature the first build
+clones it into `./image-chor` (gitignored) and every build compiles that
+clone's `scripts/` in (src/builtin.rs); `just editors` pulls it. Work on it
 from disk with `chor game --overlay ~/projects/image-chor`, or build `chor`
 with a local checkout via `IMAGE_CHOR_DIR=~/projects/image-chor`.
 **Ctrl+M** opens the built-in model editor overlay the same way: it pauses the
 app, takes the view from the app's camera (`app.drive`) and models over the
 scene. Its code is [model-chor](https://github.com/Auxnon/model-chor)
-(locally `~/projects/model-chor`), fetched like image-chor; build a local
+(locally `~/projects/model-chor`), cloned into `./model-chor` like image-chor; build a local
 checkout with `MODEL_CHOR_DIR=~/projects/model-chor`, or run it from disk with
 `chor game --overlay ~/projects/model-chor`. `chor game --overlay builtin:model`
 opens the built-in copy without a key press, which is how to test it. It edits

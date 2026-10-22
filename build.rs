@@ -84,24 +84,24 @@ fn nested_command(program: &str, manifest: &std::path::Path, target_dir: &std::p
 /// - the image editor (Ctrl+P), github.com/Auxnon/image-chor
 /// - the model editor (Ctrl+M), github.com/Auxnon/model-chor
 ///
-/// Each build fetches the repo's latest `main` and compiles its `scripts/`
-/// (`.lua` and `.silt`; `ignore.lua`, the LSP stubs, is left out). This runs
-/// again whenever the engine's sources change, so any rebuild picks up the
-/// newest version; `just editors` forces one.
+/// Each is a git clone in the engine's own folder (`image-chor/`,
+/// `model-chor/`, both gitignored), made by the first build that doesn't find
+/// it; after that the build never fetches, it compiles whatever that checkout
+/// holds. Its `scripts/` (`.lua` and `.silt`; `ignore.lua`, the LSP stubs, is
+/// left out) go in, and editing them, pulling, or switching branches there
+/// rebuilds. `just editors` pulls both.
 ///
-/// - `IMAGE_CHOR_DIR` / `MODEL_CHOR_DIR`: use this local checkout instead;
-///   nothing is fetched.
-/// - `IMAGE_CHOR_REF` / `MODEL_CHOR_REF`: a branch, tag or commit instead of
-///   `main`.
-/// - Offline, the copy fetched last time is used. With none at all the build
-///   still succeeds, with a warning, and the shortcut says the editor isn't
-///   built in.
+/// - `IMAGE_CHOR_DIR` / `MODEL_CHOR_DIR`: use this checkout instead.
+/// - `IMAGE_CHOR_REF` / `MODEL_CHOR_REF`: the branch, tag or commit the first
+///   clone checks out instead of `main`. An existing clone is left as it is.
+/// - Offline with no clone yet, the build still succeeds, with a warning, and
+///   the shortcut says the editor isn't built in; the next build tries again.
 mod editors {
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
     pub struct Editor {
-        /// repo name, and the folder it's fetched into under OUT_DIR
+        /// repo name, and the folder it's cloned into in the engine's folder
         name: &'static str,
         pub dir_env: &'static str,
         ref_env: &'static str,
@@ -132,10 +132,10 @@ mod editors {
 
     impl Editor {
         fn checkout(&self) -> PathBuf {
-            PathBuf::from(std::env::var("OUT_DIR").unwrap()).join(self.name)
+            PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join(self.name)
         }
 
-        /// The checkout this build compiled in, once run() has fetched it.
+        /// The checkout this build compiled in, once run() has made sure of it.
         pub fn fetched(&self) -> Option<PathBuf> {
             std::env::var_os("CARGO_FEATURE_STUDIO")?;
             let dir = std::env::var_os(self.dir_env).map(PathBuf::from).unwrap_or_else(|| self.checkout());
@@ -153,18 +153,17 @@ mod editors {
                     dir
                 }
                 None => {
-                    // Printing any rerun-if-changed replaces cargo's default of
-                    // rerunning on every change in the package, so name the inputs
-                    // that should trigger a fetch: the engine's own sources.
-                    for input in ["build.rs", "Cargo.toml", "src"] {
-                        println!("cargo::rerun-if-changed={}", input);
-                    }
                     let dir = self.checkout();
-                    let want = std::env::var(self.ref_env).unwrap_or_else(|_| "main".into());
-                    if let Err(e) = fetch(&dir, self.url, &want) {
-                        let old = if dir.join("scripts").is_dir() { "; using the copy fetched last time" } else { "" };
-                        println!("cargo::warning={}: couldn't fetch {} from {}: {}{}", self.name, want, self.url, e, old);
+                    if !dir.join("scripts").is_dir() {
+                        let want = std::env::var(self.ref_env).unwrap_or_else(|_| "main".into());
+                        if let Err(e) = clone(&dir, self.url, &want) {
+                            println!("cargo::warning={}: couldn't clone {} from {}: {}", self.name, want, self.url, e);
+                        }
                     }
+                    // Rebuild when its scripts change: an edit, a pull, another
+                    // branch. (While there's no clone, cargo reruns this every
+                    // build, which tries the clone again.)
+                    println!("cargo::rerun-if-changed={}", dir.join("scripts").display());
                     dir
                 }
             };
@@ -215,12 +214,16 @@ mod editors {
         }
     }
 
-    fn fetch(dir: &Path, url: &str, want: &str) -> Result<(), String> {
-        if !dir.join(".git").is_dir() {
-            git(None, &["init", "-q", &dir.to_string_lossy()])?;
+    /// A full clone, so it can be pulled, edited and committed to like any
+    /// other checkout.
+    fn clone(dir: &Path, url: &str, want: &str) -> Result<(), String> {
+        if dir.exists() {
+            return Err(format!("{} is there but has no scripts/; move it aside to clone again", dir.display()));
         }
-        git(Some(dir), &["fetch", "-q", "--depth", "1", url, want])?;
-        git(Some(dir), &["checkout", "-q", "--force", "--detach", "FETCH_HEAD"])?;
+        git(None, &["clone", "-q", url, &dir.to_string_lossy()])?;
+        if want != "main" {
+            git(Some(dir), &["checkout", "-q", want])?;
+        }
         Ok(())
     }
 

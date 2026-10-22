@@ -7,9 +7,10 @@
 #   render-tui     = software renderer for terminals (no GPU/window)
 #   wasm           = browser build (no shared memory; CDN-friendly)
 #   wasm-ultra     = wasm + SharedArrayBuffer (needs COOP/COEP headers)
-#   studio         = the logo boot and the editors, fetched at build time (see
-#                    build.rs): image editor (Ctrl+P) github.com/Auxnon/image-chor,
-#                    model editor (Ctrl+M) github.com/Auxnon/model-chor
+#   studio         = the logo boot and the editors, cloned into ./image-chor and
+#                    ./model-chor by the first build (see build.rs): image editor
+#                    (Ctrl+P) github.com/Auxnon/image-chor, model editor (Ctrl+M)
+#                    github.com/Auxnon/model-chor
 #   include_auto   = bake auto.game.png into the binary (implies studio)
 #   online_capable = networking (used by the headless server build)
 
@@ -156,12 +157,12 @@ install-tui:
     ln -sf ~/.local/chor-tui/bin/chor ~/.local/bin/chor-tui
     @echo "Installed as chor-tui"
 
-# Pull the latest editors (github.com/Auxnon/image-chor and model-chor) into
-# the next build. Any change to the engine's sources does this too. To build
-# with a local checkout instead: IMAGE_CHOR_DIR=~/projects/image-chor or
+# Pull the latest editors into their clones (./image-chor, ./model-chor); the
+# next build compiles them in. A missing clone is made by the next build. To
+# build with another checkout instead: IMAGE_CHOR_DIR=~/projects/image-chor or
 # MODEL_CHOR_DIR=~/projects/model-chor cargo build
 editors:
-    touch build.rs
+    for d in image-chor model-chor; do if [ -d $d ]; then git -C $d pull --ff-only; fi; done
 
 # Old name for `editors`.
 image-chor: editors

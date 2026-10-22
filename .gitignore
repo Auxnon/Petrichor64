@@ -39,6 +39,10 @@ web/dist/
 # generated game bundles (regenerate with: chor pack <dir>)
 /*.game.png
 
+# the editors studio builds in, cloned here by build.rs (see `just editors`)
+/image-chor/
+/model-chor/
+
 # locally-built native binary
 /p64
 chor
