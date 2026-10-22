@@ -195,10 +195,15 @@ fn keycode_to_index(kc: KeyCode) -> Option<usize> {
         F8 => 44, F9 => 45, F10 => 46, F11 => 47, F12 => 48, F13 => 49, F14 => 50,
         F15 => 51, F16 => 52, F17 => 53, F18 => 54, F19 => 55, F20 => 56, F21 => 57,
         F22 => 58, F23 => 59, F24 => 60,
-        PrintScreen => 61,
+        PrintScreen => 61, Insert => 64, Home => 65,
         Delete => 66, End => 67, PageDown => 68, PageUp => 69,
         ArrowLeft => 70, ArrowUp => 71, ArrowRight => 72, ArrowDown => 73,
         Backspace => 74, Enter => 75, Space => 76,
+        // punctuation and tab, at the slots key_match names them by ("tab",
+        // "lbracket", ".", ...) and key_unmatch turns back into cin() text
+        Quote => 100, Backslash => 105, Comma => 109, Equal => 111,
+        BracketLeft => 116, Minus => 123, Period => 131, BracketRight => 137,
+        Semicolon => 141, Slash => 142, Tab => 146,
         // Engine-internal keys (not exposed by name via key_match): the console
         // toggle and modifiers. 62 is free in the legacy scheme; the modifiers
         // share the same slots bit_check's explicit match uses (247..=250).
@@ -291,6 +296,39 @@ mod tests {
                     name
                 );
             }
+        }
+    }
+
+    /// Tab, the punctuation and Home had names but no KeyCode mapped to them, so
+    /// `key("tab")` was permanently false the same way.
+    #[test]
+    fn named_keys_resolve_to_the_slot_input_writes() {
+        use winit::keyboard::KeyCode::*;
+        let cases: [(winit::keyboard::KeyCode, &str); 15] = [
+            (Tab, "tab"),
+            (BracketLeft, "lbracket"),
+            (BracketRight, "rbracket"),
+            (Period, "."),
+            (Comma, ","),
+            (Minus, "-"),
+            (Equal, "="),
+            (Semicolon, ";"),
+            (Slash, "/"),
+            (Backslash, "\\"),
+            (Quote, "'"),
+            (Home, "home"),
+            (Insert, "insert"),
+            (Delete, "del"),
+            (End, "end"),
+        ];
+        for (kc, name) in cases {
+            let slot = keycode_to_index(kc).expect("key must map to a slot");
+            assert_eq!(
+                crate::command::key_match(name.to_string()),
+                slot,
+                "key(\"{}\") must read the slot the input path writes",
+                name
+            );
         }
     }
 }

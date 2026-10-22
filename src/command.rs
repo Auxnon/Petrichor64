@@ -4210,6 +4210,8 @@ pub(crate) fn key_match(key: String) -> usize {
         "f23" => 59,
         "f24" => 60,
         "snapshot" => 61,
+        "insert" => 64,
+        "home" => 65,
         "del" => 66,
         "end" => 67,
         "pagedown" => 68,
