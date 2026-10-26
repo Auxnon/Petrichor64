@@ -1130,17 +1130,14 @@ function make(asset, x, y, z, scale) end"
                     .borrow()
                     .downcast_get::<LuaEnt, _, _>(|c| Ok(c.get_id()));
                 if let (Ok(parent_id), Ok(child_id)) = (id1, id2) {
-                    let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
-                    match pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id, tx))) {
-                        Ok(_) => {}
-                        Err(_er) => {
-                            return Err(static_err("Unable to group entity"));
-                        }
-                    };
-                    match rx.recv() {
-                        Ok(_) => {}
-                        Err(_) => {}
-                    };
+                    // Not waited on: it rides the same queue as the child's
+                    // Spawn, so it lands after it, and the parent is set on the
+                    // shared entity before anything draws it. Waiting cost a
+                    // frame per call (a model editor parenting a handle per
+                    // vertex stalled for seconds).
+                    if pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id))).is_err() {
+                        return Err(static_err("Unable to group entity"));
+                    }
                 } else {
                     return Err(static_err("Could not retrieve parent or child id to group"));
                 }
@@ -4564,7 +4561,7 @@ pub enum MainCommmand {
     Anim(String, Vec<String>, u32),
     // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Spawn(UserDataWrapper),
-    Group(u64, u64, SyncSender<bool>),
+    Group(u64, u64),
     Model(Box<ModelPacket>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),
@@ -4780,7 +4777,7 @@ pub fn hex_rgba(c: [u8; 4]) -> String {
 /// Only the fire-and-forget subset is mapped: `Cam`, `Globals`, `LoopComplete`,
 /// `AsyncError`, `Spawn`, and `Model`/`Make` (the `mod` native sends a reply
 /// channel but never reads it, so they're acked here and forwarded). Blocking
-/// request/response commands (GetImg/Group/GetGlobal/Read/Write/Die — they
+/// request/response commands (GetImg/GetGlobal/Read/Write/Die — they
 /// carry a SyncSender that is read) and host-internal
 /// ones return `None` and are handled in the read-back phase. Compiled on all
 /// targets so a new `MainCommmand` variant or `VmToHost` change is type-checked

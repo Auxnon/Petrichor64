@@ -3166,9 +3166,8 @@ impl Core {
                     #[cfg(target_arch = "wasm32")]
                     let _ = lent;
                 }
-                MainCommmand::Group(parent, child, tx) => {
+                MainCommmand::Group(parent, child) => {
                     self.ent_manager.group(id, parent, child);
-                    self.log_check(tx.send(true));
                 }
                 MainCommmand::Globals(table) => {
                     for (k, v) in table.iter() {
