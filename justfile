@@ -146,9 +146,11 @@ serve dir='web/dist' *flags='':
 
 # Install `chor` with everything (`kitchensink`), including the web build
 # embedded so `chor -w <game dir>` works anywhere. Runs the web build first
-# (needs trunk, wasm-pack, wasm32-unknown-unknown).
+# (needs trunk, wasm-pack, wasm32-unknown-unknown). Builds in target/ rather
+# than cargo install's throwaway temp dir, so a reinstall only recompiles what
+# changed (the nested web and TUI builds keep target/web-embed, target/tui-embed).
 install:
-    cargo install --path . --features kitchensink
+    cargo install --locked --path . --features kitchensink --target-dir target
 
 # Terminal-only build, beside the normal `chor`: cargo can only install it as
 # `chor`, so it goes in its own root and is linked in as `chor-tui`.

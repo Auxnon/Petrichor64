@@ -827,3 +827,25 @@ chor serves it with `Content-Encoding: gzip`; ~3MB), or a `web/dist` on disk.
 - `cargo install --git` with `kitchensink` needs trunk, wasm-pack and the
   wasm32 target on the installing machine (or `CHOR_WEB_DIST`). A prebuilt
   bundle shipped per release would remove that.
+
+## `chor -t` and the embedded TUI build
+
+`kitchensink` (`tui-embed`) builds the terminal backend as a second release
+build of the whole crate (`--no-default-features --features
+silt,studio,bin,render-tui`) and embeds it gzipped (~2MB); `chor -t` unpacks it
+to the cache dir and runs it. `headed` and `render-tui` are mutually exclusive
+(`compile_error!` in src/lib.rs, ~356 `cfg(feature = "headed")` sites), so the
+two can't share a binary today. The nested build keeps its target dir in
+`target/tui-embed`, so after the first build it is incremental.
+
+### TODO
+
+- **Let the TUI share the headed binary's render path, as an option.** One
+  `chor` that can present through the software rasterizer to a terminal
+  instead of opening a window, alongside the standalone TUI-only build
+  (`just install-tui`, no wgpu/winit), which stays. Saves the second release
+  build and its LTO link (a big share of a kitchensink build) and ~1.5MB of the
+  embedded copy, and drops the unpack-on-first-run. Needs the headed/non-headed
+  split turned into a runtime choice where the core differs (thread layout in
+  src/root.rs, the sound thread, every place that assumes a GPU device), with
+  the terminal path never touching wgpu.

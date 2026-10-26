@@ -45,9 +45,17 @@ fn main() {
     }
 }
 
+/// The target dir a nested build of this crate uses: target/<name> in the repo.
+/// Not under OUT_DIR, which `cargo install` puts in a fresh temp dir every time,
+/// so the nested build would start cold on each install; here it stays
+/// incremental and only recompiles what changed. Still its own dir: the outer
+/// build holds a lock on its own, and sharing it would deadlock.
+fn nested_target(manifest: &std::path::Path, name: &str) -> std::path::PathBuf {
+    manifest.join("target").join(name)
+}
+
 /// A `Command` for a cargo-driven tool run from inside this build script, for a
-/// separate build of this crate. The nested cargo gets its own target dir: the
-/// outer build holds a lock on target/, and sharing it would deadlock.
+/// separate build of this crate, in its own target dir (see nested_target).
 fn nested_command(program: &str, manifest: &std::path::Path, target_dir: &std::path::Path) -> std::process::Command {
     let mut c = std::process::Command::new(program);
     // This script's env describes the outer build (CARGO_CFG_*, CARGO_FEATURE_*,
@@ -306,7 +314,7 @@ mod web_embed {
             );
         }
 
-        let target_dir = out.join("web-target");
+        let target_dir = super::nested_target(manifest, "web-embed");
         let dist = out.join("web-dist");
         let nested = |program: &str| super::nested_command(program, manifest, &target_dir);
 
@@ -387,7 +395,7 @@ mod tui_embed {
                 for input in ["build.rs", "Cargo.toml", "Cargo.lock", "src"] {
                     println!("cargo::rerun-if-changed={}", input);
                 }
-                let target_dir = out.join("tui-target");
+                let target_dir = super::nested_target(&manifest, "tui-embed");
                 // Always release: this is the binary people run, whatever the
                 // outer profile. `--target` keeps a cross build's TUI on the same
                 // target as the chor that carries it.
