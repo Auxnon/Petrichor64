@@ -1,3 +1,6 @@
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
 use std::borrow::Borrow;
 
 use glam::{vec3, Vec3};
@@ -176,13 +179,13 @@ impl UserData for LuaEnt {
     }
 
     fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_meta_method("__tostring", |_, _, this_res, _: ()| {
+        methods.add_meta_method("__tostring", |_, mc, this_res, _: ()| {
             let this = safe_unwrap!(this_res);
-            Ok(format!("[entity {}]", this.get_id()))
+            Ok(lstr(mc, format!("[entity {}]", this.get_id())))
         });
-        methods.add_meta_method("__concat", |_, _, this_res, _: ()| {
+        methods.add_meta_method("__concat", |_, mc, this_res, _: ()| {
             let this = safe_unwrap!(this_res);
-            Ok(format!("[entity {}]", this.get_id()))
+            Ok(lstr(mc, format!("[entity {}]", this.get_id())))
         });
         methods.add_method_mut("pos", |_, _, this_res, p: (f64, f64, f64)| {
             let this = safe_unwrap!(this_res);
@@ -263,12 +266,12 @@ impl UserData for LuaEnt {
                 let world = entity_matrix(this).transform_point3(joint16) / 16.;
                 let o = st.bone(&name).unwrap_or_default();
                 let mut t = vm.raw_table();
-                t.set("x", world.x as f64);
-                t.set("y", world.y as f64);
-                t.set("z", world.z as f64);
-                t.set("rx", o.rot[0] as f64);
-                t.set("ry", o.rot[1] as f64);
-                t.set("rz", o.rot[2] as f64);
+                t.set_str(mc, "x", world.x as f64);
+                t.set_str(mc, "y", world.y as f64);
+                t.set_str(mc, "z", world.z as f64);
+                t.set_str(mc, "rx", o.rot[0] as f64);
+                t.set_str(mc, "ry", o.rot[1] as f64);
+                t.set_str(mc, "rz", o.rot[2] as f64);
                 Ok(vm.wrap_table(mc, t))
             },
         );
@@ -279,7 +282,7 @@ impl UserData for LuaEnt {
             // let wrapped = std::sync::Arc::new(std::sync::Mutex::new(ent));
             let wrapped = lua.create_userdata(mc, ent);
             let arr = vec![wrapped.clone()];
-            if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get("_make") {
+            if let Some(Value::NativeFunction(v)) = lua.globals.borrow().get_str("_make") {
                 v.f.call(lua, mc, &arr);
             }
 
@@ -305,7 +308,7 @@ impl UserData for LuaEnt {
             |_, _, this_res, (asset, x, y, z, rot): (Value, i32, i32, i32, Option<u8>)| {
                 let this = safe_unwrap!(this_res);
                 let name = match asset {
-                    Value::String(s) => s,
+                    Value::String(s) => s.to_string(),
                     _ => String::new(),
                 };
                 let grid = this
@@ -344,10 +347,10 @@ impl UserData for LuaEnt {
             })
         });
 
-        methods.add_method_mut("gtile", |_, _, this_res, (x, y, z): (i32, i32, i32)| {
+        methods.add_method_mut("gtile", |_, mc, this_res, (x, y, z): (i32, i32, i32)| {
             let this = safe_unwrap!(this_res);
             Ok(match &this.grid {
-                Some(g) => Value::String(match g.get_tile(x, y, z) {
+                Some(g) => lstr(mc, match g.get_tile(x, y, z) {
                     Some((name, _)) => name,
                     None => String::new(),
                 }),
@@ -410,9 +413,9 @@ impl UserData for LuaEnt {
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);
 
         // Joint names of the model's skeleton (empty if it has none).
-        fields.add_field_method_get("bones", |_, _, this| {
+        fields.add_field_method_get("bones", |_, mc, this| {
             crate::skeleton::lookup(&this.asset)
-                .map(|sk| sk.joints.iter().map(|j| j.name.clone()).collect::<Vec<String>>())
+                .map(|sk| sk.joints.iter().map(|j| lstr(mc, j.name.as_str())).collect::<Vec<Value>>())
                 .unwrap_or_default()
         });
         fields.add_field_method_set("flipped", |_, _, this, flipped: bool| {
@@ -451,7 +454,7 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
         fields.add_field_method_get("id", |_, _, this| Ok(this.id));
-        fields.add_field_method_get("tex", |_, _, this| Ok(this.tex.clone()));
+        fields.add_field_method_get("tex", |_, mc, this| Ok(lstr(mc, this.tex.as_str())));
         fields.add_field_method_set("tex", |_, _, this, tex: String| {
             if this.tex != tex {
                 this.tex = tex;
@@ -464,7 +467,7 @@ impl UserData for LuaEnt {
             }
             Ok(())
         });
-        fields.add_field_method_get("asset", |_, _, this| Ok(this.asset.clone()));
+        fields.add_field_method_get("asset", |_, mc, this| Ok(lstr(mc, this.asset.as_str())));
         fields.add_field_method_set("asset", |_, _, this, asset: String| {
             if this.asset != asset {
                 this.asset = asset;

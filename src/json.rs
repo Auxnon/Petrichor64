@@ -30,7 +30,7 @@ fn encode(v: &Value, depth: usize) -> Result<Json, String> {
         Value::Integer(i) => Json::Number((*i).into()),
         Value::Number(f) => num(*f),
         Value::Infinity(_) => Json::Null,
-        Value::String(s) => Json::String(s.clone()),
+        Value::String(s) => Json::String(s.to_string()),
         #[cfg(feature = "silt")]
         Value::Vec2(v) => Json::Array(vec![num(v.x as f64), num(v.y as f64)]),
         #[cfg(feature = "silt")]
@@ -56,7 +56,7 @@ fn encode(v: &Value, depth: usize) -> Result<Json, String> {
                 let mut map = Map::new();
                 for (k, v) in t.iter() {
                     let key = match k {
-                        Value::String(s) => s.clone(),
+                        Value::String(s) => s.to_string(),
                         Value::Integer(i) => i.to_string(),
                         Value::Number(f) => f.to_string(),
                         Value::Bool(b) => b.to_string(),
@@ -79,7 +79,7 @@ pub fn from_json<'gc>(vm: &VM<'gc>, mc: &Mutation<'gc>, j: Json) -> Value<'gc> {
             Some(i) => Value::Integer(i),
             None => Value::Number(n.as_f64().unwrap_or(0.)),
         },
-        Json::String(s) => Value::String(s),
+        Json::String(s) => vm.new_string(mc, s),
         Json::Array(a) => {
             let mut t = vm.raw_table();
             for v in a {
@@ -90,7 +90,7 @@ pub fn from_json<'gc>(vm: &VM<'gc>, mc: &Mutation<'gc>, j: Json) -> Value<'gc> {
         Json::Object(o) => {
             let mut t = vm.raw_table();
             for (k, v) in o {
-                t.set(k, from_json(vm, mc, v));
+                t.set(vm.new_string(mc, k), from_json(vm, mc, v));
             }
             vm.wrap_table(mc, t)
         }

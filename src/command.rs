@@ -1,3 +1,6 @@
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
 use crate::root::Core;
 #[cfg(feature = "audio")]
 use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
@@ -552,19 +555,19 @@ fn parse_sound_cfg(cfg: Option<&Value>, scalar_key: &str) -> (Envelope, Option<f
         Some(v @ (Value::Number(_) | Value::Integer(_))) => scalar = Some(v.into()),
         Some(Value::Table(t)) => {
             let tb = t.borrow();
-            if let Some(v) = tb.get(scalar_key) {
+            if let Some(v) = tb.get_str(scalar_key) {
                 scalar = Some(v.into());
             }
-            if let Some(v) = tb.get("atk") {
+            if let Some(v) = tb.get_str("atk") {
                 env.attack = v.into();
             }
-            if let Some(v) = tb.get("dec") {
+            if let Some(v) = tb.get_str("dec") {
                 env.decay = v.into();
             }
-            if let Some(v) = tb.get("sus") {
+            if let Some(v) = tb.get_str("sus") {
                 env.sustain = v.into();
             }
-            if let Some(v) = tb.get("rel") {
+            if let Some(v) = tb.get_str("rel") {
                 env.release = v.into();
             }
         }
@@ -684,8 +687,8 @@ pub fn init_lua_sys<'a, 'gc>(
 
     // let c = *vm;
     let mut globals = vm_init.globals.borrow_mut(mc_in);
-    globals.set("pi", std::f64::consts::PI);
-    globals.set("tau", std::f64::consts::PI * 2.0);
+    globals.set_str(mc_in, "pi", std::f64::consts::PI);
+    globals.set_str(mc_in, "tau", std::f64::consts::PI * 2.0);
     drop(globals);
 
     // vm_init.create_userdata(mc, data)
@@ -781,7 +784,7 @@ function cout(...) end"
         "tile",
         move |_, _, (t, x, y, z, r): (Value, i32, i32, i32, Option<u8>)| {
             let tile = match t {
-                Value::String(s) => s,
+                Value::String(s) => s.to_string(),
                 _ => "".to_string(),
             };
             let ro = match r {
@@ -829,21 +832,21 @@ function dtile( x, y, z) end"
                     .borrow()
                     .iter()
                     .filter_map(|(_, v)| match v {
-                        Value::String(s) => Some(s.to_owned()),
+                        Value::String(s) => Some(s.to_string()),
                         _ => None,
                     })
                     .collect(),
-                Some(Value::String(s)) => vec![s],
+                Some(Value::String(s)) => vec![s.to_string()],
                 _ => vec![],
             };
             let mut look = crate::tileset::Look::Block;
             let mut pieces = vec![];
             if let Some(Value::Table(t)) = opts {
                 let t = t.borrow();
-                if let Some(Value::String(s)) = t.get("look") {
+                if let Some(Value::String(s)) = t.get_str("look") {
                     look = crate::tileset::Look::parse(s);
                 }
-                if let Some(Value::Table(p)) = t.get("pieces") {
+                if let Some(Value::Table(p)) = t.get_str("pieces") {
                     for (k, v) in p.borrow().iter() {
                         let case = match k {
                             Value::String(s) => crate::tileset::parse_case(&s),
@@ -851,7 +854,7 @@ function dtile( x, y, z) end"
                             _ => None,
                         };
                         match (case, v) {
-                            (Some(c), Value::String(m)) => pieces.push((c, m.to_owned())),
+                            (Some(c), Value::String(m)) => pieces.push((c, m.to_string())),
                             _ => {
                                 return Err(make_err(&format!(
                                     "tileset {}: a piece is [case] = \"model\", case as 8 corner bits like \"1111 0000\" or 0..255",
@@ -894,12 +897,12 @@ function istile(x, y, z) end"
     let sender = world_sender.clone();
     lua!(
         "gtile",
-        move |_, _, (x, y, z): (i32, i32, i32)| {
+        move |_, mc, (x, y, z): (i32, i32, i32)| {
             let t = World::get_tile(&sender, x, y, z);
-            Ok(match t {
+            Ok(lstr(mc, match t {
                 Some(s) => s.0,
                 None => "".to_string(),
-            })
+            }))
         },
         "Return the asset name of the tile at a given location",
         "
@@ -967,7 +970,7 @@ function key(key, volatile) end"
 
     lua!(
         "cin",
-        move |_, _, _: ()| {
+        move |_, mc, _: ()| {
             let h: String = diff_keys
                 .borrow()
                 .iter()
@@ -975,7 +978,7 @@ function key(key, volatile) end"
                 .filter_map(|(i, k)| if *k { key_unmatch(i) } else { None })
                 .collect();
 
-            Ok(h)
+            Ok(lstr(mc, h))
         },
         "Get a string of all keys pressed",
         "   
@@ -988,22 +991,22 @@ function cin() end"
         move |vm, mc, (): ()| {
             let mut t = vm.raw_table();
             let m = mice.borrow();
-            t.set("x", m[0]);
-            t.set("y", m[1]);
-            t.set("dx", m[2]);
-            t.set("dy", m[3]);
-            t.set("px", m[4]);
-            t.set("py", m[5]);
+            t.set_str(mc, "x", m[0]);
+            t.set_str(mc, "y", m[1]);
+            t.set_str(mc, "dx", m[2]);
+            t.set_str(mc, "dy", m[3]);
+            t.set_str(mc, "px", m[4]);
+            t.set_str(mc, "py", m[5]);
 
             // t.set("z",m[2])?;
-            t.set("m1", m[6] > 0.);
-            t.set("m2", m[7] > 0.);
-            t.set("m3", m[8] > 0.);
-            t.set("scroll", m[9]);
+            t.set_str(mc, "m1", m[6] > 0.);
+            t.set_str(mc, "m2", m[7] > 0.);
+            t.set_str(mc, "m3", m[8] > 0.);
+            t.set_str(mc, "scroll", m[9]);
 
-            t.set("vx", m[10]);
-            t.set("vy", m[11]);
-            t.set("vz", m[12]);
+            t.set_str(mc, "vx", m[10]);
+            t.set_str(mc, "vy", m[11]);
+            t.set_str(mc, "vz", m[12]);
 
             drop(m);
             // Return an explicit `Value::Table` rather than leaning on the
@@ -1196,7 +1199,7 @@ function reload() end"
                     // synth; the rest of the table is app-state globals as usual.
                     #[cfg(feature = "audio")]
                     {
-                        if let Some(Value::Table(lanes_t)) = t.borrow().get("lanes") {
+                        if let Some(Value::Table(lanes_t)) = t.borrow().get_str("lanes") {
                             let lt = lanes_t.borrow();
                             let mut counts = Vec::new();
                             let mut i = 1;
@@ -1240,7 +1243,7 @@ function attr(attributes) end"
         move |_, _, table_val: Value| {
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
-                let pos = match table.get("pos") {
+                let pos = match table.get_str("pos") {
                     Some(v) => match v {
                         Value::Table(tbl) => {
                             let t = tbl.borrow();
@@ -1253,7 +1256,7 @@ function attr(attributes) end"
                     },
                     _ => None,
                 };
-                let rot = match table.get("rot") {
+                let rot = match table.get_str("rot") {
                     Some(v) => match v {
                         Value::Table(tbl) => {
                             let t = tbl.borrow();
@@ -1267,7 +1270,7 @@ function attr(attributes) end"
                 };
 
                 // a half-height in world units, or false / 0 for perspective
-                let ortho = match table.get("ortho") {
+                let ortho = match table.get_str("ortho") {
                     Some(Value::Bool(_)) => Some(0.),
                     Some(v) => {
                         let h: f32 = v.into();
@@ -1294,7 +1297,7 @@ function cam(params) end"
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
                 // A raw xyz vector table (not a colour) — shared by `dir`/`pos`.
-                let vec3_of = |key: &str| match table.get(key) {
+                let vec3_of = |key: &str| match table.get_str(key) {
                     Some(Value::Table(tbl)) => {
                         let t = tbl.borrow();
                         Some(glam::vec3(
@@ -1310,7 +1313,7 @@ function cam(params) end"
                 // Colours accept the usual forms: hex string ('ff0'), rgb table
                 // (0..1 or 0..255) — via the shared get_color helper.
                 let color_of = |key: &str| {
-                    table.get(key).map(|v| {
+                    table.get_str(key).map(|v| {
                         let c = crate::lua_img::get_color(v.clone());
                         glam::vec3(c.x, c.y, c.z)
                     })
@@ -1318,11 +1321,11 @@ function cam(params) end"
                 let color = color_of("color");
                 let sky = color_of("sky");
                 let ground = color_of("ground");
-                let ambient = match table.get("ambient") {
+                let ambient = match table.get_str("ambient") {
                     Some(v) => Some(v.into()),
                     _ => None,
                 };
-                let shape = match table.get("shape") {
+                let shape = match table.get_str("shape") {
                     Some(Value::String(s)) => match s.to_lowercase().as_str() {
                         "sun" => Some(0u8),
                         "cone" => Some(1u8),
@@ -1331,11 +1334,11 @@ function cam(params) end"
                     },
                     _ => None,
                 };
-                let range = match table.get("range") {
+                let range = match table.get_str("range") {
                     Some(v) => Some(v.into()),
                     _ => None,
                 };
-                let angle = match table.get("angle") {
+                let angle = match table.get_str("angle") {
                     Some(v) => Some(v.into()),
                     _ => None,
                 };
@@ -1359,7 +1362,7 @@ function lum(params) end"
             if let Value::Table(t) = table_val {
                 let table = t.borrow();
                 // Colour accepts hex string ('9bd') or rgb table via get_color.
-                let (r, g, b) = match table.get("color") {
+                let (r, g, b) = match table.get_str("color") {
                     Some(v) => {
                         let c = crate::lua_img::get_color(v.clone());
                         (c.x, c.y, c.z)
@@ -1367,7 +1370,7 @@ function lum(params) end"
                     _ => (0., 0., 0.),
                 };
                 // `dist` is the far distance where geometry is fully fogged; 0 = off.
-                let dist: f32 = match table.get("dist") {
+                let dist: f32 = match table.get_str("dist") {
                     Some(v) => v.into(),
                     _ => 0.,
                 };
@@ -1409,12 +1412,12 @@ function mgrab(on) end"
                 Value::Bool(on) => MainCommmand::Shdw(on, None, None),
                 Value::Table(t) => {
                     let table = t.borrow();
-                    let on = match table.get("on") {
+                    let on = match table.get_str("on") {
                         Some(Value::Bool(b)) => *b,
                         _ => true,
                     };
-                    let size: Option<f32> = table.get("size").map(|v| v.into());
-                    let range: Option<f32> = table.get("range").map(|v| v.into());
+                    let size: Option<f32> = table.get_str("size").map(|v| v.into());
+                    let range: Option<f32> = table.get_str("range").map(|v| v.into());
                     MainCommmand::Shdw(on, size, range)
                 }
                 _ => MainCommmand::Shdw(true, None, None),
@@ -1451,7 +1454,7 @@ function gour(on) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "chip",
-        move |_, _, code: Option<String>| {
+        move |_, mc, code: Option<String>| {
             match code {
                 Some(c) => {
                     let id = match c.to_lowercase().as_str() {
@@ -1471,7 +1474,7 @@ function gour(on) end"
                         2 => "r30",
                         _ => "r00",
                     };
-                    Ok(Value::String(name.to_string()))
+                    Ok(lstr(mc, name))
                 }
             }
         },
@@ -1485,7 +1488,7 @@ function chip(code) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "mon",
-        move |_, _, code: Option<String>| {
+        move |_, mc, code: Option<String>| {
             match code {
                 Some(c) => {
                     let id = match c.to_lowercase().as_str() {
@@ -1505,7 +1508,7 @@ function chip(code) end"
                         2 => "grille",
                         _ => "lcd",
                     };
-                    Ok(Value::String(name.to_string()))
+                    Ok(lstr(mc, name))
                 }
             }
         },
@@ -1536,13 +1539,14 @@ function mon(code) end"
                 .into_iter()
                 .map(|(a, b, nx, ny, nz, depth)| {
                     let mut t = vm.raw_table();
-                    t.set("a", a as f64);
-                    t.set("b", b as f64);
-                    t.set(
+                    t.set_str(mc, "a", a as f64);
+                    t.set_str(mc, "b", b as f64);
+                    t.set_str(
+                        mc,
                         "normal",
                         vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
                     );
-                    t.set("depth", depth as f64);
+                    t.set_str(mc, "depth", depth as f64);
                     vm.wrap_table(mc, t)
                 })
                 .collect();
@@ -1566,15 +1570,17 @@ function hit.all() end",
                 .into_iter()
                 .map(|(ix, iy, iz, nx, ny, nz, depth)| {
                     let mut t = vm.raw_table();
-                    t.set(
+                    t.set_str(
+                        mc,
                         "tile",
                         vm.table_from_array(mc, [ix as f64, iy as f64, iz as f64]),
                     );
-                    t.set(
+                    t.set_str(
+                        mc,
                         "normal",
                         vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
                     );
-                    t.set("depth", depth as f64);
+                    t.set_str(mc, "depth", depth as f64);
                     vm.wrap_table(mc, t)
                 })
                 .collect();
@@ -1599,16 +1605,18 @@ function hit.cell(id) end",
                 .into_iter()
                 .map(|(owner, ix, iy, iz, nx, ny, nz, depth)| {
                     let mut t = vm.raw_table();
-                    t.set("owner", owner as f64);
-                    t.set(
+                    t.set_str(mc, "owner", owner as f64);
+                    t.set_str(
+                        mc,
                         "tile",
                         vm.table_from_array(mc, [ix as f64, iy as f64, iz as f64]),
                     );
-                    t.set(
+                    t.set_str(
+                        mc,
                         "normal",
                         vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
                     );
-                    t.set("depth", depth as f64);
+                    t.set_str(mc, "depth", depth as f64);
                     vm.wrap_table(mc, t)
                 })
                 .collect();
@@ -1648,11 +1656,12 @@ function hit.grid(id) end",
             match rx.recv() {
                 Ok(Some((nx, ny, nz, depth))) => {
                     let mut t = vm.raw_table();
-                    t.set(
+                    t.set_str(
+                        mc,
                         "normal",
                         vm.table_from_array(mc, [nx as f64, ny as f64, nz as f64]),
                     );
-                    t.set("depth", depth as f64);
+                    t.set_str(mc, "depth", depth as f64);
                     Ok(vm.wrap_table(mc, t))
                 }
                 _ => Ok(Value::Nil),
@@ -1670,7 +1679,7 @@ function hit.pair(a, b) end",
     vm_init
         .globals
         .borrow_mut(mc_in)
-        .set("hit", vm_init.wrap_table(mc_in, hit));
+        .set_str(mc_in, "hit", vm_init.wrap_table(mc_in, hit));
 
     #[cfg(feature = "audio")]
     let sing_bpm = singer.clone();
@@ -2098,20 +2107,20 @@ function mic(id, secs) end"
                     Some(ref a) if a == "ports" => {
                         let mut out = lu.raw_table();
                         for (i, p) in crate::midi::ports().into_iter().enumerate() {
-                            out.set(i as i64 + 1, Value::String(p));
+                            out.set(i as i64 + 1, lstr(mc, p));
                         }
                         return Ok(lu.wrap_table(mc, out));
                     }
                     Some(ref a) if a == "port" => {
                         return Ok(match crate::midi::connected() {
-                            Some(p) => Value::String(p),
+                            Some(p) => lstr(mc, p),
                             None => Value::Nil,
                         });
                     }
                     Some(ref a) if a == "open" => {
                         return Ok(
                             match crate::midi::open(sing.clone(), name.as_deref()) {
-                                Ok(p) => Value::String(p),
+                                Ok(p) => lstr(mc, p),
                                 Err(_) => Value::Nil,
                             },
                         );
@@ -2208,13 +2217,13 @@ function grit(channel, amount, mode) end"
                 let mut hz = 5.5f32;
                 if let Value::Table(t) = &cfg {
                     let tb = t.borrow();
-                    if let Some(v) = tb.get("breath") {
+                    if let Some(v) = tb.get_str("breath") {
                         breath = v.into();
                     }
-                    if let Some(v) = tb.get("vib") {
+                    if let Some(v) = tb.get_str("vib") {
                         vib = v.into();
                     }
-                    if let Some(v) = tb.get("hz") {
+                    if let Some(v) = tb.get_str("hz") {
                         hz = v.into();
                     }
                 }
@@ -2458,7 +2467,7 @@ function nimg(w, h) end"
                             sender: tx,
                         })),
                     )));
-                    return Ok("Building model in polygon mode");
+                    return Ok(lstr(mc, "Building model in polygon mode"));
                 }
 
                 match ordered_list::<[f32; 3]>(&t,"q",vm,mc) {
@@ -2541,7 +2550,7 @@ function nimg(w, h) end"
                                 )));
                             }
                         }
-                        Ok("Building model in quad mode")
+                        Ok(lstr(mc, "Building model in quad mode"))
                     }
                     _ => {
                         // println!("got no quads");
@@ -2568,7 +2577,7 @@ function nimg(w, h) end"
                                                     sender:tx})
                                                 ),
                                             )));
-                                            return Ok("Building model in vert mode")
+                                            return Ok(lstr(mc, "Building model in vert mode"))
                                         }
                                         _ => {
                                             // Same fallback as the quad form: a mesh
@@ -2586,7 +2595,7 @@ function nimg(w, h) end"
                                                     sender: tx})
                                                 ),
                                             )));
-                                            return Ok("Building model in vert mode")
+                                            return Ok(lstr(mc, "Building model in vert mode"))
                                         }
                                     }
                                 }
@@ -2613,7 +2622,7 @@ function nimg(w, h) end"
                                                 ),
                                             )));
                                         }
-                                        Ok("Building model in texture mode")
+                                        Ok(lstr(mc, "Building model in texture mode"))
                                     }
                                     _ => {
                                         // Err::<(),&str>
@@ -2637,14 +2646,14 @@ function mod(asset, t) end"
     let pitcher = main_pitcher.clone();
     lua!(
         "gmod",
-        move |_, _, (model, bundle): (Option<String>, Option<u8>)| {
+        move |_, mc, (model, bundle): (Option<String>, Option<u8>)| {
             let (tx, rx) = sync_channel::<Vec<String>>(0);
             lua_err!(pitcher.send((
                 bundle_id,
                 MainCommmand::ListModel(model.unwrap_or("".to_string()), bundle, tx),
             )));
             match rx.recv() {
-                Ok(d) => Ok(d),
+                Ok(d) => Ok(d.into_iter().map(|s| lstr(mc, s)).collect::<Vec<Value>>()),
                 _ => Ok(vec![]),
             }
         },
@@ -2676,11 +2685,11 @@ function lmod(model, bundle) end"
             let (mut w, mut h, mut pad, mut mode) = (64u32, 64u32, 1u32, crate::unwrap::Mode::Box);
             if let Value::Table(o) = &opts {
                 let o = o.borrow();
-                let num = |k: &str| value_f32(&o.get_value(&k.into())).map(|f| f.max(0.) as u32);
+                let num = |k: &str| value_f32(&o.str_value(k)).map(|f| f.max(0.) as u32);
                 w = num("w").unwrap_or(w).max(1);
                 h = num("h").unwrap_or(h).max(1);
                 pad = num("pad").unwrap_or(pad);
-                if let Value::String(s) = o.get_value(&"mode".into()) {
+                if let Value::String(s) = o.str_value("mode") {
                     mode = crate::unwrap::Mode::parse(&s.to_string())
                         .ok_or_else(|| static_err("unwrap: mode is \"box\" or \"flat\""))?;
                 }
@@ -2699,10 +2708,10 @@ function lmod(model, bundle) end"
             let i: Vec<Value> = un.ind.iter().map(|i| Value::Integer(*i as i64)).collect();
             let from: Vec<Value> = un.from.iter().map(|i| Value::Integer(*i as i64)).collect();
             let mut out = vm.raw_table();
-            out.set("v", vm.table_from_array(mc, v));
-            out.set("u", vm.table_from_array(mc, u));
-            out.set("i", vm.table_from_array(mc, i));
-            out.set("from", vm.table_from_array(mc, from));
+            out.set_str(mc, "v", vm.table_from_array(mc, v));
+            out.set_str(mc, "u", vm.table_from_array(mc, u));
+            out.set_str(mc, "i", vm.table_from_array(mc, i));
+            out.set_str(mc, "from", vm.table_from_array(mc, from));
             if norm.len() == pos.len() {
                 let n: Vec<Value> = un
                     .from
@@ -2712,9 +2721,9 @@ function lmod(model, bundle) end"
                         vm.table_from_array(mc, [p[0] as f64, p[1] as f64, p[2] as f64])
                     })
                     .collect();
-                out.set("n", vm.table_from_array(mc, n));
+                out.set_str(mc, "n", vm.table_from_array(mc, n));
             }
-            out.set("charts", un.charts as i64);
+            out.set_str(mc, "charts", un.charts as i64);
             Ok(vm.wrap_table(mc, out))
         },
         "Lay a mesh's triangles flat onto a w x h image: new v/n/u/i to pass to mod() <mesh:{v,i,n?}, opts?:{w,h,pad,mode}>",
@@ -2745,7 +2754,7 @@ function unwrap(mesh, opts) end"
                 .unwrap_or(false);
             let writing = opts
                 .as_ref()
-                .map(|t| !matches!(t.get_value(&"v".into()), Value::Nil))
+                .map(|t| !matches!(t.str_value("v"), Value::Nil))
                 .unwrap_or(false);
 
             let shaped = opts.as_ref().and_then(|t| mesh_from_table(t, vm, mc));
@@ -2828,10 +2837,10 @@ function unwrap(mesh, opts) end"
                 .collect();
             let ind: Vec<Value> = mesh.ind.iter().map(|i| Value::Integer(*i as i64)).collect();
             let mut out = vm.raw_table();
-            out.set("v", vm.table_from_array(mc, pos));
-            out.set("n", vm.table_from_array(mc, norm));
-            out.set("u", vm.table_from_array(mc, uv));
-            out.set("i", vm.table_from_array(mc, ind));
+            out.set_str(mc, "v", vm.table_from_array(mc, pos));
+            out.set_str(mc, "n", vm.table_from_array(mc, norm));
+            out.set_str(mc, "u", vm.table_from_array(mc, uv));
+            out.set_str(mc, "i", vm.table_from_array(mc, ind));
             Ok(vm.wrap_table(mc, out))
         },
         "Write mesh tables to a .glb/.gltf in the app folder, or read one back <path:string, data?:{v,i,n,u,t,up}>",
@@ -3095,15 +3104,16 @@ function quit(u) end"
         move |vm, mc, b: bool| {
             println!("we got inside help command");
             let mut t = vm.raw_table();
-            t.set("help", "list all lua commands. In fact, the command used by this program to list this very command");
+            t.set_str(mc, "help", lstr(mc, "list all lua commands. In fact, the command used by this program to list this very command"));
             for (k, (desc, examp)) in command_map_clone.iter() {
                 if b {
-                    t.set(
-                        k.to_string(),
-                        vm.table_from_array(mc, [desc.to_string(), examp.to_string()]),
+                    t.set_str(
+                        mc,
+                        k,
+                        vm.table_from_array(mc, [lstr(mc, desc.as_str()), lstr(mc, examp.as_str())]),
                     );
                 } else {
-                    t.set(k.to_string(), desc.to_string());
+                    t.set_str(mc, k, lstr(mc, desc.as_str()));
                 }
             }
             println!("we made a help table");
@@ -3118,12 +3128,12 @@ function help() end"
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "get",
-        move |_, _, file: String| {
+        move |_, mc, file: String| {
             let (tx, rx) = sync_channel::<Option<String>>(0);
             lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
             match rx.recv() {
                 Ok(o) => match o {
-                    Some(s) => Ok(Value::String(s)),
+                    Some(s) => Ok(lstr(mc, s)),
                     None => Ok(Value::Nil),
                 },
                 _ => Ok(Value::Nil),
@@ -3181,7 +3191,7 @@ function help() end",
     vm_init
         .globals
         .borrow_mut(mc_in)
-        .set("io", vm_init.wrap_table(mc_in, io));
+        .set_str(mc_in, "io", vm_init.wrap_table(mc_in, io));
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
@@ -3203,11 +3213,11 @@ function help() end",
         let pitcher = main_pitcher.clone();
         lua_lib!(
             "read",
-            move |_, _, file: String| {
+            move |_, mc, file: String| {
                 let (tx, rx) = sync_channel::<Option<String>>(0);
                 lua_err!(pitcher.send((bundle_id, MainCommmand::AppRead(file, tx))));
                 match rx.recv() {
-                    Ok(Some(s)) => Ok(Value::String(s)),
+                    Ok(Some(s)) => Ok(lstr(mc, s)),
                     _ => Ok(Value::Nil),
                 }
             },
@@ -3268,7 +3278,7 @@ function app.png(texture, path) end",
                 let files = rx.recv().unwrap_or_default();
                 let mut t = vm.raw_table();
                 for (i, f) in files.iter().enumerate() {
-                    t.set(i as i64 + 1, f.to_string());
+                    t.set(i as i64 + 1, lstr(mc, f.to_string()));
                 }
                 Ok(vm.wrap_table(mc, t))
             },
@@ -3313,34 +3323,34 @@ function app.reload() end",
                     return Ok(Value::Nil);
                 };
                 let mut t = vm.raw_table();
-                t.set("kind", hit.kind);
-                t.set("id", hit.id as i64);
-                t.set("asset", hit.asset);
-                t.set("cx", hit.cell[0] as i64);
-                t.set("cy", hit.cell[1] as i64);
-                t.set("cz", hit.cell[2] as i64);
-                t.set("dist", hit.dist as f64);
-                t.set("x", hit.point[0] as f64);
-                t.set("y", hit.point[1] as f64);
-                t.set("z", hit.point[2] as f64);
-                t.set("nx", hit.normal[0] as f64);
-                t.set("ny", hit.normal[1] as f64);
-                t.set("nz", hit.normal[2] as f64);
+                t.set_str(mc, "kind", lstr(mc, hit.kind));
+                t.set_str(mc, "id", hit.id as i64);
+                t.set_str(mc, "asset", lstr(mc, hit.asset));
+                t.set_str(mc, "cx", hit.cell[0] as i64);
+                t.set_str(mc, "cy", hit.cell[1] as i64);
+                t.set_str(mc, "cz", hit.cell[2] as i64);
+                t.set_str(mc, "dist", hit.dist as f64);
+                t.set_str(mc, "x", hit.point[0] as f64);
+                t.set_str(mc, "y", hit.point[1] as f64);
+                t.set_str(mc, "z", hit.point[2] as f64);
+                t.set_str(mc, "nx", hit.normal[0] as f64);
+                t.set_str(mc, "ny", hit.normal[1] as f64);
+                t.set_str(mc, "nz", hit.normal[2] as f64);
                 if let Some((lo, hi)) = hit.bounds {
-                    t.set("x0", lo[0] as f64);
-                    t.set("y0", lo[1] as f64);
-                    t.set("z0", lo[2] as f64);
-                    t.set("x1", hi[0] as f64);
-                    t.set("y1", hi[1] as f64);
-                    t.set("z1", hi[2] as f64);
+                    t.set_str(mc, "x0", lo[0] as f64);
+                    t.set_str(mc, "y0", lo[1] as f64);
+                    t.set_str(mc, "z0", lo[2] as f64);
+                    t.set_str(mc, "x1", hi[0] as f64);
+                    t.set_str(mc, "y1", hi[1] as f64);
+                    t.set_str(mc, "z1", hi[2] as f64);
                 }
                 if let Some((name, u, v, w, h, c)) = hit.tex {
-                    t.set("tex", name);
-                    t.set("u", u as i64);
-                    t.set("v", v as i64);
-                    t.set("tw", w as i64);
-                    t.set("th", h as i64);
-                    t.set("color", hex_rgba(c));
+                    t.set_str(mc, "tex", lstr(mc, name));
+                    t.set_str(mc, "u", u as i64);
+                    t.set_str(mc, "v", v as i64);
+                    t.set_str(mc, "tw", w as i64);
+                    t.set_str(mc, "th", h as i64);
+                    t.set_str(mc, "color", lstr(mc, hex_rgba(c)));
                 }
                 Ok(vm.wrap_table(mc, t))
             },
@@ -3384,7 +3394,7 @@ function app.hide(hit, on) end",
                     Ok(Ok(m)) => m,
                     Ok(Err(e)) => {
                         let mut t = vm.raw_table();
-                        t.set("err", e);
+                        t.set_str(mc, "err", lstr(mc, e));
                         return Ok(vm.wrap_table(mc, t));
                     }
                     Err(_) => return Ok(Value::Nil),
@@ -3400,20 +3410,21 @@ function app.hide(hit, on) end",
                     .map(|p| vm.table_from_array(mc, [p[0] as f64, p[1] as f64]))
                     .collect();
                 let mut t = vm.raw_table();
-                t.set("kind", m.kind);
-                t.set("asset", m.asset);
-                t.set("source", m.source);
+                t.set_str(mc, "kind", lstr(mc, m.kind));
+                t.set_str(mc, "asset", lstr(mc, m.asset));
+                t.set_str(mc, "source", lstr(mc, m.source));
                 if let Some(path) = m.path {
-                    t.set("path", path);
+                    t.set_str(mc, "path", lstr(mc, path));
                 }
-                t.set("x", m.origin[0] as f64);
-                t.set("y", m.origin[1] as f64);
-                t.set("z", m.origin[2] as f64);
-                t.set("rz", m.rz as f64);
-                t.set("scale", m.scale as f64);
-                t.set("p", vm.table_from_array(mc, p));
-                t.set("u", vm.table_from_array(mc, u));
-                t.set("t", vm.table_from_array(mc, m.tex));
+                t.set_str(mc, "x", m.origin[0] as f64);
+                t.set_str(mc, "y", m.origin[1] as f64);
+                t.set_str(mc, "z", m.origin[2] as f64);
+                t.set_str(mc, "rz", m.rz as f64);
+                t.set_str(mc, "scale", m.scale as f64);
+                t.set_str(mc, "p", vm.table_from_array(mc, p));
+                t.set_str(mc, "u", vm.table_from_array(mc, u));
+                let tex: Vec<Value> = m.tex.into_iter().map(|s| lstr(mc, s)).collect();
+                t.set_str(mc, "t", vm.table_from_array(mc, tex));
                 Ok(vm.wrap_table(mc, t))
             },
             "overlay only: the triangles of a tile or entity app.pick returned, with their textures, for editing",
@@ -3464,17 +3475,17 @@ function app.drive(on) end",
                     return Ok(Value::Nil);
                 };
                 let mut t = vm.raw_table();
-                t.set("x", c.pos[0] as f64);
-                t.set("y", c.pos[1] as f64);
-                t.set("z", c.pos[2] as f64);
-                t.set("yaw", c.rot[0] as f64);
-                t.set("pitch", c.rot[1] as f64);
-                t.set("ox", c.ray_origin[0] as f64);
-                t.set("oy", c.ray_origin[1] as f64);
-                t.set("oz", c.ray_origin[2] as f64);
-                t.set("dx", c.ray_dir[0] as f64);
-                t.set("dy", c.ray_dir[1] as f64);
-                t.set("dz", c.ray_dir[2] as f64);
+                t.set_str(mc, "x", c.pos[0] as f64);
+                t.set_str(mc, "y", c.pos[1] as f64);
+                t.set_str(mc, "z", c.pos[2] as f64);
+                t.set_str(mc, "yaw", c.rot[0] as f64);
+                t.set_str(mc, "pitch", c.rot[1] as f64);
+                t.set_str(mc, "ox", c.ray_origin[0] as f64);
+                t.set_str(mc, "oy", c.ray_origin[1] as f64);
+                t.set_str(mc, "oz", c.ray_origin[2] as f64);
+                t.set_str(mc, "dx", c.ray_dir[0] as f64);
+                t.set_str(mc, "dy", c.ray_dir[1] as f64);
+                t.set_str(mc, "dz", c.ray_dir[2] as f64);
                 Ok(vm.wrap_table(mc, t))
             },
             "overlay only: the app's camera (x,y,z,yaw,pitch) and the pointer ray (ox..oz, dx..dz)",
@@ -3493,7 +3504,7 @@ function app.view() end",
                 let cols = rx.recv().unwrap_or_default();
                 let mut t = vm.raw_table();
                 for (i, c) in cols.iter().enumerate() {
-                    t.set(i as i64 + 1, hex_rgba(*c));
+                    t.set(i as i64 + 1, lstr(mc, hex_rgba(*c)));
                 }
                 Ok(vm.wrap_table(mc, t))
             },
@@ -3515,12 +3526,12 @@ function app.colors(texture) end",
                 let mut t = vm.raw_table();
                 match r {
                     Ok(path) => {
-                        t.set("ok", true);
-                        t.set("path", path);
+                        t.set_str(mc, "ok", true);
+                        t.set_str(mc, "path", lstr(mc, path));
                     }
                     Err(e) => {
-                        t.set("ok", false);
-                        t.set("err", e);
+                        t.set_str(mc, "ok", false);
+                        t.set_str(mc, "err", lstr(mc, e));
                     }
                 }
                 Ok(vm.wrap_table(mc, t))
@@ -3543,12 +3554,12 @@ function app.source(texture) end",
                 let mut t = vm.raw_table();
                 match r {
                     Ok(path) => {
-                        t.set("ok", true);
-                        t.set("path", path);
+                        t.set_str(mc, "ok", true);
+                        t.set_str(mc, "path", lstr(mc, path));
                     }
                     Err(e) => {
-                        t.set("ok", false);
-                        t.set("err", e);
+                        t.set_str(mc, "ok", false);
+                        t.set_str(mc, "err", lstr(mc, e));
                     }
                 }
                 Ok(vm.wrap_table(mc, t))
@@ -3571,8 +3582,8 @@ function app.save(texture) end",
                     return Ok(Value::Nil);
                 };
                 let mut t = vm.raw_table();
-                t.set("dir", i.dir);
-                t.set("packed", i.packed);
+                t.set_str(mc, "dir", lstr(mc, i.dir));
+                t.set_str(mc, "packed", i.packed);
                 Ok(vm.wrap_table(mc, t))
             },
             "overlay only: the edited app's folder, and whether it's packed (nothing can be saved)",
@@ -3592,20 +3603,20 @@ function app.info() end",
                     return Ok(Value::Nil);
                 };
                 let mut t = vm.raw_table();
-                t.set("w", i.w as i64);
-                t.set("h", i.h as i64);
+                t.set_str(mc, "w", i.w as i64);
+                t.set_str(mc, "h", i.h as i64);
                 if i.tile > 0 {
-                    t.set("tile", i.tile as i64);
+                    t.set_str(mc, "tile", i.tile as i64);
                 }
-                t.set("new", i.new);
+                t.set_str(mc, "new", i.new);
                 match i.save {
                     Ok(path) => {
-                        t.set("ok", true);
-                        t.set("path", path);
+                        t.set_str(mc, "ok", true);
+                        t.set_str(mc, "path", lstr(mc, path));
                     }
                     Err(e) => {
-                        t.set("ok", false);
-                        t.set("err", e);
+                        t.set_str(mc, "ok", false);
+                        t.set_str(mc, "err", lstr(mc, e));
                     }
                 }
                 Ok(vm.wrap_table(mc, t))
@@ -3641,15 +3652,15 @@ function app.texinfo(texture) end",
                 let mut t = vm.raw_table();
                 match r {
                     Ok(o) => {
-                        t.set("ok", true);
-                        t.set("tex", o.tex);
-                        t.set("path", o.path);
-                        t.set("unwrapped", o.unwrapped);
-                        t.set("charts", o.charts as i64);
+                        t.set_str(mc, "ok", true);
+                        t.set_str(mc, "tex", lstr(mc, o.tex));
+                        t.set_str(mc, "path", lstr(mc, o.path));
+                        t.set_str(mc, "unwrapped", o.unwrapped);
+                        t.set_str(mc, "charts", o.charts as i64);
                     }
                     Err(e) => {
-                        t.set("ok", false);
-                        t.set("err", e);
+                        t.set_str(mc, "ok", false);
+                        t.set_str(mc, "err", lstr(mc, e));
                     }
                 }
                 Ok(vm.wrap_table(mc, t))
@@ -3679,9 +3690,9 @@ function app.newtex(ent, name, w, h, mode) end",
                     return Ok(Value::Nil);
                 };
                 let mut t = vm.raw_table();
-                t.set("x", p[0] as f64);
-                t.set("y", p[1] as f64);
-                t.set("depth", p[2] as f64);
+                t.set_str(mc, "x", p[0] as f64);
+                t.set_str(mc, "y", p[1] as f64);
+                t.set_str(mc, "depth", p[2] as f64);
                 Ok(vm.wrap_table(mc, t))
             },
             "overlay only: a world point's screen position (0..1) and depth, or nil behind the camera",
@@ -3707,7 +3718,7 @@ function app.close() end",
         vm_init
             .globals
             .borrow_mut(mc_in)
-            .set("app", vm_init.wrap_table(mc_in, app));
+            .set_str(mc_in, "app", vm_init.wrap_table(mc_in, app));
     }
 
     COMMAND_DOCS.with(|d| *d.borrow_mut() = command_map.clone());
@@ -4667,12 +4678,12 @@ fn mesh_in(hit: &Value) -> Result<MeshIn, LuaError> {
         return Err(static_err("pass the table app.pick returned"));
     };
     let h = h.borrow();
-    let int = |k: &str| match h.get_value(&k.into()) {
+    let int = |k: &str| match h.str_value(k) {
         Value::Integer(n) => n,
         Value::Number(n) => n as i64,
         _ => 0,
     };
-    let ent = matches!(h.get_value(&"kind".into()), Value::String(s) if s.to_string() == "ent");
+    let ent = matches!(h.str_value("kind"), Value::String(s) if s.to_string() == "ent");
     Ok(MeshIn {
         ent,
         id: int("id") as u64,
@@ -4866,7 +4877,7 @@ pub fn num(x: Value) -> LuaResponse {
     match x {
         Value::Integer(i) => LuaResponse::Integer(i),
         Value::Number(f) => LuaResponse::Number(f),
-        Value::String(s) => LuaResponse::String(s),
+        Value::String(s) => LuaResponse::String(s.to_string()),
         _ => LuaResponse::Integer(0),
     }
 }
@@ -4976,13 +4987,13 @@ fn table_hasher(table: &Table) -> Vec<(String, ValueMap)> {
     let mut data = vec![];
     for (key, val) in table.iter() {
         let str_key = if let Some(str_key) = match key {
-            Value::String(s) => Some(s.to_owned()),
+            Value::String(s) => Some(s.to_string()),
 
             Value::Integer(i) => Some(i.to_string()),
             _ => None,
         } {
             let mapped = match val {
-                Value::String(s) => ValueMap::String(s.to_owned()),
+                Value::String(s) => ValueMap::String(s.to_string()),
 
                 Value::Integer(i) => ValueMap::Integer(i64_to_i32(*i)),
                 Value::Number(n) => ValueMap::Float(*n as f32),
@@ -4992,7 +5003,7 @@ fn table_hasher(table: &Table) -> Vec<(String, ValueMap)> {
                         t.borrow()
                             .iter()
                             .filter_map(|(k, v)| match v {
-                                Value::String(s) => Some(ValueMap::String(s.to_owned())),
+                                Value::String(s) => Some(ValueMap::String(s.to_string())),
                                 Value::Integer(i) => Some(ValueMap::Integer(i64_to_i32(*i))),
                                 Value::Number(n) => Some(ValueMap::Float(*n as f32)), // TODO inaccurate
                                 Value::Bool(b) => Some(ValueMap::Bool(*b)),
@@ -5020,7 +5031,7 @@ fn ordered_list<'v, R>(t: &Table<'v>, key: &str, vm: &VM<'v>, mc: &Mutation<'v>)
 where
     R: silt_lua::value::FromLua<'v> + Default,
 {
-    match t.get_value(&key.into()) {
+    match t.str_value(key) {
         Value::Nil => None,
         Value::Table(inner) => {
             let tb = inner.borrow();
@@ -5038,7 +5049,7 @@ where
 
 /// Points from a Lua list of `{x, y, z}` tables or `vec3` values.
 fn point_list<'v>(t: &Table<'v>, key: &str) -> Option<Vec<[f32; 3]>> {
-    match t.get_value(&key.into()) {
+    match t.str_value(key) {
         Value::Table(inner) => {
             let tb = inner.borrow();
             let mut out = Vec::new();
@@ -5075,13 +5086,13 @@ fn mesh_from_table<'v>(
     vm: &VM<'v>,
     mc: &Mutation<'v>,
 ) -> Option<Result<(crate::gltf_io::MeshData, Vec<String>), String>> {
-    let scale = match t.get_value(&"scale".into()) {
+    let scale = match t.str_value("scale") {
         Value::Integer(n) => n as f32,
         Value::Number(n) => n as f32,
         _ => 1.,
     };
     let mut names: Vec<String> = vec![];
-    let mut mesh = if let Value::Table(ft) = t.get_value(&"f".into()) {
+    let mut mesh = if let Value::Table(ft) = t.str_value("f") {
         let pos = point_list(t, "p").unwrap_or_default();
         let ftb = ft.borrow();
         let mut faces = Vec::new();
@@ -5108,7 +5119,7 @@ fn mesh_from_table<'v>(
         let fu = ordered_list::<[f32; 2]>(t, "fu", vm, mc).unwrap_or_default();
         // fc: per face, a list of {u, v} for its corners
         let mut fc: Vec<Vec<[f32; 2]>> = vec![];
-        if let Value::Table(ct) = t.get_value(&"fc".into()) {
+        if let Value::Table(ct) = t.str_value("fc") {
             let ctb = ct.borrow();
             let mut i = 1;
             while let Some(face) = ctb.getn(i) {

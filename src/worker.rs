@@ -502,8 +502,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         let sky_ref = sky_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
         {
             let mut g = vm.globals.borrow_mut(mc);
-            g.set("gui", main_val);
-            g.set("sky", sky_val);
+            g.set(vm.new_string(mc, "gui"), main_val);
+            g.set(vm.new_string(mc, "sky"), sky_val);
         }
         // No InitBack: the main thread can't hold Gc refs into this worker's
         // arena. The worker owns the pixels and posts Raster when they change.

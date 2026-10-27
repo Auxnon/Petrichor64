@@ -1,3 +1,6 @@
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
 #[cfg(feature = "audio")]
 use crate::sound::SoundCommand;
 use crate::{
@@ -333,8 +336,8 @@ impl<'lt> LuaCore {
                     let (sky_val, sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
 
                     let mut globals = vm.globals.borrow_mut(mc);
-                    globals.set("gui", main_val);
-                    globals.set("sky", sky_val);
+                    globals.set_str(mc, "gui", main_val);
+                    globals.set_str(mc, "sky", sky_val);
                     drop(globals);
                     // Clone before handing the refs to the main thread: the loop needs
                     // them to publish each finished frame (see LuaImg::publish).
@@ -926,7 +929,7 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             }
         }
         LuaTalk::Drop(s) => {
-            if let Some(Err(e)) = vm.call_global(mc, "drop", s) {
+            if let Some(Err(e)) = vm.call_global(mc, "drop", crate::silt_str::LStr(s)) {
                 let msg = error_string(e.into(), &ctx.scripts);
                 ctx.async_sender
                     .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;

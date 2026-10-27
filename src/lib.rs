@@ -97,6 +97,8 @@ mod tileset;
 #[cfg(all(feature = "render-tui", not(target_arch = "wasm32")))]
 mod tui;
 mod types;
+#[cfg(feature = "silt")]
+mod silt_str;
 
 #[cfg(all(feature = "headed", feature = "render-tui"))]
 compile_error!(

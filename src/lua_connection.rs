@@ -182,7 +182,7 @@ impl UserData for LuaConnection {
                 return Err(LuaError::UDBadCall);
             };
             let text = match v {
-                Some(Value::String(s)) => s,
+                Some(Value::String(s)) => s.to_string(),
                 Some(t @ Value::Table(_)) => crate::json::to_json(&t)
                     .map_err(LuaError::Custom)?
                     .to_string(),
@@ -203,14 +203,14 @@ impl UserData for LuaConnection {
                 Some(s) if decode.unwrap_or(false) => {
                     match serde_json::from_str::<serde_json::Value>(&s) {
                         Ok(j) => crate::json::from_json(vm, mc, j),
-                        Err(_) => Value::String(s),
+                        Err(_) => vm.new_string(mc, s),
                     }
                 }
-                Some(s) => Value::String(s),
+                Some(s) => vm.new_string(mc, s),
             })
         });
-        methods.add_method_mut("test", |_, _, this, (): ()| {
-            Ok(this.and_then(|c| c.status()))
+        methods.add_method_mut("test", |vm, mc, this, (): ()| {
+            Ok(this.and_then(|c| c.status()).map(|s| vm.new_string(mc, s)))
         });
         methods.add_method_mut("kill", |_, _, this, (): ()| {
             match this {

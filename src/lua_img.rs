@@ -1,3 +1,6 @@
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
 use std::sync::Arc;
 
 use crate::{
@@ -286,13 +289,13 @@ impl UserData for LuaImg {
 
         // Read one pixel back, as an `rrggbbaa` string any colour argument
         // takes; nil outside the image.
-        methods.add_method("get", |_, _mc, this_res, (x, y): (i64, i64)| {
+        methods.add_method("get", |_, mc, this_res, (x, y): (i64, i64)| {
             let this = safe_unwrap!(this_res);
             if x < 0 || y < 0 || x >= this.image.width() as i64 || y >= this.image.height() as i64 {
                 return Ok(None);
             }
             let p = this.image.get_pixel(x as u32, y as u32).0;
-            Ok(Some(crate::command::hex_rgba(p)))
+            Ok(Some(lstr(mc, crate::command::hex_rgba(p))))
         });
 
         methods.add_method_mut(

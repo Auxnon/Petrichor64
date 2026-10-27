@@ -1,4 +1,7 @@
 #[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
+#[cfg(feature = "silt")]
 use silt_lua::{
     gc_arena::Mutation,
     prelude::Table,
@@ -83,18 +86,18 @@ impl GlobalMap {
 
     #[cfg(feature = "silt")]
     pub fn convert<'gc>(&self, vm: &mut VM<'gc>, mc: &Mutation<'gc>, table: &mut Table<'gc>) {
-        table.set("os", self.os);
-        table.set("hz", self.hertz);
+        table.set_str(mc, "os", lstr(mc, self.os));
+        table.set_str(mc, "hz", self.hertz);
 
         let mut res_tbl = vm.raw_table();
         res_tbl.set(0, self.resolution.0);
         res_tbl.set(1, self.resolution.1);
-        table.set("res", vm.wrap_table(mc, res_tbl));
-        table.set("w", self.window.0);
-        table.set("h", self.window.1);
-        table.set("aspect", self.window.0 as f64 / self.window.1 as f64);
-        table.set("gw", self.gui.0);
-        table.set("gh", self.gui.1);
+        table.set_str(mc, "res", vm.wrap_table(mc, res_tbl));
+        table.set_str(mc, "w", self.window.0);
+        table.set_str(mc, "h", self.window.1);
+        table.set_str(mc, "aspect", self.window.0 as f64 / self.window.1 as f64);
+        table.set_str(mc, "gw", self.gui.0);
+        table.set_str(mc, "gh", self.gui.1);
     }
 }
 
