@@ -11,8 +11,9 @@ examples of everything below.
 
 1. A game is a folder: `scripts/*.lua` plus a **non-empty** `assets/` folder (drop
    an `icon.png` in it). Run it with `chor path/to/game` (the old
-   `target/release/petrichor64` binary does the same). Build with
-   `--features audio` if you want sound.
+   `target/release/petrichor64` binary does the same). Sound is in the default
+   build; [sound-chor](https://github.com/Auxnon/sound-chor) (locally
+   `~/projects/sound-chor`, once `apps/synth`) is the app for trying it out.
 2. Define `main()` (runs once after load) and `loop()` (every frame). `draw(w, h)`
    is optional and runs on window resize, not every frame. Draw the HUD from
    `loop()`. (Before this was fixed, engines older than this commit fail every
