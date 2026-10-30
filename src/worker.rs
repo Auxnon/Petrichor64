@@ -136,6 +136,7 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
                 width,
                 height,
             } => {
+                crate::command::reset_vm_presets();
                 match build_worker_vm(bundle_id, width, height) {
                     Ok(vm) => {
                         *slot = Some(vm);

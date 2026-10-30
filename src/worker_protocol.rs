@@ -114,6 +114,9 @@ pub enum VmToHost {
     /// Capture/release the mouse (FPS look). Web defers the actual pointer-lock
     /// to the next canvas click; native grabs the cursor immediately.
     MouseGrab(bool),
+    /// `chip()` / `mon()` presets (see `root::apply_chip`/`apply_monitor`).
+    Chip(u8),
+    Monitor(u8),
     /// Set engine globals (screen effects, window props, …).
     Globals(Vec<(String, ValueWire)>),
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the

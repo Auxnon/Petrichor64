@@ -4869,8 +4869,39 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             let _ = tx.send(0);
             Some(VmToHost::Make(m))
         }
+        // The presets live on main, which the VM can't ask synchronously, so the
+        // worker answers chip()/mon() with the last preset it set. A preset from
+        // the script header (applied on main at load) reads as r00/lcd here.
+        MainCommmand::SetChip(id) => {
+            VM_CHIP.with(|c| c.set(id));
+            Some(VmToHost::Chip(id))
+        }
+        MainCommmand::GetChip(tx) => {
+            let _ = tx.send(VM_CHIP.with(|c| c.get()));
+            None
+        }
+        MainCommmand::SetMonitor(id) => {
+            VM_MONITOR.with(|c| c.set(id));
+            Some(VmToHost::Monitor(id))
+        }
+        MainCommmand::GetMonitor(tx) => {
+            let _ = tx.send(VM_MONITOR.with(|c| c.get()));
+            None
+        }
         _ => None,
     }
+}
+
+thread_local! {
+    static VM_CHIP: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+    static VM_MONITOR: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// A new VM starts at r00/lcd, as main's presets do on every app load.
+#[allow(dead_code)]
+pub fn reset_vm_presets() {
+    VM_CHIP.with(|c| c.set(0));
+    VM_MONITOR.with(|c| c.set(0));
 }
 
 pub fn num(x: Value) -> LuaResponse {

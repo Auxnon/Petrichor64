@@ -2760,6 +2760,17 @@ impl Core {
                 // pointer-lock intent (actual lock waits for a canvas click).
                 self.global.mouse_grab = on;
             }
+            VmToHost::Chip(id) => {
+                crate::root::apply_chip(
+                    &mut self.global,
+                    #[cfg(feature = "headed")]
+                    &mut self.gfx,
+                    id,
+                );
+            }
+            VmToHost::Monitor(id) => {
+                crate::root::apply_monitor(&mut self.global, id);
+            }
             VmToHost::Model {
                 asset,
                 textures,

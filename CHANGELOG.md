@@ -16,6 +16,7 @@
 - Paint overlay: NEW (panel button, or N) gives the focused thing a fresh image, 16x16 or its sheet's tile size, starting from how it looks now. A mesh is unwrapped onto it; saving writes `assets/name.png`, or `assets/name.glb` (mesh with its new uvs) for a mesh
 - `unwrap(mesh, {w, h, pad, mode})`: lay a mesh's triangles flat onto an image, for passing straight to `mod()`. Overlays also get `app.info`, `app.texinfo`, `app.newtex`
 - `chip('r43')` filters textures the way the N64 did, 3-point instead of bilinear: magnified texels smear into diamonds instead of round blobs
+- Fix (web): `chip()` and `mon()` did nothing in the browser (the worker dropped them), and asking for the current one always said r00/lcd
 - Web: the game fills its container (`#petrichor64-root`, `<petrichor-64>`, or the page) instead of a fixed 640x548 box, and its render size follows when the container resizes. Size it by sizing the container
 - Fix (web): the engine didn't start until the first mouse move or key press after the page loaded, and a resize during startup was lost, leaving the picture stretched
 - Web: `?lat` on the page URL measures key-to-sound latency per stage (`web/latency.js`; numbers in PLAN.md)
