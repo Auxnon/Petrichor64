@@ -150,16 +150,17 @@ px → client rect grows → buffer grows again. A runaway that multiplies by DP
 each observation until it passes the GPU's `max_texture_dimension_2d`.
 
 **Mitigation (committed)**:
-- `attach_canvas_to_dom` pins the canvas CSS display size (640×548), decoupling
-  display from the backing buffer so the loop can't start.
+- `attach_canvas_to_dom` pins the canvas absolutely positioned at 100% of its
+  container (`#petrichor64-root`, else `<body>`). Out of flow it can't size the
+  container, so display follows the container and never the buffer, and the loop
+  can't start. A container that has no size of its own falls back to 640×548.
 - `Gfx::set_config_size` clamps width/height to `device.limits().max_texture_dimension_2d`
   as a safety net, so any future resize path can't crash the module.
 
-**Still TODO**: The canvas now renders at a *fixed* CSS size. Making it responsive
-to the `<petrichor-64>` host container needs a ResizeObserver-driven path that
-reads the container's size (not the canvas's own) and sets the buffer from that,
-so display never feeds back into buffer. Until then, hosts resize via CSS on
-`#petrichor64-root` at their own risk.
+Hosts size the game by sizing `#petrichor64-root`, or `<petrichor-64>`, which the
+root fills. winit's ResizeObserver reports the canvas's new size as `Resized`; the
+engine reconfigures the surface, which sets the buffer. A Resized that comes while
+the async Core is still being built is caught up when it's installed.
 
 ---
 

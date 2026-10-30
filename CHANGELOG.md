@@ -15,6 +15,8 @@
 - Paint overlay: the SAVE button says when edits can't be saved (`CAN'T SAVE`, `SAVE 2 (1 CAN'T)`), and a packed game shows READ ONLY from the start
 - Paint overlay: NEW (panel button, or N) gives the focused thing a fresh image, 16x16 or its sheet's tile size, starting from how it looks now. A mesh is unwrapped onto it; saving writes `assets/name.png`, or `assets/name.glb` (mesh with its new uvs) for a mesh
 - `unwrap(mesh, {w, h, pad, mode})`: lay a mesh's triangles flat onto an image, for passing straight to `mod()`. Overlays also get `app.info`, `app.texinfo`, `app.newtex`
+- Web: the game fills its container (`#petrichor64-root`, `<petrichor-64>`, or the page) instead of a fixed 640x548 box, and its render size follows when the container resizes. Size it by sizing the container
+- Fix (web): the engine didn't start until the first mouse move or key press after the page loaded, and a resize during startup was lost, leaving the picture stretched
 - The image editor (the paint overlay) moved to its own repo, [image-chor](https://github.com/Auxnon/image-chor). `studio` builds fetch its latest `main` and compile it in; `IMAGE_CHOR_DIR` builds a local checkout instead, `IMAGE_CHOR_REF` picks another branch or commit, and `chor --version` names the commit built in
 - glbs the engine wrote itself keep their image saveable: painting one and saving rewrites the glb
 - Overlay `app.*` additions: `pick` (what's under the pointer, down to the texture and texel), `pause`, `view` (the app's camera and the pointer ray), `colors`, `project`, `close`

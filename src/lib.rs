@@ -946,6 +946,12 @@ impl ApplicationHandler for App {
                 }
                 self.core = Some(core);
                 self.catcher = Some(catcher);
+                // Core::new sized itself while the canvas wasn't laid out (a
+                // 640x548 fallback), and any Resized that came while it was
+                // being built found no core to apply to. Catch up to the canvas.
+                if let (Some(core), Some(w)) = (self.core.as_mut(), self.window.as_ref()) {
+                    core.resize(w.inner_size());
+                }
             }
         }
 
@@ -1169,13 +1175,15 @@ impl ApplicationHandler for App {
         let now = Instant::now();
 
         if now >= self.next_frame_time {
-            let core = match self.core.as_mut() {
-                Some(c) => c,
-                None => return,
-            };
-            let catcher = match self.catcher.as_ref() {
-                Some(c) => c,
-                None => return,
+            // No core yet (the web builds it asynchronously): keep ticking, or
+            // the loop sleeps until the next input event and the finished core
+            // sits uninstalled until someone moves the mouse.
+            let (core, catcher) = match (self.core.as_mut(), self.catcher.as_ref()) {
+                (Some(c), Some(k)) => (c, k),
+                _ => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.frame_duration));
+                    return;
+                }
             };
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -1674,19 +1682,44 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     if canvas.height() == 0 {
         canvas.set_height(548);
     }
-    // Pin the CSS display size. Without it the canvas displays at its backing
-    // buffer's pixel size, so winit's DPR-scaled buffer grows the client rect,
-    // which grows the buffer again — a runaway that eventually exceeds the GPU's
-    // max texture size and aborts the module. A fixed CSS size decouples display
-    // from buffer; a host page can still override via CSS on #petrichor64-root.
+    // Fill the container, absolutely positioned. Without a CSS size the canvas
+    // displays at its backing buffer's pixel size, so winit's DPR-scaled buffer
+    // grows the client rect, which grows the buffer again — a runaway that
+    // eventually exceeds the GPU's max texture size and aborts the module. Out
+    // of flow, the canvas can't size its container, so display follows the
+    // container alone and never the buffer. The host sizes the game by sizing
+    // #petrichor64-root (or <petrichor-64>, which the root fills).
     let style = canvas.style();
-    let _ = style.set_property("width", "640px");
-    let _ = style.set_property("height", "548px");
+    let _ = style.set_property("display", "block");
+    let _ = style.set_property("position", "absolute");
+    let _ = style.set_property("inset", "0");
+    let _ = style.set_property("width", "100%");
+    let _ = style.set_property("height", "100%");
     let parent = document
         .get_element_by_id("petrichor64-root")
         .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
-    if let Some(parent) = parent {
-        let _ = parent.append_child(canvas);
+    let Some(parent) = parent else {
+        return;
+    };
+    let _ = parent.append_child(canvas);
+    let Ok(parent) = parent.dyn_into::<web_sys::HtmlElement>() else {
+        return;
+    };
+    let pstyle = parent.style();
+    let positioned = web_sys::window()
+        .and_then(|w| w.get_computed_style(&parent).ok().flatten())
+        .and_then(|cs| cs.get_property_value("position").ok())
+        .is_some_and(|p| p != "static");
+    if !positioned {
+        let _ = pstyle.set_property("position", "relative");
+    }
+    // A container nothing sizes (an auto-height div, now that the canvas is out
+    // of flow) would collapse to 0 and show nothing; give it the old default.
+    if parent.client_width() == 0 {
+        let _ = pstyle.set_property("width", "640px");
+    }
+    if parent.client_height() == 0 {
+        let _ = pstyle.set_property("height", "548px");
     }
 }
 

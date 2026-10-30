@@ -38,10 +38,9 @@
         background: #111;
         overflow: hidden;
       }
-      /* winit appends its canvas to <body>; make it fill the viewport. */
+      /* The canvas lands in <body> and attach_canvas_to_dom (lib.rs) pins it
+         to fill it, so the game fills the viewport. */
       canvas {
-        display: block;
-        margin: 0 auto;
         image-rendering: pixelated; /* keep the low-res console look crisp */
       }
       /* winit makes the canvas focusable (tabindex) to receive keyboard input;
