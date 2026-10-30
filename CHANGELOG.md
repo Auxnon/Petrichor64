@@ -17,6 +17,7 @@
 - `unwrap(mesh, {w, h, pad, mode})`: lay a mesh's triangles flat onto an image, for passing straight to `mod()`. Overlays also get `app.info`, `app.texinfo`, `app.newtex`
 - Web: the game fills its container (`#petrichor64-root`, `<petrichor-64>`, or the page) instead of a fixed 640x548 box, and its render size follows when the container resizes. Size it by sizing the container
 - Fix (web): the engine didn't start until the first mouse move or key press after the page loaded, and a resize during startup was lost, leaving the picture stretched
+- Web: `?lat` on the page URL measures key-to-sound latency per stage (`web/latency.js`; numbers in PLAN.md)
 - `apps/synth` moved to its own repo, [sound-chor](https://github.com/Auxnon/sound-chor) (history kept), to grow into a sound-making tool. It's a standalone app for now, not built into `chor`: `chor ~/projects/sound-chor`
 - The image editor (the paint overlay) moved to its own repo, [image-chor](https://github.com/Auxnon/image-chor). `studio` builds fetch its latest `main` and compile it in; `IMAGE_CHOR_DIR` builds a local checkout instead, `IMAGE_CHOR_REF` picks another branch or commit, and `chor --version` names the commit built in
 - glbs the engine wrote itself keep their image saveable: painting one and saving rewrites the glb

@@ -29,6 +29,11 @@
     <link data-trunk rel="copy-file" href="worklet-polyfill.js" />
     <link data-trunk rel="copy-file" href="synth/petrichor_synth.js" />
     <link data-trunk rel="copy-file" href="synth/petrichor_synth_bg.wasm" />
+    <!-- Key-to-sound latency probe, off unless the URL has ?lat. A classic
+         script, so it runs before the engine's module creates its AudioContext
+         and worker (see the file). -->
+    <link data-trunk rel="copy-file" href="latency.js" />
+    <script src="latency.js"></script>
     <style>
       html,
       body {

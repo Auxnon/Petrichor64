@@ -355,6 +355,33 @@ everything above and makes native and web feel identical. Judge latency on wired
 output only. If Petrichor is to be usable for performance, the docs should say so
 the way every DAW does.
 
+**Measured (web, 2026-10-30).** `web/latency.js` is a probe, off unless the page URL
+has `?lat`: each thread stamps its stage on one clock (`performance.timeOrigin`), the
+worklet reports the audio frame of the first block carrying the note, and
+`getOutputTimestamp()` maps that frame to the speaker. A line per press shows over
+the game, and `p64lat.summary()` in the console gives the table. Headless Chrome on
+Linux, sound-chor's piano, 100 presses at random frame phases, ms:
+
+| stage | median | p90 | max |
+|-------|--------|-----|-----|
+| frame: keydown → next `Loop` posted | 7–14 | 19–20 | 21 |
+| hop: main → worker | 0.05 | 0.1 | 0.1 |
+| lua: `loop()` → note sent down the lane | 0.15 | 0.2 | 0.4 |
+| lane: sent → rendered | 4–6.5 | 10.5 | 12.7 |
+| out: rendered → speaker (browser's estimate) | 40 | 40 | 40 |
+| **total** | **50–57** | **64–68** | **70** |
+
+- **frame is the engine's to fix**, and the largest stage it controls: a key waits
+  for the next frame's `Loop`, up to a whole frame and a bit. Running key handlers on
+  the event itself (hooks) instead of polling in `loop()` takes it to ~0.
+- **lane is the device callback, not the quantum.** `baseLatency` was 10.7 ms = 512
+  frames: Chrome drives the worklet in bursts of four 128-frame quanta, so a note
+  can wait up to a burst. A lower `latencyHint` on the AudioContext is the knob to
+  try.
+- **hop and lua are noise.** A shared-memory ring would save nothing here.
+- **out** is what the browser reports for the device (headless: a flat 40). Measure
+  on real hardware, on wired output, before reading anything into it.
+
 ### mpsc vs. a shared-memory ring (the actual trade-off)
 
 They aren't competitors. `mpsc` is an **ownership-transfer channel** (arbitrary Rust

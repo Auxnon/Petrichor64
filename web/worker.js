@@ -15,6 +15,26 @@ import init, { worker_init, worker_receive } from "/Petrichor64.js";
 let ready = false;
 const queue = [];
 
+// The key-to-sound latency probe (web/latency.js, on with the page's `?lat`).
+// The page answers our hello with "on"; until then nothing is measured. We
+// report when a stamped Loop arrived and when its notes left, and relay the
+// worklet's report of the block that carried them.
+const lat = new BroadcastChannel("p64-lat");
+let latOn = false;
+const latNow = () => performance.timeOrigin + performance.now();
+lat.onmessage = (e) => {
+  if (e.data && e.data.kind === "on" && !latOn) {
+    latOn = true;
+    if (soundPort) soundPort.postMessage({ type: "lat", on: true });
+  }
+};
+lat.postMessage({ kind: "hello" });
+
+function onLane(e) {
+  const m = e.data;
+  if (m && m.type === "lat") lat.postMessage({ kind: "worklet", frame: m.frame });
+}
+
 // ---------------------------------------------------------------------------
 // Sound commands take one of two routes, and never both at once.
 //
@@ -82,9 +102,16 @@ function dispatch(msg) {
   // worker_receive returns an envelope { msgs: VmToHost[], ents?, sounds? }.
   // Post it as ONE message per frame; transfer the entity buffer zero-copy so
   // its backing ArrayBuffer moves instead of being structured-clone copied.
+  // The latency probe's stamp; Rust's decoder would reject the extra key.
+  const post = msg && msg.__lat;
+  if (post !== undefined) delete msg.__lat;
+  const recv = latOn && post !== undefined ? latNow() : 0;
   const env = worker_receive(msg);
   const ents = env.ents;
   const transfer = ents ? [ents.buffer] : [];
+  if (recv && soundPort && env.sounds && env.sounds.length) {
+    lat.postMessage({ kind: "vm", post, recv, done: latNow() });
+  }
   const sounds = routeSounds(env.sounds);
   self.postMessage({ kind: "vm-batch", msgs: env.msgs, ents, sounds }, transfer);
 }
@@ -95,6 +122,8 @@ self.onmessage = (e) => {
   // and a MessagePort can't cross into wasm as a HostToVm anyway.
   if (msg && msg.kind === "sound-port") {
     soundPort = msg.port;
+    soundPort.onmessage = onLane;
+    if (latOn) soundPort.postMessage({ type: "lat", on: true });
     laneExpected = true;
     const buffered = soundQueue;
     soundQueue = [];

@@ -42,6 +42,11 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     this.peak = 0;
     this.reportUntil = 0;
     this.lastReport = 0;
+    // The key-to-sound latency probe (web/latency.js). Once the worker turns it
+    // on, the first block rendered after a command arrives reports its frame
+    // back on the port the probe came in on.
+    this.latPort = null;
+    this.latPending = false;
     this.port.onmessage = (e) => this.onMessage(e.data);
     // A message that arrives but fails to deserialize fires this instead of
     // onmessage — the case where a posted WebAssembly.Module doesn't survive the
@@ -59,7 +64,7 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
     this.port.postMessage({ type: 'hello' });
   }
 
-  onMessage(msg) {
+  onMessage(msg, port) {
     if (!msg) return;
     switch (msg.type) {
       case 'wasm':
@@ -104,7 +109,7 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
         // (the VM worker). Its traffic is identical to 'cmd' below — only the
         // route differs, skipping the main thread and its frame boundary.
         if (msg.port) {
-          msg.port.onmessage = (e) => this.onMessage(e.data);
+          msg.port.onmessage = (e) => this.onMessage(e.data, msg.port);
           msg.port.onmessageerror = () => {
             this.port.postMessage({
               type: 'error',
@@ -114,12 +119,16 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
           this.port.postMessage({ type: 'lane' });
         }
         break;
+      case 'lat':
+        this.latPort = msg.on ? port : null;
+        break;
       case 'cmd':
         // One MessagePack-encoded SoundCommand. Decoded in Rust; queued onto the
         // same mpsc the mixer drains natively.
         if (this.synth && msg.bytes) {
           try {
             this.cmds++;
+            if (this.latPort) this.latPending = true;
             this.synth.command(msg.bytes);
           } catch (err) {
             this.port.postMessage({ type: 'error', message: String(err) });
@@ -146,6 +155,10 @@ class PetrichorSynthProcessor extends AudioWorkletProcessor {
       this.scratch = new Float32Array(frames);
     }
     this.synth.process(this.scratch);
+    if (this.latPending) {
+      this.latPending = false;
+      this.latPort.postMessage({ type: 'lat', frame: currentFrame });
+    }
     // The synth is mono (as on native, where write_data copies one value into
     // every frame slot); fan it out to each output channel.
     for (const channel of out) channel.set(this.scratch);
