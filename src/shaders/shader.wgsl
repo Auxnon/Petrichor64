@@ -51,6 +51,8 @@ struct Globals {
 	// x = shdw() on/off.
 	light_view_proj: mat4x4<f32>,
 	shadow_on: vec4<f32>,
+	// Chip-owned render state: x = 3-point texture filtering (R43).
+	chip: vec4<f32>,
 };
 
 struct GuiFrag {
@@ -321,6 +323,30 @@ const BAYER4: array<f32,16> = array<f32,16>(
 	15.,7.,13.,5.,
 );
 
+// The N64's texture filter (R43 chip): each pixel blends the three texels of the
+// triangle it falls in, splitting the 2x2 block along its diagonal, instead of all
+// four the way bilinear does. Magnified, it smears texels into diamonds where
+// bilinear rounds them into blobs: the look that reads as N64. Reads texels
+// directly, wrapped like the sampler's Repeat; the atlas gutter (texture.rs)
+// covers the reads past a texture's edge, as it does for bilinear.
+fn atlas_texel(p: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+	return textureLoad(t_diffuse, ((p % size) + size) % size, 0);
+}
+
+fn three_point(uv: vec2<f32>) -> vec4<f32> {
+	let size = vec2<i32>(textureDimensions(t_diffuse));
+	let p = uv * vec2<f32>(size) - 0.5;
+	let f = fract(p);
+	let b = vec2<i32>(floor(p));
+	let c00 = atlas_texel(b, size);
+	let c10 = atlas_texel(b + vec2<i32>(1, 0), size);
+	let c01 = atlas_texel(b + vec2<i32>(0, 1), size);
+	let c11 = atlas_texel(b + vec2<i32>(1, 1), size);
+	let lower = c00 + f.x * (c10 - c00) + f.y * (c01 - c00);
+	let upper = c11 + (1. - f.x) * (c01 - c11) + (1. - f.y) * (c10 - c11);
+	return select(upper, lower, f.x + f.y <= 1.);
+}
+
 @fragment
 fn fs_main( in: VertexOutput) -> FragmentOutput {
 	//f_color = vec4<f32>(0.10000001192092896, 0.20000000298023224, 0.10000000149011612, 1.0);
@@ -373,7 +399,13 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	// perspective-correct ones — the PS1's characteristic texture warp.
 	let snap=globals.adjustments[3][3];
 	let uv=mix(in.tex_coords,in.tex_coords_affine,select(0.,1.,snap>0.));
-	f_color=textureSample(t_diffuse, s_diffuse, uv*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+	// R43 chip: the N64's 3-point filter in place of the sampler's bilinear.
+	// globals is uniform, so textureSample stays in uniform control flow.
+	if (globals.chip.x > 0.5) {
+		f_color=three_point(uv*mutator);
+	} else {
+		f_color=textureSample(t_diffuse, s_diffuse, uv*mutator);//vec4<f32>(abs(in.vpos.y)%1.,1.,1.,1.0);
+	}
 
 	if( in.specs.w>0.){
 		let end=in.specs.w;

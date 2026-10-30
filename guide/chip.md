@@ -14,7 +14,10 @@ console names:
 - `"r00"` — modern (default). Full precision, perspective-correct texturing,
   today's filtering. A no-op if you never call `chip()`.
 - `"r43"` — N64-ish, named for the N64's MIPS **VR4300**/R4300i CPU. Soft,
-  bilinear-blurred, lower internal resolution, a touch of fog — the RCP's
+  lower internal resolution, a touch of fog, and the RDP's **3-point** texture
+  filter: each pixel blends the three nearest texels instead of bilinear's four,
+  so magnified textures smear into diamonds rather than round blobs (a checker
+  turns into diagonal bands, as it did on the hardware). The RCP's
   characteristic blur, not a geometry change.
 - `"r30"` — PS1-ish, named for the PS1's MIPS **R3000A**. Real vertex wobble
   (no subpixel precision), affine texture warping, nearest-neighbor filtering,

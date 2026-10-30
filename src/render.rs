@@ -271,6 +271,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         0.,
     ];
     let light_view_proj_mat: [[f32; 4]; 4] = lvp.unwrap_or(Mat4::ZERO).to_cols_array_2d();
+    let chip: [f32; 4] = [if core.global.chip == 1 { 1. } else { 0. }, 0., 0., 0.];
 
     let size1 = bytemuck::cast_slice(mx_view_ref);
     let size2 = bytemuck::cast_slice(mx_persp_ref);
@@ -302,6 +303,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     );
     gfx.queue
         .write_buffer(&gfx.uniform_buf, 384, bytemuck::cast_slice(&shadow_on));
+    gfx.queue
+        .write_buffer(&gfx.uniform_buf, 400, bytemuck::cast_slice(&chip));
 
     // Hoisted above both passes: get_chunk_models() takes &mut core.world
     // (it round-trips a TileCommand::Check to every world thread), so it

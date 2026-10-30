@@ -97,6 +97,8 @@ struct GlobalUniforms {
     light_view_proj: [[f32; 4]; 4],
     // x = shdw() on/off.
     shadow_on: [f32; 4],
+    // Chip-owned render state: x = 3-point texture filtering (R43).
+    chip: [f32; 4],
 }
 // pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4:new()
 //     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
@@ -423,6 +425,7 @@ impl<'w> Gfx<'w> {
             light_shape: [0.0, 0.0, 0.0, 0.0], // shape=0 => sun
             light_view_proj: Mat4::ZERO.to_cols_array_2d(),
             shadow_on: [0.0, 0.0, 0.0, 0.0],
+            chip: [0.0, 0.0, 0.0, 0.0],
         };
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
