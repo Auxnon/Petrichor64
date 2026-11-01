@@ -1,5 +1,10 @@
 ## UNRELEASED
 
+- `seq(id, steps, cfg)`: a sequencer on the audio thread. Steps (notes, chords, rests, sample hits, sung syllables with `say=`) play against the sample clock once, a counted number of times (`loop = 4`) or forever (`loop = true`); `after = id` chains one sequence onto the end of another, the same id swaps the pattern at the end of the current pass, `choke = true` cuts the last hit for chopped breaks. `seq(id)` / `seq()` stop
+- `smpl(id, 'name', { from, to })`: bind a slice of a loaded sound (0..1), sharing the decoded buffer, so a break chops into slots
+- `sing`: English vowels `ee`/`oo`/`ae` and the short vowels `ih`/`uh`/`eh`; `c`/`q`/`x`/`j` sound; consonants shrink to fit short syllables instead of hissing over them
+- Fix: `fade(ch, secs, x)` stopped one step short of `x`, so `fade(ch, 0, x)` left the channel at full volume
+- `CHOR_WAV=path` records the master bus to a WAV and `CHOR_MUTE=1` keeps the device silent meanwhile, for checking sound in tests without playing it aloud
 - **Ctrl+M model editor overlay**: over any app that isn't `attr{lock=true}`, pauses it and opens [model-chor](https://github.com/Auxnon/model-chor), the polygon modeller, starting from the app's camera angle with a bare grid over the scene. Esc (with nothing selected) or Ctrl+M closes it and the app's camera comes back. Saves land in the app's `models/`, exports in its `assets/`. Built in with `studio` like the image editor: `MODEL_CHOR_DIR` / `MODEL_CHOR_REF`, and `chor --version` names the commit
 - `app.drive(on)` (overlays): draw the scene through the overlay's own `cam`; the app's camera is kept and put back when it lets go or closes
 - Fix: `key("tab")`, `key("home")`, `key("insert")` and the punctuation keys (`"lbracket"`, `"rbracket"`, `"."`, `","`, `"-"`, `"="`, `";"`, `"/"`, `"\\"`, `"'"`) were always false: they had names but nothing mapped the keyboard to them. They work now, and `cin()` includes them

@@ -35,6 +35,10 @@ recorded voice, all synthesized.
     (`'sun'`, `'call'`, `'him'`, `'sing'`); mixed too (`'sink'`, `'want'`).
   - **diphthongs** — two vowels in one syllable glide between them: `'ai'`
     ("eye"), `'au'` ("ow"), `'oi'` ("oy").
+  - **English vowels** — `ee`/`oo` ("see"/"moon"), `ae` ("cat"), and a vowel then
+    `h` for the short ones: `ih` ("sit"), `uh` ("but"), `eh` ("bed"). So
+    `'luhv'`, `'kaet'`, `'sih ting'` sing the way they read.
+  - `c`/`q` sing as `k`, `x` as `ks`, `j` as a short `ch`.
 - `length` — default per-syllable sustain seconds (used when `melody` doesn't
   give per-syllable lengths). Default 0.5.
 - `channel` — which channel ("track") to sing on. Default `0`. A phrase sequences
@@ -63,4 +67,6 @@ sing('o', 330, 2)
 
 Shares the channel/lane polyphony and mixer with `note`/`smpl` — a sung chord
 uses one channel's lanes (see `attr{lanes}`), so the whole chord shares that
-channel's `vox` character. See also `note`, `song`, `fade`, `vox`, `attr`.
+channel's `vox` character. To sing in time with a song, put the syllables in a
+`seq` (`say=` on a step) instead: they then land on the beat with the rest of
+it. See also `note`, `song`, `seq`, `fade`, `vox`, `attr`.

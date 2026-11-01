@@ -3,7 +3,7 @@
 use crate::silt_str::{lstr, TableStr};
 use crate::root::Core;
 #[cfg(feature = "audio")]
-use crate::sound::{Envelope, Instrument, Note, SoundCommand, WaveType};
+use crate::sound::{Envelope, Instrument, Note, Sequence, SoundCommand, Step, WaveType};
 #[cfg(feature = "audio")]
 use crate::fx::{DriveShape, FilterKind};
 #[cfg(feature = "audio")]
@@ -574,6 +574,63 @@ fn parse_sound_cfg(cfg: Option<&Value>, scalar_key: &str) -> (Envelope, Option<f
         _ => {}
     }
     (env, scalar)
+}
+
+/// Read `seq`'s step list. Each step is `{beats, freq, instrument?, volume?}`
+/// plus optional `len=` (sounding beats, default `beats`), `at=` (an explicit
+/// beat, else it follows the step before) and `say=` (a syllable to sing at that
+/// pitch). `freq` may be a table (a chord), or `0`/absent for a rest. Returns
+/// the steps sorted by start, and where the last one ends: the pattern length.
+#[cfg(feature = "audio")]
+fn parse_steps<'v>(tb: &Table<'v>) -> (Vec<Step>, f32) {
+    let mut out: Vec<Step> = Vec::new();
+    let mut cursor = 0.0f32;
+    let mut i = 1;
+    while let Some(v) = tb.getn(i) {
+        i += 1;
+        let st = match v {
+            Value::Table(st) => st.borrow(),
+            _ => continue,
+        };
+        let beats: f32 = st.getn(1).map(|x| x.into()).unwrap_or(1.0);
+        let at: f32 = st.get_str("at").map(|x| x.into()).unwrap_or(cursor);
+        let len: f32 = st
+            .get_str("len")
+            .map(|x| x.into())
+            .unwrap_or(if beats > 0.0 { beats } else { 0.25 });
+        let instr: f32 = st.getn(3).map(|x| x.into()).unwrap_or(0.0);
+        let vol: f32 = st.getn(4).map(|x| x.into()).unwrap_or(1.0);
+        let syllable = match st.get_str("say") {
+            Some(Value::String(t)) => Some(crate::vocaloid::parse_syllable(&t.to_string())),
+            _ => None,
+        };
+        let mut freqs: Vec<f32> = Vec::new();
+        match st.getn(2) {
+            Some(Value::Table(ft)) => {
+                let ft = ft.borrow();
+                let mut j = 1;
+                while let Some(f) = ft.getn(j) {
+                    freqs.push(f.into());
+                    j += 1;
+                }
+            }
+            Some(f) => freqs.push(f.into()),
+            None => {}
+        }
+        if freqs.is_empty() {
+            freqs.push(0.0); // a rest still holds its place in the pattern
+        }
+        for f in freqs {
+            let note = match &syllable {
+                Some(syl) => Note::sung(f, 0.0, vol, syl),
+                None => Note::new(instr.max(0.0) as usize, f, 0.0, vol),
+            };
+            out.push(Step { at, len, note });
+        }
+        cursor = at + beats;
+    }
+    out.sort_by(|a, b| a.at.total_cmp(&b.at));
+    (out, cursor)
 }
 
 thread_local! {
@@ -1739,6 +1796,84 @@ function cue(freq, length, channel, instrument, at, grid) end"
     );
 
     #[cfg(feature = "audio")]
+    let sing_seq = singer.clone();
+    lua!(
+        "seq",
+        move |_, _, (id, steps, cfg): (Option<usize>, Option<Value>, Option<Value>)| {
+            #[cfg(feature = "audio")]
+            {
+                let id = match id {
+                    Some(id) => id,
+                    None => {
+                        let _ = sing_seq.send(SoundCommand::StopSequence(None));
+                        return Ok(());
+                    }
+                };
+                let steps = match steps {
+                    Some(Value::Table(t)) => parse_steps(&t.borrow()),
+                    _ => {
+                        let _ = sing_seq.send(SoundCommand::StopSequence(Some(id)));
+                        return Ok(());
+                    }
+                };
+                let (steps, natural_len) = steps;
+                let mut seq = Sequence {
+                    id,
+                    steps,
+                    length: natural_len,
+                    loops: 1,
+                    channel: 0,
+                    at: None,
+                    grid: None,
+                    after: None,
+                    choke: false,
+                };
+                if let Some(Value::Table(c)) = &cfg {
+                    let c = c.borrow();
+                    if let Some(v) = c.get_str("ch") {
+                        let ch: f32 = v.into();
+                        seq.channel = ch.max(0.) as usize;
+                    }
+                    match c.get_str("loop") {
+                        // `true` = forever; a count is how many passes, 0 = forever.
+                        Some(Value::Bool(b)) => seq.loops = if *b { 0 } else { 1 },
+                        Some(v @ (Value::Number(_) | Value::Integer(_))) => {
+                            let n: f32 = v.into();
+                            seq.loops = n.max(0.) as u32;
+                        }
+                        _ => {}
+                    }
+                    if let Some(v) = c.get_str("len") {
+                        seq.length = v.into();
+                    }
+                    if let Some(v) = c.get_str("at") {
+                        seq.at = Some(v.into());
+                    }
+                    if let Some(v) = c.get_str("grid") {
+                        seq.grid = Some(v.into());
+                    }
+                    if let Some(v) = c.get_str("after") {
+                        let a: f32 = v.into();
+                        seq.after = Some(a.max(0.) as usize);
+                    }
+                    if let Some(Value::Bool(b)) = c.get_str("choke") {
+                        seq.choke = *b;
+                    }
+                }
+                lua_err!(sing_seq.send(SoundCommand::Sequence(seq)));
+            }
+            Ok(())
+        },
+        "Play a sequence of steps on the transport: once, a counted number of times, or looped; chain with after",
+        "
+---@alias SeqStep { [1]: number, [2]: number|number[]|nil, [3]: integer?, [4]: number?, len?: number, at?: number, say?: string }
+---@param id integer? the sequence's handle; seq() alone stops every sequence
+---@param steps SeqStep[]? {beats, freq|{freqs}|0 (rest), instrument?, volume?, len=beats, at=beat, say='la'}; omit to stop `id`
+---@param cfg? { ch?: integer, loop?: integer|boolean, len?: number, at?: number, grid?: number, after?: integer, choke?: boolean }
+function seq(id, steps, cfg) end"
+    );
+
+    #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(
         "note",
@@ -2248,6 +2383,17 @@ function vox(channel, cfg) end"
                 // cfg (optional): { base=, atk=, dec=, sus=, rel= }, or a bare
                 // number for legacy base pitch. `base` is the natural-playback Hz.
                 let (env, base) = parse_sound_cfg(cfg.as_ref(), "base");
+                // `from`/`to`: the slice of a loaded file to play, as 0..1.
+                let mut range = (0.0f32, 1.0f32);
+                if let Some(Value::Table(t)) = &cfg {
+                    let tb = t.borrow();
+                    if let Some(v) = tb.get_str("from") {
+                        range.0 = v.into();
+                    }
+                    if let Some(v) = tb.get_str("to") {
+                        range.1 = v.into();
+                    }
+                }
                 match data {
                     // A name binds a sound loaded from sounds/<name>.ogg into slot
                     // `id`. The lookup happens once, here — the mixer stays purely
@@ -2257,7 +2403,8 @@ function vox(channel, cfg) end"
                             id,
                             name.to_string(),
                             base,
-                            env
+                            env,
+                            range
                         )));
                     }
                     // A table is raw PCM. Read it by index (getn loop) rather than
@@ -2283,11 +2430,11 @@ function vox(channel, cfg) end"
             }
             Ok(())
         },
-        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1); cfg = { base, atk, dec, sus, rel }",
+        "Define instrument `id` from a loaded sound name, or raw PCM samples (-1..1); cfg = { base, atk, dec, sus, rel, from, to }",
         "
 ---@param id integer
 ---@param data string|number[] a loaded sound name (sounds/<name>.ogg), or raw PCM samples in -1..1
----@param cfg? { base?: number, atk?: number, dec?: number, sus?: number, rel?: number } base pitch (default 440) + ADSR envelope
+---@param cfg? { base?: number, atk?: number, dec?: number, sus?: number, rel?: number, from?: number, to?: number } base pitch (default 440) + ADSR envelope; from/to slice a loaded file (0..1)
 function smpl(id, data, cfg) end"
     );
 

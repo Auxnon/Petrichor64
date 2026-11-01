@@ -216,6 +216,11 @@ grep -E 'rror|not callable|corrupt|panic|Invalid|attempt' game.log
 grep fps game.log | tail -3
 ```
 
+Sound can be checked the same way: `CHOR_WAV=/tmp/out.wav CHOR_MUTE=1 chor game`
+records exactly what the mixer made (mono 16-bit) and plays nothing aloud. Read it
+with Python (`wave` + numpy) for levels, onset timing and pitch; sound-chor's
+AGENTS.md has the recipe.
+
 If the session is **locked** (or there's no compositor at all), `grim` only
 captures the lock screen. Have the engine save its own frames instead:
 

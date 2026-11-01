@@ -105,6 +105,31 @@ pub fn vowel_formants(vowel: &str) -> [Formant; 3] {
     }
 }
 
+/// The vowels English needs that the five cardinal ones miss, plus long-vowel
+/// spellings, so a lyric can be written the way it sounds:
+/// - `ee` / `oo` — the long vowels of "see" / "moon" (same as `i` / `u`, but
+///   reads naturally in a respelled word);
+/// - `ae` — the a in "cat" (without this, `ae` would glide a→e);
+/// - a vowel then `h` — the short vowels: `ih` ("sit"), `uh` ("but"), `eh`
+///   ("bed"); `ah`/`oh` are just `a`/`o`. The `h` is part of the vowel, not a
+///   breath after it.
+fn spelled_vowel(nucleus: &[char], lax: bool) -> Option<[Formant; 3]> {
+    let f = |freq, q, gain| Formant { freq, q, gain };
+    if lax && nucleus.len() == 1 {
+        return match nucleus[0] {
+            'i' => Some([f(400.0, 8.0, 1.0), f(1900.0, 10.0, 0.5), f(2550.0, 12.0, 0.3)]),
+            'u' => Some([f(640.0, 8.0, 1.0), f(1190.0, 9.0, 0.6), f(2390.0, 12.0, 0.3)]),
+            c => Some(vowel_formants(&c.to_string())),
+        };
+    }
+    match nucleus {
+        ['e', 'e'] => Some(vowel_formants("i")),
+        ['o', 'o'] => Some(vowel_formants("u")),
+        ['a', 'e'] => Some([f(660.0, 8.0, 1.0), f(1720.0, 10.0, 0.55), f(2410.0, 12.0, 0.3)]),
+        _ => None,
+    }
+}
+
 /// An *unvoiced* consonant onset: a short burst of band-passed noise before the
 /// vowel — fricatives s/f/h/sh and plosives t/k/p (voiced pairs z/v/d/g/b
 /// approximated the same). *Voiced* consonants (m/n/l/r/w/y) are handled instead
@@ -156,6 +181,18 @@ impl Cluster {
 
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+
+    /// Shorten the bursts in proportion so they last at most `max_secs` in all.
+    /// A syllable sung (or babbled) in 70ms can't spend 90ms hissing an `s`.
+    pub fn squeeze(&mut self, max_secs: f32) {
+        let total: f32 = self.iter().map(|k| k.secs).sum();
+        if total > max_secs && total > 0.0 {
+            let k = (max_secs / total).max(0.0);
+            for b in self.bursts[..self.len as usize].iter_mut() {
+                b.secs *= k;
+            }
+        }
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Consonant> {
@@ -220,6 +257,12 @@ fn parse_consonants(s: &str) -> Vec<Cons> {
                 }
                 i += 2;
             }
+            ('x', _) => {
+                // "ks": a pop then a hiss.
+                out.extend(consonant_for('k').map(Cons::Unvoiced));
+                out.extend(consonant_for('s').map(Cons::Unvoiced));
+                i += 1;
+            }
             ('t', Some('h')) => {
                 if let Some(k) = consonant_for('f') {
                     out.push(Cons::Unvoiced(k)); // approximate 'th' as a soft fricative
@@ -269,7 +312,8 @@ fn consonant_for(c: char) -> Option<Consonant> {
         'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.45), // broadband
         'h' => cons(1500.0, 0.7, 0.06, 0.4),       // breathy
         't' | 'd' => cons(4000.0, 1.5, 0.02, 0.7), // sharp tick
-        'k' | 'g' => cons(2000.0, 1.5, 0.02, 0.7), // mid pop
+        'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.02, 0.7), // mid pop
+        'j' => cons(2800.0, 1.2, 0.05, 0.5),       // a short ch
         'p' | 'b' => cons(800.0, 1.2, 0.02, 0.7),  // low pop
         _ => None, // vowels + l/r/m/n/w/y
     }
@@ -283,6 +327,7 @@ fn consonant_for(c: char) -> Option<Consonant> {
 /// - `"cat"`  → onset /k/, vowel /a/, coda /t/ burst
 /// - `"sun"`  → onset /s/, vowel /u/, voiced /n/ coda glide
 /// - `"sink"` → /s/, /i/, /n/ coda glide + /k/ burst
+/// - `"luhv"` → /l/ glide, /ʌ/ (the `uh` spelling), /v/ burst
 pub fn parse_syllable(s: &str) -> SungSyllable {
     let lower = s.trim().to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
@@ -324,11 +369,16 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
         }
     }
 
+    // A spelled vowel (`ee`, `ae`, `uh`…) first; its trailing `h` belongs to it.
+    let lax = coda_str.starts_with('h');
+    let coda_str = if lax { &coda_str[1..] } else { &coda_str[..] };
+    let spelled = spelled_vowel(&nucleus, lax);
+
     // Vowel nucleus, and a diphthong glide if the run holds two different vowels
     // (only when a voiced onset glide didn't already claim the glide).
     let last = nucleus.last().copied().unwrap_or('a');
-    let vowel = vowel_formants(&last.to_string());
-    if glide_from.is_none() && nucleus.len() >= 2 && nucleus[0] != last {
+    let vowel = spelled.unwrap_or_else(|| vowel_formants(&last.to_string()));
+    if spelled.is_none() && glide_from.is_none() && nucleus.len() >= 2 && nucleus[0] != last {
         glide_from = Some(vowel_formants(&nucleus[0].to_string()));
         glide_secs = 0.15;
     }
@@ -337,7 +387,7 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
     // liquid tail), then any unvoiced bursts (`t`, `s`, `k`…).
     let mut coda_glide = None;
     let mut coda = Cluster::default();
-    for tok in parse_consonants(&coda_str) {
+    for tok in parse_consonants(coda_str) {
         match tok {
             Cons::Voiced(vf) => {
                 if coda_glide.is_none() {
@@ -355,5 +405,26 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
         vowel,
         coda_glide,
         coda,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The spelled vowels land on their own formants: `uh` isn't `u`, `ae` is a
+    /// vowel rather than an a→e glide, and the `h` doesn't become a coda breath.
+    #[test]
+    fn spelled_vowels_parse_as_vowels() {
+        let uh = parse_syllable("buht");
+        let u = parse_syllable("but");
+        assert!(uh.vowel[0].freq > u.vowel[0].freq + 200.0);
+        assert_eq!(uh.coda.len(), 1, "only the t is a coda burst");
+        let ae = parse_syllable("kaet");
+        assert!(ae.glide_from.is_none(), "ae must not glide");
+        assert!(ae.vowel[1].freq > 1600.0);
+        let ai = parse_syllable("mai");
+        assert!(ai.glide_from.is_some(), "m still glides in");
+        assert_eq!(parse_syllable("box").coda.len(), 2, "x is k+s");
     }
 }
