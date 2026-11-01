@@ -812,7 +812,25 @@ impl<'w> Gfx<'w> {
             sky_pipeline,
         )
     }
-    pub fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>) -> (u32, u32) {
+    /// The gui raster's size for a window of `new_size` physical pixels at
+    /// `scale` physical pixels a logical one.
+    pub fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
+        let fixed = Self::fixed_gui_size(gui_params, new_size);
+        if !(gui_params.px > 0.) || !(scale > 0.) {
+            return fixed;
+        }
+        // the window's own aspect, as `Aspect` keeps it; the larger of the two
+        let per = gui_params.px as f64 * scale;
+        let w = (new_size.width as f64 / per) as u32;
+        let h = (new_size.height as f64 / per) as u32;
+        if w > fixed.0 && h > fixed.1 {
+            (w.min(new_size.width), h.min(new_size.height))
+        } else {
+            fixed
+        }
+    }
+
+    fn fixed_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>) -> (u32, u32) {
         let gui_size = gui_params.resolution;
         match gui_params.style {
             GuiStyle::Aspect => {
@@ -894,7 +912,7 @@ impl<'w> Gfx<'w> {
         let new_size = self.size;
         self.surface.configure(&self.device, &self.config);
         self.rebuild_scene_targets();
-        Self::compute_gui_size(gui_params, new_size)
+        Self::compute_gui_size(gui_params, new_size, self.win_ref.scale_factor())
     }
 
     /// The scene's resolution for a `crt_resolution` and a window size:

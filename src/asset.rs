@@ -1361,6 +1361,7 @@ pub fn make_codex_file<'a>(
 ---@field mouse_grab boolean
 ---@field size integer[] width, height of window
 ---@field title string
+---@field gui_px number one gui pixel is this many logical (CSS, dp) pixels: a bigger window, a finer gui, never coarser than 320x240; 0 (default) keeps 320x240
 ---@field modernize boolean must be false or 0 for the remainder to work
 ---@field dark number
 ---@field glitch number[]

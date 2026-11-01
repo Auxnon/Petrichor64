@@ -178,7 +178,7 @@ impl<'core> Core {
         let global = Global::new();
         let mut loggy = crate::log::Loggy::new();
         let psize = winit::dpi::PhysicalSize::new(1280, 960);
-        let gui_scaled = Gfx::compute_gui_size(&global.gui_params, psize);
+        let gui_scaled = Gfx::compute_gui_size(&global.gui_params, psize, 1.);
         println!("gui_scaled: {:?}", gui_scaled);
         let mut gui = Gui::new(&gfx, gui_pipeline, sky_pipeline, gui_scaled, &mut loggy);
 
