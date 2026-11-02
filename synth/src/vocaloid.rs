@@ -21,8 +21,14 @@ pub struct Formant {
 }
 
 /// How loud a sung vowel comes out (rms of the formant bank's output at volume 1),
-/// whatever the vowel and pitch. See [`voiced_level`].
-pub const VOWEL_RMS: f32 = 0.13;
+/// whatever the vowel and pitch. See [`voiced_level`]. Set so a sung note is as
+/// loud as a saw note (its source) at the same volume; at 0.13 it was ~12 dB
+/// under every instrument and sank in a mix.
+pub const VOWEL_RMS: f32 = 0.55;
+
+/// The consonant gains below were tuned against a vowel level of 0.13; they
+/// scale with [`VOWEL_RMS`] so they keep their place under the vowel.
+const BURST: f32 = VOWEL_RMS / 0.13;
 
 /// The narrowest each formant may be (Hz), and the narrowest relative to the
 /// note's pitch. Narrow resonances make a vowel's loudness depend on whether a
@@ -428,7 +434,7 @@ fn parse_consonants(s: &str) -> Vec<Cons> {
         freq: 3000.0,
         q: 1.2,
         secs: 0.09,
-        gain: 0.14,
+        gain: 0.14 * BURST,
         locus: PALATAL,
         vot: 0.0,
         plosive: false,
@@ -509,7 +515,7 @@ pub const DENTAL: [f32; 3] = [250.0, 1450.0, 2600.0];
 /// Map a leading character to its consonant onset, if any.
 fn consonant_for(c: char) -> Option<Consonant> {
     let cons = |freq, q, secs, gain, locus, vot, plosive| {
-        Some(Consonant { freq, q, secs, gain, locus, vot, plosive })
+        Some(Consonant { freq, q, secs, gain: gain * BURST, locus, vot, plosive })
     };
     match c {
         // A broad hiss (Q 1.3, not a narrow "pssh"), ~14 dB under the vowel.
