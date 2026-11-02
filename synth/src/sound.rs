@@ -444,7 +444,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
                 SoundCommand::PlayNote(note, ch) => {
                     let c = ch.unwrap_or(0).min(channels.len() - 1);
-                    let l = channels[c].pick_lane();
+                    let l = channels[c].lane_for(&note);
                     channels[c].queues[l].push_back(note);
                 }
                 SoundCommand::Chain(notes, ch) => {
@@ -623,7 +623,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     Some((at, note, c)) if *at <= frames => {
                         let (note, c) = (*note, *c);
                         *slot = None;
-                        let l = channels[c].pick_lane();
+                        let l = channels[c].lane_for(&note);
                         channels[c].queues[l].push_back(note);
                     }
                     Some((at, _, _)) => {
@@ -741,6 +741,25 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     }
                 }
 
+                // Fading voice: release ramp to silence at the instrument's rate.
+                // Rendered *before* the sounding voice: a voice released below
+                // moves here, and rendering this after would play it twice in
+                // that sample (a one-sample spike, a faint click at every
+                // note-off). It picks up its release from the next sample.
+                if let Some(v) = chan.fading[l].as_mut() {
+                    let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
+                    let rel = if v.sung {
+                        instr.env.release.max(SUNG_RELEASE)
+                    } else {
+                        instr.env.release
+                    };
+                    v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
+                    if v.env <= 0.0 {
+                        chan.fading[l] = None;
+                    } else {
+                        ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
+                    }
+                }
                 // Sounding voice: run the attack→decay→sustain envelope, then hand
                 // off to `fading` for release at note-off.
                 if let Some(v) = chan.current[l].as_mut() {
@@ -777,21 +796,6 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     }
                 }
 
-                // Fading voice: release ramp to silence at the instrument's rate.
-                if let Some(v) = chan.fading[l].as_mut() {
-                    let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                    let rel = if v.sung {
-                        instr.env.release.max(SUNG_RELEASE)
-                    } else {
-                        instr.env.release
-                    };
-                    v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
-                    if v.env <= 0.0 {
-                        chan.fading[l] = None;
-                    } else {
-                        ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
-                    }
-                }
             }
 
             // Channel effects, in chain order (like a pedal chain): drive and
@@ -1584,6 +1588,23 @@ impl Channel {
     }
     /// Pick a lane for a new note: the first fully-idle lane, else round-robin
     /// steal (the channel's polyphony cap = its lane count).
+    /// The lane for a new note. A sung note goes to the lane of the syllable
+    /// before it when that one has been released (it may carry its voice on):
+    /// a lane starts its queued note *before* rendering its releasing voice, so
+    /// the hand-over happens between samples. On another lane, the old voice
+    /// could already have rendered this sample and the new one would render it
+    /// again — a one-sample jump in phase and filter state, heard as a faint
+    /// click at every join.
+    fn lane_for(&mut self, note: &Note) -> usize {
+        if note.formants.is_some() {
+            if let Some(l) = self.last_sung {
+                if l < self.lanes() && self.current[l].is_none() && self.queues[l].is_empty() {
+                    return l;
+                }
+            }
+        }
+        self.pick_lane()
+    }
     fn pick_lane(&mut self) -> usize {
         let lanes = self.lanes();
         (0..lanes)
@@ -1601,7 +1622,7 @@ impl Channel {
     /// fine for `note`, but a sequencer step that starts late is a wrong note. So
     /// the voice in the way is sent to its release instead.
     fn start_now(&mut self, note: Note) {
-        let l = self.pick_lane();
+        let l = self.lane_for(&note);
         if let Some(v) = self.current[l].take() {
             self.fading[l] = Some(v);
         }
@@ -1775,7 +1796,10 @@ impl Voice {
     fn load_burst(&mut self, k: &Consonant, xfade_into_vowel: bool, sr: f32) {
         let total = (k.secs * sr) as u32;
         if xfade_into_vowel {
-            let xfade_secs = (k.secs * 0.5).min(0.012);
+            // A hiss thins out under the vowel as it starts (up to 30ms); a stop's
+            // burst is over almost at once.
+            let most = if k.plosive { 0.012 } else { 0.03 };
+            let xfade_secs = (k.secs * 0.5).min(most);
             let xfade_samps = (xfade_secs * sr) as u32;
             self.consonant_samples = total.saturating_sub(xfade_samps);
             self.consonant_xfade = Crossfade::new(xfade_secs, sr);
@@ -1791,23 +1815,30 @@ impl Voice {
     }
     /// The active burst's amplitude shape at its current position: a stop
     /// snaps on and decays (most of it in the first third), a fricative swells
-    /// in over its first third. Square-edged noise is what made consonants
+    /// in and (into silence) fades out. Square-edged noise is what made consonants
     /// sound pasted on.
     fn burst_shape(&mut self) -> f32 {
         let t = self.burst_pos as f32 / self.burst_len as f32;
         self.burst_pos = self.burst_pos.saturating_add(1);
         let smooth = |x: f32| x * x * (3.0 - 2.0 * x);
-        let tail = if self.burst_tail && t > 0.7 {
-            smooth(((1.0 - t) / 0.3).clamp(0.0, 1.0))
-        } else {
-            1.0
-        };
         if self.burst_plosive {
+            let tail = if self.burst_tail && t > 0.7 {
+                smooth(((1.0 - t) / 0.3).clamp(0.0, 1.0))
+            } else {
+                1.0
+            };
             (-t * 3.5).exp() * tail
-        } else if t < 0.3 {
-            smooth(t / 0.3)
         } else {
-            tail
+            // A hiss is a breath pushed through a gap: it swells over its first
+            // 40% and, ending in silence, fades over its last 40%. A flat-topped
+            // block of noise is a valve opening and shutting.
+            let rise = smooth((t / 0.4).min(1.0));
+            let fall = if self.burst_tail {
+                smooth(((1.0 - t) / 0.4).clamp(0.0, 1.0))
+            } else {
+                1.0
+            };
+            rise * fall
         }
     }
     /// Advance the coda one segment when the sustain (or a prior coda segment)
@@ -2503,5 +2534,30 @@ mod tests {
         let tail = rms(&x[last - 96..last]);
         let body = rms(&x[last - 2400..last - 1200]);
         assert!(tail < body * 0.25, "hiss ends at {:.3} (body {:.3})", tail, body);
+    }
+
+    /// A note-off doesn't play the voice twice in one sample. Releasing used to
+    /// move the voice to `fading` and then render `fading` in the same sample:
+    /// one sample at double level, a faint click at the end of every note.
+    #[test]
+    fn note_off_has_no_spike() {
+        let x = sing_phrase(&[("a", 0.0, 0.07, 330.0)], 7200);
+        // How far a sample sticks out from the line through its neighbours.
+        let spike = |i: usize| (x[i] - (x[i - 1] + x[i + 1]) * 0.5).abs();
+        let steady = (1000..3000).map(spike).fold(0.0f32, f32::max);
+        let off = (3200..3500).map(spike).fold(0.0f32, f32::max);
+        assert!(off < steady * 1.5, "note-off spike {:.4} vs steady {:.4}", off, steady);
+    }
+
+    /// Carrying the voice on to a new pitch doesn't step the filters or the
+    /// level: the formants glide on from exactly where they were. (Refitting
+    /// the starting shape to the new pitch made a one-sample spike per join.)
+    #[test]
+    fn pitch_change_hand_over_is_smooth() {
+        let x = sing_phrase(&[("a", 0.0, 0.07, 330.0), ("a", 0.076, 0.07, 390.0)], 9600);
+        let spike = |i: usize| (x[i] - (x[i - 1] + x[i + 1]) * 0.5).abs();
+        let steady = (1000..3000).map(spike).fold(0.0f32, f32::max);
+        let join = (3500..4000).map(spike).fold(0.0f32, f32::max);
+        assert!(join < steady * 1.5, "hand-over spike {:.4} vs steady {:.4}", join, steady);
     }
 }

@@ -191,15 +191,27 @@ impl FormantBank {
         t2: f32,
         f0: f32,
     ) {
-        let cur = self.cur;
-        let sr = self.sr;
         match via {
             Some(v) => {
-                self.glide_to(&cur, v, t1, f0, sr);
+                self.glide_from_here(v, t1, f0);
                 self.then = Some((*to, t2));
             }
-            None => self.glide_to(&cur, to, t1, f0, sr),
+            None => self.glide_from_here(to, t1, f0),
         }
+    }
+
+    /// Glide from exactly the current formants and level (no refit: refitting
+    /// the start to a new pitch would step the filters and gain at once, a
+    /// click) to `to` fitted at `f0`.
+    fn glide_from_here(&mut self, to: &[Formant; 3], secs: f32, f0: f32) {
+        self.from = self.cur;
+        self.level_from = self.level;
+        self.to = fit_to_pitch(to, f0);
+        self.level_to = voiced_level(&self.to, f0, self.sr);
+        self.glide = Crossfade::new(secs, self.sr);
+        self.f0 = f0;
+        self.then = None;
+        self.active = true;
     }
 
     /// The formants right now.
@@ -230,8 +242,8 @@ impl FormantBank {
             if self.glide.done() {
                 self.cur = self.to;
                 if let Some((next, secs)) = self.then.take() {
-                    let (from, f0, sr) = (self.to, self.f0, self.sr);
-                    self.glide_to(&from, &next, secs, f0, sr);
+                    let f0 = self.f0;
+                    self.glide_from_here(&next, secs, f0);
                 }
             }
         }
@@ -416,7 +428,7 @@ fn parse_consonants(s: &str) -> Vec<Cons> {
         freq: 3000.0,
         q: 1.2,
         secs: 0.09,
-        gain: 0.21,
+        gain: 0.14,
         locus: PALATAL,
         vot: 0.0,
         plosive: false,
@@ -500,7 +512,8 @@ fn consonant_for(c: char) -> Option<Consonant> {
         Some(Consonant { freq, q, secs, gain, locus, vot, plosive })
     };
     match c {
-        's' | 'z' => cons(6000.0, 2.0, 0.08, 0.22, ALVEOLAR, 0.0, false), // hiss
+        // A broad hiss (Q 1.3, not a narrow "pssh"), ~14 dB under the vowel.
+        's' | 'z' => cons(5500.0, 1.3, 0.08, 0.12, ALVEOLAR, 0.0, false),
         'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.146, LABIAL, 0.0, false), // broadband
         // h is breath through the vowel's own shape: no burst, all aspiration.
         'h' => cons(1500.0, 0.7, 0.003, 0.0, [0.0; 3], 0.07, false),
