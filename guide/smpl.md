@@ -23,6 +23,17 @@ The trailing `cfg` table (all keys optional):
 - `atk` / `dec` / `sus` / `rel` — the ADSR envelope, same as `instr` (attack,
   decay, sustain level, release — times in seconds, `sus` a 0..1 level).
 
+- `from` / `to` — play only a slice of a **loaded file**, as fractions `0..1` of
+  its length (default `0` and `1`). Bind several slices of one file into several
+  slots to chop it: they share the decoded buffer, so it costs no copy.
+
+```lua
+-- chop a one-bar break into 16 sixteenths, slots 20..35
+for k = 0, 15 do
+    smpl(20 + k, 'amen', { from = k / 16, to = (k + 1) / 16, rel = 0.01 })
+end
+```
+
 A bare number as `cfg` is still read as `base` for back-compat
 (`smpl(id, pcm, 440)`). One-shot samples play to their natural end regardless of
 the note's length, then release with `rel`.

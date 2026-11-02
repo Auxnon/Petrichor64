@@ -271,6 +271,7 @@ where
                     MIC_BANK_NAME.to_string(),
                     Some(440.0),
                     Envelope::default(),
+                    (0.0, 1.0),
                 ));
                 sent = true;
                 done.store(true, Ordering::Release);
@@ -342,6 +343,9 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     // The earliest frame anything is due, so the common case is one comparison per
     // sample instead of a scan of all 64 slots.
     let mut next_due: u64 = u64::MAX;
+    // Running sequences, and the earliest frame any of them has a step due.
+    let mut seqs: Vec<Playing> = Vec::with_capacity(MAX_SEQS);
+    let mut seq_due: u64 = u64::MAX;
 
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
@@ -352,8 +356,71 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 SoundCommand::SetBpm(b) => {
                     if b > 0.0 {
                         bpm = b;
+                        // Sequences keep their place in beats; their frames move.
+                        seq_due = 0;
                     }
                 }
+                SoundCommand::Sequence(seq) => {
+                    if seq.steps.is_empty() || seq.length <= 0.0 {
+                        continue;
+                    }
+                    let fpb = 60.0 / bpm as f64 * sample_rate as f64;
+                    let now_beat = frames as f64 / fpb;
+                    let mut start = now_beat;
+                    match seq.at {
+                        Some(a) => {
+                            start = now_beat.max(a as f64);
+                            // An explicit start replaces the old pattern outright.
+                            seqs.retain(|p| p.seq.id != seq.id || p.ghost);
+                        }
+                        None => {
+                            // Same id already running: hand over at the end of its
+                            // pass, so a pattern change never lands mid-bar.
+                            seqs.retain(|p| p.seq.id != seq.id || !p.waiting);
+                            if let Some(k) =
+                                seqs.iter().position(|p| p.seq.id == seq.id && !p.ghost)
+                            {
+                                let old = &mut seqs[k];
+                                let len = old.seq.length as f64;
+                                if old.next == 0 {
+                                    // Nothing of this pass has played yet: swap now.
+                                    start = old.start + old.pass as f64 * len;
+                                    seqs.swap_remove(k);
+                                } else {
+                                    start = old.start + (old.pass + 1) as f64 * len;
+                                    old.seq.loops = old.pass + 1;
+                                    old.ghost = true;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(g) = seq.grid.filter(|g| *g > 0.0) {
+                        let g = g as f64;
+                        // A hair of slack so a start already on the grid stays put.
+                        start = ((start - 1e-6) / g).ceil() * g;
+                    }
+                    let waiting = seq
+                        .after
+                        .map(|a| seqs.iter().any(|p| p.seq.id == a && !p.ghost))
+                        .unwrap_or(false);
+                    if seqs.len() >= MAX_SEQS {
+                        eprintln!("sound: too many sequences, {} dropped", seq.id);
+                        continue;
+                    }
+                    seqs.push(Playing {
+                        seq,
+                        start,
+                        pass: 0,
+                        next: 0,
+                        waiting,
+                        ghost: false,
+                    });
+                    seq_due = 0;
+                }
+                SoundCommand::StopSequence(id) => match id {
+                    Some(id) => seqs.retain(|p| p.seq.id != id),
+                    None => seqs.clear(),
+                },
                 SoundCommand::PlayAt(note, ch, at_beat, quant) => {
                     let c = ch.unwrap_or(0).min(channels.len() - 1);
                     let fpb = 60.0 / bpm * sample_rate;
@@ -398,12 +465,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     normalize_pcm(&mut pcm);
                     // Raw Lua PCM has no source rate — treat it as device-rate
                     // (rate_ratio 1.0), preserving the old 1-sample-per-output step.
+                    let end = pcm.len();
                     samples.insert(
                         id,
                         Sample {
                             pcm: pcm.into(),
                             base_freq,
                             rate_ratio: 1.0,
+                            start: 0,
+                            end,
                         },
                     );
                     instruments.insert(id, Instrument::sample(id).with_env(env));
@@ -416,17 +486,22 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     let source_rate = if source_rate > 0.0 { source_rate } else { sample_rate };
                     loaded.insert(name, (pcm.into(), source_rate));
                 }
-                SoundCommand::BindSample(id, name, base, env) => {
+                SoundCommand::BindSample(id, name, base, env, (from, to)) => {
                     // `smpl(id, 'name')`: resolve the loaded file once and copy
                     // its (Arc) buffer into integer slot `id`. Missing name =>
                     // leave the slot as-is (the note falls back to a default).
                     if let Some((pcm, source_rate)) = loaded.get(&name) {
+                        let n = pcm.len();
+                        let start = ((from.clamp(0.0, 1.0) * n as f32) as usize).min(n);
+                        let end = ((to.clamp(0.0, 1.0) * n as f32) as usize).clamp(start, n);
                         samples.insert(
                             id,
                             Sample {
                                 pcm: Arc::clone(pcm),
                                 base_freq: base.filter(|b| *b > 0.0).unwrap_or(440.0),
                                 rate_ratio: source_rate / sample_rate,
+                                start,
+                                end,
                             },
                         );
                         instruments.insert(id, Instrument::sample(id).with_env(env));
@@ -448,6 +523,8 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     bpm = 120.0;
                     pending = [None; MAX_SCHEDULED];
                     next_due = u64::MAX;
+                    seqs.clear();
+                    seq_due = u64::MAX;
                     frames = 0;
                 }
                 SoundCommand::Stop(ch) => match ch {
@@ -558,6 +635,72 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 }
             }
         }
+        // Walk the sequences the transport has reached. Same guard as above: one
+        // comparison per sample until a step is due.
+        if frames >= seq_due {
+            seq_due = u64::MAX;
+            let fpb = 60.0 / bpm as f64 * sample_rate as f64;
+            let secs_per_beat = 60.0 / bpm;
+            let mut i = 0;
+            while i < seqs.len() {
+                if seqs[i].waiting {
+                    i += 1;
+                    continue;
+                }
+                let mut finished = false;
+                loop {
+                    let p = &mut seqs[i];
+                    let due = (p.next_beat() * fpb) as u64;
+                    if due > frames {
+                        seq_due = seq_due.min(due);
+                        break;
+                    }
+                    let step = p.seq.steps[p.next];
+                    let c = p.seq.channel.min(channels.len() - 1);
+                    if p.seq.choke {
+                        channels[c].release_all();
+                    }
+                    // A rest is a step with no pitch: it holds its place and sounds
+                    // nothing.
+                    if step.note.frequency > 0.0 {
+                        let mut note = step.note;
+                        note.duration = step.len * secs_per_beat;
+                        channels[c].start_now(note);
+                    }
+                    p.next += 1;
+                    if p.next >= p.seq.steps.len() {
+                        p.next = 0;
+                        p.pass += 1;
+                        if p.seq.loops > 0 && p.pass >= p.seq.loops {
+                            finished = true;
+                            break;
+                        }
+                    }
+                }
+                if finished {
+                    let done = seqs.swap_remove(i);
+                    if !done.ghost {
+                        // Wake whatever was chained to it, starting on its last beat.
+                        let end = done.end_beat();
+                        for w in seqs.iter_mut() {
+                            if w.waiting && w.seq.after == Some(done.seq.id) {
+                                w.waiting = false;
+                                w.start = end;
+                                if let Some(g) = w.seq.grid.filter(|g| *g > 0.0) {
+                                    let g = g as f64;
+                                    w.start = ((end - 1e-6) / g).ceil() * g;
+                                }
+                            }
+                        }
+                    }
+                    // A woken sequence may be due this very frame: look again next
+                    // sample rather than reasoning about the swapped-in element.
+                    seq_due = frames;
+                    continue;
+                }
+                i += 1;
+            }
+        }
         frames += 1;
 
         let mut mix = 0.0f32;
@@ -592,6 +735,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         voice.coda_glide = note.coda_glide;
                         voice.coda = note.coda;
                         voice.onset = note.onset;
+                        // Short syllables keep their vowel: the consonants get at
+                        // most a third of the note each side (no-op at sung lengths).
+                        voice.onset.squeeze(note.duration * 0.35);
+                        voice.coda.squeeze(note.duration * 0.35);
                         voice.onset_i = 0;
                         voice.onset_xfade_last = true;
                         if !voice.onset.is_empty() {
@@ -659,6 +806,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
             ch_out = chan.reverb.process(ch_out);
             if !chan.fade.done() {
                 chan.gain = chan.fade.mix(chan.fade_from, chan.fade_to);
+                // `mix` returns the blend *before* its last step, so land on the
+                // target exactly: otherwise `fade(ch, 0, x)` never reaches x.
+                if chan.fade.done() {
+                    chan.gain = chan.fade_to;
+                }
             }
             mix += ch_out * chan.gain;
         }
@@ -683,16 +835,89 @@ where
     let out_channels = config.channels as usize;
     let mut next_value = make_mixer(config.sample_rate.0 as f32, audience);
     let err_fn = |err| eprintln!("audio stream error: {}", err);
+    // Dev aids for checking sound without ears: `CHOR_WAV=path` records the master
+    // bus to a mono WAV, and `CHOR_MUTE=1` sends silence to the device while the
+    // mixer (and the recording) runs as normal, so a test needn't play aloud.
+    let tap = std::env::var("CHOR_WAV").ok().map(|p| wav_tap(p, config.sample_rate.0));
+    let mute = std::env::var("CHOR_MUTE").map(|v| v == "1").unwrap_or(false);
+    let mut block: Vec<f32> = Vec::new();
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            write_data(data, out_channels, &mut next_value)
+            if tap.is_none() && !mute {
+                write_data(data, out_channels, &mut next_value);
+                return;
+            }
+            // Debug path only: this allocates on the audio thread.
+            block.clear();
+            let mut capture = || {
+                let v = next_value();
+                block.push(v);
+                if mute {
+                    0.0
+                } else {
+                    v
+                }
+            };
+            write_data(data, out_channels, &mut capture);
+            if let Some(tx) = &tap {
+                let _ = tx.try_send(block.clone());
+            }
         },
         err_fn,
         None,
     )?;
     stream.play()?;
     Ok(stream)
+}
+
+/// Start a thread that appends mono f32 blocks to a 16-bit WAV at `path`,
+/// rewriting the header's sizes after each block so the file is valid whenever
+/// the app is killed. Backs `CHOR_WAV`.
+#[cfg(all(feature = "host-io", not(target_arch = "wasm32")))]
+fn wav_tap(path: String, rate: u32) -> std::sync::mpsc::SyncSender<Vec<f32>> {
+    use std::io::{Seek, SeekFrom, Write};
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<f32>>(256);
+    std::thread::spawn(move || {
+        let mut f = match std::fs::File::create(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("CHOR_WAV: can't create {}: {}", path, e);
+                return;
+            }
+        };
+        let header = |data_len: u32| {
+            let mut h = Vec::with_capacity(44);
+            h.extend_from_slice(b"RIFF");
+            h.extend_from_slice(&(36 + data_len).to_le_bytes());
+            h.extend_from_slice(b"WAVEfmt ");
+            h.extend_from_slice(&16u32.to_le_bytes());
+            h.extend_from_slice(&1u16.to_le_bytes()); // PCM
+            h.extend_from_slice(&1u16.to_le_bytes()); // mono
+            h.extend_from_slice(&rate.to_le_bytes());
+            h.extend_from_slice(&(rate * 2).to_le_bytes());
+            h.extend_from_slice(&2u16.to_le_bytes());
+            h.extend_from_slice(&16u16.to_le_bytes());
+            h.extend_from_slice(b"data");
+            h.extend_from_slice(&data_len.to_le_bytes());
+            h
+        };
+        let _ = f.write_all(&header(0));
+        let mut len: u32 = 0;
+        for block in rx {
+            let bytes: Vec<u8> = block
+                .iter()
+                .flat_map(|v| ((v.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
+                .collect();
+            len += bytes.len() as u32;
+            let _ = f.seek(SeekFrom::End(0));
+            let _ = f.write_all(&bytes);
+            let _ = f.seek(SeekFrom::Start(0));
+            let _ = f.write_all(&header(len));
+        }
+    });
+    eprintln!("CHOR_WAV: recording the master bus");
+    tx
 }
 
 /// Web audio output: schedule short PCM chunks onto the AudioContext's own clock
@@ -818,6 +1043,11 @@ pub struct Sample {
     pcm: Arc<[f32]>,
     base_freq: f32,
     rate_ratio: f32,
+    /// The slice of `pcm` this slot plays, as frame indices `start..end`. A whole
+    /// buffer is `0..len`; `smpl(id, 'amen', {from, to})` binds a piece of one, so
+    /// a break chops into slots that all share the loaded file's `Arc`.
+    start: usize,
+    end: usize,
 }
 
 /// Full-rate white noise from a per-voice xorshift-ish LCG (advances `rng`).
@@ -876,11 +1106,11 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
 fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>, sr: f32) -> f32 {
     if let WaveType::Sample(sid) = instr.wave {
         return if let Some(s) = samples.get(&sid) {
-            let i = v.sample_pos as usize;
-            let out = if i + 1 < s.pcm.len() {
-                let frac = v.sample_pos - i as f32;
+            let i = s.start + v.sample_pos as usize;
+            let out = if i + 1 < s.end {
+                let frac = v.sample_pos.fract();
                 s.pcm[i] * (1.0 - frac) + s.pcm[i + 1] * frac
-            } else if i < s.pcm.len() {
+            } else if i < s.end {
                 s.pcm[i]
             } else {
                 v.remaining = 0.0; // one-shot finished => release
@@ -1023,6 +1253,79 @@ impl Note {
     }
 }
 
+/// One step of a [`Sequence`]: a note placed on the pattern's beat grid.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Step {
+    /// Where the step starts, in beats from the top of the pattern.
+    pub at: f32,
+    /// How long it sounds, in beats. Stays in beats until the step fires and is
+    /// converted there, because the tempo belongs to the audio thread.
+    pub len: f32,
+    pub note: Note,
+}
+
+/// A sequence (`seq`): steps on a beat grid, played once, a counted number of
+/// times, or forever, on one channel. The audio thread walks it against the
+/// transport, so every pass lands on the sample clock — a looped break never
+/// drifts from the bass under it, which a Lua loop calling `note` each frame
+/// would.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Sequence {
+    /// The caller's handle. Sending the same id again swaps the pattern at the end
+    /// of the current pass; `after` names another sequence by it.
+    pub id: usize,
+    /// Sorted by `at`. Steps sharing an `at` sound together (a chord).
+    pub steps: Vec<Step>,
+    /// Beats per pass.
+    pub length: f32,
+    /// How many passes to play. `0` = forever.
+    pub loops: u32,
+    pub channel: usize,
+    /// Absolute transport beat to start on; `None` = now (or the end of the pass,
+    /// when replacing a running sequence of the same id).
+    pub at: Option<f32>,
+    /// Snap the start up to the next multiple of this many beats.
+    pub grid: Option<f32>,
+    /// Start when the sequence with this id finishes, rather than now. A chained
+    /// intro → verse → loop is a few `seq` calls with `after`.
+    pub after: Option<usize>,
+    /// Cut whatever is still sounding on the channel when a step fires: chopped
+    /// breaks want each slice to stop the last, the way a sampler's choke group
+    /// does.
+    pub choke: bool,
+}
+
+/// A sequence on the audio thread: where it started and how far it has got.
+struct Playing {
+    seq: Sequence,
+    /// Transport beat of the first pass's beat 0.
+    start: f64,
+    pass: u32,
+    /// Index of the next step to fire.
+    next: usize,
+    /// Chained with `after` and its predecessor is still playing.
+    waiting: bool,
+    /// Superseded by a newer sequence of the same id: plays out its current pass,
+    /// then ends without starting anything chained to the id.
+    ghost: bool,
+}
+
+impl Playing {
+    fn next_beat(&self) -> f64 {
+        self.start
+            + self.pass as f64 * self.seq.length as f64
+            + self.seq.steps[self.next].at as f64
+    }
+    /// The beat this sequence's last pass ends on (only meaningful when counted).
+    fn end_beat(&self) -> f64 {
+        self.start + self.seq.loops as f64 * self.seq.length as f64
+    }
+}
+
+/// Most sequences playing at once; the store is preallocated so starting one
+/// doesn't grow it on the audio thread.
+const MAX_SEQS: usize = 32;
+
 /// Per-instrument ADSR envelope. Times are in seconds; `sustain` is a level
 /// (0..1) held while the note sounds. Defaults reproduce the old fixed envelope
 /// (fast attack, no decay, full sustain, short release) so untouched instruments
@@ -1157,6 +1460,18 @@ impl Channel {
                 self.steal = (self.steal + 1) % lanes;
                 l
             })
+    }
+    /// Start a note on this frame. `pick_lane` steals a busy lane when they're all
+    /// taken, and a stolen lane's queue would hold the note until its voice ends —
+    /// fine for `note`, but a sequencer step that starts late is a wrong note. So
+    /// the voice in the way is sent to its release instead.
+    fn start_now(&mut self, note: Note) {
+        let l = self.pick_lane();
+        if let Some(v) = self.current[l].take() {
+            self.fading[l] = Some(v);
+        }
+        self.queues[l].clear();
+        self.queues[l].push_back(note);
     }
     /// Release every lane (clear queues, ramp sounding voices down): `mute`/`Stop`.
     fn release_all(&mut self) {
@@ -1436,6 +1751,10 @@ pub enum SoundCommand {
     /// Beats are converted to frames *here*, on the audio thread, so tempo has one
     /// owner and a bpm change cannot race a scheduled note.
     PlayAt(Note, Option<usize>, f32, Option<f32>),
+    /// Start (or swap in) a sequence. Backs `seq(id, steps, cfg)`.
+    Sequence(Sequence),
+    /// Stop a sequence by id (`None` = all). Notes already sounding ring out.
+    StopSequence(Option<usize>),
     MakeInstrument(Instrument),
     /// Store a PCM sample (id, mono samples -1..1, base pitch, envelope) and
     /// register a same-id instrument that plays it.
@@ -1444,8 +1763,10 @@ pub enum SoundCommand {
     /// sample-rate). Sent by the asset loader at boot; bound later by BindSample.
     LoadSample(String, Vec<f32>, f32),
     /// Bind a name-banked sound into integer instrument slot `id`, optionally
-    /// overriding its base pitch, with an envelope. Backs `smpl(id, 'name', cfg?)`.
-    BindSample(usize, String, Option<f32>, Envelope),
+    /// overriding its base pitch, with an envelope and the slice of the file to
+    /// play (`from`, `to` as 0..1 fractions; `(0, 1)` = all of it). Backs
+    /// `smpl(id, 'name', cfg?)`.
+    BindSample(usize, String, Option<f32>, Envelope, (f32, f32)),
     /// Play one note. `Some(ch)` targets a channel; `None` = channel 0 (the
     /// default track). The note takes a free lane of that channel, so overlapping
     /// notes on one channel form a chord (up to its lane count).
@@ -1617,6 +1938,124 @@ mod tests {
         assert!(at < 100, "expected an immediate start, got {}", at);
     }
 
+    /// Frames (at 48kHz) where sound starts after a stretch of silence: one entry
+    /// per note a sequence fired, as long as the notes are shorter than the gaps.
+    fn onsets(cmds: Vec<SoundCommand>, n: usize) -> Vec<usize> {
+        let (tx, rx) = channel::<SoundCommand>();
+        for c in cmds {
+            tx.send(c).unwrap();
+        }
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        let mut out = Vec::new();
+        let mut quiet = 1000;
+        for i in 0..n {
+            if mixer().abs() > 0.001 {
+                if quiet >= 1000 {
+                    out.push(i);
+                }
+                quiet = 0;
+            } else {
+                quiet += 1;
+            }
+        }
+        out
+    }
+
+    fn seq_of(id: usize, beats: &[f32], loops: u32, after: Option<usize>) -> Sequence {
+        let mut at = 0.0;
+        let mut steps = Vec::new();
+        for &b in beats {
+            steps.push(Step { at, len: 0.1, note: Note::new(0, 440.0, 0.0, 1.0) });
+            at += b;
+        }
+        Sequence {
+            id,
+            steps,
+            length: at,
+            loops,
+            channel: 0,
+            at: None,
+            grid: None,
+            after,
+            choke: false,
+        }
+    }
+
+    /// A counted loop plays its pattern that many times, each pass on the beat,
+    /// and then stops. 120bpm: a beat is 24000 frames.
+    #[test]
+    fn a_counted_sequence_loops_then_stops() {
+        let hits = onsets(
+            vec![SoundCommand::SetBpm(120.0), SoundCommand::Sequence(seq_of(1, &[1.0, 1.0], 3, None))],
+            48000 * 4,
+        );
+        assert_eq!(hits.len(), 6, "2 steps x 3 passes, got {:?}", hits);
+        for (k, &h) in hits.iter().enumerate() {
+            let want = k * 24000;
+            assert!(h >= want && h < want + 100, "hit {} at {}, want ~{}", k, h, want);
+        }
+    }
+
+    /// `after` starts a sequence on the beat its predecessor's last pass ends.
+    #[test]
+    fn a_chained_sequence_starts_when_the_first_ends() {
+        let hits = onsets(
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::Sequence(seq_of(1, &[1.0], 2, None)),
+                SoundCommand::Sequence(seq_of(2, &[1.0], 1, Some(1))),
+            ],
+            48000 * 3,
+        );
+        assert_eq!(hits.len(), 3, "got {:?}", hits);
+        assert!((48000..48100).contains(&hits[2]), "chained start at {}", hits[2]);
+    }
+
+    /// An infinite loop keeps going until stopped.
+    #[test]
+    fn a_forever_sequence_stops_on_request() {
+        let (tx, rx) = channel::<SoundCommand>();
+        tx.send(SoundCommand::SetBpm(240.0)).unwrap();
+        tx.send(SoundCommand::Sequence(seq_of(7, &[1.0], 0, None))).unwrap();
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        let mut loud_late = 0.0f32;
+        for i in 0..48000 * 2 {
+            let v = mixer().abs();
+            if i > 48000 + 2000 {
+                loud_late = loud_late.max(v);
+            }
+        }
+        assert!(loud_late > 0.01, "forever loop went quiet");
+        tx.send(SoundCommand::StopSequence(Some(7))).unwrap();
+        let mut after = 0.0f32;
+        for i in 0..48000 {
+            let v = mixer().abs();
+            if i > 6000 {
+                after = after.max(v);
+            }
+        }
+        assert!(after < 0.001, "stopped loop still sounding: {}", after);
+    }
+
+    /// A bound slice plays only its part of the file: a slice of the silent half
+    /// is silent.
+    #[test]
+    fn a_sample_slice_plays_only_its_range() {
+        let mut pcm = vec![0.0f32; 8000];
+        for (i, s) in pcm.iter_mut().enumerate().take(4000) {
+            *s = (i as f32 * 0.05).sin();
+        }
+        let peak = peak_of(
+            vec![
+                SoundCommand::LoadSample("half".into(), pcm, 48000.0),
+                SoundCommand::BindSample(3, "half".into(), None, Envelope::default(), (0.5, 1.0)),
+                SoundCommand::PlayNote(Note::new(3, 440.0, 1.0, 1.0), None),
+            ],
+            8000,
+        );
+        assert!(peak < 0.001, "silent slice made sound: {}", peak);
+    }
+
     /// The most basic contract there is: `note()` must make sound. Guards the
     /// whole chain (channel/lane allocation, envelope, oscillator, effect chain,
     /// master limiter) against silent regressions.
@@ -1663,7 +2102,7 @@ mod tests {
         let peak = peak_of(
             vec![
                 SoundCommand::LoadSample("tone".into(), fake_pcm(22050), 44100.0),
-                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default()),
+                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default(), (0.0, 1.0)),
                 SoundCommand::PlayNote(Note::new(2, 440.0, 0.5, 1.0), Some(2)),
             ],
             4800,
@@ -1678,7 +2117,7 @@ mod tests {
         let peak = peak_of(
             vec![
                 SoundCommand::LoadSample("tone".into(), fake_pcm(22050), 44100.0),
-                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default()),
+                SoundCommand::BindSample(2, "tone".into(), None, Envelope::default(), (0.0, 1.0)),
                 SoundCommand::CrushChannel(2, 4.0, 600.0),
                 SoundCommand::PlayNote(Note::new(2, 440.0, 0.5, 1.0), Some(2)),
             ],
