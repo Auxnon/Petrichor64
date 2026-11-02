@@ -20,10 +20,100 @@ pub struct Formant {
     pub gain: f32,
 }
 
+/// How loud a sung vowel comes out (rms of the formant bank's output at volume 1),
+/// whatever the vowel and pitch. See [`voiced_level`].
+pub const VOWEL_RMS: f32 = 0.13;
+
+/// The narrowest each formant may be (Hz), and the narrowest relative to the
+/// note's pitch. Narrow resonances make a vowel's loudness depend on whether a
+/// harmonic happens to land on a peak; a band at least ~0.6 × f0 wide always
+/// holds one.
+const MIN_BW: [f32; 3] = [80.0, 100.0, 140.0];
+const MIN_BW_F0: f32 = 0.6;
+
+/// Fit a vowel's formants to the note it's sung on, the way a singer does:
+/// - F1 never sits below the fundamental (~1.1 × f0). A high /i/ or /u/ has its
+///   F1 at 270–320 Hz; sung at 520 Hz that resonance has no harmonic to ring,
+///   the vowel all but vanishes and only noise is left. Sopranos raise F1 to
+///   follow the pitch for the same reason. F2 keeps clear of the raised F1.
+/// - Each formant is at least [`MIN_BW`] wide (and 0.6 × f0), so the vowel
+///   doesn't flicker between loud and silent as the melody moves.
+pub fn fit_to_pitch(formants: &[Formant; 3], f0: f32) -> [Formant; 3] {
+    let mut out = *formants;
+    if f0 > 0.0 {
+        let f1_floor = f0 * 1.1;
+        if out[0].freq < f1_floor {
+            out[0].freq = f1_floor;
+        }
+        if out[1].freq < out[0].freq * 1.3 {
+            out[1].freq = out[0].freq * 1.3;
+        }
+    }
+    for (i, f) in out.iter_mut().enumerate() {
+        let min_bw = MIN_BW[i].max(f0 * MIN_BW_F0);
+        let max_q = f.freq / min_bw;
+        if f.q > max_q {
+            f.q = max_q.max(0.5);
+        }
+    }
+    out
+}
+
+/// The output gain that makes a sawtooth at `f0` through these (parallel,
+/// constant-peak band-pass) formants come out at [`VOWEL_RMS`]. Worked out from
+/// the filters' response at each harmonic — once per note, not per sample.
+pub fn voiced_level(formants: &[Formant; 3], f0: f32, sample_rate: f32) -> f32 {
+    if f0 <= 0.0 {
+        return 1.0;
+    }
+    // Band-pass coefficients (as Biquad::retune), evaluated on the unit circle.
+    let mut coef = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 3];
+    for (c, f) in coef.iter_mut().zip(formants.iter()) {
+        let w0 = std::f32::consts::TAU * f.freq / sample_rate;
+        let (sin_w0, cos_w0) = w0.sin_cos();
+        let alpha = sin_w0 / (2.0 * f.q.max(0.001));
+        let a0 = 1.0 + alpha;
+        *c = (alpha / a0, -2.0 * cos_w0 / a0, (1.0 - alpha) / a0, f.gain);
+    }
+    let top = (sample_rate * 0.45).min(12_000.0);
+    let mut power = 0.0f32;
+    let mut n = 1;
+    loop {
+        let hz = f0 * n as f32;
+        if hz > top {
+            break;
+        }
+        let w = std::f32::consts::TAU * hz / sample_rate;
+        let (s1, c1) = w.sin_cos();
+        let (s2, c2) = (2.0 * w).sin_cos();
+        // H(z) = b0 (1 - z^-2) / (1 + a1 z^-1 + a2 z^-2), z^-k = cos(kw) - j sin(kw)
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for &(b0, a1, a2, g) in coef.iter() {
+            let (nr, ni) = (b0 * (1.0 - c2), b0 * s2);
+            let (dr, di) = (1.0 + a1 * c1 + a2 * c2, -(a1 * s1 + a2 * s2));
+            let d = dr * dr + di * di;
+            re += g * (nr * dr + ni * di) / d;
+            im += g * (ni * dr - nr * di) / d;
+        }
+        // A -1..1 sawtooth's nth harmonic has amplitude 2/(πn).
+        let amp = 2.0 / (std::f32::consts::PI * n as f32);
+        power += amp * amp * (re * re + im * im) * 0.5;
+        n += 1;
+    }
+    if power <= 1e-12 {
+        return 1.0;
+    }
+    (VOWEL_RMS / power.sqrt()).min(20.0)
+}
+
 /// A per-voice bank of up to three formant filters summed in parallel. Can hold
 /// a steady vowel or glide between two formant sets (for voiced consonants and
 /// diphthongs) — the filters are retuned each sample toward the target while a
 /// crossfade ramp runs. Inactive until `set`/`glide_to`, so plain notes skip it.
+///
+/// Both take the note's pitch: the formants are fitted to it ([`fit_to_pitch`])
+/// and the output is levelled ([`voiced_level`]) so every vowel, at every pitch,
+/// comes out equally loud. The level glides along with the formants.
 #[derive(Clone, Copy, Default)]
 pub struct FormantBank {
     filters: [Biquad; 3],
@@ -32,30 +122,47 @@ pub struct FormantBank {
     glide: Crossfade,
     sr: f32,
     active: bool,
+    level_from: f32,
+    level_to: f32,
+    level: f32,
 }
 
 impl FormantBank {
-    /// Set a steady vowel (no glide).
-    pub fn set(&mut self, formants: &[Formant; 3], sample_rate: f32) {
-        self.from = *formants;
-        self.to = *formants;
+    /// Set a steady vowel (no glide), sung at `f0`.
+    pub fn set(&mut self, formants: &[Formant; 3], f0: f32, sample_rate: f32) {
+        let fitted = fit_to_pitch(formants, f0);
+        self.from = fitted;
+        self.to = fitted;
         self.sr = sample_rate;
-        for (bq, f) in self.filters.iter_mut().zip(formants.iter()) {
+        for (bq, f) in self.filters.iter_mut().zip(fitted.iter()) {
             bq.retune(f.freq, f.q, f.gain, sample_rate);
         }
+        self.level = voiced_level(&fitted, f0, sample_rate);
+        self.level_from = self.level;
+        self.level_to = self.level;
         self.glide = Crossfade::default(); // already at target
         self.active = true;
     }
 
     /// Start at `from` and glide the formants to `to` over `secs` — a voiced
     /// consonant sliding into its vowel, or a diphthong (vowel→vowel).
-    pub fn glide_to(&mut self, from: &[Formant; 3], to: &[Formant; 3], secs: f32, sample_rate: f32) {
-        self.from = *from;
-        self.to = *to;
+    pub fn glide_to(
+        &mut self,
+        from: &[Formant; 3],
+        to: &[Formant; 3],
+        secs: f32,
+        f0: f32,
+        sample_rate: f32,
+    ) {
+        self.from = fit_to_pitch(from, f0);
+        self.to = fit_to_pitch(to, f0);
         self.sr = sample_rate;
-        for (bq, f) in self.filters.iter_mut().zip(from.iter()) {
+        for (bq, f) in self.filters.iter_mut().zip(self.from.iter()) {
             bq.retune(f.freq, f.q, f.gain, sample_rate);
         }
+        self.level_from = voiced_level(&self.from, f0, sample_rate);
+        self.level_to = voiced_level(&self.to, f0, sample_rate);
+        self.level = self.level_from;
         self.glide = Crossfade::new(secs, sample_rate);
         self.active = true;
     }
@@ -78,12 +185,13 @@ impl FormantBank {
                     self.sr,
                 );
             }
+            self.level = self.level_from + (self.level_to - self.level_from) * t;
         }
         let mut out = 0.0;
         for bq in self.filters.iter_mut() {
             out += bq.process(src);
         }
-        out
+        out * self.level
     }
 }
 
@@ -233,7 +341,7 @@ enum Cons {
 /// digraphs: `sh`/`ch` (hiss), `ng` (nasal), `ck` (→k), `th` (→f-ish). Used for
 /// both the onset and coda clusters, so `str`/`spl`/`nts`/`nk` all decompose.
 fn parse_consonants(s: &str) -> Vec<Cons> {
-    let sh = Consonant { freq: 3000.0, q: 1.2, secs: 0.09, gain: 0.5 };
+    let sh = Consonant { freq: 3000.0, q: 1.2, secs: 0.09, gain: 0.21 };
     let chars: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -308,13 +416,13 @@ fn consonant_for(c: char) -> Option<Consonant> {
         })
     };
     match c {
-        's' | 'z' => cons(6000.0, 2.0, 0.08, 0.5), // hiss
-        'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.45), // broadband
-        'h' => cons(1500.0, 0.7, 0.06, 0.4),       // breathy
-        't' | 'd' => cons(4000.0, 1.5, 0.02, 0.7), // sharp tick
-        'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.02, 0.7), // mid pop
-        'j' => cons(2800.0, 1.2, 0.05, 0.5),       // a short ch
-        'p' | 'b' => cons(800.0, 1.2, 0.02, 0.7),  // low pop
+        's' | 'z' => cons(6000.0, 2.0, 0.08, 0.22), // hiss
+        'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.146), // broadband
+        'h' => cons(1500.0, 0.7, 0.06, 0.11),      // breathy
+        't' | 'd' => cons(4000.0, 1.5, 0.02, 0.19), // sharp tick
+        'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.02, 0.24), // mid pop
+        'j' => cons(2800.0, 1.2, 0.05, 0.22),      // a short ch
+        'p' | 'b' => cons(800.0, 1.2, 0.02, 0.235), // low pop
         _ => None, // vowels + l/r/m/n/w/y
     }
 }

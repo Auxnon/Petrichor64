@@ -717,11 +717,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         // voice character (breath/vibrato) onto the voice.
                         if let Some(target) = &note.formants {
                             if let Some(from) = &note.glide_from {
-                                voice
-                                    .voice_bank
-                                    .glide_to(from, target, note.glide_secs, sample_rate);
+                                voice.voice_bank.glide_to(
+                                    from,
+                                    target,
+                                    note.glide_secs,
+                                    note.frequency,
+                                    sample_rate,
+                                );
                             } else {
-                                voice.voice_bank.set(target, sample_rate);
+                                voice.voice_bank.set(target, note.frequency, sample_rate);
                             }
                             voice.vowel = *target; // for a voiced coda to glide from
                             voice.breath = chan.breath;
@@ -735,10 +739,12 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         voice.coda_glide = note.coda_glide;
                         voice.coda = note.coda;
                         voice.onset = note.onset;
-                        // Short syllables keep their vowel: the consonants get at
-                        // most a third of the note each side (no-op at sung lengths).
-                        voice.onset.squeeze(note.duration * 0.35);
-                        voice.coda.squeeze(note.duration * 0.35);
+                        // Short syllables keep their vowel: the onset gets at most a
+                        // fifth of the note and the coda a seventh (no-op at sung
+                        // lengths). At a third each side, a 70ms talk blip like
+                        // "shoot" was two-thirds hiss and read as whispered.
+                        voice.onset.squeeze(note.duration * 0.2);
+                        voice.coda.squeeze(note.duration * 0.15);
                         voice.onset_i = 0;
                         voice.onset_xfade_last = true;
                         if !voice.onset.is_empty() {
@@ -1050,6 +1056,22 @@ pub struct Sample {
     end: usize,
 }
 
+/// PolyBLEP correction for a ramp's reset at phase `t` (0..1) stepping `dt` per
+/// sample: subtract from a naive sawtooth to band-limit its edge.
+fn poly_blep(t: f32, dt: f32) -> f32 {
+    if dt <= 0.0 {
+        0.0
+    } else if t < dt {
+        let x = t / dt;
+        x + x - x * x - 1.0
+    } else if t > 1.0 - dt {
+        let x = (t - 1.0) / dt;
+        x * x + x + x + 1.0
+    } else {
+        0.0
+    }
+}
+
 /// Full-rate white noise from a per-voice xorshift-ish LCG (advances `rng`).
 /// Shared by the noise oscillator and the consonant onsets.
 fn white_noise(rng: &mut u32) -> f32 {
@@ -1142,11 +1164,19 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
     // crossfade. `advance` steps the phase.
     v.advance();
     let body = if v.voice_bank.is_active() {
-        const PI: f32 = std::f32::consts::PI;
-        // Breath: aspiration noise mixed into the glottal source, then shaped by
-        // the same formants — a breathy vowel rather than a hiss on top.
-        let saw = v.phase / PI - 1.0;
-        let src = saw + v.breath * white_noise(&mut v.rng);
+        // Glottal source: a band-limited (PolyBLEP) sawtooth. The naive ramp
+        // aliases badly at sung pitches, and the folded-back partials land
+        // between the harmonics as a gritty hiss of their own.
+        let t = v.phase / TWO_PI;
+        let dt = v.phase_inc / TWO_PI;
+        let saw = 2.0 * t - 1.0 - poly_blep(t, dt);
+        // Breath: aspiration noise mixed into the source, then shaped by the same
+        // formants — a breathy vowel rather than a hiss on top. It pulses with
+        // each glottal cycle (loudest just after the reset, where the folds open),
+        // as real aspiration does; steady noise is heard as a separate whisper
+        // beside the voice instead of as part of it.
+        let pulse = 0.35 + 0.65 * (0.5 + 0.5 * v.phase.cos());
+        let src = saw + v.breath * pulse * white_noise(&mut v.rng);
         v.voice_bank.process(src)
     } else {
         osc(v.phase, instr, &mut v.rng)
@@ -1613,7 +1643,8 @@ impl Voice {
                     self.coda_stage = CodaStage::Bursts;
                     if let Some(target) = self.coda_glide.take() {
                         // Glide the vowel into the nasal/liquid ending, staying tonal.
-                        self.voice_bank.glide_to(&self.vowel, &target, 0.08, sr);
+                        self.voice_bank
+                            .glide_to(&self.vowel, &target, 0.08, self.freq, sr);
                         self.remaining = 0.08;
                         return true;
                     }
@@ -2177,5 +2208,56 @@ mod tests {
             9600,
         );
         assert!(peak > 0.01, "expected signal, got peak {}", peak);
+    }
+
+    /// Render a sung syllable on its own and return the samples.
+    fn sing_alone(syl: &str, hz: f32, secs: f32, n: usize) -> Vec<f32> {
+        let (tx, rx) = channel::<SoundCommand>();
+        let s = crate::vocaloid::parse_syllable(syl);
+        tx.send(SoundCommand::PlayNote(Note::sung(hz, secs, 1.0, &s), Some(1)))
+            .unwrap();
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        (0..n).map(|_| mixer()).collect()
+    }
+
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+    }
+
+    /// Every vowel at every pitch comes out equally loud. Before the bank was
+    /// levelled, /u/ was 10× louder at 330 Hz than at 520 Hz, so a melody pumped
+    /// and its high notes went quiet enough for the consonants and breath to
+    /// read as a whisper.
+    #[test]
+    fn vowels_are_equally_loud_at_any_pitch() {
+        let mut levels = Vec::new();
+        for v in ["a", "ee", "oo", "o", "ae", "uh"] {
+            for hz in [130.0, 220.0, 330.0, 520.0, 700.0] {
+                let x = sing_alone(v, hz, 0.6, 24000);
+                levels.push((v, hz, rms(&x[9600..24000])));
+            }
+        }
+        let lo = levels.iter().map(|l| l.2).fold(f32::MAX, f32::min);
+        let hi = levels.iter().map(|l| l.2).fold(0.0, f32::max);
+        assert!(lo > 0.01, "a vowel went silent: {:?}", levels);
+        assert!(hi / lo < 1.2, "vowel levels spread {:.2}x: {:?}", hi / lo, levels);
+    }
+
+    /// A consonant is quieter than the vowel it leads into (real speech puts an
+    /// /s/ 10–15 dB down). At equal loudness every syllable starts with a hiss.
+    #[test]
+    fn consonants_sit_under_the_vowel() {
+        for c in ["s", "f", "h", "t", "k", "p", "j", "sh"] {
+            let x = sing_alone(&format!("{}a", c), 220.0, 0.4, 19200);
+            let burst = rms(&x[..480]);
+            let vowel = rms(&x[9600..16800]);
+            assert!(
+                burst < vowel * 0.45,
+                "'{}' burst {:.3} vs vowel {:.3}",
+                c,
+                burst,
+                vowel
+            );
+        }
     }
 }
