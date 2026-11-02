@@ -431,7 +431,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                             target = (target / g).ceil() * g;
                         }
                     }
-                    let at = (target * fpb) as u64;
+                    let beat_at = (target * fpb) as u64;
+                    let at = beat_at.saturating_sub(preroll_frames(&note, sample_rate)).max(frames);
+                    let mut note = note;
+                    note.preroll = (beat_at - at.min(beat_at)) as f32 / sample_rate;
                     match pending.iter_mut().find(|slot| slot.is_none()) {
                         Some(slot) => {
                             *slot = Some((at, note, c));
@@ -650,12 +653,15 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 let mut finished = false;
                 loop {
                     let p = &mut seqs[i];
-                    let due = (p.next_beat() * fpb) as u64;
+                    let step = p.seq.steps[p.next];
+                    let beat_at = (p.next_beat() * fpb) as u64;
+                    let mut timed = step.note;
+                    timed.duration = step.len * secs_per_beat;
+                    let due = beat_at.saturating_sub(preroll_frames(&timed, sample_rate));
                     if due > frames {
                         seq_due = seq_due.min(due);
                         break;
                     }
-                    let step = p.seq.steps[p.next];
                     let c = p.seq.channel.min(channels.len() - 1);
                     if p.seq.choke {
                         channels[c].release_all();
@@ -663,8 +669,8 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     // A rest is a step with no pitch: it holds its place and sounds
                     // nothing.
                     if step.note.frequency > 0.0 {
-                        let mut note = step.note;
-                        note.duration = step.len * secs_per_beat;
+                        let mut note = timed;
+                        note.preroll = beat_at.saturating_sub(frames) as f32 / sample_rate;
                         channels[c].start_now(note);
                     }
                     p.next += 1;
@@ -723,7 +729,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         // fifth of the note and the coda a seventh (no-op at sung
                         // lengths). At a third each side, a 70ms talk blip like
                         // "shoot" was two-thirds hiss and read as whispered.
-                        voice.onset.squeeze(note.duration * 0.2);
+                        // A pre-rolled onset has its head start on top (it sounds
+                        // before the beat), and the note runs that much longer.
+                        voice.onset.squeeze(note.preroll + note.duration * 0.2);
+                        voice.remaining += note.preroll;
                         voice.coda.squeeze(note.duration * 0.15);
                         voice.onset_i = 0;
                         voice.onset_xfade_last = true;
@@ -1054,6 +1063,22 @@ pub struct Sample {
     end: usize,
 }
 
+/// Longest a sung onset is started ahead of its beat.
+const PREROLL_MAX: f32 = 0.06;
+
+/// How far ahead of its beat to start a sung note (in frames): long enough for
+/// its unvoiced onset (bursts and aspiration) to sound before the vowel, the
+/// way a singer starts an s early so the vowel lands on time — at most 60ms and
+/// 60% of the note. Squeezing the s into the note instead made it a click.
+fn preroll_frames(note: &Note, sr: f32) -> u64 {
+    if note.formants.is_none() || note.onset.is_empty() {
+        return 0;
+    }
+    let onset: f32 = note.onset.iter().map(|k| k.secs + k.vot).sum();
+    let secs = onset.min(PREROLL_MAX).min(note.duration * 0.6);
+    (secs.max(0.0) * sr) as u64
+}
+
 /// Aspiration level (noise into the formants) at the start of the gap between a
 /// p/t/k/h and its vowel; fades as the voice comes in.
 const ASPIRATION: f32 = 0.4;
@@ -1106,6 +1131,21 @@ fn start_sung(chan: &mut Channel, voice: &mut Voice, note: &Note, target: &[Form
             voice.voice_toward(1.0, 0.02, sr);
         }
         _ => {
+            // Started early for its consonant: the syllable before is still
+            // sustaining. It closes toward this consonant and lets go halfway
+            // through the head start, so the vowel fades into the hiss instead
+            // of the two sounding side by side.
+            if note.preroll > 0.0 {
+                if let Some(pl) = chan.last_sung.filter(|&pl| pl < lanes) {
+                    if let Some(p) = chan.current[pl].as_mut().filter(|p| p.sung) {
+                        p.remaining = p.remaining.min(note.preroll * 0.5);
+                        if let Some(locus) = note.glide_from.as_ref() {
+                            let f = p.cur_freq;
+                            p.voice_bank.glide_on(None, note.preroll, locus, 0.0, f);
+                        }
+                    }
+                }
+            }
             // Starting after a consonant (or from silence). A previous syllable
             // still dying away closes toward this consonant as it goes.
             if let (Some(pl), Some(locus)) = (prev, note.glide_from.as_ref()) {
@@ -1345,6 +1385,11 @@ pub struct Note {
     /// `SungSyllable::coda_locus`).
     #[serde(default)]
     pub coda_locus: Option<[Formant; 3]>,
+    /// Seconds this note was started ahead of its beat so its unvoiced onset
+    /// (s, t, sh...) sounds *before* the beat and the vowel lands on it. Set by
+    /// the scheduler (see `preroll_frames`), not by the caller.
+    #[serde(default)]
+    pub preroll: f32,
     /// Coda consonant cluster: unvoiced bursts played after the vowel (the "t"
     /// in "cat", "t"+"s" in "cats").
     pub coda: Cluster,
@@ -1362,6 +1407,7 @@ impl Note {
             glide_secs: 0.0,
             coda_glide: None,
             coda_locus: None,
+            preroll: 0.0,
             coda: Cluster::default(),
         }
     }
@@ -1384,6 +1430,7 @@ impl Note {
             glide_secs: syllable.glide_secs,
             coda_glide: syllable.coda_glide,
             coda_locus: syllable.coda_locus,
+            preroll: 0.0,
             coda: syllable.coda,
         }
     }
@@ -2559,5 +2606,17 @@ mod tests {
         let steady = (1000..3000).map(spike).fold(0.0f32, f32::max);
         let join = (3500..4000).map(spike).fold(0.0f32, f32::max);
         assert!(join < steady * 1.5, "hand-over spike {:.4} vs steady {:.4}", join, steady);
+    }
+
+    /// A sung onset consonant starts ahead of the beat so the vowel lands on it:
+    /// "sa" on beat 0.2s hisses before 0.2s and is voicing by 0.215s. Squeezed
+    /// into the note instead, a short syllable's s was a ~20ms click.
+    #[test]
+    fn onset_consonant_starts_before_the_beat() {
+        let x = sing_phrase(&[("sa", 0.2, 0.12, 220.0)], 19200);
+        let before = rms(&x[7440..9360]); // 155..195ms
+        assert!(before > 0.002, "nothing before the beat (rms {:.4})", before);
+        let vowel = periodicity(&x[10320..11280]); // 215..235ms
+        assert!(vowel > 0.85, "vowel not voicing just after the beat ({:.2})", vowel);
     }
 }
