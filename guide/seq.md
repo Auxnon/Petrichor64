@@ -24,6 +24,9 @@ do anything while it plays.
   - `at=` an explicit beat in the pattern, instead of following the previous step;
   - `say=` a syllable to **sing** at that pitch instead of playing the
     instrument (same spelling as `sing`), so lyrics ride the same clock.
+    A syllable's opening s/t/k/sh... starts a little *before* its beat (up to
+    60ms) so the vowel lands on it, and consecutive voiced syllables on a
+    channel run together as one voice.
 - `cfg` (all optional):
   - `ch` — channel (default `0`); effects and `vox` are the channel's;
   - `loop` — passes to play: `1` (default), `4`, or `true`/`0` for forever;

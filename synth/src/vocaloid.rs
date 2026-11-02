@@ -20,10 +20,106 @@ pub struct Formant {
     pub gain: f32,
 }
 
+/// How loud a sung vowel comes out (rms of the formant bank's output at volume 1),
+/// whatever the vowel and pitch. See [`voiced_level`]. Set so a sung note is as
+/// loud as a saw note (its source) at the same volume; at 0.13 it was ~12 dB
+/// under every instrument and sank in a mix.
+pub const VOWEL_RMS: f32 = 0.55;
+
+/// The consonant gains below were tuned against a vowel level of 0.13; they
+/// scale with [`VOWEL_RMS`] so they keep their place under the vowel.
+const BURST: f32 = VOWEL_RMS / 0.13;
+
+/// The narrowest each formant may be (Hz), and the narrowest relative to the
+/// note's pitch. Narrow resonances make a vowel's loudness depend on whether a
+/// harmonic happens to land on a peak; a band at least ~0.6 × f0 wide always
+/// holds one.
+const MIN_BW: [f32; 3] = [80.0, 100.0, 140.0];
+const MIN_BW_F0: f32 = 0.6;
+
+/// Fit a vowel's formants to the note it's sung on, the way a singer does:
+/// - F1 never sits below the fundamental (~1.1 × f0). A high /i/ or /u/ has its
+///   F1 at 270–320 Hz; sung at 520 Hz that resonance has no harmonic to ring,
+///   the vowel all but vanishes and only noise is left. Sopranos raise F1 to
+///   follow the pitch for the same reason. F2 keeps clear of the raised F1.
+/// - Each formant is at least [`MIN_BW`] wide (and 0.6 × f0), so the vowel
+///   doesn't flicker between loud and silent as the melody moves.
+pub fn fit_to_pitch(formants: &[Formant; 3], f0: f32) -> [Formant; 3] {
+    let mut out = *formants;
+    if f0 > 0.0 {
+        let f1_floor = f0 * 1.1;
+        if out[0].freq < f1_floor {
+            out[0].freq = f1_floor;
+        }
+        if out[1].freq < out[0].freq * 1.3 {
+            out[1].freq = out[0].freq * 1.3;
+        }
+    }
+    for (i, f) in out.iter_mut().enumerate() {
+        let min_bw = MIN_BW[i].max(f0 * MIN_BW_F0);
+        let max_q = f.freq / min_bw;
+        if f.q > max_q {
+            f.q = max_q.max(0.5);
+        }
+    }
+    out
+}
+
+/// The output gain that makes a sawtooth at `f0` through these (parallel,
+/// constant-peak band-pass) formants come out at [`VOWEL_RMS`]. Worked out from
+/// the filters' response at each harmonic — once per note, not per sample.
+pub fn voiced_level(formants: &[Formant; 3], f0: f32, sample_rate: f32) -> f32 {
+    if f0 <= 0.0 {
+        return 1.0;
+    }
+    // Band-pass coefficients (as Biquad::retune), evaluated on the unit circle.
+    let mut coef = [(0.0f32, 0.0f32, 0.0f32, 0.0f32); 3];
+    for (c, f) in coef.iter_mut().zip(formants.iter()) {
+        let w0 = std::f32::consts::TAU * f.freq / sample_rate;
+        let (sin_w0, cos_w0) = w0.sin_cos();
+        let alpha = sin_w0 / (2.0 * f.q.max(0.001));
+        let a0 = 1.0 + alpha;
+        *c = (alpha / a0, -2.0 * cos_w0 / a0, (1.0 - alpha) / a0, f.gain);
+    }
+    let top = (sample_rate * 0.45).min(12_000.0);
+    let mut power = 0.0f32;
+    let mut n = 1;
+    loop {
+        let hz = f0 * n as f32;
+        if hz > top {
+            break;
+        }
+        let w = std::f32::consts::TAU * hz / sample_rate;
+        let (s1, c1) = w.sin_cos();
+        let (s2, c2) = (2.0 * w).sin_cos();
+        // H(z) = b0 (1 - z^-2) / (1 + a1 z^-1 + a2 z^-2), z^-k = cos(kw) - j sin(kw)
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for &(b0, a1, a2, g) in coef.iter() {
+            let (nr, ni) = (b0 * (1.0 - c2), b0 * s2);
+            let (dr, di) = (1.0 + a1 * c1 + a2 * c2, -(a1 * s1 + a2 * s2));
+            let d = dr * dr + di * di;
+            re += g * (nr * dr + ni * di) / d;
+            im += g * (ni * dr - nr * di) / d;
+        }
+        // A -1..1 sawtooth's nth harmonic has amplitude 2/(πn).
+        let amp = 2.0 / (std::f32::consts::PI * n as f32);
+        power += amp * amp * (re * re + im * im) * 0.5;
+        n += 1;
+    }
+    if power <= 1e-12 {
+        return 1.0;
+    }
+    (VOWEL_RMS / power.sqrt()).min(20.0)
+}
+
 /// A per-voice bank of up to three formant filters summed in parallel. Can hold
 /// a steady vowel or glide between two formant sets (for voiced consonants and
 /// diphthongs) — the filters are retuned each sample toward the target while a
 /// crossfade ramp runs. Inactive until `set`/`glide_to`, so plain notes skip it.
+///
+/// Both take the note's pitch: the formants are fitted to it ([`fit_to_pitch`])
+/// and the output is levelled ([`voiced_level`]) so every vowel, at every pitch,
+/// comes out equally loud. The level glides along with the formants.
 #[derive(Clone, Copy, Default)]
 pub struct FormantBank {
     filters: [Biquad; 3],
@@ -32,32 +128,101 @@ pub struct FormantBank {
     glide: Crossfade,
     sr: f32,
     active: bool,
+    level_from: f32,
+    level_to: f32,
+    level: f32,
+    /// The pitch the bank is fitted to.
+    f0: f32,
+    /// Where the formants are right now (mid-glide or landed).
+    cur: [Formant; 3],
+    /// A second glide to start when this one lands: (target, seconds).
+    then: Option<([Formant; 3], f32)>,
 }
 
 impl FormantBank {
-    /// Set a steady vowel (no glide).
-    pub fn set(&mut self, formants: &[Formant; 3], sample_rate: f32) {
-        self.from = *formants;
-        self.to = *formants;
+    /// Set a steady vowel (no glide), sung at `f0`.
+    pub fn set(&mut self, formants: &[Formant; 3], f0: f32, sample_rate: f32) {
+        let fitted = fit_to_pitch(formants, f0);
+        self.from = fitted;
+        self.to = fitted;
         self.sr = sample_rate;
-        for (bq, f) in self.filters.iter_mut().zip(formants.iter()) {
+        for (bq, f) in self.filters.iter_mut().zip(fitted.iter()) {
             bq.retune(f.freq, f.q, f.gain, sample_rate);
         }
+        self.level = voiced_level(&fitted, f0, sample_rate);
+        self.level_from = self.level;
+        self.level_to = self.level;
         self.glide = Crossfade::default(); // already at target
         self.active = true;
+        self.f0 = f0;
+        self.cur = fitted;
+        self.then = None;
     }
 
     /// Start at `from` and glide the formants to `to` over `secs` — a voiced
     /// consonant sliding into its vowel, or a diphthong (vowel→vowel).
-    pub fn glide_to(&mut self, from: &[Formant; 3], to: &[Formant; 3], secs: f32, sample_rate: f32) {
-        self.from = *from;
-        self.to = *to;
+    pub fn glide_to(
+        &mut self,
+        from: &[Formant; 3],
+        to: &[Formant; 3],
+        secs: f32,
+        f0: f32,
+        sample_rate: f32,
+    ) {
+        self.from = fit_to_pitch(from, f0);
+        self.to = fit_to_pitch(to, f0);
         self.sr = sample_rate;
-        for (bq, f) in self.filters.iter_mut().zip(from.iter()) {
+        for (bq, f) in self.filters.iter_mut().zip(self.from.iter()) {
             bq.retune(f.freq, f.q, f.gain, sample_rate);
         }
+        self.level_from = voiced_level(&self.from, f0, sample_rate);
+        self.level_to = voiced_level(&self.to, f0, sample_rate);
+        self.level = self.level_from;
         self.glide = Crossfade::new(secs, sample_rate);
         self.active = true;
+        self.f0 = f0;
+        self.cur = self.from;
+        self.then = None;
+    }
+
+    /// Glide from wherever the formants are now to `via` over `t1`, then on to
+    /// `to` over `t2`, at a (possibly new) pitch `f0`. The filters keep ringing
+    /// through it — this is how one syllable runs into the next instead of the
+    /// voice stopping and a new one starting.
+    pub fn glide_on(
+        &mut self,
+        via: Option<&[Formant; 3]>,
+        t1: f32,
+        to: &[Formant; 3],
+        t2: f32,
+        f0: f32,
+    ) {
+        match via {
+            Some(v) => {
+                self.glide_from_here(v, t1, f0);
+                self.then = Some((*to, t2));
+            }
+            None => self.glide_from_here(to, t1, f0),
+        }
+    }
+
+    /// Glide from exactly the current formants and level (no refit: refitting
+    /// the start to a new pitch would step the filters and gain at once, a
+    /// click) to `to` fitted at `f0`.
+    fn glide_from_here(&mut self, to: &[Formant; 3], secs: f32, f0: f32) {
+        self.from = self.cur;
+        self.level_from = self.level;
+        self.to = fit_to_pitch(to, f0);
+        self.level_to = voiced_level(&self.to, f0, self.sr);
+        self.glide = Crossfade::new(secs, self.sr);
+        self.f0 = f0;
+        self.then = None;
+        self.active = true;
+    }
+
+    /// The formants right now.
+    pub fn current(&self) -> [Formant; 3] {
+        self.cur
     }
 
     pub fn is_active(&self) -> bool {
@@ -71,19 +236,28 @@ impl FormantBank {
             let t = self.glide.mix(0.0, 1.0); // progress 0→1, advances the ramp
             for i in 0..3 {
                 let (a, b) = (self.from[i], self.to[i]);
-                self.filters[i].retune(
-                    a.freq + (b.freq - a.freq) * t,
-                    a.q + (b.q - a.q) * t,
-                    a.gain + (b.gain - a.gain) * t,
-                    self.sr,
-                );
+                let f = Formant {
+                    freq: a.freq + (b.freq - a.freq) * t,
+                    q: a.q + (b.q - a.q) * t,
+                    gain: a.gain + (b.gain - a.gain) * t,
+                };
+                self.filters[i].retune(f.freq, f.q, f.gain, self.sr);
+                self.cur[i] = f;
+            }
+            self.level = self.level_from + (self.level_to - self.level_from) * t;
+            if self.glide.done() {
+                self.cur = self.to;
+                if let Some((next, secs)) = self.then.take() {
+                    let f0 = self.f0;
+                    self.glide_from_here(&next, secs, f0);
+                }
             }
         }
         let mut out = 0.0;
         for bq in self.filters.iter_mut() {
             out += bq.process(src);
         }
-        out
+        out * self.level
     }
 }
 
@@ -141,6 +315,16 @@ pub struct Consonant {
     /// Onset length in seconds.
     pub secs: f32,
     pub gain: f32,
+    /// Where the mouth is closed or narrowed for this sound, as the F1-F3 a
+    /// vowel slides out of (into) when it follows (precedes) it — the *locus*.
+    /// That slide, not the noise, is most of what makes a p sound unlike a t or
+    /// a k. All zero = no slide (h, whose shape is the vowel's own).
+    pub locus: [f32; 3],
+    /// Aspiration after the burst, seconds: breath through the vowel's shape
+    /// before the voice comes in (the puff after p/t/k; all of an h).
+    pub vot: f32,
+    /// A stop's burst snaps on and decays; a fricative's hiss swells in.
+    pub plosive: bool,
 }
 
 /// Most bursts a [`Cluster`] holds. Four covers anything worth pronouncing —
@@ -183,16 +367,26 @@ impl Cluster {
         self.len == 0
     }
 
-    /// Shorten the bursts in proportion so they last at most `max_secs` in all.
+    /// Shorten the bursts (and their aspiration) in proportion so they last at
+    /// most `max_secs` in all.
     /// A syllable sung (or babbled) in 70ms can't spend 90ms hissing an `s`.
     pub fn squeeze(&mut self, max_secs: f32) {
-        let total: f32 = self.iter().map(|k| k.secs).sum();
+        let total: f32 = self.iter().map(|k| k.secs + k.vot).sum();
         if total > max_secs && total > 0.0 {
             let k = (max_secs / total).max(0.0);
             for b in self.bursts[..self.len as usize].iter_mut() {
                 b.secs *= k;
+                b.vot *= k;
             }
         }
+    }
+
+    pub fn last(&self) -> Option<&Consonant> {
+        self.iter().last()
+    }
+
+    pub fn first(&self) -> Option<&Consonant> {
+        self.iter().next()
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Consonant> {
@@ -220,6 +414,9 @@ pub struct SungSyllable {
     pub vowel: [Formant; 3],
     pub coda_glide: Option<[Formant; 3]>,
     pub coda: Cluster,
+    /// The vowel closes toward the first coda burst's locus before it ("cat":
+    /// /a/ slides toward t as the voice stops), when there's no voiced coda.
+    pub coda_locus: Option<[Formant; 3]>,
 }
 
 /// One consonant in a cluster: an unvoiced noise burst, or a voiced (nasal /
@@ -233,7 +430,15 @@ enum Cons {
 /// digraphs: `sh`/`ch` (hiss), `ng` (nasal), `ck` (→k), `th` (→f-ish). Used for
 /// both the onset and coda clusters, so `str`/`spl`/`nts`/`nk` all decompose.
 fn parse_consonants(s: &str) -> Vec<Cons> {
-    let sh = Consonant { freq: 3000.0, q: 1.2, secs: 0.09, gain: 0.5 };
+    let sh = Consonant {
+        freq: 3000.0,
+        q: 1.2,
+        secs: 0.09,
+        gain: 0.14 * BURST,
+        locus: PALATAL,
+        vot: 0.0,
+        plosive: false,
+    };
     let chars: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -264,8 +469,9 @@ fn parse_consonants(s: &str) -> Vec<Cons> {
                 i += 1;
             }
             ('t', Some('h')) => {
-                if let Some(k) = consonant_for('f') {
-                    out.push(Cons::Unvoiced(k)); // approximate 'th' as a soft fricative
+                if let Some(mut k) = consonant_for('f') {
+                    k.locus = DENTAL; // a soft fricative, between the teeth
+                    out.push(Cons::Unvoiced(k));
                 }
                 i += 2;
             }
@@ -297,26 +503,45 @@ fn voiced_onset(c: char) -> Option<[Formant; 3]> {
     }
 }
 
+/// Loci (F1, F2, F3 in Hz) by place of articulation. F1 is low for every
+/// closure; F2 says where: low at the lips, mid behind the teeth, high where
+/// the tongue humps up for k/sh.
+pub const LABIAL: [f32; 3] = [250.0, 900.0, 2200.0];
+pub const ALVEOLAR: [f32; 3] = [250.0, 1750.0, 2700.0];
+pub const VELAR: [f32; 3] = [250.0, 1950.0, 2350.0];
+pub const PALATAL: [f32; 3] = [250.0, 2100.0, 2800.0];
+pub const DENTAL: [f32; 3] = [250.0, 1450.0, 2600.0];
+
 /// Map a leading character to its consonant onset, if any.
 fn consonant_for(c: char) -> Option<Consonant> {
-    let cons = |freq, q, secs, gain| {
-        Some(Consonant {
-            freq,
-            q,
-            secs,
-            gain,
-        })
+    let cons = |freq, q, secs, gain, locus, vot, plosive| {
+        Some(Consonant { freq, q, secs, gain: gain * BURST, locus, vot, plosive })
     };
     match c {
-        's' | 'z' => cons(6000.0, 2.0, 0.08, 0.5), // hiss
-        'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.45), // broadband
-        'h' => cons(1500.0, 0.7, 0.06, 0.4),       // breathy
-        't' | 'd' => cons(4000.0, 1.5, 0.02, 0.7), // sharp tick
-        'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.02, 0.7), // mid pop
-        'j' => cons(2800.0, 1.2, 0.05, 0.5),       // a short ch
-        'p' | 'b' => cons(800.0, 1.2, 0.02, 0.7),  // low pop
+        // A broad hiss (Q 1.3, not a narrow "pssh"), ~14 dB under the vowel.
+        's' | 'z' => cons(5500.0, 1.3, 0.08, 0.12, ALVEOLAR, 0.0, false),
+        'f' | 'v' => cons(4000.0, 1.0, 0.08, 0.146, LABIAL, 0.0, false), // broadband
+        // h is breath through the vowel's own shape: no burst, all aspiration.
+        'h' => cons(1500.0, 0.7, 0.003, 0.0, [0.0; 3], 0.07, false),
+        't' | 'd' => cons(4000.0, 1.5, 0.012, 0.19, ALVEOLAR, 0.03, true), // sharp tick
+        'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.015, 0.24, VELAR, 0.035, true), // mid pop
+        'j' => cons(2800.0, 1.2, 0.05, 0.22, PALATAL, 0.01, false), // a short ch
+        'p' | 'b' => cons(800.0, 1.2, 0.01, 0.235, LABIAL, 0.025, true), // low pop
         _ => None, // vowels + l/r/m/n/w/y
     }
+}
+
+/// A locus as formants, borrowing the vowel's sharpness and gains so only the
+/// frequencies move during the slide. `None` for a consonant without one.
+pub fn locus_formants(locus: &[f32; 3], vowel: &[Formant; 3]) -> Option<[Formant; 3]> {
+    if locus[0] <= 0.0 {
+        return None;
+    }
+    let mut out = *vowel;
+    for (f, hz) in out.iter_mut().zip(locus.iter()) {
+        f.freq = *hz;
+    }
+    Some(out)
 }
 
 /// Parse a sung syllable into onset / vowel / coda. Examples:
@@ -383,6 +608,17 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
         glide_secs = 0.15;
     }
 
+    // An unvoiced onset with nothing voiced after it: the vowel slides out of
+    // the last burst's locus ("ta" starts with its F2 up at t's 1750 Hz).
+    if glide_from.is_none() {
+        if let Some(k) = onset.last() {
+            if let Some(lf) = locus_formants(&k.locus, &vowel) {
+                glide_from = Some(lf);
+                glide_secs = 0.045;
+            }
+        }
+    }
+
     // Coda: an optional voiced ending to glide *to* (first voiced — a nasal/
     // liquid tail), then any unvoiced bursts (`t`, `s`, `k`…).
     let mut coda_glide = None;
@@ -398,12 +634,18 @@ pub fn parse_syllable(s: &str) -> SungSyllable {
         }
     }
 
+    let coda_locus = match (coda_glide, coda.first()) {
+        (None, Some(k)) => locus_formants(&k.locus, &vowel),
+        _ => None,
+    };
+
     SungSyllable {
         onset,
         glide_from,
         glide_secs,
         vowel,
         coda_glide,
+        coda_locus,
         coda,
     }
 }
@@ -420,9 +662,13 @@ mod tests {
         let u = parse_syllable("but");
         assert!(uh.vowel[0].freq > u.vowel[0].freq + 200.0);
         assert_eq!(uh.coda.len(), 1, "only the t is a coda burst");
-        let ae = parse_syllable("kaet");
+        let ae = parse_syllable("aet");
         assert!(ae.glide_from.is_none(), "ae must not glide");
         assert!(ae.vowel[1].freq > 1600.0);
+        let kae = parse_syllable("kaet");
+        let from = kae.glide_from.expect("k's locus slides into the vowel");
+        assert_eq!(from[1].freq, VELAR[1]);
+        assert!(kae.coda_locus.is_some(), "the vowel closes toward the t");
         let ai = parse_syllable("mai");
         assert!(ai.glide_from.is_some(), "m still glides in");
         assert_eq!(parse_syllable("box").coda.len(), 2, "x is k+s");
