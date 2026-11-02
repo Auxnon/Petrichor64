@@ -3239,6 +3239,13 @@ impl Core {
                                 self.global.screen_effects.modernize = Self::val2float(v)
                             }
                             "fog" => self.global.screen_effects.fog = Self::val2float(v),
+                            "gui_px" => {
+                                let px = Self::val2float(v).max(0.);
+                                if px != self.global.gui_params.px {
+                                    self.global.gui_params.px = px;
+                                    self.debounced_resize();
+                                }
+                            }
                             "fullscreen" => {
                                 self.global.fullscreen = Self::val2bool(v);
                                 self.check_fullscreen();

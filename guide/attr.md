@@ -27,6 +27,7 @@ Tweak monitor properties, lock mouse, disable console, etc. If there's a global 
 - fullscreen: boolean - fullscreen the window, can still be windowed again with ctrl/cmd + enter
 - mouse_grab: boolean - First person style mouse grab, ungrabs while console is open
 - size: integer[] - Integer array. Force the window to a certain size, this is logically based and not physically
+- gui_px: number - one gui pixel is this many logical pixels (CSS pixels on the web, dp on Android), so a bigger window gets a finer gui (`gui.w`, `gui.h` follow); never coarser than the default 320x240. 0, the default, keeps 320x240 at any window size
 
 **Misc**
 

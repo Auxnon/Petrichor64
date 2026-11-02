@@ -305,6 +305,10 @@ pub struct GuiParams {
     pub style: GuiStyle,
     pub layout: (i8, i8),
     pub scaling: bool,
+    /// `attr{gui_px=}`: one gui pixel is this many logical (CSS, dp) pixels,
+    /// so a big window gets a finer gui; never coarser than `resolution`.
+    /// 0 is off: the gui is `resolution` at any window size.
+    pub px: f32,
 }
 impl GuiParams {
     pub fn new() -> GuiParams {
@@ -313,6 +317,7 @@ impl GuiParams {
             style: GuiStyle::Aspect,
             layout: (0, -1),
             scaling: false,
+            px: 0.,
         }
     }
 }

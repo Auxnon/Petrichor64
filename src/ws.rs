@@ -14,6 +14,12 @@
 //!
 //! Frames sent before the socket opens are queued, not dropped, so a script can
 //! `conn` and immediately `send` its handshake.
+//!
+//! Inbound frames wait for the script to `recv` them, and on the web the
+//! script only runs while the page draws: a hidden tab or a paused web view
+//! keeps receiving with nobody reading. So the web inbox is bounded; past
+//! that the socket is closed with status "overflow" (a script reconnects and
+//! catches up) rather than growing until an allocation fails.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::WsLink;
@@ -166,10 +172,15 @@ mod web {
     use wasm_bindgen::{prelude::Closure, JsCast};
     use web_sys::{CloseEvent, Event, MessageEvent, WebSocket};
 
+    /// The most a socket may hold unread, in frames and in bytes.
+    const INBOX_FRAMES: usize = 8192;
+    const INBOX_BYTES: usize = 32 << 20;
+
     struct Shared {
         open: bool,
         pending: Vec<String>,
         inbox: VecDeque<String>,
+        inbox_bytes: usize,
         status: Option<String>,
     }
 
@@ -212,6 +223,7 @@ mod web {
                 open: false,
                 pending: vec![],
                 inbox: VecDeque::new(),
+                inbox_bytes: 0,
                 status: None,
             }));
 
@@ -230,11 +242,25 @@ mod web {
                     sh.status = Some("websocket error".to_owned());
                 }
             });
-            let s = shared.clone();
+            let (s, sk) = (shared.clone(), sock.clone());
             let onmessage = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
-                if let Some(t) = e.data().as_string() {
-                    s.borrow_mut().inbox.push_back(t);
+                let mut sh = s.borrow_mut();
+                if sh.status.is_some() {
+                    return;
                 }
+                let Some(t) = e.data().as_string() else { return };
+                if sh.inbox.len() >= INBOX_FRAMES || sh.inbox_bytes + t.len() > INBOX_BYTES {
+                    // Nobody's reading: let go of it all and close, so the
+                    // script reconnects instead of the worker running out.
+                    sh.inbox.clear();
+                    sh.inbox_bytes = 0;
+                    sh.open = false;
+                    sh.status = Some("overflow".to_owned());
+                    let _ = sk.close();
+                    return;
+                }
+                sh.inbox_bytes += t.len();
+                sh.inbox.push_back(t);
             });
             let s = shared.clone();
             let onclose = Closure::<dyn FnMut(CloseEvent)>::new(move |e: CloseEvent| {
@@ -290,8 +316,15 @@ mod web {
         }
 
         pub fn recv(&self) -> Option<String> {
-            self.with(|e| e.shared.borrow_mut().inbox.pop_front())
-                .flatten()
+            self.with(|e| {
+                let mut sh = e.shared.borrow_mut();
+                let t = sh.inbox.pop_front();
+                if let Some(t) = &t {
+                    sh.inbox_bytes -= t.len();
+                }
+                t
+            })
+            .flatten()
         }
 
         pub fn status(&self) -> Option<String> {
