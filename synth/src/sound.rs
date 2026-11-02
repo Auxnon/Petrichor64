@@ -712,31 +712,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     if let Some(note) = chan.queues[l].pop_front() {
                         let inc = TWO_PI * note.frequency / sample_rate;
                         let mut voice = Voice::from_note(&note, inc);
-                        // Sung note: set the vowel formants, or glide from a voiced
-                        // consonant / diphthong start into them; stamp the channel's
-                        // voice character (breath/vibrato) onto the voice.
-                        if let Some(target) = &note.formants {
-                            if let Some(from) = &note.glide_from {
-                                voice.voice_bank.glide_to(
-                                    from,
-                                    target,
-                                    note.glide_secs,
-                                    note.frequency,
-                                    sample_rate,
-                                );
-                            } else {
-                                voice.voice_bank.set(target, note.frequency, sample_rate);
-                            }
-                            voice.vowel = *target; // for a voiced coda to glide from
-                            voice.breath = chan.breath;
-                            voice.vib_depth = chan.vib_depth;
-                            voice.vib_rate = chan.vib_rate;
-                        }
-                        // Coda (played at note-off) + onset cluster: queue the
-                        // onset bursts and start the first. Each is band-passed
-                        // noise; the final onset burst crossfades into the vowel
-                        // (up to 12ms) so it isn't an abrupt cut.
+                        // Coda (played at note-off) + onset cluster. Each burst is
+                        // band-passed noise; the final onset burst crossfades into
+                        // the vowel (up to 12ms) so it isn't an abrupt cut.
                         voice.coda_glide = note.coda_glide;
+                        voice.coda_locus = note.coda_locus;
                         voice.coda = note.coda;
                         voice.onset = note.onset;
                         // Short syllables keep their vowel: the onset gets at most a
@@ -747,6 +727,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         voice.coda.squeeze(note.duration * 0.15);
                         voice.onset_i = 0;
                         voice.onset_xfade_last = true;
+                        if let Some(target) = note.formants {
+                            start_sung(chan, &mut voice, &note, &target, sample_rate);
+                            chan.last_sung = Some(l);
+                        }
                         if !voice.onset.is_empty() {
                             let is_last = voice.onset.len() == 1;
                             let k = voice.onset[0];
@@ -761,7 +745,13 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 // off to `fading` for release at note-off.
                 if let Some(v) = chan.current[l].as_mut() {
                     let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                    v.advance_env(&instr.env, sample_rate);
+                    if v.rise > 0.0 {
+                        let mut e = instr.env;
+                        e.attack = v.rise;
+                        v.advance_env(&e, sample_rate);
+                    } else {
+                        v.advance_env(&instr.env, sample_rate);
+                    }
                     ch_out += voice_out(v, instr, &samples, sample_rate) * v.volume * v.env;
                     // One-shot samples play to their natural end, ignoring the note's
                     // duration — otherwise a pitched-DOWN sample (slower playback)
@@ -790,7 +780,11 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                 // Fading voice: release ramp to silence at the instrument's rate.
                 if let Some(v) = chan.fading[l].as_mut() {
                     let instr = instruments.get(&v.instrument).unwrap_or(&default_instr);
-                    let rel = instr.env.release;
+                    let rel = if v.sung {
+                        instr.env.release.max(SUNG_RELEASE)
+                    } else {
+                        instr.env.release
+                    };
                     v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
                     if v.env <= 0.0 {
                         chan.fading[l] = None;
@@ -1056,6 +1050,84 @@ pub struct Sample {
     end: usize,
 }
 
+/// Aspiration level (noise into the formants) at the start of the gap between a
+/// p/t/k/h and its vowel; fades as the voice comes in.
+const ASPIRATION: f32 = 0.4;
+/// Shortest release a sung voice gets, so it can hand over to the next syllable
+/// (and a closing consonant overlaps a dying vowel, not silence).
+const SUNG_RELEASE: f32 = 0.04;
+
+/// Start a sung note's voice: its formants, voicing ramp and aspiration, and —
+/// when the channel's previous syllable is still dying away and this one starts
+/// voiced (a vowel, or l/r/m/n/w/y) — carry that voice on instead of starting a
+/// new one: same phase and filter state, the pitch sliding over, the formants
+/// gliding on from where they were. Speech is one continuous sound with shapes
+/// moving through it; a fresh beep per syllable is what made it sound typed.
+fn start_sung(chan: &mut Channel, voice: &mut Voice, note: &Note, target: &[Formant; 3], sr: f32) {
+    voice.sung = true;
+    voice.vowel = *target;
+    voice.breath = chan.breath;
+    voice.vib_depth = chan.vib_depth;
+    voice.vib_rate = chan.vib_rate;
+    let f0 = note.frequency;
+    let glide = note.glide_secs.min(note.duration * 0.4).max(0.005);
+    let bursts = !voice.onset.is_empty();
+    let vot = voice.onset.last().map(|k| k.vot).unwrap_or(0.0);
+    let lanes = chan.lanes();
+    let prev = chan.last_sung.filter(|&pl| {
+        pl < lanes && chan.fading[pl].as_ref().is_some_and(|p| p.sung && p.env > 0.02)
+    });
+    // Only a voice still voicing carries on. One that ended on s/t/k is in its
+    // burst or closed for it: cutting that off to carry on would chop the
+    // consonant, so the new syllable starts fresh after it.
+    let voicing = |pl: usize| {
+        chan.fading[pl].as_ref().is_some_and(|p| {
+            p.voicing_to > 0.0 && p.consonant_samples == 0 && p.consonant_xfade.done()
+        })
+    };
+    match prev {
+        Some(pl) if !bursts && voicing(pl) => {
+            let Some(p) = chan.fading[pl].take() else {
+                return;
+            };
+            voice.phase = p.phase;
+            voice.voice_bank = p.voice_bank;
+            voice.voice_bank
+                .glide_on(note.glide_from.as_ref(), 0.03, target, glide.max(0.04), f0);
+            voice.porta_from = p.cur_freq.max(1.0);
+            voice.porta = Crossfade::new((note.duration * 0.3).min(0.04), sr);
+            voice.env = p.env;
+            voice.rise = 0.02;
+            voice.voicing = p.voicing;
+            voice.voice_toward(1.0, 0.02, sr);
+        }
+        _ => {
+            // Starting after a consonant (or from silence). A previous syllable
+            // still dying away closes toward this consonant as it goes.
+            if let (Some(pl), Some(locus)) = (prev, note.glide_from.as_ref()) {
+                if let Some(p) = chan.fading[pl].as_mut() {
+                    let f = p.cur_freq;
+                    p.voice_bank.glide_on(None, 0.025, locus, 0.0, f);
+                }
+            }
+            match &note.glide_from {
+                Some(from) => voice.voice_bank.glide_to(from, target, glide, f0, sr),
+                None => voice.voice_bank.set(target, f0, sr),
+            }
+            voice.voicing = 0.0;
+            let ramp = if vot > 0.0 {
+                vot
+            } else if bursts {
+                0.012
+            } else {
+                0.02
+            };
+            voice.voice_toward(1.0, ramp, sr);
+            voice.asp = if vot > 0.0 { ASPIRATION } else { 0.0 };
+        }
+    }
+}
+
 /// PolyBLEP correction for a ramp's reset at phase `t` (0..1) stepping `dt` per
 /// sample: subtract from a naive sawtooth to band-limit its edge.
 fn poly_blep(t: f32, dt: f32) -> f32 {
@@ -1148,14 +1220,24 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         };
     }
 
-    // Vibrato (sung voices): a slow LFO wobbles the pitch. Recompute phase_inc
-    // from the modulated frequency before advancing.
-    if v.voice_bank.is_active() && v.vib_depth > 0.0 {
-        v.vib_phase += TWO_PI * v.vib_rate / sr;
-        if v.vib_phase >= TWO_PI {
-            v.vib_phase -= TWO_PI;
+    // Pitch of a sung voice: the slide from the previous syllable (legato), then
+    // vibrato (a slow LFO). Recompute phase_inc before advancing.
+    if v.voice_bank.is_active() {
+        let mut f = v.freq;
+        if !v.porta.done() {
+            let t = v.porta.mix(0.0, 1.0);
+            f = v.porta_from * (v.freq / v.porta_from).powf(t);
         }
-        v.phase_inc = TWO_PI * v.freq * (1.0 + v.vib_depth * v.vib_phase.sin()) / sr;
+        v.cur_freq = f;
+        let mut wob = 1.0;
+        if v.vib_depth > 0.0 {
+            v.vib_phase += TWO_PI * v.vib_rate / sr;
+            if v.vib_phase >= TWO_PI {
+                v.vib_phase -= TWO_PI;
+            }
+            wob += v.vib_depth * v.vib_phase.sin();
+        }
+        v.phase_inc = TWO_PI * f * wob / sr;
     }
 
     // The tonal body of this voice: a sung vowel (sawtooth glottal source through
@@ -1164,6 +1246,15 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
     // crossfade. `advance` steps the phase.
     v.advance();
     let body = if v.voice_bank.is_active() {
+        // Voicing ramps in once the onset bursts are done (and out into a
+        // closing coda), rather than switching on at full strength.
+        if v.consonant_samples == 0 && v.onset_i >= v.onset.len() {
+            if v.voicing < v.voicing_to {
+                v.voicing = (v.voicing + v.voicing_step).min(v.voicing_to);
+            } else if v.voicing > v.voicing_to {
+                v.voicing = (v.voicing - v.voicing_step).max(v.voicing_to);
+            }
+        }
         // Glottal source: a band-limited (PolyBLEP) sawtooth. The naive ramp
         // aliases badly at sung pitches, and the folded-back partials land
         // between the harmonics as a gritty hiss of their own.
@@ -1174,9 +1265,12 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
         // formants — a breathy vowel rather than a hiss on top. It pulses with
         // each glottal cycle (loudest just after the reset, where the folds open),
         // as real aspiration does; steady noise is heard as a separate whisper
-        // beside the voice instead of as part of it.
+        // beside the voice instead of as part of it. While the voice is still
+        // coming in after p/t/k/h, unpulsed aspiration fills the gap instead.
         let pulse = 0.35 + 0.65 * (0.5 + 0.5 * v.phase.cos());
-        let src = saw + v.breath * pulse * white_noise(&mut v.rng);
+        let noise = white_noise(&mut v.rng);
+        let air = v.breath * pulse * v.voicing + v.asp * (1.0 - v.voicing);
+        let src = saw * v.voicing + air * noise;
         v.voice_bank.process(src)
     } else {
         osc(v.phase, instr, &mut v.rng)
@@ -1193,12 +1287,14 @@ fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sampl
     }
 
     if v.consonant_samples > 0 {
-        // Pure consonant: a band-passed noise burst.
+        // Pure consonant: a shaped, band-passed noise burst.
         v.consonant_samples -= 1;
-        v.consonant_filter.process(white_noise(&mut v.rng))
+        let g = v.burst_shape();
+        v.consonant_filter.process(white_noise(&mut v.rng)) * g
     } else if !v.consonant_xfade.done() {
         // Onset tail: crossfade the consonant noise out and the vowel body in.
-        let cons = v.consonant_filter.process(white_noise(&mut v.rng));
+        let g = v.burst_shape();
+        let cons = v.consonant_filter.process(white_noise(&mut v.rng)) * g;
         v.consonant_xfade.mix(cons, body)
     } else {
         body
@@ -1241,6 +1337,10 @@ pub struct Note {
     /// Optional voiced coda to glide *to* at note-off (a nasal/liquid ending
     /// like the "n" in "sun").
     pub coda_glide: Option<[Formant; 3]>,
+    /// Where the vowel closes toward before an unvoiced coda (see
+    /// `SungSyllable::coda_locus`).
+    #[serde(default)]
+    pub coda_locus: Option<[Formant; 3]>,
     /// Coda consonant cluster: unvoiced bursts played after the vowel (the "t"
     /// in "cat", "t"+"s" in "cats").
     pub coda: Cluster,
@@ -1257,6 +1357,7 @@ impl Note {
             glide_from: None,
             glide_secs: 0.0,
             coda_glide: None,
+            coda_locus: None,
             coda: Cluster::default(),
         }
     }
@@ -1278,6 +1379,7 @@ impl Note {
             glide_from: syllable.glide_from,
             glide_secs: syllable.glide_secs,
             coda_glide: syllable.coda_glide,
+            coda_locus: syllable.coda_locus,
             coda: syllable.coda,
         }
     }
@@ -1433,6 +1535,8 @@ struct Channel {
     breath: f32,
     vib_depth: f32,
     vib_rate: f32,
+    /// The lane of the last sung note started here, for legato hand-over.
+    last_sung: Option<usize>,
 }
 impl Channel {
     /// Build a channel with `lanes` polyphony slots. Takes the device
@@ -1457,6 +1561,7 @@ impl Channel {
             breath: 0.0,
             vib_depth: 0.0,
             vib_rate: 5.5,
+            last_sung: None,
         }
     }
     fn lanes(&self) -> usize {
@@ -1536,6 +1641,7 @@ impl Channel {
         self.echo.clear();
         self.reverb.clear();
         self.breath = 0.0;
+        self.last_sung = None;
         self.vib_depth = 0.0;
         self.vib_rate = 5.5;
     }
@@ -1585,6 +1691,35 @@ struct Voice {
     vib_depth: f32,
     vib_rate: f32,
     vib_phase: f32,
+    /// A sung note (formant voice), for the articulation below.
+    sung: bool,
+    /// How much of the glottal source is sounding (0..1), moving toward
+    /// `voicing_to` by `voicing_step` per sample once the bursts are done. The
+    /// voice fades in after a consonant and out into a closing one instead of
+    /// switching on and off.
+    voicing: f32,
+    voicing_to: f32,
+    voicing_step: f32,
+    /// Aspiration (breath through the formants) filling the gap while voicing
+    /// comes in after p/t/k/h.
+    asp: f32,
+    /// The active burst's length and position (samples), for shaping it.
+    burst_len: u32,
+    burst_pos: u32,
+    burst_plosive: bool,
+    /// The burst ends in silence or another burst (a coda, mid-cluster), not a
+    /// crossfade into the vowel, so it has to fade out on its own.
+    burst_tail: bool,
+    /// Pitch slide from the previous syllable (legato).
+    porta_from: f32,
+    porta: Crossfade,
+    /// The pitch sounding right now (slide included), for the next syllable.
+    cur_freq: f32,
+    /// Where the vowel closes toward before an unvoiced coda.
+    coda_locus: Option<[Formant; 3]>,
+    /// Attack time override (seconds) for a legato start rising from the
+    /// previous syllable's level; 0 = the instrument's.
+    rise: f32,
 }
 impl Voice {
     fn from_note(note: &Note, phase_inc: f32) -> Self {
@@ -1614,7 +1749,26 @@ impl Voice {
             vib_depth: 0.0,
             vib_rate: 0.0,
             vib_phase: 0.0,
+            sung: false,
+            voicing: 1.0,
+            voicing_to: 1.0,
+            voicing_step: 1.0,
+            asp: 0.0,
+            burst_len: 0,
+            burst_pos: 0,
+            burst_plosive: false,
+            burst_tail: false,
+            porta_from: note.frequency,
+            porta: Crossfade::default(),
+            cur_freq: note.frequency,
+            coda_locus: None,
+            rise: 0.0,
         }
+    }
+    /// Set the voicing ramp: toward `to` over `secs`.
+    fn voice_toward(&mut self, to: f32, secs: f32, sr: f32) {
+        self.voicing_to = to;
+        self.voicing_step = 1.0 / (secs.max(0.001) * sr);
     }
     /// Load the next queued consonant burst into the active-burst slot. The final
     /// onset burst crossfades into the vowel; mid-cluster and coda bursts don't.
@@ -1630,6 +1784,31 @@ impl Voice {
             self.consonant_xfade = Crossfade::default(); // done → no blend
         }
         self.consonant_filter = Biquad::bandpass(k.freq, k.q, k.gain, sr);
+        self.burst_len = total.max(1);
+        self.burst_pos = 0;
+        self.burst_plosive = k.plosive;
+        self.burst_tail = !xfade_into_vowel;
+    }
+    /// The active burst's amplitude shape at its current position: a stop
+    /// snaps on and decays (most of it in the first third), a fricative swells
+    /// in over its first third. Square-edged noise is what made consonants
+    /// sound pasted on.
+    fn burst_shape(&mut self) -> f32 {
+        let t = self.burst_pos as f32 / self.burst_len as f32;
+        self.burst_pos = self.burst_pos.saturating_add(1);
+        let smooth = |x: f32| x * x * (3.0 - 2.0 * x);
+        let tail = if self.burst_tail && t > 0.7 {
+            smooth(((1.0 - t) / 0.3).clamp(0.0, 1.0))
+        } else {
+            1.0
+        };
+        if self.burst_plosive {
+            (-t * 3.5).exp() * tail
+        } else if t < 0.3 {
+            smooth(t / 0.3)
+        } else {
+            tail
+        }
     }
     /// Advance the coda one segment when the sustain (or a prior coda segment)
     /// runs out. Returns `true` if it set up more sound to play (a voiced glide
@@ -1644,8 +1823,19 @@ impl Voice {
                     if let Some(target) = self.coda_glide.take() {
                         // Glide the vowel into the nasal/liquid ending, staying tonal.
                         self.voice_bank
-                            .glide_to(&self.vowel, &target, 0.08, self.freq, sr);
+                            .glide_on(None, 0.08, &target, 0.0, self.freq);
                         self.remaining = 0.08;
+                        return true;
+                    }
+                    if let Some(target) = self.coda_locus.take() {
+                        // Close toward the coming stop/fricative: the formants
+                        // slide to its locus while the voice dies away, so the
+                        // burst lands at the end of a closing vowel.
+                        let secs = self.coda.iter().map(|k| k.secs).sum::<f32>().clamp(0.015, 0.035);
+                        self.voice_bank.glide_on(None, secs, &target, 0.0, self.freq);
+                        self.voice_toward(0.0, secs, sr);
+                        self.asp = 0.0;
+                        self.remaining = secs;
                         return true;
                     }
                 }
@@ -2259,5 +2449,59 @@ mod tests {
                 vowel
             );
         }
+    }
+
+    /// Sing syllables at (start, length, hz), 60bpm so beats are seconds.
+    fn sing_phrase(sylls: &[(&str, f32, f32, f32)], n: usize) -> Vec<f32> {
+        let (tx, rx) = channel::<SoundCommand>();
+        tx.send(SoundCommand::SetBpm(60.0)).unwrap();
+        for (sy, at, len, hz) in sylls {
+            let s = crate::vocaloid::parse_syllable(sy);
+            tx.send(SoundCommand::PlayAt(Note::sung(*hz, *len, 1.0, &s), Some(1), *at, None))
+                .unwrap();
+        }
+        let mut mixer = make_mixer_boxed(48000.0, rx);
+        (0..n).map(|_| mixer()).collect()
+    }
+
+    /// How periodic a stretch is: its best normalised correlation with itself
+    /// shifted by a pitch period (150-600 Hz). One voice scores near 1; two
+    /// voices at different pitches sounding together score far lower.
+    fn periodicity(f: &[f32]) -> f32 {
+        let mut best = 0.0f32;
+        for lag in 80..320 {
+            let (a, b) = (&f[..f.len() - lag], &f[lag..]);
+            let ab: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+            let aa: f32 = a.iter().map(|x| x * x).sum();
+            let bb: f32 = b.iter().map(|x| x * x).sum();
+            if aa > 0.0 && bb > 0.0 {
+                best = best.max(ab / (aa * bb).sqrt());
+            }
+        }
+        best
+    }
+
+    /// Two voiced syllables in a row are one continuous voice: the second takes
+    /// over the first (phase, filters, a pitch slide) instead of a new beep
+    /// starting while the old one dies away. Without the hand-over the join
+    /// is two pitches at once and periodicity falls to ~0.6; with it, ~0.92+.
+    #[test]
+    fn voiced_syllables_run_together() {
+        let x = sing_phrase(&[("la", 0.0, 0.092, 300.0), ("lo", 0.1, 0.092, 260.0)], 9600);
+        let worst = (4600..6200)
+            .step_by(160)
+            .map(|i| periodicity(&x[i..i + 480]))
+            .fold(1.0f32, f32::min);
+        assert!(worst > 0.85, "join periodicity fell to {:.2}", worst);
+    }
+
+    /// A consonant that ends a word fades out instead of cutting to silence.
+    #[test]
+    fn a_final_hiss_fades_out() {
+        let x = sing_phrase(&[("yes", 0.0, 0.3, 220.0)], 24000);
+        let last = x.iter().rposition(|v| v.abs() > 1e-4).unwrap();
+        let tail = rms(&x[last - 96..last]);
+        let body = rms(&x[last - 2400..last - 1200]);
+        assert!(tail < body * 0.25, "hiss ends at {:.3} (body {:.3})", tail, body);
     }
 }
