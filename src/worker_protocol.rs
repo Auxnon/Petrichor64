@@ -290,7 +290,7 @@ pub fn control_state_from_wire(keys: &[u8], analog: &[f32]) -> ControlState {
     for (slot, b) in k.iter_mut().zip(keys.iter()) {
         *slot = *b != 0;
     }
-    let mut a = [0f32; 11];
+    let mut a = [0f32; crate::types::ANALOG_LEN];
     for (slot, v) in a.iter_mut().zip(analog.iter()) {
         *slot = *v;
     }

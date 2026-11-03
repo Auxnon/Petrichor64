@@ -491,7 +491,7 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         let mut compiler = Compiler::new();
         let keys_mutex = Rc::new(RefCell::new([false; 256]));
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
-        let mice_mutex = Rc::new(RefCell::new([0f32; 13]));
+        let mice_mutex = Rc::new(RefCell::new([0f32; crate::types::MICE_LEN]));
 
         let main_rast = LuaImg::new(bundle_id, main_im.clone(), size[0], size[1], letters.clone());
         let sky_rast = LuaImg::new(bundle_id, sky_im.clone(), size[0], size[1], letters.clone());

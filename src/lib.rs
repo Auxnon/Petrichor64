@@ -143,6 +143,29 @@ const OS: &str = "web";
 #[cfg(target_os = "android")]
 const OS: &str = "droid";
 
+/// How far in from each edge the system's bars reach, in window pixels: top,
+/// right, bottom, left. Android reports the part of the window the app's
+/// content view gets (`content_rect`), which leaves out the status and
+/// navigation bars the surface is drawn under. winit doesn't announce a change
+/// to it (it logs a TODO), so this is read every frame; it's a lock and a copy.
+#[cfg(all(target_os = "android", feature = "headed"))]
+fn android_inset(window: &winit::window::Window) -> [f32; 4] {
+    use winit::platform::android::WindowExtAndroid;
+    let r = window.content_rect();
+    let size = window.inner_size();
+    let (w, h) = (size.width as i32, size.height as i32);
+    // Before the first layout the rect is empty: say nothing is covered.
+    if r.right <= r.left || r.bottom <= r.top || w == 0 || h == 0 {
+        return [0.; 4];
+    }
+    [
+        r.top.clamp(0, h) as f32,
+        (w - r.right).clamp(0, w) as f32,
+        (h - r.bottom).clamp(0, h) as f32,
+        r.left.clamp(0, w) as f32,
+    ]
+}
+
 #[cfg(target_os = "ios")]
 const OS: &str = "ios";
 
@@ -591,6 +614,16 @@ impl ApplicationHandler for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         ::log::info!("petrichor64: suspended — surface released");
         self.surface_lost = true;
+        // Fingers down as the app leaves won't send their lift; let them go
+        // now, or they'd be stuck down (and the mouse held) on return.
+        self.primary_touch = None;
+        self.touch_last = None;
+        if let Some(core) = &mut self.core {
+            if core.global.touches.iter().any(|t| t.is_some()) {
+                core.global.touches = [None; crate::global::TOUCH_SLOTS];
+                core.global.mouse_buttons[0] = 0.0;
+            }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -724,9 +757,9 @@ impl ApplicationHandler for App {
             // winit's touch id, not "whichever event arrived". That distinction is
             // the whole point: a second finger landing and lifting during a drag
             // must not move the cursor or release the button, which is exactly what
-            // id-less handling gets wrong. Extra fingers are ignored for now; when
-            // multi-touch gestures arrive they belong in their own Lua command
-            // rather than being smuggled through `mus`.
+            // id-less handling gets wrong. Every finger, the primary included, is
+            // also tracked for `touches()`, where a script reads gestures (pinch,
+            // two-finger drag) rather than having them smuggled through `mus`.
             //
             // Platform-independent on purpose: winit reports touch the same way on
             // Android, iOS and desktop touchscreens, so this also makes a Surface or
@@ -740,6 +773,11 @@ impl ApplicationHandler for App {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
+                // Every finger, primary or not, for `touches()`.
+                let tx = touch.location.x as f32 / size.width as f32;
+                let ty = touch.location.y as f32 / size.height as f32;
+                let down = matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved);
+                core.global.track_touch(touch.id, down, tx, ty);
                 match touch.phase {
                     TouchPhase::Started => {
                         if self.primary_touch.is_none() {
@@ -1093,6 +1131,7 @@ impl ApplicationHandler for App {
                         self.bits.1[8] = g.cursor_projected_pos.x;
                         self.bits.1[9] = g.cursor_projected_pos.y;
                         self.bits.1[10] = g.cursor_projected_pos.z;
+                        g.pack_touches(&mut self.bits.1);
 
                         // Mirror the app's grab intent into the pointer-lock
                         // flag the canvas click handler reads. Release the lock
@@ -1132,7 +1171,7 @@ impl ApplicationHandler for App {
                         if console_open {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
-                                analog: vec![0f32; 11],
+                                analog: vec![0f32; crate::types::ANALOG_LEN],
                                 clock: crate::skeleton::clock(),
                             });
                         } else {
@@ -1199,6 +1238,17 @@ impl ApplicationHandler for App {
 
             state_change_checker(core, event_loop, &win_arc, self.center, Some(catcher));
 
+            // The window is drawn edge to edge, under the system's bars: keep
+            // `attr().inset` saying how much of each edge they cover.
+            #[cfg(target_os = "android")]
+            {
+                let inset = android_inset(&win_arc);
+                if inset != core.global.safe_inset {
+                    ::log::info!("petrichor64: inset (top right bottom left) {:?}", inset);
+                    core.global.safe_inset = inset;
+                }
+            }
+
             // Release grabbed mouse if the console was just opened.
             if core.global.console && core.global.mouse_grabbed_state {
                 win_arc.set_cursor_visible(true);
@@ -1232,6 +1282,7 @@ impl ApplicationHandler for App {
             self.bits.1[8] = core.global.cursor_projected_pos.x;
             self.bits.1[9] = core.global.cursor_projected_pos.y;
             self.bits.1[10] = core.global.cursor_projected_pos.z;
+            core.global.pack_touches(&mut self.bits.1);
 
             // Evaluate system shortcuts and console key commands.
             controls::controls_evaluate(
@@ -3302,7 +3353,8 @@ impl Core {
                     let t = GlobalMap::new(OS, 60., resolution).with_screen(
                         (self.gfx.size.width, self.gfx.size.height),
                         (self.gui.size[0], self.gui.size[1]),
-                    );
+                    )
+                    .with_inset(self.global.safe_inset);
                     #[cfg(not(feature = "headed"))]
                     let t = GlobalMap::new(OS, 60., resolution);
                     self.log_check(tx.send(t));

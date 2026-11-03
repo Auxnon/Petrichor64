@@ -4,6 +4,10 @@ use std::collections::HashMap;
 pub const SHADOW_SIZE_DEFAULT: u32 = 128;
 pub const SHADOW_RANGE_DEFAULT: f32 = 25.0;
 
+/// How many fingers `touches()` reports at once. Phones track ten, but past a
+/// few no gesture needs them, and each slot costs three floats a frame.
+pub const TOUCH_SLOTS: usize = 5;
+
 #[cfg(feature = "headed")]
 use crate::post::ScreenBinds;
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
@@ -14,6 +18,14 @@ pub struct Global {
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
     pub mouse_buttons: [f32; 4],
+    /// Every finger on the screen, for `touches()`: slot i holds (winit touch id,
+    /// x, y), x and y normalised 0..1 like the mouse. A finger keeps its slot
+    /// while it's down, so a script can follow one across frames by slot.
+    pub touches: [Option<(u64, f32, f32)>; TOUCH_SLOTS],
+    /// The edges the system draws over (Android's status and navigation bars),
+    /// in window pixels: top, right, bottom, left. Zero where nothing covers
+    /// the window, as on desktop. `attr().inset`.
+    pub safe_inset: [f32; 4],
     pub fullscreen: bool,
     pub fullscreen_state: bool,
     /** whether to attempt to grab the mouse or not, does not indicate actual grabbed state or not */
@@ -119,6 +131,8 @@ impl Global {
             mouse_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
             mouse_buttons: [0.; 4],
+            touches: [None; TOUCH_SLOTS],
+            safe_inset: [0.; 4],
             mouse_delta: vec2(0., 0.),
             cam_pos: vec3(0., 0., 0.),
             cam_ortho: 0.,
@@ -165,6 +179,37 @@ impl Global {
             locked: false,
             boot_state: true,
             pending_load: None,
+        }
+    }
+
+    /// A finger landed or moved (`down`), or lifted. A new finger takes the
+    /// first free slot; one past `TOUCH_SLOTS` isn't reported.
+    pub fn track_touch(&mut self, id: u64, down: bool, x: f32, y: f32) {
+        let at = self.touches.iter().position(|t| matches!(t, Some((i, _, _)) if *i == id));
+        match (at, down) {
+            (Some(i), true) => self.touches[i] = Some((id, x, y)),
+            (Some(i), false) => self.touches[i] = None,
+            (None, true) => {
+                if let Some(i) = self.touches.iter().position(|t| t.is_none()) {
+                    self.touches[i] = Some((id, x, y));
+                }
+            }
+            (None, false) => {}
+        }
+    }
+
+    /// Write the touch slots into a `ControlState` analog array, from
+    /// `ANALOG_TOUCH` on: per slot, 1 if a finger is in it, then its x and y.
+    pub fn pack_touches(&self, analog: &mut [f32]) {
+        for (i, t) in self.touches.iter().enumerate() {
+            let at = crate::types::ANALOG_TOUCH + 3 * i;
+            let (down, x, y) = match t {
+                Some((_, x, y)) => (1.0, *x, *y),
+                None => (0.0, 0.0, 0.0),
+            };
+            analog[at] = down;
+            analog[at + 1] = x;
+            analog[at + 2] = y;
         }
     }
 
@@ -393,5 +438,45 @@ mod tests {
         );
         assert_eq!(g.light_color, vec3(0., 0., 0.));
         assert_eq!(g.light_ambient, 1.);
+    }
+}
+
+#[cfg(test)]
+mod touch_tests {
+    use super::*;
+
+    fn ids(g: &Global) -> Vec<Option<u64>> {
+        g.touches.iter().map(|t| t.map(|(id, _, _)| id)).collect()
+    }
+
+    #[test]
+    fn a_finger_keeps_its_slot_and_a_lifted_slot_is_reused() {
+        let mut g = Global::new();
+        g.track_touch(7, true, 0.1, 0.2);
+        g.track_touch(9, true, 0.5, 0.5);
+        g.track_touch(7, true, 0.3, 0.4); // moved
+        assert_eq!(g.touches[0], Some((7, 0.3, 0.4)));
+        g.track_touch(7, false, 0.3, 0.4); // the first lifts: the second stays put
+        assert_eq!(ids(&g)[..2], [None, Some(9)]);
+        g.track_touch(11, true, 0.9, 0.9);
+        assert_eq!(ids(&g)[..2], [Some(11), Some(9)]);
+        g.track_touch(42, false, 0., 0.); // a lift never seen landing
+        assert_eq!(ids(&g)[..2], [Some(11), Some(9)]);
+    }
+
+    #[test]
+    fn fingers_past_the_slots_are_dropped_and_packing_marks_the_empty_ones() {
+        let mut g = Global::new();
+        for id in 0..(TOUCH_SLOTS as u64 + 2) {
+            g.track_touch(id, true, 0.5, 0.25);
+        }
+        assert!(g.touches.iter().all(|t| t.is_some()));
+        g.track_touch(1, false, 0., 0.);
+        let mut a = [9f32; crate::types::ANALOG_LEN];
+        g.pack_touches(&mut a);
+        let at = crate::types::ANALOG_TOUCH;
+        assert_eq!(a[at..at + 3], [1., 0.5, 0.25]);
+        assert_eq!(a[at + 3..at + 6], [0., 0., 0.]);
+        assert_eq!(a[..at], [9f32; crate::types::ANALOG_TOUCH], "the mouse is left alone");
     }
 }

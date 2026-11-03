@@ -667,7 +667,7 @@ pub fn command_docs() -> Result<HashMap<String, (String, String)>, P64Error> {
             singer.clone(),
             Rc::new(RefCell::new([false; 256])),
             Rc::new(RefCell::new([false; 256])),
-            Rc::new(RefCell::new([0f32; 13])),
+            Rc::new(RefCell::new([0f32; crate::types::MICE_LEN])),
             Rc::new(RefCell::new(Pad::new())),
             Rc::new(Mutex::new(2u64)),
             loggy.clone(),
@@ -696,7 +696,7 @@ pub fn init_lua_sys<'a, 'gc>(
     #[cfg(feature = "audio")] singer: SoundSender,
     keys: Rc<RefCell<[bool; 256]>>,
     diff_keys: Rc<RefCell<[bool; 256]>>,
-    mice: Rc<RefCell<[f32; 13]>>,
+    mice: Rc<RefCell<[f32; crate::types::MICE_LEN]>>,
     gamepad: Rc<RefCell<Pad>>,
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
@@ -1041,6 +1041,31 @@ function key(key, volatile) end"
         "   
 ---@return string
 function cin() end"
+    );
+
+    let touch_mice = Rc::clone(&mice);
+    lua!(
+        "touches",
+        move |vm, mc, (): ()| {
+            let mut list = vm.raw_table();
+            let m = touch_mice.borrow();
+            for slot in 0..crate::global::TOUCH_SLOTS {
+                let at = 13 + 3 * slot;
+                if m[at] > 0. {
+                    let mut t = vm.raw_table();
+                    t.set_str(mc, "id", (slot + 1) as i64);
+                    t.set_str(mc, "x", m[at + 1]);
+                    t.set_str(mc, "y", m[at + 2]);
+                    list.push(vm.wrap_table(mc, t));
+                }
+            }
+            drop(m);
+            Ok(vm.wrap_table(mc, list))
+        },
+        " Get every finger on the screen: a list of {id, x, y}, x and y 0..1 like mus(). A finger keeps its id while it's down. The first finger down is also the mouse.",
+        "
+---@return {id:integer, x:number, y:number}[]
+function touches() end"
     );
 
     lua!(
