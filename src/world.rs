@@ -220,6 +220,22 @@ pub struct World {
 }
 
 impl World {
+    /// A new device after a lost one (`gpu_loss.rs`): every chunk's buffers
+    /// again, and the tile models repointed at their new selves.
+    #[cfg(feature = "headed")]
+    pub fn restore_gpu(&mut self, device: &wgpu::Device, remap: &mut crate::model::ModelRemap) {
+        for layer in self.layers.values_mut() {
+            for chunk in layer.chunks.values_mut() {
+                chunk.restore_gpu(device, false);
+            }
+        }
+        for mapper in self.local_mappers.values_mut() {
+            for m in mapper.model_map.values_mut() {
+                *m = remap.get(m, device);
+            }
+        }
+    }
+
     pub fn new(loggy: Sender<(LogType, String)>) -> World {
         // let senders = FxHashMap::default();
         // senders.insert(k, v)

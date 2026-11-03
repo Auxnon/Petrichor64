@@ -5,7 +5,9 @@ use glam::{ivec3, IVec3, Vec4};
 #[cfg(feature = "headed")]
 use glam::Mat4;
 #[cfg(feature = "headed")]
-use wgpu::{util::DeviceExt, Buffer, Device};
+use crate::gpu_loss::BufferInit;
+#[cfg(feature = "headed")]
+use wgpu::{Buffer, Device};
 
 #[cfg(feature = "headed")]
 use crate::ent::EntityUniforms;
@@ -719,7 +721,7 @@ impl ChunkModel {
         } else {
             wgpu::BufferUsages::VERTEX
         };
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&[e]),
             usage,
@@ -766,6 +768,15 @@ impl ChunkModel {
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&[e]));
     }
 
+    /// Its buffers again on a new device (`gpu_loss.rs`), from the mesh it
+    /// keeps; `updatable` as `new` took it.
+    #[cfg(feature = "headed")]
+    pub fn restore_gpu(&mut self, device: &Device, updatable: bool) {
+        let t = ChunkModel::create_transform(self.pos);
+        self.instance_buffer = ChunkModel::create_buffer(device, t, updatable);
+        self.cook(device);
+    }
+
     #[cfg(feature = "headed")]
     pub fn cook(&mut self, device: &Device) {
         // A chunk with nothing left in it (its last tile removed, or only
@@ -775,13 +786,13 @@ impl ChunkModel {
             self.buffers = None;
             return;
         }
-        let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
             contents: bytemuck::cast_slice(&self.vert_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Chunk Index Buffer"),
             contents: bytemuck::cast_slice(&self.ind_data),
             usage: wgpu::BufferUsages::INDEX,

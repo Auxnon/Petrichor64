@@ -46,7 +46,8 @@ pub struct Gfx<'w> {
     pub skinned_pipeline: wgpu::RenderPipeline,
     pub skinned_shadow_pipeline: wgpu::RenderPipeline,
     pub palette_layout: wgpu::BindGroupLayout,
-    pub surface: wgpu::Surface<'w>,
+    /// `None` only between `release_surface` and the `Gfx` that replaces this one.
+    pub surface: Option<wgpu::Surface<'w>>,
     /// Kept so the surface can be rebuilt without tearing down the device, the
     /// pipelines, or the running game — Android destroys the native window when the
     /// app is backgrounded (screen sleep) and hands back a *new* one on resume, at
@@ -72,6 +73,11 @@ pub struct Gfx<'w> {
     pub gui_overlay_pipeline: wgpu::RenderPipeline,
     /// The `crt_resolution` that `render_size` was last derived from.
     render_res: f32,
+    /// The atlas's (mag, min) nearest filtering as `set_filter_mode` last set
+    /// it, so a restored device gets the same chip look.
+    filter: Option<(bool, bool)>,
+    /// A frame was submitted since the last `flush_unsubmitted`.
+    pub submitted: std::cell::Cell<bool>,
 }
 
 #[repr(C)]
@@ -141,15 +147,39 @@ fn create_depth_texture(
     (depth_texture, view, sampler)
 }
 
+/// What `Gfx::connect` hands `Gfx::build`.
+pub struct GpuLink<'w> {
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'w>,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    size: PhysicalSize<u32>,
+}
+
 impl<'w> Gfx<'w> {
     pub async fn new(
         rwindow: Arc<Window>,
         tex_manager: &TexManager,
     ) -> (Self, RenderPipeline, RenderPipeline) {
-        // crate::texture::save_audio_buffer(&vec![255u8; 1024]);
-        // let b=Box::new(*rwindow);
-        // let window = &*rwindow;
-        // let ww= SurfaceTarget::Window(Box::new(*rwindow));
+        match Self::connect(rwindow.clone(), None).await {
+            Ok(link) => Self::build(link, rwindow, tex_manager),
+            Err(e) => {
+                error_window(e.into());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// A surface on the window and a device to draw it with: the half of `new`
+    /// that a lost GPU has to redo (`gpu_loss.rs`). Fails rather than exits, so
+    /// a restore can try again later. `instance` reuses one: natively a second
+    /// instance on the same window crashes the driver (seen on NVIDIA), and on
+    /// the web a new one can settle on another backend than the canvas has.
+    pub async fn connect(
+        rwindow: Arc<Window>,
+        instance: Option<wgpu::Instance>,
+    ) -> Result<GpuLink<'w>, String> {
         // On the web the canvas often isn't laid out yet at init, so
         // inner_size() reports 0x0 — which makes the surface config and every
         // texture derived from it 0x0 and Dawn/WebGPU rejects them. Start from a
@@ -167,28 +197,29 @@ impl<'w> Gfx<'w> {
         // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         // Chrome on Linux exposes `navigator.gpu` without a WebGPU adapter;
         // the detection drops WebGPU there so WebGL2 gets used instead.
-        let instance = wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
-            backends: default_backends(),
-            memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
-                for_resource_creation: None,
-                for_device_loss: None,
-            },
-            backend_options: BackendOptions::from_env_or_default(),
-            flags: wgpu::InstanceFlags::empty(),
-            display: None,
-        })
-        .await;
+        let instance = match instance {
+            Some(i) => i,
+            None => {
+                wgpu::util::new_instance_with_webgpu_detection(wgpu::InstanceDescriptor {
+                    backends: default_backends(),
+                    memory_budget_thresholds: wgpu::MemoryBudgetThresholds {
+                        for_resource_creation: None,
+                        for_device_loss: None,
+                    },
+                    backend_options: BackendOptions::from_env_or_default(),
+                    flags: wgpu::InstanceFlags::empty(),
+                    display: None,
+                })
+                .await
+            }
+        };
         // let arc_window = std::sync::Arc::new(window);
         // arc_window.inn
 
         // wgpu::Backends::all());
-        let surface = match instance.create_surface(rwindow.clone()) {
-            Ok(surface) => surface,
-            Err(e) => {
-                error_window(Box::new(e));
-                std::process::exit(1);
-            }
-        };
+        let surface = instance
+            .create_surface(rwindow.clone())
+            .map_err(|e| format!("could not create a surface: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -196,9 +227,9 @@ impl<'w> Gfx<'w> {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("Failed to request adapter");
+            .map_err(|e| format!("no graphics adapter: {e}"))?;
 
-        let (device, queue) = match adapter
+        let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 trace: Trace::Off, // TODO make this on, where should it save?
                 experimental_features: ExperimentalFeatures::disabled(),
@@ -217,17 +248,33 @@ impl<'w> Gfx<'w> {
                 memory_hints: wgpu::MemoryHints::Performance, // TODO try setting this to manual, how much memory do we need?
             })
             .await
-        {
-            Ok((device, queue)) => (device, queue),
-            Err(e) => {
-                error_window(Box::new(e));
-                std::process::exit(1);
-            }
-        };
-        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
-            error_window(Box::new(e));
-            std::process::exit(1);
-        }));
+            .map_err(|e| format!("no graphics device: {e}"))?;
+        crate::gpu_loss::watch(&device);
+        Ok(GpuLink {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+            size,
+        })
+    }
+
+    /// Everything on the device: pipelines, the atlas (from `tex_manager`'s
+    /// CPU copy), the scene targets. Returns the gui and sky pipelines for `Gui`.
+    pub fn build(
+        link: GpuLink<'w>,
+        rwindow: Arc<Window>,
+        tex_manager: &TexManager,
+    ) -> (Self, RenderPipeline, RenderPipeline) {
+        let GpuLink {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+            size,
+        } = link;
 
         //this order is important, since models can load their own textures we need assets to init first
 
@@ -776,13 +823,15 @@ impl<'w> Gfx<'w> {
 
         (
             Self {
-                surface,
+                surface: Some(surface),
                 instance,
                 device,
                 queue,
                 size,
                 render_size: size,
                 render_res: 0.,
+                filter: None,
+                submitted: std::cell::Cell::new(false),
                 gui_overlay_pipeline,
                 config,
                 depth_texture: depth.1,
@@ -897,7 +946,7 @@ impl<'w> Gfx<'w> {
                     self.config.height = s.height;
                 }
                 surface.configure(&self.device, &self.config);
-                self.surface = surface;
+                self.surface = Some(surface);
                 self.rebuild_scene_targets();
                 true
             }
@@ -911,9 +960,49 @@ impl<'w> Gfx<'w> {
         }
     }
 
+    /// Once a tick: if no frame was submitted since the last call, submit
+    /// nothing, which still sends the uploads queued meanwhile. Every
+    /// `create_buffer_init` and `write_buffer` parks a staging buffer (and its
+    /// target) on the queue until the next submit, and the game keeps making
+    /// them (entity batches, uniforms) while no frame draws: a window that's
+    /// hidden, occluded or asleep, or a surface that won't give a texture. On
+    /// a Mac left asleep for hours that grew until wgpu reported out of memory.
+    pub fn flush_unsubmitted(&self) {
+        if !self.submitted.replace(false) {
+            self.queue.submit(std::iter::empty());
+        }
+    }
+
+    /// Let go of the window's surface ahead of a new `Gfx` making its own: a
+    /// native window can only carry one swapchain. Returns the instance, for
+    /// the new one to be made from.
+    pub fn release_surface(&mut self) -> wgpu::Instance {
+        self.surface = None;
+        self.instance()
+    }
+
+    /// The instance this device came from, for a replacement to come from too.
+    pub fn instance(&self) -> wgpu::Instance {
+        self.instance.clone()
+    }
+
+    /// Carry what isn't GPU state over from the `Gfx` this one replaces after a
+    /// lost device, then size everything to match it. Returns the gui size.
+    pub fn adopt(&mut self, old: &Gfx, gui_params: &GuiParams) -> (u32, u32) {
+        self.set_config_size(old.size);
+        self.render_res = old.render_res;
+        if let Some((mag, min)) = old.filter {
+            self.set_filter_mode(mag, min);
+        }
+        self.set_shadow_size(old.shadow_size);
+        self.resize(gui_params)
+    }
+
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
         let new_size = self.size;
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = &self.surface {
+            surface.configure(&self.device, &self.config);
+        }
         self.rebuild_scene_targets();
         Self::compute_gui_size(gui_params, new_size, self.win_ref.scale_factor())
     }
@@ -1016,6 +1105,7 @@ impl<'w> Gfx<'w> {
     /// bilinear, the characteristic N64 blur); R30 wants both `true` (PS1 had no
     /// texture filtering at all).
     pub fn set_filter_mode(&mut self, mag_nearest: bool, min_nearest: bool) {
+        self.filter = Some((mag_nearest, min_nearest));
         let filter = |nearest: bool| {
             if nearest {
                 wgpu::FilterMode::Nearest

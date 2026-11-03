@@ -5,7 +5,9 @@ use glam::{Mat4, Quat};
 use itertools::izip;
 use std::{collections::HashMap, rc::Rc};
 #[cfg(feature = "headed")]
-use wgpu::{util::DeviceExt, Device};
+use crate::gpu_loss::BufferInit;
+#[cfg(feature = "headed")]
+use wgpu::Device;
 
 #[cfg(feature = "headed")]
 use crate::texture::TexManager;
@@ -49,14 +51,14 @@ impl ModelManager {
     pub fn init(#[cfg(feature = "headed")] device: &Device) -> ModelManager {
         let (plane_vertex_data, plane_index_data) = create_plane(8, Some(ivec3(0, 0, 0)), None);
         #[cfg(feature = "headed")]
-        let plane_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let plane_vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Plane Vertex Buffer"),
             contents: bytemuck::cast_slice(&plane_vertex_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         #[cfg(feature = "headed")]
-        let plane_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let plane_index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Plane Index Buffer"),
             contents: bytemuck::cast_slice(&plane_index_data),
             usage: wgpu::BufferUsages::INDEX,
@@ -83,13 +85,13 @@ impl ModelManager {
 
         let (cube_vertex_data, cube_index_data) = create_cube(16); // TODO 16
         #[cfg(feature = "headed")]
-        let cube_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let cube_vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Cubes Vertex Buffer"),
             contents: bytemuck::cast_slice(&cube_vertex_data),
             usage: wgpu::BufferUsages::VERTEX,
         });
         #[cfg(feature = "headed")]
-        let cube_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let cube_index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Cubes Index Buffer"),
             contents: bytemuck::cast_slice(&cube_index_data),
             usage: wgpu::BufferUsages::INDEX,
@@ -126,6 +128,19 @@ impl ModelManager {
 
     pub fn cube_model(&self) -> Rc<Model> {
         Rc::clone(&self.CUBE)
+    }
+
+    /// Remake every model on a new device after a lost one (`gpu_loss.rs`).
+    /// The returned `ModelRemap` repoints whatever else holds the old ones.
+    #[cfg(feature = "headed")]
+    pub fn restore_gpu(&mut self, device: &Device) -> ModelRemap {
+        let mut remap = ModelRemap::default();
+        self.CUBE = remap.get(&self.CUBE, device);
+        self.PLANE = remap.get(&self.PLANE, device);
+        for m in self.DICTIONARY.values_mut() {
+            *m = remap.get(m, device);
+        }
+        remap
     }
 
     pub fn plane_model(&self) -> Rc<Model> {
@@ -395,14 +410,14 @@ impl ModelManager {
             None => base_name.to_owned(),
         };
         #[cfg(feature = "headed")]
-        let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", compound_name, " Mesh Vertex Buffer")),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         #[cfg(feature = "headed")]
-        let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", compound_name, " Mesh Index Buffer")),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
@@ -410,7 +425,7 @@ impl ModelManager {
 
         let skin = skin.map(|verts| ModelSkin {
             #[cfg(feature = "headed")]
-            buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            buf: device.buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(&format!("{} Skin Buffer", compound_name)),
                 contents: bytemuck::cast_slice(&verts),
                 usage: wgpu::BufferUsages::VERTEX,
@@ -697,14 +712,14 @@ impl ModelManager {
             .collect::<Vec<Vertex>>();
 
         #[cfg(feature = "headed")]
-        let mesh_vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", name, " Mesh Vertex Buffer")),
             contents: bytemuck::cast_slice(&verts2),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
         #[cfg(feature = "headed")]
-        let mesh_index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let mesh_index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some(&format!("{}{}", name, " Mesh Index Buffer")),
             contents: bytemuck::cast_slice(&inds),
             usage: wgpu::BufferUsages::INDEX,
@@ -1049,14 +1064,14 @@ fn build_model(
     inds: &Vec<u16>,
 ) -> Model {
     #[cfg(feature = "headed")]
-    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let vertex_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Vertex Buffer"),
         contents: bytemuck::cast_slice(verts),
         usage: wgpu::BufferUsages::VERTEX,
     });
 
     #[cfg(feature = "headed")]
-    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let index_buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Chunk Index Buffer"),
         contents: bytemuck::cast_slice(inds),
         usage: wgpu::BufferUsages::INDEX,
@@ -1102,6 +1117,63 @@ pub struct Model {
     /// Per-vertex joints/weights for a skinned glTF mesh; its skeleton lives in
     /// `skeleton::SKELETONS` under this model's names.
     pub skin: Option<ModelSkin>,
+}
+
+/// Old model -> the same model on a new device, made the first time it's asked
+/// for, so a holder `ModelManager` doesn't know of is still repointed. Keyed
+/// by address, so it keeps the old ones alive: none is freed, and its address
+/// reused by a new one, while the remap is still being asked.
+#[cfg(feature = "headed")]
+#[derive(Default)]
+pub struct ModelRemap(rustc_hash::FxHashMap<*const Model, (Rc<Model>, Rc<Model>)>);
+
+#[cfg(feature = "headed")]
+impl ModelRemap {
+    pub fn get(&mut self, old: &Rc<Model>, device: &Device) -> Rc<Model> {
+        self.0
+            .entry(Rc::as_ptr(old))
+            .or_insert_with(|| (old.clone(), Rc::new(old.on_device(device))))
+            .1
+            .clone()
+    }
+}
+
+#[cfg(feature = "headed")]
+impl Model {
+    /// This model with its buffers made again on `device`, from the mesh it
+    /// keeps. Only the plane keeps none, and it is always the same plane.
+    fn on_device(&self, device: &Device) -> Model {
+        let plane;
+        let (verts, inds) = match &self.data {
+            Some((v, i)) => (v, i),
+            None => {
+                plane = create_plane(8, Some(ivec3(0, 0, 0)), None);
+                (&plane.0, &plane.1)
+            }
+        };
+        let buffer = |contents: &[u8], usage| {
+            device.buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(&self.name),
+                contents,
+                usage,
+            })
+        };
+        Model {
+            base_name: self.base_name.clone(),
+            name: self.name.clone(),
+            index_count: self.index_count,
+            data: self.data.clone(),
+            bounds_min: self.bounds_min,
+            bounds_max: self.bounds_max,
+            vertex_buf: buffer(bytemuck::cast_slice(verts), wgpu::BufferUsages::VERTEX),
+            index_buf: buffer(bytemuck::cast_slice(inds), wgpu::BufferUsages::INDEX),
+            index_format: self.index_format,
+            skin: self.skin.as_ref().map(|s| ModelSkin {
+                buf: buffer(bytemuck::cast_slice(&s.verts), wgpu::BufferUsages::VERTEX),
+                verts: s.verts.clone(),
+            }),
+        }
+    }
 }
 
 pub struct ModelSkin {

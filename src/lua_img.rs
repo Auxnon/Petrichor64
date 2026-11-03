@@ -117,6 +117,12 @@ impl LuaImg {
     }
 
     /// Renderer side: hand over the completed frame if one is waiting.
+    /// Hand the last finished frame out again on the next `take_presented`:
+    /// the texture it went to is gone (a lost GPU, `gpu_loss.rs`).
+    pub fn present_again(&mut self) {
+        self.presented_dirty = self.presented.is_some();
+    }
+
     pub fn take_presented(&mut self) -> Option<&RgbaImage> {
         if !self.presented_dirty {
             return None;

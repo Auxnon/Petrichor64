@@ -553,7 +553,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     //     texture_extent,
     // );
 
-    let output = match gfx.surface.get_current_texture() {
+    let Some(surface) = gfx.surface.as_ref() else {
+        return DrawState::Skip;
+    };
+    let output = match surface.get_current_texture() {
         wgpu::CurrentSurfaceTexture::Success(tex) => tex,
         wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
             // Texture is usable but the surface should be reconfigured
@@ -626,6 +629,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     });
 
     gfx.queue.submit(std::iter::once(encoder.finish()));
+    gfx.submitted.set(true);
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(p) = snap {
         crate::snap::save(&gfx.device, p);

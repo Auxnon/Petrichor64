@@ -43,6 +43,8 @@ mod error;
 mod file_util;
 #[cfg(feature = "headed")]
 mod gfx;
+#[cfg(feature = "headed")]
+mod gpu_loss;
 mod gltf_io;
 mod global;
 mod gui;
@@ -208,6 +210,23 @@ pub struct App {
     /// tears it down whenever the app leaves the foreground. Named for what it means
     /// rather than "suspended", which is already a method on this type.
     surface_lost: bool,
+    /// A lost GPU being restored (`gpu_loss.rs`): frames to wait before asking
+    /// for a device again after a failed try.
+    gpu_retry: u32,
+    /// Frames drawn since the last restore, and how many losses in a row came
+    /// soon after one: a device that keeps dying is asked for again less often.
+    gpu_drawn: u32,
+    gpu_quick: u32,
+    /// A loss is being dealt with (its backoff is already set).
+    gpu_down: bool,
+    /// wasm: a device request is in flight, and lands here.
+    #[cfg(target_arch = "wasm32")]
+    pending_gpu: std::rc::Rc<std::cell::RefCell<Option<Result<crate::gfx::GpuLink<'static>, String>>>>,
+    #[cfg(target_arch = "wasm32")]
+    gpu_asking: bool,
+    /// `CHOR_GPU_LOSE=secs`: when to lose the device on purpose, for testing.
+    #[cfg(not(target_arch = "wasm32"))]
+    gpu_test_loss: Option<std::time::Instant>,
     /// Set at boot when the game is compiled in (`include_auto`); the load itself
     /// happens on the first frame, so window activation isn't blocked by unpacking.
     #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
@@ -271,6 +290,17 @@ impl Default for App {
             #[cfg(not(target_arch = "wasm32"))]
             deferred_overlay: None,
             surface_lost: false,
+            gpu_retry: 0,
+            gpu_drawn: u32::MAX,
+            gpu_quick: 0,
+            gpu_down: false,
+            #[cfg(target_arch = "wasm32")]
+            pending_gpu: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            gpu_asking: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            gpu_test_loss: crate::gpu_loss::test_loss_at()
+                .map(|s| std::time::Instant::now() + std::time::Duration::from_secs_f32(s)),
             primary_touch: None,
             touch_last: None,
             #[cfg(target_arch = "wasm32")]
@@ -401,6 +431,123 @@ fn state_change_checker(
 }
 
 #[cfg(feature = "headed")]
+/// The window petrichor opens (icon is native-only; winit ignores it on web).
+fn window_attributes() -> WindowAttributes {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let icon = image::load_from_memory(include_bytes!("../assets/petrichor-small-icon.png"))
+            .expect("failed to load icon.png");
+        let rgba = icon.as_rgba8().unwrap();
+        let (width, height) = icon.dimensions();
+        let bytes = rgba
+            .chunks_exact(4)
+            .flat_map(|p| p.iter().cloned())
+            .collect::<Vec<_>>();
+        let window_icon = winit::window::Icon::from_rgba(bytes, width, height).unwrap();
+        WindowAttributes::default()
+            .with_title("Petrichor64")
+            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+            .with_window_icon(Some(window_icon))
+    }
+    #[cfg(target_arch = "wasm32")]
+    WindowAttributes::default()
+        .with_title("Petrichor64")
+        .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+}
+
+impl App {
+    /// Drawing has stopped on a lost GPU (`gpu_loss.rs`): once a device can be
+    /// had, get one and rebuild onto it. Native asks inline; the web can't
+    /// block, so it asks once and picks the answer up on a later frame.
+    fn restore_gpu(&mut self, #[allow(unused)] event_loop: &ActiveEventLoop) {
+        let (Some(core), Some(window)) = (self.core.as_mut(), self.window.clone()) else {
+            return;
+        };
+        if !self.gpu_down {
+            self.gpu_down = true;
+            // Lost again within two seconds of coming back: wait 1s, 2s, 4s...
+            // (to ~30s) before the next try, rather than rebuilding in a loop.
+            self.gpu_quick = if self.gpu_drawn < 120 { self.gpu_quick + 1 } else { 0 };
+            if self.gpu_quick > 0 {
+                self.gpu_retry = (60u32 << (self.gpu_quick - 1).min(5)).min(1800);
+                ::log::warn!("gpu lost again soon after a restore; waiting {} frames", self.gpu_retry);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(res) = self.pending_gpu.borrow_mut().take() {
+            self.gpu_asking = false;
+            match res {
+                Ok(link) => {
+                    core.restore_gpu(link, window);
+                    self.gpu_down = false;
+                    self.gpu_drawn = 0;
+                }
+                Err(e) => {
+                    ::log::error!("gpu restore failed, trying again: {e}");
+                    self.gpu_retry = 60;
+                }
+            }
+            return;
+        }
+        if self.gpu_retry > 0 {
+            self.gpu_retry -= 1;
+            return;
+        }
+        if !crate::gpu_loss::ready() {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // A new device on the old window hangs or crashes NVIDIA's Wayland
+            // driver in its first present, so the device gets a window of its own,
+            // the same as the old. Android has the one window it was given.
+            #[cfg(not(target_os = "android"))]
+            let window = {
+                let title = window.title();
+                let attrs = window_attributes()
+                    .with_title(if title.is_empty() { "Petrichor64".into() } else { title })
+                    .with_inner_size(window.inner_size())
+                    .with_fullscreen(window.fullscreen());
+                match event_loop.create_window(attrs) {
+                    Ok(w) => {
+                        let w = Arc::new(w);
+                        w.focus_window();
+                        self.window = Some(w.clone());
+                        w
+                    }
+                    Err(e) => {
+                        ::log::error!("no window for the restored gpu, trying again: {e}");
+                        self.gpu_retry = 60;
+                        return;
+                    }
+                }
+            };
+            let instance = core.gfx.release_surface();
+            match pollster::block_on(crate::gfx::Gfx::connect(window.clone(), Some(instance))) {
+                Ok(link) => {
+                    core.restore_gpu(link, window);
+                    self.gpu_down = false;
+                    self.gpu_drawn = 0;
+                }
+                Err(e) => {
+                    ::log::error!("gpu restore failed, trying again: {e}");
+                    self.gpu_retry = 60;
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if !self.gpu_asking {
+            self.gpu_asking = true;
+            let slot = self.pending_gpu.clone();
+            let instance = core.gfx.instance();
+            wasm_bindgen_futures::spawn_local(async move {
+                let res = crate::gfx::Gfx::connect(window, Some(instance)).await;
+                *slot.borrow_mut() = Some(res);
+            });
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     /// Called when the event loop is ready and (on mobile/web) the app has resumed.
     /// This is where we create the window and initialise the engine.
@@ -435,30 +582,7 @@ impl ApplicationHandler for App {
             return;
         }
 
-        // --- Window attributes (icon is native-only; winit ignores it on web) ---
-        #[cfg(not(target_arch = "wasm32"))]
-        let win_attr = {
-            let icon = image::load_from_memory(include_bytes!(
-                "../assets/petrichor-small-icon.png"
-            ))
-            .expect("failed to load icon.png");
-            let rgba = icon.as_rgba8().unwrap();
-            let (width, height) = icon.dimensions();
-            let bytes = rgba
-                .chunks_exact(4)
-                .flat_map(|p| p.iter().cloned())
-                .collect::<Vec<_>>();
-            let window_icon = winit::window::Icon::from_rgba(bytes, width, height).unwrap();
-            WindowAttributes::default()
-                .with_title("Petrichor64")
-                .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
-                .with_window_icon(Some(window_icon))
-        };
-        #[cfg(target_arch = "wasm32")]
-        let win_attr = WindowAttributes::default()
-            .with_title("Petrichor64")
-            .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32));
-
+        let win_attr = window_attributes();
         let window = Arc::new(
             event_loop
                 .create_window(win_attr)
@@ -556,6 +680,7 @@ impl ApplicationHandler for App {
             if let Some(canvas) = window.canvas() {
                 attach_canvas_to_dom(&canvas);
                 install_keyboard_sink(&canvas);
+                crate::gpu_loss::watch_canvas(&canvas);
                 install_web_input_handlers(
                     &canvas,
                     self.pointer_lock_wanted.clone(),
@@ -645,6 +770,18 @@ impl ApplicationHandler for App {
                 if self.surface_lost {
                     return;
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let (Some(at), Some(core)) = (self.gpu_test_loss, &self.core) {
+                    if std::time::Instant::now() >= at {
+                        self.gpu_test_loss = None;
+                        crate::gpu_loss::simulate(&core.gfx.device);
+                    }
+                }
+                if crate::gpu_loss::is_lost() {
+                    self.restore_gpu(event_loop);
+                    return;
+                }
+                self.gpu_drawn = self.gpu_drawn.saturating_add(1);
                 if let Some(core) = &mut self.core {
                     match core.render() {
                         render::DrawState::Success => {}
@@ -1147,6 +1284,9 @@ impl ApplicationHandler for App {
                     core.apply_vm_message(m);
                 }
             }
+            if let Some(core) = self.core.as_mut() {
+                core.gfx.flush_unsubmitted();
+            }
 
             // Keep the web audio queue filled ahead of the audio clock (glitch-free
             // through render jank). Runs every frame once Core is up.
@@ -1261,6 +1401,8 @@ impl ApplicationHandler for App {
 
             // Save current key state for next frame's pressed/released detection.
             self.bits_prev = self.bits.0;
+
+            core.gfx.flush_unsubmitted();
 
             // Request a GPU frame; rendering happens in RedrawRequested.
             win_arc.request_redraw();
@@ -2892,7 +3034,7 @@ impl Core {
             VmToHost::Raster { sky, w, h, px } => {
                 #[cfg(feature = "headed")]
                 if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
-                    self.gui.write_bundle_raster(0, sky, &img, &self.gfx.queue);
+                    self.gui.write_bundle_raster(0, sky, img, &self.gfx.queue);
                 }
             }
             VmToHost::LoopComplete { .. } => {

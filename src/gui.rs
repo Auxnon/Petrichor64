@@ -52,6 +52,14 @@ struct ScreenLayer {
     pub bundle_target: Option<u8>,
     pub index: ScreenIndex,
     pub dirty: bool,
+    /// The texture was remade (a lost GPU): upload the raster's last frame
+    /// even though it hasn't changed.
+    pub reupload: bool,
+    /// wasm: the last raster the VM worker sent (`write_bundle_raster`). It
+    /// goes straight to the texture, so this is the only copy a lost GPU can
+    /// be given back.
+    #[cfg(target_arch = "wasm32")]
+    pub last: Option<RgbaImage>,
 }
 #[cfg(feature = "headed")]
 impl ScreenLayer {
@@ -162,6 +170,9 @@ impl ScreenLayer {
                             // costs one lock instead of re-uploading a megabyte.
                             if let Err(e) =
                                 lua_img.downcast_mut(|img: &mut crate::lua_img::LuaImg| {
+                                    if self.reupload {
+                                        img.present_again();
+                                    }
                                     if let Some(frame) = img.take_presented() {
                                         crate::texture::write_tex(
                                             queue,
@@ -175,6 +186,7 @@ impl ScreenLayer {
                                 eprintln!("image downcast err: {}", e);
                             };
                             self.dirty = false;
+                            self.reupload = false;
                         }
                         // LuaImg not yet available — keep dirty for retry next frame
                     }
@@ -288,6 +300,9 @@ impl Gui {
                 index: ScreenIndex::System,
                 bundle_target: Some(0),
                 dirty: true,
+                reupload: false,
+                #[cfg(target_arch = "wasm32")]
+                last: None,
             },
             primary_layer: ScreenLayer {
                 // index: ScreenIndex::Primary,
@@ -296,6 +311,9 @@ impl Gui {
                 index: ScreenIndex::Primary,
                 bundle_target: Some(0),
                 dirty: true,
+                reupload: false,
+                #[cfg(target_arch = "wasm32")]
+                last: None,
             },
             secondary_layer: ScreenLayer {
                 // index: ScreenIndex::Secondary,
@@ -305,6 +323,9 @@ impl Gui {
                 // Assigned by `sync_layer_targets` when an overlay is up.
                 bundle_target: None,
                 dirty: true,
+                reupload: false,
+                #[cfg(target_arch = "wasm32")]
+                last: None,
             },
             trinary_layer: ScreenLayer {
                 // index: ScreenIndex::Trinary,
@@ -313,6 +334,9 @@ impl Gui {
                 index: ScreenIndex::Trinary,
                 bundle_target: None,
                 dirty: true,
+                reupload: false,
+                #[cfg(target_arch = "wasm32")]
+                last: None,
             },
             sky_layer: ScreenLayer {
                 // index: ScreenIndex::Sky,
@@ -321,6 +345,9 @@ impl Gui {
                 index: ScreenIndex::Sky,
                 bundle_target: Some(0),
                 dirty: true,
+                reupload: false,
+                #[cfg(target_arch = "wasm32")]
+                last: None,
             },
 
             console_string: "".to_string(),
@@ -546,10 +573,10 @@ impl Gui {
         &mut self,
         bundle_id: u8,
         sky: bool,
-        img: &RgbaImage,
+        img: RgbaImage,
         queue: &wgpu::Queue,
     ) {
-        let mut layers = if sky {
+        let layers = if sky {
             vec![&mut self.sky_layer]
         } else {
             vec![
@@ -558,14 +585,21 @@ impl Gui {
                 &mut self.trinary_layer,
             ]
         };
-        for layer in layers.iter_mut() {
+        #[allow(unused_mut, unused_variables)]
+        let mut shown = None;
+        for layer in layers.into_iter() {
             let t = &layer.texture.texture;
             if layer.bundle_target == Some(bundle_id)
                 && (t.width(), t.height()) == img.dimensions()
             {
-                crate::texture::write_tex(queue, t, img);
+                crate::texture::write_tex(queue, t, &img);
                 layer.dirty = false;
+                shown = Some(layer);
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(layer) = shown {
+            layer.last = Some(img);
         }
     }
 
@@ -590,6 +624,53 @@ impl Gui {
     }
 
     #[cfg(feature = "headed")]
+    /// A new device after a lost one (`gpu_loss.rs`): new layer textures at the
+    /// current size, all dirty, so they re-upload from the rasters they show.
+    pub fn restore_gpu(
+        &mut self,
+        gfx: &crate::gfx::Gfx,
+        gui_pipeline: wgpu::RenderPipeline,
+        sky_pipeline: wgpu::RenderPipeline,
+    ) {
+        self.gui_pipeline = gui_pipeline;
+        self.sky_pipeline = sky_pipeline;
+        let blank = RgbaImage::new(self.size[0], self.size[1]);
+        for layer in [
+            &mut self.system_layer,
+            &mut self.primary_layer,
+            &mut self.secondary_layer,
+            &mut self.trinary_layer,
+            &mut self.sky_layer,
+        ] {
+            layer.texture = crate::texture::make_tex(&gfx.device, &gfx.queue, &blank);
+            layer.dirty = true;
+            layer.reupload = true;
+            #[cfg(target_arch = "wasm32")]
+            if let Some(img) = layer.last.as_ref().filter(|i| i.dimensions() == (self.size[0], self.size[1])) {
+                crate::texture::write_tex(&gfx.queue, &layer.texture.texture, img);
+                layer.dirty = false;
+                layer.reupload = false;
+            }
+        }
+        let (gui_group, gui_aux_group, sky_group) = rebuild_group(
+            [
+                &self.system_layer.texture,
+                &self.primary_layer.texture,
+                &self.secondary_layer.texture,
+                &self.trinary_layer.texture,
+                &self.sky_layer.texture,
+            ],
+            &gfx.device,
+            &gfx.main_layout,
+            &gfx.gui_aux_layout,
+            &gfx.uniform_buf,
+        );
+        self.gui_group = gui_group;
+        self.sky_group = sky_group;
+        self.gui_aux_group = gui_aux_group;
+        self.notifications_dirty = true;
+    }
+
     pub fn resize(&mut self, bm: &mut BundleManager, size: (u32, u32), gfx: &crate::gfx::Gfx) {
         let device = &gfx.device;
         let queue = &gfx.queue;

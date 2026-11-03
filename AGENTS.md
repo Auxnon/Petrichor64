@@ -230,6 +230,13 @@ env CHOR_SNAP=/tmp/shot CHOR_SNAP_AT=200,400 chor path/to/game
 # -> /tmp/shot-200.png, /tmp/shot-400.png (frame counts since start)
 ```
 
+A game should survive a lost GPU (`src/gpu_loss.rs`). `CHOR_GPU_LOSE=5` destroys the
+device five seconds in; compare a `CHOR_SNAP` frame from before with one after, and
+look for `gpu lost` / `gpu restored` in the log. Something drawn once (a `sky:fill`
+in `main()`, a `tex`, a `mod`) going missing afterwards is a restore bug. On the web,
+lose the WebGL2 context from the page: `canvas.getContext('webgl2')
+.getExtension('WEBGL_lose_context').loseContext()`, then `restoreContext()`.
+
 ### 3. Gotchas while testing
 
 - **Kill by exact name** (`pkill -x chor`). A `pkill -f` pattern that matches your

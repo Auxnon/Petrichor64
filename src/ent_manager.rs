@@ -19,7 +19,9 @@ use mlua::{UserData, UserDataMethods};
 use rustc_hash::FxHashMap;
 use silt_lua::userdata::UserDataWrapper;
 #[cfg(feature = "headed")]
-use wgpu::{util::DeviceExt, Buffer};
+use crate::gpu_loss::BufferInit;
+#[cfg(feature = "headed")]
+use wgpu::Buffer;
 
 // Collision (guide/hit.md) is core simulation, not a render concern, so this
 // runs in both headed and headless builds.
@@ -320,7 +322,7 @@ impl BundleEnts {
         if data.is_empty() {
             data.resize(MAX_JOINTS, Mat4::IDENTITY.to_cols_array());
         }
-        let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buf = device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("skin palettes"),
             contents: bytemuck::cast_slice(&data),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -342,6 +344,28 @@ impl BundleEnts {
 
 // (lua, ent)
 impl EntManager {
+    /// A new device after a lost one (`gpu_loss.rs`): every entity onto its
+    /// model's new self, batches rebuilt next frame, grid chunks remade.
+    #[cfg(feature = "headed")]
+    pub fn restore_gpu(&mut self, device: &wgpu::Device, remap: &mut crate::model::ModelRemap) {
+        self.instance_buffer = EntManager::build_buffer(&self.instances, device);
+        for b in self.bundles.values_mut() {
+            for (_, e, _) in b.array.iter_mut() {
+                e.model = remap.get(&e.model, device);
+            }
+            b.render_hash.clear();
+            b.hash_dirty = true;
+        }
+        for e in self.specks.iter_mut() {
+            e.model = remap.get(&e.model, device);
+        }
+        for models in self.entity_grid_models.values_mut() {
+            for chunk in models.values_mut() {
+                chunk.restore_gpu(device, true);
+            }
+        }
+    }
+
     pub fn new(#[cfg(feature = "headed")] device: &wgpu::Device) -> EntManager {
         EntManager {
             #[cfg(feature = "headed")]
@@ -362,7 +386,7 @@ impl EntManager {
     #[cfg(feature = "headed")]
     pub fn build_buffer(instances: &Vec<Instance>, device: &wgpu::Device) -> Buffer {
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(&instance_data),
             usage: wgpu::BufferUsages::VERTEX,
@@ -379,7 +403,7 @@ impl EntManager {
         instance_data: &Vec<EntityUniforms>,
         device: &wgpu::Device,
     ) -> Buffer {
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Instance Buffer"),
             contents: bytemuck::cast_slice(instance_data),
             usage: wgpu::BufferUsages::VERTEX,

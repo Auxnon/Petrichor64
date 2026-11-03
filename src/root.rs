@@ -467,6 +467,25 @@ impl<'core> Core {
         }
     }
 
+    /// Swap in a new device after a lost one (`gpu_loss.rs`). Everything on
+    /// the GPU is made again from what the engine keeps on the CPU: the atlas,
+    /// the gui and sky rasters, model meshes and tile chunks. The VM, entities
+    /// and world carry on as they were. `window` is the one `link` was made on.
+    #[cfg(feature = "headed")]
+    pub fn restore_gpu(&mut self, link: crate::gfx::GpuLink<'static>, window: Arc<Window>) {
+        let (mut gfx, gui_pipeline, sky_pipeline) = Gfx::build(link, window, &self.tex_manager);
+        gfx.adopt(&self.gfx, &self.global.gui_params);
+        self.gfx = gfx;
+        // Before the rebuild, which makes its buffers through `BufferInit`.
+        crate::gpu_loss::restored();
+        self.gui.restore_gpu(&self.gfx, gui_pipeline, sky_pipeline);
+        let device = &self.gfx.device;
+        let mut remap = self.model_manager.restore_gpu(device);
+        self.world.restore_gpu(device, &mut remap);
+        self.ent_manager.restore_gpu(device, &mut remap);
+        self.instance_buffers.clear();
+    }
+
     #[cfg(feature = "headed")]
     pub fn render(&mut self) -> DrawState {
         self.global.delayed += 1;
