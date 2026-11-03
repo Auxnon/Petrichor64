@@ -291,6 +291,12 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         if let Err(e) = res {
             web_sys::console::error_1(&format!("[petrichor worker] dispatch error: {}", e).into());
         }
+        // `enter` doesn't collect (silt's run/call/cycle do it themselves), and
+        // gc_arena can only collect between enters: without this every table a
+        // loop() makes was kept for good, ~1 GB an hour for sosh, until an
+        // allocation failed (`unreachable` in the ws handler / passStringToWasm0).
+        // Debt-paced, so it's cheap when little was allocated.
+        lua.collect();
     }
 
     // Log lines → console.
