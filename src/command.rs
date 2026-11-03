@@ -1797,25 +1797,35 @@ function cue(freq, length, channel, instrument, at, grid) end"
 
     #[cfg(feature = "audio")]
     let sing_seq = singer.clone();
+    // For `seq(nil, steps)`: the next id to hand out (well above any a script
+    // would pick by hand), and the last sequence sent to each channel, which a
+    // pushed sequence plays after.
+    #[cfg(feature = "audio")]
+    let seq_queue: Rc<Mutex<(usize, HashMap<usize, usize>)>> =
+        Rc::new(Mutex::new((1 << 20, HashMap::new())));
     lua!(
         "seq",
         move |_, _, (id, steps, cfg): (Option<usize>, Option<Value>, Option<Value>)| {
             #[cfg(feature = "audio")]
             {
-                let id = match id {
-                    Some(id) => id,
-                    None => {
-                        let _ = sing_seq.send(SoundCommand::StopSequence(None));
-                        return Ok(());
-                    }
-                };
-                let steps = match steps {
-                    Some(Value::Table(t)) => parse_steps(&t.borrow()),
-                    _ => {
+                let steps = match (id, steps) {
+                    (_, Some(Value::Table(t))) => parse_steps(&t.borrow()),
+                    (Some(id), _) => {
                         let _ = sing_seq.send(SoundCommand::StopSequence(Some(id)));
-                        return Ok(());
+                        return Ok(Value::Nil);
+                    }
+                    (None, _) => {
+                        seq_queue.lock().1.clear();
+                        let _ = sing_seq.send(SoundCommand::StopSequence(None));
+                        return Ok(Value::Nil);
                     }
                 };
+                let pushed = id.is_none();
+                let id = id.unwrap_or_else(|| {
+                    let mut q = seq_queue.lock();
+                    q.0 += 1;
+                    q.0
+                });
                 let (steps, natural_len) = steps;
                 let mut seq = Sequence {
                     id,
@@ -1827,7 +1837,11 @@ function cue(freq, length, channel, instrument, at, grid) end"
                     grid: None,
                     after: None,
                     choke: false,
+                    bpm: None,
                 };
+                // A push chains after the channel's last sequence unless it says
+                // when to start itself (`at`, `after`, or `after = false`).
+                let mut chain = pushed;
                 if let Some(Value::Table(c)) = &cfg {
                     let c = c.borrow();
                     if let Some(v) = c.get_str("ch") {
@@ -1848,28 +1862,50 @@ function cue(freq, length, channel, instrument, at, grid) end"
                     }
                     if let Some(v) = c.get_str("at") {
                         seq.at = Some(v.into());
+                        chain = false;
                     }
                     if let Some(v) = c.get_str("grid") {
                         seq.grid = Some(v.into());
                     }
-                    if let Some(v) = c.get_str("after") {
-                        let a: f32 = v.into();
-                        seq.after = Some(a.max(0.) as usize);
+                    match c.get_str("after") {
+                        Some(Value::Bool(_)) => chain = false,
+                        Some(v) => {
+                            let a: f32 = v.into();
+                            seq.after = Some(a.max(0.) as usize);
+                            chain = false;
+                        }
+                        None => {}
                     }
                     if let Some(Value::Bool(b)) = c.get_str("choke") {
                         seq.choke = *b;
                     }
+                    if let Some(v) = c.get_str("bpm") {
+                        let b: f32 = v.into();
+                        if b > 0. {
+                            seq.bpm = Some(b);
+                        }
+                    }
+                }
+                {
+                    let mut q = seq_queue.lock();
+                    if chain {
+                        seq.after = q.1.get(&seq.channel).copied();
+                    }
+                    q.1.insert(seq.channel, id);
                 }
                 lua_err!(sing_seq.send(SoundCommand::Sequence(seq)));
+                return Ok(Value::Integer(id as i64));
             }
-            Ok(())
+            #[allow(unreachable_code)]
+            Ok(Value::Nil)
         },
         "Play a sequence of steps on the transport: once, a counted number of times, or looped; chain with after",
         "
 ---@alias SeqStep { [1]: number, [2]: number|number[]|nil, [3]: integer?, [4]: number?, len?: number, at?: number, say?: string }
----@param id integer? the sequence's handle; seq() alone stops every sequence
+---@param id integer? the sequence's handle; nil pushes it after the channel's last sequence; seq() alone stops every sequence
 ---@param steps SeqStep[]? {beats, freq|{freqs}|0 (rest), instrument?, volume?, len=beats, at=beat, say='la'}; omit to stop `id`
----@param cfg? { ch?: integer, loop?: integer|boolean, len?: number, at?: number, grid?: number, after?: integer, choke?: boolean }
+---@param cfg? { ch?: integer, loop?: integer|boolean, len?: number, at?: number, grid?: number, after?: integer|false, choke?: boolean, bpm?: number }
+---@return integer? id the sequence's id (the new one, for a push)
 function seq(id, steps, cfg) end"
     );
 

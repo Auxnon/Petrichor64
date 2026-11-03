@@ -1,5 +1,8 @@
 ## UNRELEASED
 
+- `seq(nil, steps, cfg)` pushes: the sequence gets a fresh id (returned) and plays after the last sequence sent to its channel, so a song is a list of `seq(nil, ...)` calls. `at`, `after = id` or `after = false` (start now) opt out. `seq` returns the id either way
+- `seq` cfg `bpm = n`: the sequence sets the tempo on its first beat (sequences without one keep whatever tempo they find); `bpm()` still changes it at once, over any sequence's
+- Fix: changing `bpm()` while sequences played moved them to a different beat: speeding up fired every step between the old beat and the new one at once, slowing down went silent until the clock caught up. The transport now carries on from the beat it's on, for `cue` too
 - `seq(id, steps, cfg)`: a sequencer on the audio thread. Steps (notes, chords, rests, sample hits, sung syllables with `say=`) play against the sample clock once, a counted number of times (`loop = 4`) or forever (`loop = true`); `after = id` chains one sequence onto the end of another, the same id swaps the pattern at the end of the current pass, `choke = true` cuts the last hit for chopped breaks. `seq(id)` / `seq()` stop
 - `smpl(id, 'name', { from, to })`: bind a slice of a loaded sound (0..1), sharing the decoded buffer, so a break chops into slots
 - `sing`: English vowels `ee`/`oo`/`ae` and the short vowels `ih`/`uh`/`eh`; `c`/`q`/`x`/`j` sound; consonants shrink to fit short syllables instead of hissing over them

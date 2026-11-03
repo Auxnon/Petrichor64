@@ -3,7 +3,7 @@
 _play a sequence of notes or samples on the transport, once, counted, or looped_
 
 ```lua
----@type fun(id?: integer, steps?: table[], cfg?: table)
+---@type fun(id?: integer, steps?: table[], cfg?: table): integer?
 function seq(id, steps, cfg)
 ```
 
@@ -16,6 +16,10 @@ do anything while it plays.
   swaps in the new pattern **at the end of the current pass**, so a change never
   lands mid-bar. `seq(id)` stops it; `seq()` stops every sequence. Stopping lets
   notes already sounding ring out (use `mute(ch)` to cut them).
+  `nil` with steps **pushes**: the sequence gets a new id and plays after the
+  last sequence sent to its channel (with or without an id), or right away if
+  that one is done. A push after a `loop = true` sequence never starts.
+  `seq` returns the id, so a pushed sequence can be stopped or chained to.
 - `steps` — played back to back. Each step is a table:
   - `[1]` beats until the next step (`0` stacks the next step on this one);
   - `[2]` frequency, a table of frequencies (a chord), or `0`/absent for a rest;
@@ -33,7 +37,12 @@ do anything while it plays.
   - `len` — beats per pass (default: where the last step ends);
   - `at` — absolute transport beat to start on; `grid` — snap the start up to the
     next multiple of this many beats (`4` = next bar);
-  - `after` — start when sequence `after` finishes, on its last beat;
+  - `after` — start when sequence `after` finishes, on its last beat (if it isn't
+    playing, start now); `after = false` makes a push start now instead of queueing;
+  - `bpm` — switch the tempo when this sequence starts, on its first beat. It
+    stays after the sequence ends; sequences without `bpm` keep whatever tempo
+    they find. A `bpm()` call still changes it at once, which is what live play
+    wants;
   - `choke` — each step cuts what's still sounding on the channel (chopped breaks).
 
 ```lua
@@ -52,6 +61,13 @@ seq(4, { {1, 440, 10}, {1, 440, 11}, {0.5, 440, 10}, {0.5, 440, 10}, {1, 440, 11
 
 seq(4)  -- stop the break
 seq()   -- stop everything
+
+-- a song as a queue on one channel: no ids, each plays after the last
+local verse = { {1, 220}, {1, 247}, {2, 262} }
+seq(nil, verse, { ch = 5, loop = 2 })
+seq(nil, verse, { ch = 5, bpm = 180 })  -- the same pattern again, faster
+local outro = seq(nil, { {4, 196} }, { ch = 5, bpm = 120 })
+seq(nil, { {4, {98, 147}} }, { ch = 6, after = outro })  -- another channel can follow it too
 ```
 
 Up to 32 sequences run at once. See also `bpm`, `cue`, `song`, `smpl`, `sing`.
