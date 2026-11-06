@@ -3,7 +3,7 @@
 _every finger on the screen_
 
 ```lua
----@return {id:integer, x:number, y:number}[]
+---@return {id:integer, x:number, y:number, pen:boolean, pressure:number}[]
 function touches()
 ```
 
@@ -14,6 +14,9 @@ touching (and always empty on a machine with no touchscreen).
   finger can be followed from tick to tick. A lifted finger's id is reused by the
   next one to land.
 - `x`, `y` - where it is, 0 to 1 across and down the screen, as in `mus()`
+- `pen` - true for a stylus (an active pen on Android, an Apple Pencil on iOS),
+  false for a finger, so an app can draw with the pen and navigate with fingers
+- `pressure` - 0 to 1. A screen that can't sense it reports 1 (or 0) throughout.
 
 Up to five fingers are reported. The first finger down also drives `mus()` (its
 `x`, `y` and `m1`), so a game that only needs one finger can ignore this; a

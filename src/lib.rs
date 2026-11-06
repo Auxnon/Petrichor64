@@ -773,11 +773,27 @@ impl ApplicationHandler for App {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
-                // Every finger, primary or not, for `touches()`.
-                let tx = touch.location.x as f32 / size.width as f32;
-                let ty = touch.location.y as f32 / size.height as f32;
+                // Every finger, primary or not, for `touches()`. A pen reports a
+                // calibrated force with an altitude: Apple Pencil on iOS, and a
+                // stylus on Android through the vendored winit.
+                let (pen, pressure) = match touch.force {
+                    Some(f @ winit::event::Force::Calibrated { altitude_angle: Some(_), .. }) => {
+                        (true, f.normalized() as f32)
+                    }
+                    Some(f) => (false, f.normalized() as f32),
+                    None => (false, 1.0),
+                };
                 let down = matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved);
-                core.global.track_touch(touch.id, down, tx, ty);
+                core.global.track_touch(
+                    crate::global::Touching {
+                        id: touch.id,
+                        x: touch.location.x as f32 / size.width as f32,
+                        y: touch.location.y as f32 / size.height as f32,
+                        pen,
+                        pressure,
+                    },
+                    down,
+                );
                 match touch.phase {
                     TouchPhase::Started => {
                         if self.primary_touch.is_none() {

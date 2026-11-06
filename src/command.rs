@@ -1050,21 +1050,23 @@ function cin() end"
             let mut list = vm.raw_table();
             let m = touch_mice.borrow();
             for slot in 0..crate::global::TOUCH_SLOTS {
-                let at = 13 + 3 * slot;
+                let at = 13 + crate::global::TOUCH_FLOATS * slot;
                 if m[at] > 0. {
                     let mut t = vm.raw_table();
                     t.set_str(mc, "id", (slot + 1) as i64);
                     t.set_str(mc, "x", m[at + 1]);
                     t.set_str(mc, "y", m[at + 2]);
+                    t.set_str(mc, "pen", m[at] > 1.5);
+                    t.set_str(mc, "pressure", m[at + 3]);
                     list.push(vm.wrap_table(mc, t));
                 }
             }
             drop(m);
             Ok(vm.wrap_table(mc, list))
         },
-        " Get every finger on the screen: a list of {id, x, y}, x and y 0..1 like mus(). A finger keeps its id while it's down. The first finger down is also the mouse.",
+        " Get every finger on the screen: a list of {id, x, y, pen, pressure}, x and y 0..1 like mus(). A finger keeps its id while it's down. The first finger down is also the mouse.",
         "
----@return {id:integer, x:number, y:number}[]
+---@return {id:integer, x:number, y:number, pen:boolean, pressure:number}[]
 function touches() end"
     );
 

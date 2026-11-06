@@ -28,12 +28,12 @@ pub enum ValueMap {
 /// Where the touches start in `ControlState`'s analog array: the first 11 are
 /// the mouse (position, delta, buttons, scroll, unprojected cursor).
 pub const ANALOG_TOUCH: usize = 11;
-/// The analog array's length: the mouse, then per touch slot (down 0/1, x, y).
-pub const ANALOG_LEN: usize = ANALOG_TOUCH + 3 * crate::global::TOUCH_SLOTS;
+/// The analog array's length: the mouse, then the touch slots (`pack_touches`).
+pub const ANALOG_LEN: usize = ANALOG_TOUCH + crate::global::TOUCH_FLOATS * crate::global::TOUCH_SLOTS;
 
 /// The script side's copy of the pointer (`mus()`, `touches()`): the 13 mouse
 /// values (with last frame's position as px, py), then the touch slots.
-pub const MICE_LEN: usize = 13 + 3 * crate::global::TOUCH_SLOTS;
+pub const MICE_LEN: usize = 13 + crate::global::TOUCH_FLOATS * crate::global::TOUCH_SLOTS;
 
 #[derive(Clone, Copy)]
 pub struct ControlState(pub [bool; 256], pub [f32; ANALOG_LEN]);

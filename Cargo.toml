@@ -374,3 +374,7 @@ category = "Game"
 short_description = "A fantasy game console and game engine"
 deb_depends = []
 osx_frameworks = []
+
+# winit with Android's stylus tool type passed through (vendor/README.md).
+[patch.crates-io]
+winit = { path = "vendor/winit" }
