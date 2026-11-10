@@ -35,13 +35,16 @@ Returns an object representing all mouse data
 
   Aspect-correct, including very tall or wide windows (verified on a phone: a cube
   placed this way lands centred on the cursor).
-- `scroll` - scroll delta from -1 to 1
+- `scroll` - this frame's wheel turn in lines (pixel scrolls, from a touchpad, are
+  scaled to about a line per 120 px): positive is up, away from you; 0 when still.
+  It's the vertical wheel, or a sideways scroll when that's all there is. Several
+  notches in one frame add up, so it can pass ±1.
 
 ```lua
 m=mus()
 
 if m.scroll >0 then
-scroll_up(m.scoll)
+scroll_up(m.scroll)
 end
 
 if m.m1 then

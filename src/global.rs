@@ -137,6 +137,17 @@ pub struct Global {
     // pub loaded_directory: Option<String>,
 }
 impl Global {
+    /// The scroll mus() reports: the wheel's vertical turn, or a sideways
+    /// scroll when that's all there is (shift+wheel on some systems, a tilt
+    /// wheel). Up (away from you) is positive.
+    pub fn scroll_amount(&self) -> f32 {
+        if self.scroll_delta.1 != 0. {
+            self.scroll_delta.1
+        } else {
+            self.scroll_delta.0
+        }
+    }
+
     pub fn new() -> Global {
         Global {
             // values: HashMap::new(),
@@ -201,7 +212,10 @@ impl Global {
     /// A finger landed or moved (`down`), or lifted. A new finger takes the
     /// first free slot; one past `TOUCH_SLOTS` isn't reported.
     pub fn track_touch(&mut self, t: Touching, down: bool) {
-        let at = self.touches.iter().position(|s| matches!(s, Some(s) if s.id == t.id));
+        let at = self
+            .touches
+            .iter()
+            .position(|s| matches!(s, Some(s) if s.id == t.id));
         match (at, down) {
             (Some(i), true) => self.touches[i] = Some(t),
             (Some(i), false) => self.touches[i] = None,
@@ -386,6 +400,19 @@ impl GuiParams {
 mod tests {
     use super::*;
 
+    /// mus().scroll is the wheel's vertical turn (it used to be the sideways
+    /// axis, always 0 on a plain mouse wheel), falling back to a sideways one.
+    #[test]
+    fn scroll_is_the_wheel() {
+        let mut g = Global::new();
+        g.scroll_delta = (0., 1.);
+        assert_eq!(g.scroll_amount(), 1.);
+        g.scroll_delta = (0.5, -2.);
+        assert_eq!(g.scroll_amount(), -2.);
+        g.scroll_delta = (-1., 0.);
+        assert_eq!(g.scroll_amount(), -1.);
+    }
+
     /// Loading an app must not inherit the previous app's `attr` state. The boot logo
     /// sets `attr{fog=200}` on its first line, and only the console lock was being
     /// cleared, so every app after it ran with a fog deep enough to hide the scene —
@@ -461,7 +488,13 @@ mod touch_tests {
     use super::*;
 
     fn at(id: u64, x: f32, y: f32) -> Touching {
-        Touching { id, x, y, pen: false, pressure: 1.0 }
+        Touching {
+            id,
+            x,
+            y,
+            pen: false,
+            pressure: 1.0,
+        }
     }
 
     fn ids(g: &Global) -> Vec<Option<u64>> {
@@ -491,7 +524,16 @@ mod touch_tests {
         }
         assert!(g.touches.iter().all(|t| t.is_some()));
         g.track_touch(at(1, 0., 0.), false);
-        g.track_touch(Touching { id: 2, x: 0.75, y: 0.5, pen: true, pressure: 0.4 }, true);
+        g.track_touch(
+            Touching {
+                id: 2,
+                x: 0.75,
+                y: 0.5,
+                pen: true,
+                pressure: 0.4,
+            },
+            true,
+        );
         let mut a = [9f32; crate::types::ANALOG_LEN];
         g.pack_touches(&mut a);
         let t = crate::types::ANALOG_TOUCH;
@@ -499,6 +541,10 @@ mod touch_tests {
         assert_eq!(a[t..t + n], [1., 0.5, 0.25, 1.]);
         assert_eq!(a[t + n..t + 2 * n], [0.; 4]);
         assert_eq!(a[t + 2 * n..t + 3 * n], [2., 0.75, 0.5, 0.4]);
-        assert_eq!(a[..t], [9f32; crate::types::ANALOG_TOUCH], "the mouse is left alone");
+        assert_eq!(
+            a[..t],
+            [9f32; crate::types::ANALOG_TOUCH],
+            "the mouse is left alone"
+        );
     }
 }
