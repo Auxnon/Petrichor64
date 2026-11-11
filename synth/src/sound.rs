@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Arc,
+        Arc, LazyLock, Mutex,
     },
 };
 
@@ -296,16 +296,83 @@ const TWO_PI: f32 = std::f32::consts::PI * 2.0;
 /// Shared by the native cpal stream and the wasm scheduled-buffer output — both
 /// just pull f32 samples from it. Drains pending SoundCommands each call, so
 /// note triggers stay effectively sample-accurate.
+/// What's sounding, as the audio thread last saw it: the transport, each
+/// channel's level, every running sequence and every sounding voice. The mixer
+/// copies itself in here every `STATE_EVERY` frames with a `try_lock` (it never
+/// waits on a reader, and never allocates once the vectors have grown), so a
+/// reader (`sounds()` in Lua) sees it at most a few ms old.
+#[derive(Clone, Debug, Default)]
+pub struct SoundState {
+    /// Frame count when taken, and the frames per second, to tell its age.
+    pub frame: u64,
+    pub sample_rate: f32,
+    /// Transport beat and tempo.
+    pub beat: f64,
+    pub bpm: f32,
+    /// Each channel's peak output (after its effects and gain) since the last
+    /// snapshot.
+    pub peaks: Vec<f32>,
+    pub seqs: Vec<SeqState>,
+    pub voices: Vec<VoiceState>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SeqState {
+    pub id: usize,
+    pub channel: usize,
+    /// The pass the transport is in (0-based), of `loops` (0 = forever).
+    pub pass: u32,
+    pub loops: u32,
+    /// The step last reached, 1-based (0 before the first).
+    pub step: usize,
+    /// Notes this sequence has started (rests don't count): goes up by one on
+    /// every hit, so a display can bump when it changes.
+    pub hits: u32,
+    /// Beats into the current pass, and beats per pass.
+    pub phase: f32,
+    pub length: f32,
+    /// 0 playing, 1 waiting for `after`, 2 starting on a later beat, 3 playing
+    /// out its last pass (replaced by the same id).
+    pub state: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VoiceState {
+    pub channel: usize,
+    pub lane: usize,
+    pub instrument: usize,
+    pub freq: f32,
+    /// Volume times envelope: how loud the voice is right now.
+    pub level: f32,
+    /// 0 an oscillator, 1 a sample, 2 a sung note.
+    pub kind: u8,
+    /// In its release (note-off has passed).
+    pub releasing: bool,
+}
+
+/// The native output's snapshot (the one `sounds()` reads).
+pub static SOUND_STATE: LazyLock<Arc<Mutex<SoundState>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(SoundState::default())));
+
+/// Frames between snapshots: ~5ms at 48kHz, under a 60Hz frame.
+const STATE_EVERY: u32 = 256;
+/// Most voices a snapshot lists (16 channels x their lanes, sounding + fading).
+const STATE_VOICES: usize = 256;
+
 /// The mixer as a trait object, for hosts that must store it behind a `Box` (the
 /// browser outputs: the main-thread `WebAudioOut` fallback and the AudioWorklet).
 pub fn make_mixer_boxed(
     sample_rate: f32,
     audience: Receiver<SoundCommand>,
 ) -> Box<dyn FnMut() -> f32> {
-    Box::new(make_mixer(sample_rate, audience))
+    Box::new(make_mixer(sample_rate, audience, None))
 }
 
-fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut() -> f32 {
+fn make_mixer(
+    sample_rate: f32,
+    audience: Receiver<SoundCommand>,
+    state: Option<Arc<Mutex<SoundState>>>,
+) -> impl FnMut() -> f32 {
     // Master gain feeding a soft limiter (the tanh below): single notes stay
     // loud and ~linear, dense polyphony compresses instead of hard-clipping.
     let master_volume = 0.5;
@@ -349,6 +416,9 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
     // Running sequences, and the earliest frame any of them has a step due.
     let mut seqs: Vec<Playing> = Vec::with_capacity(MAX_SEQS);
     let mut seq_due: u64 = u64::MAX;
+    // Per-channel peaks since the last snapshot, and frames until the next.
+    let mut peaks: Vec<f32> = vec![0.0; NUM_CH];
+    let mut until_state: u32 = 0;
 
     move || -> f32 {
         // Drain every pending command each sample so triggers are effectively
@@ -423,6 +493,8 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         waiting,
                         ghost: false,
                         tempo_pending,
+                        hits: 0,
+                        step: 0,
                     });
                     seq_due = 0;
                 }
@@ -711,8 +783,10 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                         let mut note = timed;
                         note.preroll = beat_at.saturating_sub(frames) as f32 / sample_rate;
                         channels[c].start_now(note);
+                        p.hits = p.hits.wrapping_add(1);
                     }
                     p.next += 1;
+                    p.step = p.next;
                     if p.next >= p.seq.steps.len() {
                         p.next = 0;
                         p.pass += 1;
@@ -749,7 +823,7 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
         frames += 1;
 
         let mut mix = 0.0f32;
-        for chan in channels.iter_mut() {
+        for (ci, chan) in channels.iter_mut().enumerate() {
             let mut ch_out = 0.0f32;
             for l in 0..chan.lanes() {
                 // Start the next queued note when this lane is idle.
@@ -864,7 +938,86 @@ fn make_mixer(sample_rate: f32, audience: Receiver<SoundCommand>) -> impl FnMut(
                     chan.gain = chan.fade_to;
                 }
             }
-            mix += ch_out * chan.gain;
+            let out = ch_out * chan.gain;
+            if out.abs() > peaks[ci] {
+                peaks[ci] = out.abs();
+            }
+            mix += out;
+        }
+
+        if let Some(st) = state.as_ref() {
+            if until_state == 0 {
+                // Busy (a reader has it): try again next sample.
+                if let Ok(mut s) = st.try_lock() {
+                    until_state = STATE_EVERY;
+                    let fpb = 60.0 / bpm as f64 * sample_rate as f64;
+                    let now_beat = beat_of(frames, frame0, beat0, fpb);
+                    s.frame = frames;
+                    s.sample_rate = sample_rate;
+                    s.beat = now_beat;
+                    s.bpm = bpm;
+                    s.peaks.clear();
+                    s.peaks.extend_from_slice(&peaks);
+                    peaks.iter_mut().for_each(|p| *p = 0.0);
+                    s.seqs.clear();
+                    if s.seqs.capacity() < MAX_SEQS {
+                        s.seqs.reserve(MAX_SEQS);
+                    }
+                    for p in seqs.iter() {
+                        let len = p.seq.length.max(1e-6) as f64;
+                        let into = now_beat - p.start;
+                        let (pass, phase, state) = if p.waiting {
+                            (0, 0.0, 1)
+                        } else if into < 0.0 {
+                            (0, into, 2)
+                        } else {
+                            let pass = (into / len).floor();
+                            (pass as u32, into - pass * len, if p.ghost { 3 } else { 0 })
+                        };
+                        s.seqs.push(SeqState {
+                            id: p.seq.id,
+                            channel: p.seq.channel,
+                            pass,
+                            loops: p.seq.loops,
+                            step: p.step,
+                            hits: p.hits,
+                            phase: phase as f32,
+                            length: p.seq.length,
+                            state,
+                        });
+                    }
+                    s.voices.clear();
+                    if s.voices.capacity() < STATE_VOICES {
+                        s.voices.reserve(STATE_VOICES);
+                    }
+                    'all: for (ci, chan) in channels.iter().enumerate() {
+                        for l in 0..chan.lanes() {
+                            for (v, releasing) in
+                                [(&chan.current[l], false), (&chan.fading[l], true)]
+                            {
+                                let Some(v) = v else { continue };
+                                if s.voices.len() >= STATE_VOICES {
+                                    break 'all;
+                                }
+                                let sample = instruments
+                                    .get(&v.instrument)
+                                    .is_some_and(|i| matches!(i.wave, WaveType::Sample(_)));
+                                s.voices.push(VoiceState {
+                                    channel: ci,
+                                    lane: l,
+                                    instrument: v.instrument,
+                                    freq: v.freq,
+                                    level: v.volume * v.env,
+                                    kind: if v.sung { 2 } else if sample { 1 } else { 0 },
+                                    releasing,
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                until_state -= 1;
+            }
         }
 
         // Soft limiter: tanh is ~linear for small signals (a lone note passes
@@ -885,7 +1038,7 @@ where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let out_channels = config.channels as usize;
-    let mut next_value = make_mixer(config.sample_rate.0 as f32, audience);
+    let mut next_value = make_mixer(config.sample_rate.0 as f32, audience, Some(SOUND_STATE.clone()));
     let err_fn = |err| eprintln!("audio stream error: {}", err);
     // Dev aids for checking sound without ears: `CHOR_WAV=path` records the master
     // bus to a mono WAV, and `CHOR_MUTE=1` sends silence to the device while the
@@ -1009,7 +1162,7 @@ impl WebAudioOut {
         let chunk_frames = (sr * 0.03).round().max(64.0) as usize; // ~30ms chunks
         log::info!("web audio: {} Hz, {}-frame chunks", sr, chunk_frames);
         Ok(Self {
-            mixer: Box::new(make_mixer(sr, audience)),
+            mixer: Box::new(make_mixer(sr, audience, None)),
             ctx,
             next_time: 0.0,
             chunk_frames,
@@ -1537,6 +1690,9 @@ struct Playing {
     ghost: bool,
     /// Has a `bpm` it hasn't applied yet; it does on its start beat.
     tempo_pending: bool,
+    /// Notes started, and the step last reached (1-based), for `SoundState`.
+    hits: u32,
+    step: usize,
 }
 
 /// The transport's beat at `frame`. The tempo changes at `frame0`, where the beat
@@ -2368,6 +2524,40 @@ mod tests {
 
     fn near(hits: &[usize], want: &[usize]) -> bool {
         hits.len() == want.len() && hits.iter().zip(want).all(|(&h, &w)| h >= w && h < w + 100)
+    }
+
+    /// The mixer's snapshot follows a running sequence: its pass, phase and hit
+    /// count, the voice it started, and the channel's level.
+    #[test]
+    fn the_snapshot_follows_a_sequence() {
+        let (tx, rx) = channel::<SoundCommand>();
+        tx.send(SoundCommand::SetBpm(120.0)).unwrap();
+        let mut sq = seq_of(5, &[1.0, 1.0], 0, None);
+        sq.channel = 3;
+        tx.send(SoundCommand::Sequence(sq)).unwrap();
+        let st = Arc::new(Mutex::new(SoundState::default()));
+        let mut mixer = make_mixer(48000.0, rx, Some(st.clone()));
+        // 1.05 beats in: the second step (beat 1) is sounding (its notes are
+        // 0.1 beats long).
+        for _ in 0..25200 {
+            mixer();
+        }
+        let s = st.lock().unwrap().clone();
+        assert!((s.beat - 1.05).abs() < 0.02, "beat {}", s.beat);
+        assert_eq!(s.bpm, 120.0);
+        assert_eq!(s.seqs.len(), 1);
+        let q = s.seqs[0];
+        assert_eq!((q.id, q.channel, q.pass, q.loops, q.step, q.hits, q.state), (5, 3, 0, 0, 2, 2, 0));
+        assert!((q.phase - 1.05).abs() < 0.02 && q.length == 2.0, "{:?}", q);
+        assert!(s.voices.iter().any(|v| v.channel == 3 && v.freq == 440.0), "{:?}", s.voices);
+        assert!(s.peaks[3] > 0.01 && s.peaks[0] == 0.0, "{:?}", s.peaks);
+        // Into the second pass: the pass counts and the phase wraps.
+        for _ in 0..48000 {
+            mixer();
+        }
+        let q = st.lock().unwrap().seqs[0];
+        assert_eq!((q.pass, q.hits), (1, 4), "{:?}", q);
+        assert!((q.phase - 1.05).abs() < 0.02, "{:?}", q);
     }
 
     /// A tempo change mid-sequence carries on from the current beat. It used to

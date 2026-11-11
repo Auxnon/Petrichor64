@@ -1909,6 +1909,87 @@ function cue(freq, length, channel, instrument, at, grid) end"
 function seq(id, steps, cfg) end"
     );
 
+    lua!(
+        "sounds",
+        move |vm, mc, t: Option<Value>| {
+            // Refill the caller's table when given one, so polling every frame
+            // makes no garbage; otherwise a new one.
+            let t = match t {
+                Some(v @ Value::Table(_)) => v,
+                _ => vm.wrap_table(mc, vm.raw_table()),
+            };
+            let Value::Table(tb) = &t else { unreachable!() };
+            let mut tb = tb.borrow_mut(mc);
+            let old = tb.len() as i64;
+            let mut n: i64 = 0;
+            macro_rules! put {
+                ($tb:expr, $v:expr) => {{
+                    n += 1;
+                    $tb.set(n, $v);
+                }};
+            }
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            {
+                // The audio thread only ever try_locks this, so holding it while
+                // copying out delays its next snapshot by a sample, never a frame.
+                let s = crate::sound::SOUND_STATE.lock().unwrap_or_else(|e| e.into_inner());
+                fn f<'v>(x: f32) -> Value<'v> {
+                    Value::Number(x as f64)
+                }
+                fn i<'v>(x: usize) -> Value<'v> {
+                    Value::Integer(x as i64)
+                }
+                put!(tb, Value::Number(s.beat));
+                put!(tb, f(s.bpm));
+                put!(tb, i(s.peaks.len()));
+                put!(tb, i(s.seqs.len()));
+                put!(tb, i(s.voices.len()));
+                for &p in &s.peaks {
+                    put!(tb, f(p));
+                }
+                for q in &s.seqs {
+                    put!(tb, i(q.id));
+                    put!(tb, i(q.channel));
+                    put!(tb, i(q.pass as usize));
+                    put!(tb, i(q.loops as usize));
+                    put!(tb, i(q.step));
+                    put!(tb, i(q.hits as usize));
+                    put!(tb, f(q.phase));
+                    put!(tb, f(q.length));
+                    put!(tb, i(q.state as usize));
+                }
+                for v in &s.voices {
+                    put!(tb, i(v.channel));
+                    put!(tb, i(v.lane));
+                    put!(tb, i(v.instrument));
+                    put!(tb, f(v.freq));
+                    put!(tb, f(v.level));
+                    put!(tb, i(v.kind as usize));
+                    put!(tb, i(v.releasing as usize));
+                }
+            }
+            #[cfg(not(all(feature = "audio", not(target_arch = "wasm32"))))]
+            {
+                // No audio thread in this VM's memory (the browser's runs in its
+                // worklet): an empty snapshot, same shape.
+                for _ in 0..5 {
+                    put!(tb, Value::Integer(0));
+                }
+                tb.set(2i64, Value::Number(0.));
+            }
+            for k in n + 1..=old {
+                tb.set(k, Value::Nil);
+            }
+            drop(tb);
+            Ok(t)
+        },
+        "What's sounding: the transport, channel levels, running sequences and voices, as a flat number array",
+        "
+---@param t number[]? a table to refill (pass the last result back to poll without garbage)
+---@return number[] t beat, bpm, nch, nseq, nvoice, then nch peaks, nseq x 9 (id, ch, pass, loops, step, hits, phase, len, state), nvoice x 7 (ch, lane, instrument, freq, level, kind, releasing)
+function sounds(t) end"
+    );
+
     #[cfg(feature = "audio")]
     let sing = singer.clone();
     lua!(

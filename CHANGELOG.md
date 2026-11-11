@@ -1,5 +1,6 @@
 ## UNRELEASED
 
+- `sounds(t?)`: what's sounding, as one flat number array a few ms old: the transport beat and bpm, each channel's peak level, every running sequence (id, channel, pass, step, a hit counter that ticks on each note, phase through its pass, state) and every voice (channel, lane, instrument, freq, level, oscillator/sample/sung, releasing). Pass the last result back to refill it without garbage. For live views like a sequence list that pulses on the beat. The audio thread publishes it with a `try_lock` every 256 frames and never waits on a reader. Native only for now (the web build returns an empty snapshot)
 - `seq(nil, steps, cfg)` pushes: the sequence gets a fresh id (returned) and plays after the last sequence sent to its channel, so a song is a list of `seq(nil, ...)` calls. `at`, `after = id` or `after = false` (start now) opt out. `seq` returns the id either way
 - `seq` cfg `bpm = n`: the sequence sets the tempo on its first beat (sequences without one keep whatever tempo they find); `bpm()` still changes it at once, over any sequence's
 - Fix: changing `bpm()` while sequences played moved them to a different beat: speeding up fired every step between the old beat and the new one at once, slowing down went silent until the clock caught up. The transport now carries on from the beat it's on, for `cue` too
