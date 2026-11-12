@@ -10,15 +10,11 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-#[cfg(feature = "headed")]
-use crate::controls::bit_check;
 use crate::log::LogType;
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(desktop)]
-use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
 #[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
+#[cfg(target_arch = "wasm32")]
 use glam::vec2;
 use global::StateChange;
 use image::GenericImageView;
@@ -26,7 +22,7 @@ use itertools::Itertools;
 use lua_define::{LuaResponse, MainPacket};
 use pollster::block_on;
 use root::Core;
-use types::{ControlState, GlobalMap};
+use types::GlobalMap;
 
 mod asset;
 mod builtin;
@@ -365,6 +361,7 @@ fn window_attributes() -> WindowAttributes {
         .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
 }
 
+#[cfg(feature = "headed")]
 impl App {
     /// Do what the engine asked of the window since the last tick. `chor`
     /// grants everything; another host picks.
@@ -519,6 +516,7 @@ impl App {
     }
 }
 
+#[cfg(feature = "headed")]
 impl ApplicationHandler for App {
     /// Called when the event loop is ready and (on mobile/web) the app has resumed.
     /// This is where we create the window and initialise the engine.
@@ -1377,10 +1375,7 @@ pub fn run_cli() -> bool {
     if args.len() >= 2 && (args[1] == "pack" || args[1] == "bundle") {
         let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
         let out = args.get(3).map(|s| s.as_str());
-        let mut loggy = crate::log::Loggy::new();
-        // pack_zip uses tokio::fs, so it needs a Tokio runtime (not pollster).
-        let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
-        match rt.block_on(crate::asset::pack_folder(dir, out, &mut loggy)) {
+        match pack(dir, out) {
             Ok(()) => println!("packed '{}' -> {}", dir, out.unwrap_or("<dir>.game.png")),
             Err(e) => {
                 eprintln!("pack failed: {}", e);
@@ -1390,6 +1385,17 @@ pub fn run_cli() -> bool {
         return true;
     }
     false
+}
+
+/// Pack a game folder into a `.game.png` (`out`, or `<dir>.game.png`): what
+/// `chor pack` does, and what `Cart::Bytes` takes.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn pack(dir: &str, out: Option<&str>) -> Result<(), String> {
+    let mut loggy = crate::log::Loggy::new();
+    // pack_zip uses tokio::fs, so it needs a Tokio runtime (not pollster).
+    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    rt.block_on(crate::asset::pack_folder(dir, out, &mut loggy))
+        .map_err(|e| e.to_string())
 }
 
 /// Android's entry point. There is no `main` on Android: the activity loads this

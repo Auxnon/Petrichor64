@@ -671,6 +671,7 @@ impl Gui {
         self.notifications_dirty = true;
     }
 
+    #[cfg(feature = "headed")]
     pub fn resize(&mut self, bm: &mut BundleManager, size: (u32, u32), gfx: &crate::gfx::Gfx) {
         let device = &gfx.device;
         let queue = &gfx.queue;

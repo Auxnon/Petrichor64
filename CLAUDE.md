@@ -124,3 +124,32 @@ give it its own reply channel and wait on that — don't reintroduce the ack her
 `asset::get_script_items` sorts, so every file's top level runs in the same order
 on every filesystem. Still, keep top-level code free of other files' globals
 (compute those in `main()`): packed games and future loaders needn't sort.
+
+## The engine is a library; `chor` is one host (`src/host.rs`, `src/instance.rs`)
+
+`Instance` is the engine without a window: one cart, its VM threads, a `Core`.
+A host hands it `Input`, calls `frame(now)` / `render()`, samples `texture()`,
+and takes `requests()`. `App` in `lib.rs` is the winit host `chor` uses: it
+translates `WindowEvent`s to `Input` and grants every `Request` (`App::grant`).
+`examples/two_carts.rs` is a second host; `tests/host.rs` runs two instances on a
+windowless device.
+
+- **Nothing below `App` may touch a window.** `Gfx` has a `Target` (a window's
+  surface, or a texture on the host's device) and no window calls: title,
+  fullscreen, size, pointer grab, quit and clipboard are `Request`s
+  (`core.requests`, `Gfx::request`). A new window-ish feature is a new `Request`
+  variant plus an arm in `App::grant`.
+- **Input goes through `Instance::input`**, not into `core.global` from `App`.
+  Positions are the instance's own physical pixels.
+- **No process-wide state for anything a cart can see.** Two instances share a
+  process: skeletons and the clock live in `skeleton::Rig` on the `Core`. What's
+  still process-wide: `gpu_loss.rs` (only `chor`'s own device is watched; a
+  host's device is the host's to watch), `midi.rs`, and the synth's
+  `SOUND_STATE` behind `sounds()`.
+- **`Policy` is enforced by construction** in `init_lua_sys` (a forbidden global
+  is never registered) and again by `MainCommmand::allowed_by` on the main
+  thread. A new native that reaches outside the instance needs both.
+- A hosted instance's texture is remade at once on `resize` (the host
+  re-binds it); a window's resize stays debounced.
+- `Instance::new` is native-only: on the web the VM runs in a worker that `App`
+  drives, and a page gets several engines by starting several module copies.

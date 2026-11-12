@@ -1,5 +1,13 @@
 ## UNRELEASED
 
+- **Petrichor64 as a library.** A host app can run the engine inside its own window: `petrichor64::Instance::new(&HostGpu, Options)` makes an instance on the host's wgpu device that runs one cart and draws into a texture of its own (`texture()`), takes input from the host (`input(Input)`, in the instance's own pixels), advances with `frame(now)` and draws with `render()`. Several run side by side (`cargo run --example two_carts -- cart-a cart-b`). Whatever a cart wants of a window (title, fullscreen, size, pointer grab, quit, clipboard) arrives as a `Request` the host grants or ignores. `chor` is now one such host: its winit window around a single instance
+- `Policy`: what a cart may reach beyond its instance (network, files, clipboard, console, loading other carts, audio, the host channel). What's off isn't registered in Lua at all (`conn`, `io`, `sub`... are `nil`), and the main thread drops the commands too. `Policy::sandbox()` for a cart from someone else
+- `host.send(str)` / `host.recv()`: a channel of strings between a cart and the app hosting it (`Instance::post` / `messages`)
+- Carts load from memory (`Cart::Bytes`, a `.game.png`), with nothing written to disk; `petrichor64::pack(dir, out)` makes one
+- wgpu 29 -> 30
+- Skeletons and the animation clock are per instance (they were process-wide: two carts with a model of the same name shared a skeleton)
+- Fix: the terminal build (`--no-default-features --features silt,render-tui,bin`) compiles again
+
 - **A lost GPU comes back without losing the game.** When the browser reclaims a backgrounded tab's WebGL2 context, WebGPU loses its device, or a native driver resets, the engine stops drawing, gets a new device, and re-uploads everything from the copies it keeps: the atlas, the gui and sky rasters (a one-off `sky:fill` survives), models, tile chunks and entities. The VM keeps running throughout. It used to freeze on the purple clear colour (web) or exit (native). The page gets `petrichor-gpu-lost` / `petrichor-gpu-restored` events on `window`; a device that keeps dying is retried less often (1s, 2s, 4s... to 30s). Natively the restored device gets a fresh window (a new device on the old one hangs NVIDIA's Wayland driver). `CHOR_GPU_LOSE=secs` loses the device on purpose, for testing
 - Fix (web): a GPU error no longer exits the engine; it's logged
 - Fix: out of memory after a long time with no frames drawn (a Mac left asleep for hours running sound-chor). Uploads made while nothing draws (entity batches every Lua loop, uniforms) wait on the GPU queue for the next frame's submit, and with no frame they piled up for good: sound-chor gained ~600 GPU allocations every 5 seconds, roughly 800 MB an hour. The engine now sends them every tick a frame didn't
