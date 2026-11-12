@@ -6,7 +6,6 @@ use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use winit::event::ElementState;
-use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 
 #[cfg(target_os = "macos")]
@@ -28,7 +27,6 @@ const COMMAND_KEY_R: KeyCode = KeyCode::ControlRight;
 /// arrives before this function runs; only non-text key logic lives here.
 pub fn controls_evaluate(
     core: &mut Core,
-    window_target: &ActiveEventLoop,
     bits: &ControlState,
     bits_prev: &[bool; 256],
     catcher: Option<&std::sync::mpsc::Receiver<crate::lua_define::MainPacket>>,
@@ -90,7 +88,7 @@ pub fn controls_evaluate(
             } else if key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if key_pressed(KeyCode::Escape) || key_pressed(KeyCode::KeyW) {
-                window_target.exit();
+                core.requests.push(crate::host::Request::Quit);
             } else if key_pressed(KeyCode::Enter) {
                 core.toggle_fullscreen();
                 core.global.fullscreen_state = core.global.fullscreen;
@@ -166,7 +164,7 @@ pub fn controls_evaluate(
                     }
                 }
             } else if key_pressed(KeyCode::KeyW) {
-                window_target.exit();
+                core.requests.push(crate::host::Request::Quit);
             }
         }
     }

@@ -58,6 +58,10 @@ pub struct Core {
     pub web_audio: Option<crate::sound::WebOut>,
     #[cfg(feature = "audio")]
     pub singer: Sender<SoundCommand>,
+    /// `policy.audio` off: where the sound commands go to be dropped, so the
+    /// sound natives have a live channel to send on (`drop_unheard`).
+    #[cfg(feature = "audio")]
+    deaf: Option<Receiver<SoundCommand>>,
 
     pub world: World,
     pub pitcher: Sender<MainPacket>,
@@ -87,6 +91,11 @@ pub struct Core {
 
     /// What this instance's cart may reach (`host.rs`). `chor` runs open.
     pub policy: crate::host::Policy,
+
+    /// What the engine wants that only whoever owns the window can do: quit,
+    /// grab the pointer, hide the cursor. The host takes them with
+    /// `Instance::requests` (with the ones `Gfx` queued) and decides.
+    pub requests: Vec<crate::host::Request>,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
@@ -171,10 +180,29 @@ pub fn apply_monitor(global: &mut Global, monitor_id: u8) {
 }
 
 impl<'core> Core {
+    /// A core that draws to `rwindow`, on a device of its own: `chor`. Exits
+    /// with an error window if there's no GPU to be had.
     #[cfg(feature = "headed")]
     pub async fn new(rwindow: Arc<Window>) -> (Self, Receiver<MainPacket>) {
+        match Gfx::connect(rwindow, None).await {
+            Ok(link) => Self::build(link, crate::host::Policy::open()),
+            Err(e) => {
+                crate::error_window(e.into());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// A core on `link`'s device, drawing where the link says: a window's
+    /// surface (`Gfx::connect`) or a texture on a host's device
+    /// (`Gfx::host_link`). `policy` is what its carts may reach.
+    #[cfg(feature = "headed")]
+    pub fn build(
+        link: crate::gfx::GpuLink<'static>,
+        policy: crate::host::Policy,
+    ) -> (Self, Receiver<MainPacket>) {
         let tex_manager = crate::texture::TexManager::new();
-        let (gfx, gui_pipeline, sky_pipeline) = Gfx::new(rwindow, &tex_manager).await;
+        let (gfx, gui_pipeline, sky_pipeline) = Gfx::build(link, &tex_manager);
         println!("{}", "== begin ==".on_green());
         let model_manager = ModelManager::init(&gfx.device);
         let mut ent_manager = EntManager::new(&gfx.device);
@@ -202,40 +230,60 @@ impl<'core> Core {
         // Native: a cpal output stream (own audio thread). Web: cpal's WebAudio
         // backend crackles on the main thread, so we drive Web Audio ourselves
         // (an AudioWorklet, or a scheduled-buffer fallback). Both share the same synth.
+        //
+        // `policy.audio` off: no stream at all. The sound natives still send
+        // their commands, so the other end of the channel is kept (`deaf`) and
+        // emptied each tick instead of played.
+        #[cfg(feature = "audio")]
+        let mut deaf = None;
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-        let (stream, singer) = sound::init();
-        #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-        let stream_result = match stream {
-            Ok(stream) => Some(stream),
-            Err(e) => {
-                loggy.log(
-                    LogType::CoreError,
-                    &format!("sound stream error, continuing in silence!: {}", e),
-                );
-                None
-            }
+        let (stream_result, singer) = if policy.audio {
+            let (stream, singer) = sound::init();
+            let stream = match stream {
+                Ok(stream) => Some(stream),
+                Err(e) => {
+                    loggy.log(
+                        LogType::CoreError,
+                        &format!("sound stream error, continuing in silence!: {}", e),
+                    );
+                    None
+                }
+            };
+            (stream, singer)
+        } else {
+            let (singer, audience) = channel();
+            deaf = Some(audience);
+            (None, singer)
         };
         #[cfg(all(feature = "audio", target_arch = "wasm32"))]
-        let (web_audio_res, singer) = sound::init_web();
-        #[cfg(all(feature = "audio", target_arch = "wasm32"))]
-        let web_audio = match web_audio_res {
-            Ok(w) => Some(w),
-            Err(e) => {
-                loggy.log(
-                    LogType::CoreError,
-                    &format!("web audio init failed, continuing in silence!: {:?}", e),
-                );
-                None
-            }
+        let (web_audio, singer) = if policy.audio {
+            let (web_audio_res, singer) = sound::init_web();
+            let web_audio = match web_audio_res {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    loggy.log(
+                        LogType::CoreError,
+                        &format!("web audio init failed, continuing in silence!: {:?}", e),
+                    );
+                    None
+                }
+            };
+            (web_audio, singer)
+        } else {
+            let (singer, audience) = channel();
+            deaf = Some(audience);
+            (None, singer)
         };
         // MIDI in: grab the first available input port at boot so a plugged-in
         // (or OS-paired Bluetooth) controller just plays the synth. No device is
         // the normal case, so a failure here is logged at most, never fatal. The
         // connection lives in `midi`'s statics, so there's nothing to store.
         #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
-        match midi::open(singer.clone(), None) {
-            Ok(port) => loggy.log(LogType::Config, &format!("midi in: {}", port)),
-            Err(e) => loggy.log(LogType::Config, &format!("no midi in ({})", e)),
+        if policy.audio {
+            match midi::open(singer.clone(), None) {
+                Ok(port) => loggy.log(LogType::Config, &format!("midi in: {}", port)),
+                Err(e) => loggy.log(LogType::Config, &format!("no midi in ({})", e)),
+            }
         }
 
         ent_manager.uniform_alignment = gfx.uniform_alignment as u32;
@@ -253,6 +301,8 @@ impl<'core> Core {
             web_audio,
             #[cfg(feature = "audio")]
             singer,
+            #[cfg(feature = "audio")]
+            deaf,
             world,
             pitcher,
             gui,
@@ -262,7 +312,8 @@ impl<'core> Core {
             model_manager,
             ent_manager,
             bundle_manager: BundleManager::new(),
-            policy: crate::host::Policy::open(),
+            policy: policy,
+            requests: Vec::new(),
             loggy,
             gfx,
             completed_bundles: FxHashMap::default(),
@@ -349,6 +400,8 @@ impl<'core> Core {
             mic_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             #[cfg(feature = "audio")]
             singer,
+            #[cfg(feature = "audio")]
+            deaf: None,
             world,
             pitcher,
             gui,
@@ -359,6 +412,7 @@ impl<'core> Core {
             ent_manager,
             bundle_manager: BundleManager::new(),
             policy: crate::host::Policy::open(),
+            requests: Vec::new(),
             loggy,
             completed_bundles: FxHashMap::default(),
             instance_buffers: (),
@@ -475,10 +529,10 @@ impl<'core> Core {
     /// Swap in a new device after a lost one (`gpu_loss.rs`). Everything on
     /// the GPU is made again from what the engine keeps on the CPU: the atlas,
     /// the gui and sky rasters, model meshes and tile chunks. The VM, entities
-    /// and world carry on as they were. `window` is the one `link` was made on.
+    /// and world carry on as they were.
     #[cfg(feature = "headed")]
-    pub fn restore_gpu(&mut self, link: crate::gfx::GpuLink<'static>, window: Arc<Window>) {
-        let (mut gfx, gui_pipeline, sky_pipeline) = Gfx::build(link, window, &self.tex_manager);
+    pub fn restore_gpu(&mut self, link: crate::gfx::GpuLink<'static>) {
+        let (mut gfx, gui_pipeline, sky_pipeline) = Gfx::build(link, &self.tex_manager);
         gfx.adopt(&self.gfx, &self.global.gui_params);
         self.gfx = gfx;
         // Before the rebuild, which makes its buffers through `BufferInit`.
@@ -507,6 +561,15 @@ impl<'core> Core {
         }
         res
         // self.loop_helper.loop_sleep(); //DEV better way to sleep that allows maincommands to come through but pauses render?
+    }
+
+    /// With no audio stream (`policy.audio` off), throw away the sound
+    /// commands sent since the last tick.
+    pub fn drop_unheard(&mut self) {
+        #[cfg(feature = "audio")]
+        if let Some(deaf) = &self.deaf {
+            while deaf.try_recv().is_ok() {}
+        }
     }
 
     pub fn toggle_fullscreen(&mut self) {

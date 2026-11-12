@@ -1,8 +1,6 @@
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
-use crate::{
-    error_window, global::GuiParams, render, texture::TexManager,
-};
+use crate::{global::GuiParams, render, texture::TexManager};
 use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
@@ -12,11 +10,8 @@ use std::sync::Arc;
 use std::mem;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
 use wgpu::{BackendOptions, ExperimentalFeatures, Features, Trace};
-use winit::{
-    dpi::{LogicalSize, PhysicalSize},
-    // platform::macos::WindowExtMacOS,
-    window::Window,
-};
+use crate::host::Request;
+use winit::{dpi::PhysicalSize, window::Window};
 
 const MAX_ENTS: u64 = 10000;
 
@@ -28,7 +23,6 @@ pub struct Gfx<'w> {
     pub main_bind_group: BindGroup,
     pub master_texture: Texture,
     pub post: Post,
-    pub win_ref: Arc<Window>,
     pub main_layout: wgpu::BindGroupLayout,
     pub gui_aux_layout: wgpu::BindGroupLayout,
     pub render_pipeline: wgpu::RenderPipeline,
@@ -46,16 +40,20 @@ pub struct Gfx<'w> {
     pub skinned_pipeline: wgpu::RenderPipeline,
     pub skinned_shadow_pipeline: wgpu::RenderPipeline,
     pub palette_layout: wgpu::BindGroupLayout,
-    /// `None` only between `release_surface` and the `Gfx` that replaces this one.
-    pub surface: Option<wgpu::Surface<'w>>,
-    /// Kept so the surface can be rebuilt without tearing down the device, the
-    /// pipelines, or the running game — Android destroys the native window when the
-    /// app is backgrounded (screen sleep) and hands back a *new* one on resume, at
-    /// which point the old surface is dead. See `recreate_surface`.
-    instance: wgpu::Instance,
+    /// Where a finished frame goes: a window's swapchain, or a texture a host
+    /// samples.
+    pub target: Target<'w>,
+    /// The target's colour format: what the post and gui-overlay pipelines
+    /// were built for.
+    pub format: wgpu::TextureFormat,
+    /// Physical pixels per logical point on the display the target is shown
+    /// on. Whoever owns the window keeps it current (`set_scale`).
+    pub scale: f64,
+    /// What a window would be asked to do (title, fullscreen, size). `Gfx`
+    /// has no window to ask: the host takes these and decides.
+    requests: std::cell::RefCell<Vec<Request>>,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     pub depth_texture: wgpu::TextureView,
     /// The window's (surface's) size in physical pixels: what the post pass
     /// draws, and the aspect ratio everything uses.
@@ -147,32 +145,82 @@ fn create_depth_texture(
     (depth_texture, view, sampler)
 }
 
-/// What `Gfx::connect` hands `Gfx::build`.
+/// Where a finished frame goes.
+pub enum Target<'w> {
+    /// A window's swapchain, acquired and presented each frame (`chor`).
+    Surface {
+        window: Arc<Window>,
+        /// `None` only between `release_surface` and the `Gfx` that replaces
+        /// this one.
+        surface: Option<wgpu::Surface<'w>>,
+        config: wgpu::SurfaceConfiguration,
+        /// Kept so the surface can be rebuilt without tearing down the device,
+        /// the pipelines, or the running game — Android destroys the native
+        /// window when the app is backgrounded (screen sleep) and hands back a
+        /// *new* one on resume, at which point the old surface is dead. See
+        /// `recreate_surface`.
+        instance: wgpu::Instance,
+    },
+    /// A texture of the engine's own on a host's device. The host samples
+    /// `view`; it's remade on resize.
+    Texture {
+        texture: wgpu::Texture,
+        view: wgpu::TextureView,
+    },
+}
+
+/// A device to build a `Gfx` on, and where its frames will go: from
+/// `Gfx::connect` (a window) or `Gfx::host_link` (a host's device).
 pub struct GpuLink<'w> {
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'w>,
-    adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     size: PhysicalSize<u32>,
+    scale: f64,
+    to: LinkTarget<'w>,
+}
+
+enum LinkTarget<'w> {
+    Surface {
+        window: Arc<Window>,
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'w>,
+        adapter: wgpu::Adapter,
+    },
+    Host {
+        format: wgpu::TextureFormat,
+    },
+}
+
+/// The texture a hosted instance draws its finished frame into. `COPY_SRC`
+/// so the host (and `CHOR_SNAP`) can read it back.
+fn host_texture(
+    device: &wgpu::Device,
+    size: PhysicalSize<u32>,
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("petrichor instance target"),
+        size: wgpu::Extent3d {
+            width: size.width.max(1),
+            height: size.height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }
 
 impl<'w> Gfx<'w> {
-    pub async fn new(
-        rwindow: Arc<Window>,
-        tex_manager: &TexManager,
-    ) -> (Self, RenderPipeline, RenderPipeline) {
-        match Self::connect(rwindow.clone(), None).await {
-            Ok(link) => Self::build(link, rwindow, tex_manager),
-            Err(e) => {
-                error_window(e.into());
-                std::process::exit(1);
-            }
-        }
-    }
-
-    /// A surface on the window and a device to draw it with: the half of `new`
-    /// that a lost GPU has to redo (`gpu_loss.rs`). Fails rather than exits, so
+    /// A surface on the window and a device to draw it with: the half of
+    /// `Core::new` that a lost GPU has to redo (`gpu_loss.rs`). Fails rather than exits, so
     /// a restore can try again later. `instance` reuses one: natively a second
     /// instance on the same window crashes the driver (seen on NVIDIA), and on
     /// the web a new one can settle on another backend than the canvas has.
@@ -252,30 +300,43 @@ impl<'w> Gfx<'w> {
             .map_err(|e| format!("no graphics device: {e}"))?;
         crate::gpu_loss::watch(&device);
         Ok(GpuLink {
-            instance,
-            surface,
-            adapter,
             device,
             queue,
             size,
+            scale: rwindow.scale_factor(),
+            to: LinkTarget::Surface {
+                window: rwindow,
+                instance,
+                surface,
+                adapter,
+            },
         })
+    }
+
+    /// A link onto a host's device: frames go to a texture of `size` physical
+    /// pixels in the host's `format`, which the host samples. The device is
+    /// the host's to watch: no loss callback or error handler is installed.
+    pub fn host_link(gpu: &crate::host::HostGpu, size: (u32, u32), scale: f64) -> GpuLink<'w> {
+        GpuLink {
+            device: gpu.device.clone(),
+            queue: gpu.queue.clone(),
+            size: PhysicalSize::new(size.0.max(1), size.1.max(1)),
+            scale,
+            to: LinkTarget::Host { format: gpu.format },
+        }
     }
 
     /// Everything on the device: pipelines, the atlas (from `tex_manager`'s
     /// CPU copy), the scene targets. Returns the gui and sky pipelines for `Gui`.
-    pub fn build(
-        link: GpuLink<'w>,
-        rwindow: Arc<Window>,
-        tex_manager: &TexManager,
-    ) -> (Self, RenderPipeline, RenderPipeline) {
+    pub fn build(link: GpuLink<'w>, tex_manager: &TexManager) -> (Self, RenderPipeline, RenderPipeline) {
         let GpuLink {
-            instance,
-            surface,
-            adapter,
             device,
             queue,
             size,
+            scale,
+            to,
         } = link;
+        let backend = device.adapter_info().backend;
 
         //this order is important, since models can load their own textures we need assets to init first
 
@@ -285,56 +346,77 @@ impl<'w> Gfx<'w> {
             texture: diff_tex,
         } = tex_manager.finalize(&device, &queue);
 
-        let surface_caps = surface.get_capabilities(&adapter);
-        // Prefer sRGB surface formats; fall back to first available
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(surface_caps.formats[0]);
+        let (target, format) = match to {
+            LinkTarget::Surface {
+                window,
+                instance,
+                surface,
+                adapter,
+            } => {
+                let surface_caps = surface.get_capabilities(&adapter);
+                // Prefer sRGB surface formats; fall back to first available
+                let surface_format = surface_caps
+                    .formats
+                    .iter()
+                    .copied()
+                    .find(|f| f.is_srgb())
+                    .unwrap_or(surface_caps.formats[0]);
 
-        // CHOR_SNAP test grabs read the presented frame back, which needs
-        // COPY_SRC on the swapchain; only asked for when grabbing.
-        #[cfg(not(target_arch = "wasm32"))]
-        let snap_usage = if crate::snap::enabled()
-            && surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC)
-        {
-            wgpu::TextureUsages::COPY_SRC
-        } else {
-            wgpu::TextureUsages::empty()
+                // CHOR_SNAP test grabs read the presented frame back, which needs
+                // COPY_SRC on the swapchain; only asked for when grabbing.
+                #[cfg(not(target_arch = "wasm32"))]
+                let snap_usage = if crate::snap::enabled()
+                    && surface_caps.usages.contains(wgpu::TextureUsages::COPY_SRC)
+                {
+                    wgpu::TextureUsages::COPY_SRC
+                } else {
+                    wgpu::TextureUsages::empty()
+                };
+                #[cfg(target_arch = "wasm32")]
+                let snap_usage = wgpu::TextureUsages::empty();
+                let config = wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | snap_usage,
+                    desired_maximum_frame_latency: 1,
+                    format: surface_format,
+                    width: size.width,
+                    height: size.height,
+                    // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
+                    // lost? can we check if immediate is better?
+                    present_mode: wgpu::PresentMode::Fifo,
+                    // Ask for what the surface actually supports. `Opaque` was hardcoded,
+                    // which is fine on desktop and the web but fatal on Android, where the
+                    // surface reports only `[Inherit]` — `Surface::configure` fails
+                    // validation and the app dies before drawing a frame. Opaque is still
+                    // preferred where it exists (the engine draws a full-screen opaque
+                    // image, and letting the compositor blend costs work for nothing).
+                    alpha_mode: if surface_caps
+                        .alpha_modes
+                        .contains(&CompositeAlphaMode::Opaque)
+                    {
+                        CompositeAlphaMode::Opaque
+                    } else {
+                        surface_caps.alpha_modes[0]
+                    },
+                    view_formats: vec![],
+                    color_space: wgpu::SurfaceColorSpace::Auto,
+                };
+                surface.configure(&device, &config);
+                let format = config.format;
+                (
+                    Target::Surface {
+                        window,
+                        surface: Some(surface),
+                        config,
+                        instance,
+                    },
+                    format,
+                )
+            }
+            LinkTarget::Host { format } => {
+                let (texture, view) = host_texture(&device, size, format);
+                (Target::Texture { texture, view }, format)
+            }
         };
-        #[cfg(target_arch = "wasm32")]
-        let snap_usage = wgpu::TextureUsages::empty();
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | snap_usage,
-            desired_maximum_frame_latency: 1,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            // present_mode: wgpu::PresentMode::Immediate, TODO used to be immediate, what have we
-            // lost? can we check if immediate is better?
-            present_mode: wgpu::PresentMode::Fifo,
-            // Ask for what the surface actually supports. `Opaque` was hardcoded,
-            // which is fine on desktop and the web but fatal on Android, where the
-            // surface reports only `[Inherit]` — `Surface::configure` fails
-            // validation and the app dies before drawing a frame. Opaque is still
-            // preferred where it exists (the engine draws a full-screen opaque
-            // image, and letting the compositor blend costs work for nothing).
-            alpha_mode: if surface_caps
-                .alpha_modes
-                .contains(&CompositeAlphaMode::Opaque)
-            {
-                CompositeAlphaMode::Opaque
-            } else {
-                surface_caps.alpha_modes[0]
-            },
-            view_formats: vec![],
-            color_space: wgpu::SurfaceColorSpace::Auto,
-        };
-
-        // TODO match
-        surface.configure(&device, &config);
 
         let entity_uniform_size = mem::size_of::<EntityUniforms>() as wgpu::BufferAddress;
 
@@ -379,7 +461,7 @@ impl<'w> Gfx<'w> {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(main_shader_source(&adapter).into()),
+            source: wgpu::ShaderSource::Wgsl(main_shader_source(backend).into()),
         });
 
         let main_uniform_size = mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
@@ -597,7 +679,7 @@ impl<'w> Gfx<'w> {
                 compilation_options: Default::default(),
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format,
                     // blend: Some(wgpu::BlendState {
                     //     color: wgpu::BlendComponent::OVER,
                     //     alpha: wgpu::BlendComponent::OVER,
@@ -645,7 +727,7 @@ impl<'w> Gfx<'w> {
             &device,
             &shader,
             [&main_layout, &entity_layout, &shadow_layout, &palette_layout],
-            config.format,
+            format,
         );
 
         let depth = create_depth_texture(size, &device);
@@ -698,7 +780,7 @@ impl<'w> Gfx<'w> {
                 module: &shader,
                 entry_point: Some("gui_fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -746,7 +828,7 @@ impl<'w> Gfx<'w> {
                 module: &shader,
                 entry_point: Some("gui_fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -785,7 +867,7 @@ impl<'w> Gfx<'w> {
                 module: &shader,
                 entry_point: Some("sky_fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -815,7 +897,8 @@ impl<'w> Gfx<'w> {
         });
 
         let post = Post::new(
-            &config,
+            (size.width, size.height),
+            format,
             &device,
             &shader,
             &main_layout,
@@ -825,8 +908,10 @@ impl<'w> Gfx<'w> {
 
         (
             Self {
-                surface: Some(surface),
-                instance,
+                target,
+                format,
+                scale,
+                requests: std::cell::RefCell::new(Vec::new()),
                 device,
                 queue,
                 size,
@@ -835,7 +920,6 @@ impl<'w> Gfx<'w> {
                 filter: None,
                 submitted: std::cell::Cell::new(false),
                 gui_overlay_pipeline,
-                config,
                 depth_texture: depth.1,
                 uniform_buf,
                 uniform_alignment,
@@ -860,7 +944,6 @@ impl<'w> Gfx<'w> {
                 entity_uniform_buf,
 
                 master_texture: diff_tex,
-                win_ref: rwindow,
             },
             gui_pipeline,
             sky_pipeline,
@@ -924,8 +1007,34 @@ impl<'w> Gfx<'w> {
         let w = new_size.width.clamp(1, max);
         let h = new_size.height.clamp(1, max);
         self.size = winit::dpi::PhysicalSize::new(w, h);
-        self.config.width = w;
-        self.config.height = h;
+        if let Target::Surface { config, .. } = &mut self.target {
+            config.width = w;
+            config.height = h;
+        }
+    }
+
+    /// The display's scale changed (or the instance moved to another display).
+    pub fn set_scale(&mut self, scale: f64) {
+        if scale > 0. {
+            self.scale = scale;
+        }
+    }
+
+    /// The finished frame, for a host to sample. `None` on a window target.
+    pub fn target_view(&self) -> Option<&wgpu::TextureView> {
+        match &self.target {
+            Target::Texture { view, .. } => Some(view),
+            Target::Surface { .. } => None,
+        }
+    }
+
+    /// What the engine wanted of a window since the last call.
+    pub fn take_requests(&self) -> Vec<Request> {
+        std::mem::take(&mut *self.requests.borrow_mut())
+    }
+
+    fn request(&self, r: Request) {
+        self.requests.borrow_mut().push(r);
     }
 
     /// Rebuild the surface against the window's *current* native handle, keeping the
@@ -937,18 +1046,27 @@ impl<'w> Gfx<'w> {
     /// nowhere — the app comes back black. Only the surface is stale, which is why
     /// this exists instead of rebuilding `Core` and losing the game's state.
     pub fn recreate_surface(&mut self) -> bool {
-        match self.instance.create_surface(self.win_ref.clone()) {
+        let Target::Surface {
+            window,
+            surface: slot,
+            config,
+            instance,
+        } = &mut self.target
+        else {
+            return false;
+        };
+        match instance.create_surface(window.clone()) {
             Ok(surface) => {
                 // The new window can be a different size (rotation, a fold opening),
                 // so trust it over the config we were holding.
-                let s = self.win_ref.inner_size();
+                let s = window.inner_size();
                 if s.width > 0 && s.height > 0 {
                     self.size = s;
-                    self.config.width = s.width;
-                    self.config.height = s.height;
+                    config.width = s.width;
+                    config.height = s.height;
                 }
-                surface.configure(&self.device, &self.config);
-                self.surface = Some(surface);
+                surface.configure(&self.device, config);
+                *slot = Some(surface);
                 self.rebuild_scene_targets();
                 true
             }
@@ -978,14 +1096,20 @@ impl<'w> Gfx<'w> {
     /// Let go of the window's surface ahead of a new `Gfx` making its own: a
     /// native window can only carry one swapchain. Returns the instance, for
     /// the new one to be made from.
-    pub fn release_surface(&mut self) -> wgpu::Instance {
-        self.surface = None;
+    pub fn release_surface(&mut self) -> Option<wgpu::Instance> {
+        if let Target::Surface { surface, .. } = &mut self.target {
+            *surface = None;
+        }
         self.instance()
     }
 
     /// The instance this device came from, for a replacement to come from too.
-    pub fn instance(&self) -> wgpu::Instance {
-        self.instance.clone()
+    /// `None` on a host's device: the host made it.
+    pub fn instance(&self) -> Option<wgpu::Instance> {
+        match &self.target {
+            Target::Surface { instance, .. } => Some(instance.clone()),
+            Target::Texture { .. } => None,
+        }
     }
 
     /// Carry what isn't GPU state over from the `Gfx` this one replaces after a
@@ -1002,11 +1126,21 @@ impl<'w> Gfx<'w> {
 
     pub fn resize(&mut self, gui_params: &GuiParams) -> (u32, u32) {
         let new_size = self.size;
-        if let Some(surface) = &self.surface {
-            surface.configure(&self.device, &self.config);
+        match &mut self.target {
+            Target::Surface {
+                surface: Some(surface),
+                config,
+                ..
+            } => surface.configure(&self.device, config),
+            Target::Surface { .. } => {}
+            Target::Texture { texture, view } => {
+                if texture.width() != new_size.width || texture.height() != new_size.height {
+                    (*texture, *view) = host_texture(&self.device, new_size, self.format);
+                }
+            }
         }
         self.rebuild_scene_targets();
-        Self::compute_gui_size(gui_params, new_size, self.win_ref.scale_factor())
+        Self::compute_gui_size(gui_params, new_size, self.scale)
     }
 
     /// The scene's resolution for a `crt_resolution` and a window size:
@@ -1074,37 +1208,22 @@ impl<'w> Gfx<'w> {
             .resize(&self.device, rs, &self.uniform_buf, &self.main_layout);
     }
 
+    // The three below are a window's business, and `Gfx` has none: they
+    // queue a `Request` for whoever does (`take_requests`). `chor` grants
+    // them all; another host decides.
+
     pub fn set_fullscreen(&self, enable: bool) {
-        // TODO windows;; macos use Fullscreen::Borderless
-        if enable {
-            self.win_ref
-                .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
-        } else {
-            self.win_ref.set_fullscreen(None)
-        }
+        self.request(Request::Fullscreen(enable));
     }
 
     /// `attr{size={w, h}}`, in logical points; a missing one keeps the current
-    /// size. `self.size` is physical pixels, so it's converted first: as it
-    /// was, on a 2x display the dimension left out doubled.
+    /// size.
     pub fn set_window_size(&self, x: Option<&f32>, y: Option<&f32>) {
-        let now: LogicalSize<f32> = self.size.to_logical(self.win_ref.scale_factor());
-        let _ = self.win_ref.request_inner_size(LogicalSize::new(
-            x.unwrap_or(&now.width).clamp(10., f32::INFINITY) as u32,
-            y.unwrap_or(&now.height).clamp(10., f32::INFINITY) as u32,
-        ));
+        self.request(Request::Size(x.copied(), y.copied()));
     }
 
     pub fn set_title(&self, title: &str) {
-        // winit's web window only sets the canvas's `alt`, borrowing the
-        // canvas its event loop may hold ("RefCell already borrowed"); the
-        // page's title is what a window title means in a browser.
-        #[cfg(target_arch = "wasm32")]
-        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-            doc.set_title(title);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        self.win_ref.set_title(title);
+        self.request(Request::Title(title.to_string()));
     }
 
     /// Swap the main scene/GUI texture sampler's filter mode and rebuild the one
@@ -1342,9 +1461,9 @@ fn base_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
 
 /// The main shader. WebGL2's GLSL ES 3.0 has no `noperspective`, so there the
 /// R30 affine UVs fall back to perspective-correct ones.
-fn main_shader_source(adapter: &wgpu::Adapter) -> std::borrow::Cow<'static, str> {
+fn main_shader_source(backend: wgpu::Backend) -> std::borrow::Cow<'static, str> {
     let src = include_str!("shaders/shader.wgsl");
-    if cfg!(target_arch = "wasm32") && adapter.get_info().backend == wgpu::Backend::Gl {
+    if cfg!(target_arch = "wasm32") && backend == wgpu::Backend::Gl {
         src.replace("@interpolate(linear) ", "").into()
     } else {
         src.into()
