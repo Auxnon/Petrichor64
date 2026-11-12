@@ -419,6 +419,17 @@ impl Instance {
         out
     }
 
+    /// host -> cart: a message for the cart's `host.recv()`. Kept until the
+    /// cart reads it, even if it hasn't finished loading.
+    pub fn post(&mut self, msg: String) {
+        self.core.host_post(msg);
+    }
+
+    /// cart -> host: everything the cart `host.send`'d since the last call.
+    pub fn messages(&mut self) -> Vec<String> {
+        self.core.host_take()
+    }
+
     /// Open or close the developer console (if the policy allows one).
     pub fn console(&mut self, open: bool) {
         let core = &mut self.core;

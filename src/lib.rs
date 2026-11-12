@@ -3859,15 +3859,9 @@ impl Core {
                     self.completed_bundles.insert(id, true);
                     loop_complete = true;
                 }
+                // The clipboard is the host's: `chor` grants it (`App::grant`).
                 MainCommmand::Copy(s) => {
-                    #[cfg(desktop)]
-                    if let Ok(mut ctx) = ClipboardContext::new() {
-                        if let Err(_) = ctx.set_contents(s) {
-                            self.log(LogType::IoError, &format!("!!Clipboard error"));
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    let _ = s;
+                    self.requests.push(crate::host::Request::Clipboard(s));
                 }
                 MainCommmand::HostSend(s) => {
                     crate::host::push_capped(&mut self.host.outbox, s);
