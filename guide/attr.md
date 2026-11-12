@@ -57,11 +57,20 @@ Called with no table, `attr()` returns what the engine knows about the screen:
 - `gw`, `gh`: integer - the gui raster's actual size, which stretches with the
   window's aspect
 - `os`: string, `hz`: number
+- `inset`: table - `top`, `right`, `bottom`, `left`: how many of the window's
+  pixels the system draws over at each edge, such as a phone's status bar and
+  navigation bar. The game is still drawn under them, edge to edge; keep buttons
+  and text inside. Zero on desktop. It changes when the phone rotates.
 
 ```lua
 local s = attr()
 local half_h = 0.41421356 -- tan(45° / 2): the view's half-height at distance 1
 local half_w = half_h * s.aspect
+```
+
+```lua
+local s = attr()
+local top = s.inset.top / s.h -- the fraction of the screen's height under the status bar
 ```
 
 ```lua

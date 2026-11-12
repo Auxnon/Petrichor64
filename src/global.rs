@@ -4,6 +4,26 @@ use std::collections::HashMap;
 pub const SHADOW_SIZE_DEFAULT: u32 = 128;
 pub const SHADOW_RANGE_DEFAULT: f32 = 25.0;
 
+/// One finger or pen on the screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Touching {
+    /// winit's touch id
+    pub id: u64,
+    /// normalised 0..1, like the mouse
+    pub x: f32,
+    pub y: f32,
+    /// a stylus rather than a finger
+    pub pen: bool,
+    /// 0..1; a screen that can't tell reports 1 (or 0)
+    pub pressure: f32,
+}
+
+/// How many fingers `touches()` reports at once. Phones track ten, but past a
+/// few no gesture needs them, and each slot costs three floats a frame.
+pub const TOUCH_SLOTS: usize = 5;
+/// Floats per touch slot in `ControlState` (see `pack_touches`).
+pub const TOUCH_FLOATS: usize = 4;
+
 #[cfg(feature = "headed")]
 use crate::post::ScreenBinds;
 use glam::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
@@ -14,6 +34,14 @@ pub struct Global {
     pub mouse_pos: Vec2,
     pub mouse_click_pos: Vec2,
     pub mouse_buttons: [f32; 4],
+    /// Every finger on the screen, for `touches()`: slot i holds the finger
+    /// (or pen). A finger keeps its slot while it's down, so a script can follow
+    /// one across frames by slot.
+    pub touches: [Option<Touching>; TOUCH_SLOTS],
+    /// The edges the system draws over (Android's status and navigation bars),
+    /// in window pixels: top, right, bottom, left. Zero where nothing covers
+    /// the window, as on desktop. `attr().inset`.
+    pub safe_inset: [f32; 4],
     pub fullscreen: bool,
     pub fullscreen_state: bool,
     /** whether to attempt to grab the mouse or not, does not indicate actual grabbed state or not */
@@ -109,6 +137,17 @@ pub struct Global {
     // pub loaded_directory: Option<String>,
 }
 impl Global {
+    /// The scroll mus() reports: the wheel's vertical turn, or a sideways
+    /// scroll when that's all there is (shift+wheel on some systems, a tilt
+    /// wheel). Up (away from you) is positive.
+    pub fn scroll_amount(&self) -> f32 {
+        if self.scroll_delta.1 != 0. {
+            self.scroll_delta.1
+        } else {
+            self.scroll_delta.0
+        }
+    }
+
     pub fn new() -> Global {
         Global {
             // values: HashMap::new(),
@@ -119,6 +158,8 @@ impl Global {
             mouse_pos: vec2(0., 0.),
             mouse_click_pos: vec2(0., 0.),
             mouse_buttons: [0.; 4],
+            touches: [None; TOUCH_SLOTS],
+            safe_inset: [0.; 4],
             mouse_delta: vec2(0., 0.),
             cam_pos: vec3(0., 0., 0.),
             cam_ortho: 0.,
@@ -165,6 +206,39 @@ impl Global {
             locked: false,
             boot_state: true,
             pending_load: None,
+        }
+    }
+
+    /// A finger landed or moved (`down`), or lifted. A new finger takes the
+    /// first free slot; one past `TOUCH_SLOTS` isn't reported.
+    pub fn track_touch(&mut self, t: Touching, down: bool) {
+        let at = self
+            .touches
+            .iter()
+            .position(|s| matches!(s, Some(s) if s.id == t.id));
+        match (at, down) {
+            (Some(i), true) => self.touches[i] = Some(t),
+            (Some(i), false) => self.touches[i] = None,
+            (None, true) => {
+                if let Some(i) = self.touches.iter().position(|s| s.is_none()) {
+                    self.touches[i] = Some(t);
+                }
+            }
+            (None, false) => {}
+        }
+    }
+
+    /// Write the touch slots into a `ControlState` analog array, from
+    /// `ANALOG_TOUCH` on: per slot, `TOUCH_FLOATS` of them: what's in it (0
+    /// nothing, 1 a finger, 2 a pen), its x and y, and its pressure.
+    pub fn pack_touches(&self, analog: &mut [f32]) {
+        for (i, t) in self.touches.iter().enumerate() {
+            let at = crate::types::ANALOG_TOUCH + TOUCH_FLOATS * i;
+            let v = match t {
+                Some(t) => [if t.pen { 2.0 } else { 1.0 }, t.x, t.y, t.pressure],
+                None => [0.0; TOUCH_FLOATS],
+            };
+            analog[at..at + TOUCH_FLOATS].copy_from_slice(&v);
         }
     }
 
@@ -326,6 +400,19 @@ impl GuiParams {
 mod tests {
     use super::*;
 
+    /// mus().scroll is the wheel's vertical turn (it used to be the sideways
+    /// axis, always 0 on a plain mouse wheel), falling back to a sideways one.
+    #[test]
+    fn scroll_is_the_wheel() {
+        let mut g = Global::new();
+        g.scroll_delta = (0., 1.);
+        assert_eq!(g.scroll_amount(), 1.);
+        g.scroll_delta = (0.5, -2.);
+        assert_eq!(g.scroll_amount(), -2.);
+        g.scroll_delta = (-1., 0.);
+        assert_eq!(g.scroll_amount(), -1.);
+    }
+
     /// Loading an app must not inherit the previous app's `attr` state. The boot logo
     /// sets `attr{fog=200}` on its first line, and only the console lock was being
     /// cleared, so every app after it ran with a fog deep enough to hide the scene —
@@ -393,5 +480,71 @@ mod tests {
         );
         assert_eq!(g.light_color, vec3(0., 0., 0.));
         assert_eq!(g.light_ambient, 1.);
+    }
+}
+
+#[cfg(test)]
+mod touch_tests {
+    use super::*;
+
+    fn at(id: u64, x: f32, y: f32) -> Touching {
+        Touching {
+            id,
+            x,
+            y,
+            pen: false,
+            pressure: 1.0,
+        }
+    }
+
+    fn ids(g: &Global) -> Vec<Option<u64>> {
+        g.touches.iter().map(|t| t.map(|t| t.id)).collect()
+    }
+
+    #[test]
+    fn a_finger_keeps_its_slot_and_a_lifted_slot_is_reused() {
+        let mut g = Global::new();
+        g.track_touch(at(7, 0.1, 0.2), true);
+        g.track_touch(at(9, 0.5, 0.5), true);
+        g.track_touch(at(7, 0.3, 0.4), true); // moved
+        assert_eq!(g.touches[0], Some(at(7, 0.3, 0.4)));
+        g.track_touch(at(7, 0.3, 0.4), false); // the first lifts: the second stays put
+        assert_eq!(ids(&g)[..2], [None, Some(9)]);
+        g.track_touch(at(11, 0.9, 0.9), true);
+        assert_eq!(ids(&g)[..2], [Some(11), Some(9)]);
+        g.track_touch(at(42, 0., 0.), false); // a lift never seen landing
+        assert_eq!(ids(&g)[..2], [Some(11), Some(9)]);
+    }
+
+    #[test]
+    fn fingers_past_the_slots_are_dropped_and_packing_marks_pens_and_empty_slots() {
+        let mut g = Global::new();
+        for id in 0..(TOUCH_SLOTS as u64 + 2) {
+            g.track_touch(at(id, 0.5, 0.25), true);
+        }
+        assert!(g.touches.iter().all(|t| t.is_some()));
+        g.track_touch(at(1, 0., 0.), false);
+        g.track_touch(
+            Touching {
+                id: 2,
+                x: 0.75,
+                y: 0.5,
+                pen: true,
+                pressure: 0.4,
+            },
+            true,
+        );
+        let mut a = [9f32; crate::types::ANALOG_LEN];
+        g.pack_touches(&mut a);
+        let t = crate::types::ANALOG_TOUCH;
+        let n = TOUCH_FLOATS;
+        assert_eq!(a[t..t + n], [1., 0.5, 0.25, 1.]);
+        assert_eq!(a[t + n..t + 2 * n], [0.; 4]);
+        assert_eq!(a[t + 2 * n..t + 3 * n], [2., 0.75, 0.5, 0.4]);
+        assert_eq!(
+            a[..t],
+            [9f32; crate::types::ANALOG_TOUCH],
+            "the mouse is left alone"
+        );
     }
 }

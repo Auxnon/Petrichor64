@@ -1370,6 +1370,7 @@ pub fn make_codex_file<'a>(
 ---@field high number
 ---@field low number
 ---@field bleed number
+---@field inset {top:number, right:number, bottom:number, left:number} read only: window pixels the system draws over at each edge (status and navigation bars); 0 on desktop
 
 ---@class cam_params
 ---@field pos number[]? x, y, z

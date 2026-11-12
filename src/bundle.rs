@@ -678,6 +678,9 @@ fn combine_states(mut old: ControlState, bits: ControlState) -> ControlState {
     old.1[5] = (old.1[5] + bits.1[5]).clamp(0.0, 1.0);
     old.1[6] = (old.1[6] + bits.1[6]).clamp(0.0, 1.0);
     // old.1[7] += bits.1[7];
+    // touches: where the fingers are now, as for the cursor position
+    let t = crate::types::ANALOG_TOUCH;
+    old.1[t..].copy_from_slice(&bits.1[t..]);
 
     old
 }

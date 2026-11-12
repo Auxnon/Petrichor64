@@ -10,9 +10,9 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use crate::log::LogType;
 #[cfg(feature = "headed")]
 use crate::controls::bit_check;
+use crate::log::LogType;
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(desktop)]
 use clipboard::{ClipboardContext, ClipboardProvider};
@@ -30,8 +30,8 @@ use types::{ControlState, GlobalMap};
 
 mod asset;
 mod builtin;
-mod cli;
 mod bundle;
+mod cli;
 mod collide;
 mod command;
 #[cfg(feature = "headed")]
@@ -41,38 +41,35 @@ mod ent;
 mod ent_manager;
 mod error;
 mod file_util;
+#[cfg(feature = "audio")]
+mod fx;
 #[cfg(feature = "headed")]
 mod gfx;
 #[cfg(feature = "headed")]
 mod gpu_loss;
-mod gltf_io;
 mod global;
+mod gltf_io;
 mod gui;
-mod log;
 #[cfg(any(feature = "ws", feature = "online_capable"))]
 mod json;
+mod log;
 #[cfg(any(feature = "ws", feature = "online_capable"))]
 mod lua_connection;
 mod lua_define;
 mod lua_ent;
-mod skeleton;
 mod lua_img;
 mod model;
 #[cfg(feature = "online_capable")]
 mod online;
-#[cfg(feature = "ws")]
-mod ws;
 #[cfg(feature = "online_capable")]
 mod packet;
 mod pad;
 mod parse;
+#[cfg(feature = "headed")]
+mod pick;
 mod pool;
 #[cfg(feature = "headed")]
 mod post;
-#[cfg(feature = "headed")]
-mod pick;
-#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
-mod snap;
 #[cfg(feature = "headed")]
 mod ray;
 #[cfg(feature = "headed")]
@@ -80,17 +77,20 @@ mod render;
 mod root;
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
 mod serve;
-#[cfg(all(feature = "tui-embed", desktop))]
-mod tui_embed;
-#[cfg(feature = "audio")]
-mod fx;
+mod skeleton;
+#[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
+mod snap;
 #[cfg(feature = "audio")]
 mod sound;
+#[cfg(all(feature = "tui-embed", desktop))]
+mod tui_embed;
+#[cfg(feature = "ws")]
+mod ws;
 // MIDI input is native-only for now (midir has no wasm path wired up here).
 #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
 mod midi;
-#[cfg(feature = "audio")]
-mod vocaloid;
+#[cfg(feature = "silt")]
+mod silt_str;
 mod template;
 mod texture;
 mod tile;
@@ -99,21 +99,21 @@ mod tileset;
 #[cfg(all(feature = "render-tui", not(target_arch = "wasm32")))]
 mod tui;
 mod types;
-#[cfg(feature = "silt")]
-mod silt_str;
+#[cfg(feature = "audio")]
+mod vocaloid;
 
 #[cfg(all(feature = "headed", feature = "render-tui"))]
 compile_error!(
     "features `headed` and `render-tui` are mutually exclusive — pick one renderer backend"
 );
+mod unwrap;
+#[cfg(feature = "picc")]
+mod userdata_util;
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 mod web_worker;
 #[cfg(target_arch = "wasm32")]
 mod worker;
 mod worker_protocol;
-mod unwrap;
-#[cfg(feature = "picc")]
-mod userdata_util;
 mod world;
 
 use command::MainCommmand;
@@ -144,6 +144,29 @@ const OS: &str = "web";
 // Visible to Lua, so games can adapt (touch-sized hit targets, no keyboard).
 #[cfg(target_os = "android")]
 const OS: &str = "droid";
+
+/// How far in from each edge the system's bars reach, in window pixels: top,
+/// right, bottom, left. Android reports the part of the window the app's
+/// content view gets (`content_rect`), which leaves out the status and
+/// navigation bars the surface is drawn under. winit doesn't announce a change
+/// to it (it logs a TODO), so this is read every frame; it's a lock and a copy.
+#[cfg(all(target_os = "android", feature = "headed"))]
+fn android_inset(window: &winit::window::Window) -> [f32; 4] {
+    use winit::platform::android::WindowExtAndroid;
+    let r = window.content_rect();
+    let size = window.inner_size();
+    let (w, h) = (size.width as i32, size.height as i32);
+    // Before the first layout the rect is empty: say nothing is covered.
+    if r.right <= r.left || r.bottom <= r.top || w == 0 || h == 0 {
+        return [0.; 4];
+    }
+    [
+        r.top.clamp(0, h) as f32,
+        (w - r.right).clamp(0, w) as f32,
+        (h - r.bottom).clamp(0, h) as f32,
+        r.left.clamp(0, w) as f32,
+    ]
+}
 
 #[cfg(target_os = "ios")]
 const OS: &str = "ios";
@@ -665,7 +688,11 @@ impl ApplicationHandler for App {
                     core.gui.disable_console();
                 }
             }
-            println!("{} {}", "[ 1 ]".on_bright_purple(), "we built core".on_red());
+            println!(
+                "{} {}",
+                "[ 1 ]".on_bright_purple(),
+                "we built core".on_red()
+            );
             self.core = Some(core);
         }
 
@@ -716,6 +743,16 @@ impl ApplicationHandler for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         ::log::info!("petrichor64: suspended — surface released");
         self.surface_lost = true;
+        // Fingers down as the app leaves won't send their lift; let them go
+        // now, or they'd be stuck down (and the mouse held) on return.
+        self.primary_touch = None;
+        self.touch_last = None;
+        if let Some(core) = &mut self.core {
+            if core.global.touches.iter().any(|t| t.is_some()) {
+                core.global.touches = [None; crate::global::TOUCH_SLOTS];
+                core.global.mouse_buttons[0] = 0.0;
+            }
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
@@ -861,9 +898,9 @@ impl ApplicationHandler for App {
             // winit's touch id, not "whichever event arrived". That distinction is
             // the whole point: a second finger landing and lifting during a drag
             // must not move the cursor or release the button, which is exactly what
-            // id-less handling gets wrong. Extra fingers are ignored for now; when
-            // multi-touch gestures arrive they belong in their own Lua command
-            // rather than being smuggled through `mus`.
+            // id-less handling gets wrong. Every finger, the primary included, is
+            // also tracked for `touches()`, where a script reads gestures (pinch,
+            // two-finger drag) rather than having them smuggled through `mus`.
             //
             // Platform-independent on purpose: winit reports touch the same way on
             // Android, iOS and desktop touchscreens, so this also makes a Surface or
@@ -877,6 +914,30 @@ impl ApplicationHandler for App {
                 if size.width == 0 || size.height == 0 {
                     return;
                 }
+                // Every finger, primary or not, for `touches()`. A pen reports a
+                // calibrated force with an altitude: Apple Pencil on iOS, and a
+                // stylus on Android through the vendored winit.
+                let (pen, pressure) = match touch.force {
+                    Some(
+                        f @ winit::event::Force::Calibrated {
+                            altitude_angle: Some(_),
+                            ..
+                        },
+                    ) => (true, f.normalized() as f32),
+                    Some(f) => (false, f.normalized() as f32),
+                    None => (false, 1.0),
+                };
+                let down = matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved);
+                core.global.track_touch(
+                    crate::global::Touching {
+                        id: touch.id,
+                        x: touch.location.x as f32 / size.width as f32,
+                        y: touch.location.y as f32 / size.height as f32,
+                        pen,
+                        pressure,
+                    },
+                    down,
+                );
                 match touch.phase {
                     TouchPhase::Started => {
                         if self.primary_touch.is_none() {
@@ -939,13 +1000,17 @@ impl ApplicationHandler for App {
             // ----------------------------------------------------------------
             WindowEvent::MouseWheel { delta, .. } => {
                 if let Some(core) = &mut self.core {
-                    core.global.scroll_delta = match delta {
+                    let (x, y) = match delta {
                         MouseScrollDelta::LineDelta(x, y) => (x, y),
                         MouseScrollDelta::PixelDelta(pos) => {
                             // Normalise pixel scroll to approximate line units.
                             (pos.x as f32 / 120.0, pos.y as f32 / 120.0)
                         }
                     };
+                    // Summed: a frame can see several wheel events (a fast
+                    // spin, a touchpad), and each used to overwrite the last.
+                    core.global.scroll_delta.0 += x;
+                    core.global.scroll_delta.1 += y;
                 }
             }
 
@@ -1028,8 +1093,10 @@ impl ApplicationHandler for App {
                     drain_stray_messages(catcher);
                 }
                 if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
-                    core.loggy
-                        .log(LogType::CoreError, &format!("failed to load {}: {}", path, e));
+                    core.loggy.log(
+                        LogType::CoreError,
+                        &format!("failed to load {}: {}", path, e),
+                    );
                 }
             }
         }
@@ -1078,8 +1145,7 @@ impl ApplicationHandler for App {
                 // resume it on first interaction (browsers start it suspended).
                 #[cfg(feature = "audio")]
                 {
-                    *self.audio_ctx.borrow_mut() =
-                        core.web_audio.as_ref().map(|w| w.context());
+                    *self.audio_ctx.borrow_mut() = core.web_audio.as_ref().map(|w| w.context());
                 }
                 self.core = Some(core);
                 self.catcher = Some(catcher);
@@ -1171,10 +1237,7 @@ impl ApplicationHandler for App {
                                     &mut core.loggy,
                                 );
                             }
-                            let size = self
-                                .core
-                                .as_ref()
-                                .map_or([256, 256], |c| c.gui.size());
+                            let size = self.core.as_ref().map_or([256, 256], |c| c.gui.size());
                             w.post(&HostToVm::Init {
                                 bundle_id: 0,
                                 width: size[0],
@@ -1183,8 +1246,7 @@ impl ApplicationHandler for App {
                             self.worker_gui_size = size;
                             // Skeletons from the models just loaded, before main()
                             // can ask an entity to play a clip.
-                            let skeletons =
-                                crate::skeleton::take_new(&mut self.skeletons_sent);
+                            let skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
                             if !skeletons.is_empty() {
                                 w.post(&HostToVm::Skeletons(skeletons));
                             }
@@ -1226,10 +1288,12 @@ impl ApplicationHandler for App {
                         self.bits.1[4] = g.mouse_buttons[0];
                         self.bits.1[5] = g.mouse_buttons[1];
                         self.bits.1[6] = g.mouse_buttons[2];
-                        self.bits.1[7] = g.scroll_delta.0;
+                        // mus().scroll: the wheel (vertical), else a sideways scroll
+                        self.bits.1[7] = g.scroll_amount();
                         self.bits.1[8] = g.cursor_projected_pos.x;
                         self.bits.1[9] = g.cursor_projected_pos.y;
                         self.bits.1[10] = g.cursor_projected_pos.z;
+                        g.pack_touches(&mut self.bits.1);
 
                         // Mirror the app's grab intent into the pointer-lock
                         // flag the canvas click handler reads. Release the lock
@@ -1237,9 +1301,7 @@ impl ApplicationHandler for App {
                         let want = g.mouse_grab && !g.console;
                         *self.pointer_lock_wanted.borrow_mut() = want;
                         if !want {
-                            if let Some(doc) =
-                                web_sys::window().and_then(|w| w.document())
-                            {
+                            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                                 if doc.pointer_lock_element().is_some() {
                                     doc.exit_pointer_lock();
                                 }
@@ -1264,12 +1326,11 @@ impl ApplicationHandler for App {
                         }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
-                        let console_open =
-                            self.core.as_ref().map_or(false, |c| c.global.console);
+                        let console_open = self.core.as_ref().map_or(false, |c| c.global.console);
                         if console_open {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
-                                analog: vec![0f32; 11],
+                                analog: vec![0f32; crate::types::ANALOG_LEN],
                                 clock: crate::skeleton::clock(),
                             });
                         } else {
@@ -1339,6 +1400,17 @@ impl ApplicationHandler for App {
 
             state_change_checker(core, event_loop, &win_arc, self.center, Some(catcher));
 
+            // The window is drawn edge to edge, under the system's bars: keep
+            // `attr().inset` saying how much of each edge they cover.
+            #[cfg(target_os = "android")]
+            {
+                let inset = android_inset(&win_arc);
+                if inset != core.global.safe_inset {
+                    ::log::info!("petrichor64: inset (top right bottom left) {:?}", inset);
+                    core.global.safe_inset = inset;
+                }
+            }
+
             // Release grabbed mouse if the console was just opened.
             if core.global.console && core.global.mouse_grabbed_state {
                 win_arc.set_cursor_visible(true);
@@ -1368,10 +1440,12 @@ impl ApplicationHandler for App {
             self.bits.1[4] = core.global.mouse_buttons[0];
             self.bits.1[5] = core.global.mouse_buttons[1];
             self.bits.1[6] = core.global.mouse_buttons[2];
-            self.bits.1[7] = core.global.scroll_delta.0;
+            // mus().scroll: the wheel (vertical), else a sideways scroll
+            self.bits.1[7] = core.global.scroll_amount();
             self.bits.1[8] = core.global.cursor_projected_pos.x;
             self.bits.1[9] = core.global.cursor_projected_pos.y;
             self.bits.1[10] = core.global.cursor_projected_pos.z;
+            core.global.pack_touches(&mut self.bits.1);
 
             // Evaluate system shortcuts and console key commands.
             controls::controls_evaluate(
@@ -1713,7 +1787,9 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
     };
 
     let mut loggy = crate::log::Loggy::new();
-    let mut archive = crate::file_util::get_archive(bytes, &mut loggy).await.ok()?;
+    let mut archive = crate::file_util::get_archive(bytes, &mut loggy)
+        .await
+        .ok()?;
     let map = crate::file_util::unpack_and_walk(
         &mut archive,
         vec!["assets", "scripts", "sounds"],
@@ -1837,9 +1913,11 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     let _ = style.set_property("inset", "0");
     let _ = style.set_property("width", "100%");
     let _ = style.set_property("height", "100%");
-    let parent = document
-        .get_element_by_id("petrichor64-root")
-        .or_else(|| document.body().map(|b| b.unchecked_into::<web_sys::Element>()));
+    let parent = document.get_element_by_id("petrichor64-root").or_else(|| {
+        document
+            .body()
+            .map(|b| b.unchecked_into::<web_sys::Element>())
+    });
     let Some(parent) = parent else {
         return;
     };
@@ -1981,7 +2059,9 @@ fn install_keyboard_sink(canvas: &web_sys::HtmlCanvasElement) {
     }
 
     // Start with the keyboard, unless the host page has focused something.
-    let page_idle = doc.active_element().map_or(true, |a| a.tag_name() == "BODY");
+    let page_idle = doc
+        .active_element()
+        .map_or(true, |a| a.tag_name() == "BODY");
     if page_idle {
         let _ = sink.focus();
     }
@@ -2059,14 +2139,14 @@ fn install_web_input_handlers(
                     .into(),
             );
         });
-        let _ = doc
-            .add_event_listener_with_callback("pointerlockerror", err.as_ref().unchecked_ref());
+        let _ =
+            doc.add_event_listener_with_callback("pointerlockerror", err.as_ref().unchecked_ref());
         err.forget();
     }
 
     if let Some(win) = web_sys::window() {
-        let keydown = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-            move |e: web_sys::KeyboardEvent| {
+        let keydown =
+            Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
                 let locked = web_sys::window()
                     .and_then(|w| w.document())
                     .and_then(|d| d.pointer_lock_element())
@@ -2079,8 +2159,7 @@ fn install_web_input_handlers(
                 if k == "F5" || (mod_key && (k == "r" || k == "R")) {
                     e.prevent_default();
                 }
-            },
-        );
+            });
         // Capture phase so we run before winit's key handler (which stops
         // propagation on the canvas) and can preventDefault the reload.
         let _ = win.add_event_listener_with_callback_and_bool(
@@ -2153,11 +2232,7 @@ pub fn drain_stray_messages(catcher: &Receiver<MainPacket>) {
     while catcher.try_recv().is_ok() {}
 }
 
-pub fn core_console_command(
-    core: &mut Core,
-    com_in: &str,
-    catcher: Option<&Receiver<MainPacket>>,
-) {
+pub fn core_console_command(core: &mut Core, com_in: &str, catcher: Option<&Receiver<MainPacket>>) {
     let mut com = com_in.trim().to_owned();
     if let Some(alias) = core.global.aliases.get(&com) {
         com = alias.to_string();
@@ -2310,14 +2385,20 @@ impl Core {
     /// triangle's texture recovered from its atlas uvs. A tile that's only a
     /// texture is the textured cube it's drawn as, and a sprite the quad.
     #[cfg(feature = "headed")]
-    fn app_mesh(&self, id: u8, req: crate::command::MeshIn) -> Result<crate::command::MeshOut, String> {
+    fn app_mesh(
+        &self,
+        id: u8,
+        req: crate::command::MeshIn,
+    ) -> Result<crate::command::MeshOut, String> {
         use crate::command::MeshOut;
         use glam::{vec2, vec3, Vec3};
         let (target, dir) = self.overlay_edit_target(id).ok_or("overlay only")?;
 
         // the packed triangles of a model, with uv_mod the way an entity draws it
         let from_model = |model: &crate::model::Model, uv_mod: glam::Vec4, out: &mut MeshOut| {
-            let Some((verts, inds)) = model.data.as_ref() else { return };
+            let Some((verts, inds)) = model.data.as_ref() else {
+                return;
+            };
             for tri in inds.chunks_exact(3) {
                 let vs: Vec<_> = tri.iter().filter_map(|&i| verts.get(i as usize)).collect();
                 if vs.len() < 3 {
@@ -2337,7 +2418,8 @@ impl Core {
                 };
                 for (v, a) in vs.iter().zip(atlas) {
                     let p = v.pos();
-                    out.pos.push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
+                    out.pos
+                        .push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
                     out.uv.push([(a.x - r.x) / r.z, (a.y - r.y) / r.w]);
                 }
                 out.tex.push(name);
@@ -2356,7 +2438,8 @@ impl Core {
             for tri in m.ind.chunks_exact(3) {
                 for &i in tri {
                     out.pos.push(m.pos[i as usize]);
-                    out.uv.push(m.uv.get(i as usize).copied().unwrap_or([0., 0.]));
+                    out.uv
+                        .push(m.uv.get(i as usize).copied().unwrap_or([0., 0.]));
                 }
                 out.tex.push(tex.clone());
             }
@@ -2377,7 +2460,11 @@ impl Core {
                     from_model(model, uv_mod, out);
                 }
                 None => {
-                    out.source = if name == "cube" || name == "plane" { "engine" } else { "code" };
+                    out.source = if name == "cube" || name == "plane" {
+                        "engine"
+                    } else {
+                        "code"
+                    };
                     from_model(model, uv_mod, out);
                 }
             }
@@ -2390,14 +2477,27 @@ impl Core {
             let found = b.array.iter().find_map(|(e, ent, uni)| {
                 e.with_ref(|l| {
                     Ok((l.get_id() == req.id && !l.is_dead()).then(|| {
-                        (l.get_asset(), [l.x as f32, l.y as f32, l.z as f32], l.rot_z as f32, l.scale as f32)
+                        (
+                            l.get_asset(),
+                            [l.x as f32, l.y as f32, l.z as f32],
+                            l.rot_z as f32,
+                            l.scale as f32,
+                        )
                     }))
                 })
                 .ok()
                 .flatten()
-                .map(|l| (l, ent.model.clone(), uni.borrow().effects, uni.borrow().uv_mod))
+                .map(|l| {
+                    (
+                        l,
+                        ent.model.clone(),
+                        uni.borrow().effects,
+                        uni.borrow().uv_mod,
+                    )
+                })
             });
-            let ((asset, pos, rz, scale), model, effects, uv_mod) = found.ok_or("no such entity")?;
+            let ((asset, pos, rz, scale), model, effects, uv_mod) =
+                found.ok_or("no such entity")?;
             let uv_mod = glam::Vec4::from_array(uv_mod);
             out.asset = asset;
             out.origin = pos;
@@ -2409,7 +2509,9 @@ impl Core {
                 out.kind = "sprite";
                 out.source = "texture";
                 let mid = vec2(uv_mod.x + uv_mod.z * 0.5, uv_mod.y + uv_mod.w * 0.5);
-                let name = crate::pick::tex_rect_at(self, mid).map(|(n, _)| n.clone()).unwrap_or_default();
+                let name = crate::pick::tex_rect_at(self, mid)
+                    .map(|(n, _)| n.clone())
+                    .unwrap_or_default();
                 let quad = [
                     ([-0.5, 0., -0.5], [0., 1.]),
                     ([0.5, 0., -0.5], [1., 1.]),
@@ -2433,8 +2535,13 @@ impl Core {
             }
         } else {
             let [x, y, z] = req.cell;
-            let sender = self.world.senders.get(&target).ok_or("the app has no tiles")?;
-            let (asset, rot) = crate::world::World::get_tile(sender, x, y, z).ok_or("no tile there")?;
+            let sender = self
+                .world
+                .senders
+                .get(&target)
+                .ok_or("the app has no tiles")?;
+            let (asset, rot) =
+                crate::world::World::get_tile(sender, x, y, z).ok_or("no tile there")?;
             out.asset = asset.clone();
             // A tile's mesh spans its cell from the low corner, turned a
             // quarter turn per `rot` about the cell's vertical centre line.
@@ -2456,7 +2563,8 @@ impl Core {
                     for &i in tri {
                         let v = verts[i as usize];
                         let p = v.pos();
-                        out.pos.push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
+                        out.pos
+                            .push([p[0] as f32 / 16., p[1] as f32 / 16., p[2] as f32 / 16.]);
                         out.uv.push(v.tex());
                     }
                     out.tex.push(asset.clone());
@@ -2466,7 +2574,11 @@ impl Core {
         Ok(out)
     }
     #[cfg(not(feature = "headed"))]
-    fn app_mesh(&self, _id: u8, _req: crate::command::MeshIn) -> Result<crate::command::MeshOut, String> {
+    fn app_mesh(
+        &self,
+        _id: u8,
+        _req: crate::command::MeshIn,
+    ) -> Result<crate::command::MeshOut, String> {
         Err("no renderer".into())
     }
 
@@ -2494,7 +2606,11 @@ impl Core {
             return false;
         };
         let [x, y, z] = req.cell;
-        let at = self.world.hidden.iter().position(|h| h.0 == target && h.1 == req.cell);
+        let at = self
+            .world
+            .hidden
+            .iter()
+            .position(|h| h.0 == target && h.1 == req.cell);
         match (on, at) {
             (true, None) => {
                 let Some((asset, rot)) = crate::world::World::get_tile(&sender, x, y, z) else {
@@ -2582,7 +2698,11 @@ impl Core {
         let (target, _) = self.overlay_edit_target(id)?;
         let r = self.tex_manager.get_tex_or_not(name)?;
         let dim = self.tex_manager.atlas_dim;
-        let src = self.tex_manager.sources.get(name).filter(|s| s.bundle == target);
+        let src = self
+            .tex_manager
+            .sources
+            .get(name)
+            .filter(|s| s.bundle == target);
         Some(crate::command::TexInfoOut {
             w: (r.z * dim.x as f32).round() as u32,
             h: (r.w * dim.y as f32).round() as u32,
@@ -2633,10 +2753,16 @@ impl Core {
 
         let found = self.ent_manager.bundles.get(&target).and_then(|b| {
             b.array.iter().find_map(|(e, ent, uni)| {
-                let alive = e.with_ref(|l| Ok(l.get_id() == req.ent && !l.is_dead())).unwrap_or(false);
+                let alive = e
+                    .with_ref(|l| Ok(l.get_id() == req.ent && !l.is_dead()))
+                    .unwrap_or(false);
                 alive.then(|| {
                     let u = uni.borrow();
-                    (std::rc::Rc::clone(&ent.model), glam::Vec4::from_array(u.uv_mod), u.effects[0] > 0.)
+                    (
+                        std::rc::Rc::clone(&ent.model),
+                        glam::Vec4::from_array(u.uv_mod),
+                        u.effects[0] > 0.,
+                    )
                 })
             })
         });
@@ -2655,17 +2781,32 @@ impl Core {
         if mapped {
             // a flipped sprite has a negative width; the entity flips the new
             // image itself, so read the rect the right way round
-            let (x0, rw) = if uv_mod.z < 0. { (uv_mod.x + uv_mod.z, -uv_mod.z) } else { (uv_mod.x, uv_mod.z) };
+            let (x0, rw) = if uv_mod.z < 0. {
+                (uv_mod.x + uv_mod.z, -uv_mod.z)
+            } else {
+                (uv_mod.x, uv_mod.z)
+            };
             let img = image::RgbaImage::from_fn(w, h, |x, y| {
                 let u = x0 + (x as f32 + 0.5) / w as f32 * rw;
                 let v = uv_mod.y + (y as f32 + 0.5) / h as f32 * uv_mod.w;
                 image::Rgba(sample([u, v]))
             });
-            self.tex_manager
-                .overwrite_texture(&name, img, &mut self.world, target, &mut self.loggy);
+            self.tex_manager.overwrite_texture(
+                &name,
+                img,
+                &mut self.world,
+                target,
+                &mut self.loggy,
+            );
             let path = assets.join(format!("{}.png", name));
-            self.tex_manager
-                .record_new_source(&name, &path.display().to_string(), target, w, h, SourceKind::NewPng);
+            self.tex_manager.record_new_source(
+                &name,
+                &path.display().to_string(),
+                target,
+                w,
+                h,
+                SourceKind::NewPng,
+            );
             self.set_ent(target, req.ent, |l| l.set_tex(name.clone()));
             return Ok(crate::command::NewTexOut {
                 path: format!("assets/{}.png", name),
@@ -2678,7 +2819,10 @@ impl Core {
         if model.skin.is_some() {
             return Err("skinned models can't be unwrapped yet".into());
         }
-        let (verts, inds) = model.data.as_ref().ok_or("this model keeps no mesh to unwrap")?;
+        let (verts, inds) = model
+            .data
+            .as_ref()
+            .ok_or("this model keeps no mesh to unwrap")?;
         let pos: Vec<[f32; 3]> = verts
             .iter()
             .map(|v| {
@@ -3037,8 +3181,13 @@ impl Core {
                 if let Some(img) = image::RgbaImage::from_raw(w, h, px) {
                     // Registers a new texture (or overlays an existing one) in the
                     // atlas, then re-uploads it to the GPU.
-                    self.tex_manager
-                        .overwrite_texture(&name, img, &mut self.world, 0, &mut self.loggy);
+                    self.tex_manager.overwrite_texture(
+                        &name,
+                        img,
+                        &mut self.world,
+                        0,
+                        &mut self.loggy,
+                    );
                     self.tex_manager
                         .refinalize(&self.gfx.queue, &self.gfx.master_texture);
                 }
@@ -3065,7 +3214,8 @@ impl Core {
                     });
                 }
             }
-            VmToHost::EntSkel(changes) => {
+            VmToHost::EntSkel(changes) =>
+            {
                 #[cfg(feature = "headed")]
                 for (id, skel) in changes {
                     self.ent_manager.each_ent(|eref| {
@@ -3157,9 +3307,7 @@ impl Core {
         // drop the input stream to release the microphone right away instead of
         // sitting on it (and on the OS's "mic in use" indicator).
         #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
-        if self.mic_stream.is_some()
-            && self.mic_done.load(std::sync::atomic::Ordering::Acquire)
-        {
+        if self.mic_stream.is_some() && self.mic_done.load(std::sync::atomic::Ordering::Acquire) {
             self.mic_stream = None;
             self.log(LogType::Config, "mic: capture complete");
         }
@@ -3322,7 +3470,9 @@ impl Core {
                         .hit_grid(id, &self.model_manager, entity_id)
                         .into_iter()
                         .map(|(owner, ix, iy, iz, h)| {
-                            (owner, ix, iy, iz, h.normal.x, h.normal.y, h.normal.z, h.depth)
+                            (
+                                owner, ix, iy, iz, h.normal.x, h.normal.y, h.normal.z, h.depth,
+                            )
                         })
                         .collect();
                     self.log_check(tx.send(hits));
@@ -3451,10 +3601,12 @@ impl Core {
                     #[cfg(not(feature = "headed"))]
                     let resolution = (256, 256);
                     #[cfg(feature = "headed")]
-                    let t = GlobalMap::new(OS, 60., resolution).with_screen(
-                        (self.gfx.size.width, self.gfx.size.height),
-                        (self.gui.size[0], self.gui.size[1]),
-                    );
+                    let t = GlobalMap::new(OS, 60., resolution)
+                        .with_screen(
+                            (self.gfx.size.width, self.gfx.size.height),
+                            (self.gui.size[0], self.gui.size[1]),
+                        )
+                        .with_inset(self.global.safe_inset);
                     #[cfg(not(feature = "headed"))]
                     let t = GlobalMap::new(OS, 60., resolution);
                     self.log_check(tx.send(t));
@@ -3676,7 +3828,10 @@ impl Core {
                             let img = self.tex_manager.get_img(&texture).2;
                             let mut png: Vec<u8> = vec![];
                             image::DynamicImage::ImageRgba8(img)
-                                .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                                .write_to(
+                                    &mut std::io::Cursor::new(&mut png),
+                                    image::ImageFormat::Png,
+                                )
                                 .map_err(|e| e.to_string())
                                 .and_then(|_| {
                                     crate::file_util::write_file_bytes_scrubbed(&dir, &file, &png)
@@ -3779,8 +3934,13 @@ impl Core {
                     });
                     match &out {
                         // the overlay reports success itself; only failures pop up
-                        Ok(p) => self.loggy.log(LogType::Config, &format!("saved {} to {}", name, p)),
-                        Err(e) => self.log(LogType::ConfigError, &format!("couldn't save {}: {}", name, e)),
+                        Ok(p) => self
+                            .loggy
+                            .log(LogType::Config, &format!("saved {} to {}", name, p)),
+                        Err(e) => self.log(
+                            LogType::ConfigError,
+                            &format!("couldn't save {}: {}", name, e),
+                        ),
                     }
                     self.log_check(tx.send(out));
                 }
@@ -3801,7 +3961,8 @@ impl Core {
                 MainCommmand::AppNewTex(req, tx) => {
                     let out = self.app_newtex(id, *req);
                     if let Err(e) = &out {
-                        self.loggy.log(LogType::Config, &format!("new image: {}", e));
+                        self.loggy
+                            .log(LogType::Config, &format!("new image: {}", e));
                     }
                     self.log_check(tx.send(out));
                 }

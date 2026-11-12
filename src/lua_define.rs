@@ -277,7 +277,7 @@ impl<'lt> LuaCore {
                     let scripts: Vec<Option<String>> = Vec::new();
                     let keys_mutex = Rc::new(RefCell::new([false; 256]));
                     let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
-                    let mice_mutex = Rc::new(RefCell::new([0f32; 13]));
+                    let mice_mutex = Rc::new(RefCell::new([0f32; crate::types::MICE_LEN]));
 
                     if debug {
                         loggy.send((
@@ -734,7 +734,7 @@ pub(crate) struct LuaContext {
     /// External-function indices from load_fn; persist in the VM across enters.
     pub(crate) keys_mutex: Rc<RefCell<[bool; 256]>>,
     pub(crate) diff_keys_mutex: Rc<RefCell<[bool; 256]>>,
-    pub(crate) mice_mutex: Rc<RefCell<[f32; 13]>>,
+    pub(crate) mice_mutex: Rc<RefCell<[f32; crate::types::MICE_LEN]>>,
     /// VM→host sink (the pitcher). On wasm this becomes a postMessage sink (§4b).
     pub(crate) async_sender: Sender<MainPacket>,
     /// Handles to this bundle's `gui` and `sky` rasters, used at the end of every
@@ -864,13 +864,14 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             // The `[...]` is fully evaluated before the assignment lands, so
             // `mm[0]`/`mm[1]` on the right still read last frame's position.
             let mut mm = ctx.mice_mutex.borrow_mut();
-            *mm = [
+            let (px, py) = (mm[0], mm[1]);
+            mm[..13].copy_from_slice(&[
                 mouse_state[0],
                 mouse_state[1],
                 mouse_state[2],
                 mouse_state[3],
-                mm[0],
-                mm[1],
+                px,
+                py,
                 mouse_state[4],
                 mouse_state[5],
                 mouse_state[6],
@@ -878,7 +879,9 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                 mouse_state[8],
                 mouse_state[9],
                 mouse_state[10],
-            ];
+            ]);
+            // then the touch slots, as they came
+            mm[13..].copy_from_slice(&mouse_state[crate::types::ANALOG_TOUCH..]);
             drop(mm);
 
             if let Some(Err(e)) = vm.call_global(mc, "loop", ()) {
