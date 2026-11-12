@@ -190,6 +190,7 @@ impl<'lt> LuaCore {
         pitcher: Sender<MainPacket>,
         loggy: Sender<(LogType, String)>,
         #[cfg(feature = "audio")] singer: SoundSender,
+        rig: std::sync::Arc<crate::skeleton::Rig>,
         debug: bool,
         /* Engine-marked overlay? Gates the `app.*` table on the VM being built below,
         so it must arrive before the first line of Lua runs. */
@@ -372,6 +373,7 @@ impl<'lt> LuaCore {
                         Rc::clone(&ent_counter),
                         loggy.clone(),
                         local_pool.clone(),
+                        rig.clone(),
                     ) {
                         Err(err) => {
                             loggy.send((

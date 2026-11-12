@@ -50,8 +50,8 @@ pub enum HostToVm {
         #[serde(with = "serde_bytes")]
         keys: Vec<u8>,
         analog: Vec<f32>,
-        /// Main's animation clock (skeleton::clock), so clips sampled in the
-        /// worker line up with the ones the renderer draws.
+        /// Main's animation clock (its `skeleton::Rig::clock`), so clips
+        /// sampled in the worker line up with the ones the renderer draws.
         #[serde(default)]
         clock: f64,
     },
@@ -297,11 +297,11 @@ pub enum ValueWire {
 
 impl HostToVm {
     /// Pack a `ControlState` into a `Loop` message (bools → 0/1 bytes).
-    pub fn loop_from(cs: &ControlState) -> Self {
+    pub fn loop_from(cs: &ControlState, clock: f64) -> Self {
         HostToVm::Loop {
             keys: cs.0.iter().map(|b| *b as u8).collect(),
             analog: cs.1.to_vec(),
-            clock: crate::skeleton::clock(),
+            clock,
         }
     }
 }

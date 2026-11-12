@@ -268,7 +268,7 @@ pub struct App {
     /// gui size the worker's rasters were last given (Init or Resize).
     #[cfg(target_arch = "wasm32")]
     worker_gui_size: [u32; 2],
-    /// How many skeletons have been forwarded to the worker (skeleton::take_new).
+    /// How many skeletons have been forwarded to the worker (skeleton::Rig::take_new).
     #[cfg(target_arch = "wasm32")]
     skeletons_sent: usize,
     /// Whether the worker has been told how its sound commands travel — given the
@@ -1105,12 +1105,14 @@ impl ApplicationHandler for App {
                                 bundle_id: 0,
                                 width: size[0],
                                 height: size[1],
-                                policy: self.core.as_ref().map(|c| c.policy.clone()).unwrap_or_default(),
+                                policy: self.inst.as_ref().map(|i| &i.core).map(|c| c.policy.clone()).unwrap_or_default(),
                             });
                             self.worker_gui_size = size;
                             // Skeletons from the models just loaded, before main()
                             // can ask an entity to play a clip.
-                            let skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                            let skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                                c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                            });
                             if !skeletons.is_empty() {
                                 w.post(&HostToVm::Skeletons(skeletons));
                             }
@@ -1183,12 +1185,15 @@ impl ApplicationHandler for App {
                                 self.worker_gui_size = size;
                             }
                         }
-                        let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                        let new_skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                            c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                        });
+                        let clock = self.inst.as_ref().map(|i| &i.core).map_or(0., |c| c.model_manager.rig.clock());
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
                         }
                         // Host messages posted so far (kept on main until Init), ahead of this loop.
-                        for m in self.core.as_mut().map(|c| c.host_inbox_drain()).unwrap_or_default() {
+                        for m in self.inst.as_mut().map(|i| &mut i.core).map(|c| c.host_inbox_drain()).unwrap_or_default() {
                             w.post(&HostToVm::Host(m));
                         }
                         // With the console open, the app must not receive input —
@@ -1198,11 +1203,11 @@ impl ApplicationHandler for App {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
                                 analog: vec![0f32; crate::types::ANALOG_LEN],
-                                clock: crate::skeleton::clock(),
+                                clock,
                             });
                         } else {
                             if let Some(i) = self.inst.as_ref() {
-                                w.post(&HostToVm::loop_from(&i.bits));
+                                w.post(&HostToVm::loop_from(&i.bits, clock));
                             }
                         }
                         drained = w.drain();
@@ -3897,7 +3902,7 @@ impl Core {
         };
 
         self.global.iteration += 1;
-        publish_clock();
+        publish_clock(&self.model_manager.rig);
         instance_buffers
     }
 }
@@ -3906,9 +3911,10 @@ lazy_static::lazy_static! {
     static ref BOOT: Instant = Instant::now();
 }
 
-/// Advance the shared animation clock (see `skeleton::clock`) once a frame.
-fn publish_clock() {
-    crate::skeleton::set_clock(BOOT.elapsed().as_secs_f64());
+/// Advance this instance's animation clock (see `skeleton::Rig::clock`) once
+/// a frame. The epoch, `BOOT`, is shared by every instance in the process.
+fn publish_clock(rig: &crate::skeleton::Rig) {
+    rig.set_clock(BOOT.elapsed().as_secs_f64());
 }
 
 /// `path` shown relative to an app's folder (`assets/wall.png`), for messages.
