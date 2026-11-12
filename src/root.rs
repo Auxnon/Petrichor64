@@ -86,7 +86,10 @@ pub struct Core {
     pub instance_buffers: IB,
 
     /// What this instance's cart may reach (`host.rs`). `chor` runs open.
+    /// Read when a bundle's VM is built, so set it before the cart loads.
     pub policy: crate::host::Policy,
+    /// The host channel's main-thread end (`host_post` / `host_take`).
+    pub host: crate::host::HostLink,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
@@ -263,6 +266,7 @@ impl<'core> Core {
             ent_manager,
             bundle_manager: BundleManager::new(),
             policy: crate::host::Policy::open(),
+            host: Default::default(),
             loggy,
             gfx,
             completed_bundles: FxHashMap::default(),
@@ -359,6 +363,7 @@ impl<'core> Core {
             ent_manager,
             bundle_manager: BundleManager::new(),
             policy: crate::host::Policy::open(),
+            host: Default::default(),
             loggy,
             completed_bundles: FxHashMap::default(),
             instance_buffers: (),
@@ -580,4 +585,47 @@ impl<'core> Core {
     //         self.gui.replace_image(rasters, d);
     //     }
     // }
+}
+
+/// The host's side of an instance: what its policy lets the cart reach, and the
+/// host channel (guide/host.md).
+impl Core {
+    /// Set what this instance's cart may reach. Takes effect for VMs built after
+    /// it, so call it before loading the cart. Closes the console if the new
+    /// policy has none.
+    pub fn set_policy(&mut self, policy: crate::host::Policy) {
+        self.policy = policy;
+        if !self.policy.console && self.global.console {
+            self.global.console = false;
+            #[cfg(feature = "headed")]
+            self.gui.disable_console();
+        }
+    }
+
+    /// host -> cart: queue a message for the cart's `host.recv()`. Kept until the
+    /// cart reads it, across a load or reload (the oldest go past
+    /// `host::HOST_QUEUE_CAP`). Dropped when the policy has no host channel.
+    pub fn host_post(&mut self, msg: String) {
+        if self.policy.host_messages {
+            crate::host::push_capped(&mut self.host.inbox.lock(), msg);
+        }
+    }
+
+    /// cart -> host: everything the cart `host.send`'d since the last call.
+    pub fn host_take(&mut self) -> Vec<String> {
+        self.host.outbox.drain(..).collect()
+    }
+
+    /// The posted messages not yet handed to the VM worker, for it to queue on
+    /// its side (`HostToVm::Host`). Wasm only: natively the VM shares the inbox.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn host_inbox_drain(&mut self) -> Vec<String> {
+        self.host.inbox.lock().drain(..).collect()
+    }
+
+    /// Where the cart's `io.get`/`io.set`/`glb` paths resolve (`Policy::files_dir`).
+    pub(crate) fn cart_files_dir(&mut self) -> Option<String> {
+        let dir = self.bundle_manager.get_main_bundle().get_directory();
+        self.policy.files_dir(dir)
+    }
 }

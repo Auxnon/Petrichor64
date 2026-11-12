@@ -7,14 +7,33 @@
 //! (through [`Request`]s) for anything a window would do. `chor` is one such
 //! host: a winit window with a single instance drawn to its surface.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 
 /// What a cart may reach beyond its own instance.
 ///
 /// Enforced by construction: a Lua global that's off is never registered
 /// (`init_lua_sys`), not checked at call time. The main thread also drops the
-/// commands a policy forbids, in case one arrives anyway.
-#[derive(Clone, Debug, PartialEq)]
+/// commands a policy forbids, in case one arrives anyway
+/// (`MainCommmand::allowed_by`, `VmToHost::allowed_by`).
+///
+/// What each field gates:
+/// - `network`: the `conn` global.
+/// - `files`: the `io` table (`io.get`/`io.set`/`io.copy`) and `glb`. A non-empty
+///   root confines their paths to it; see [`Policy::files_dir`].
+/// - `clipboard`: `io.copy` (which, living in `io`, also needs `files`), and
+///   ctrl+V pasting into the cart (`drop`).
+/// - `console`: the backtick console, console commands, and the editor overlays
+///   (which also need `load_apps`).
+/// - `load_apps`: `sub`, `over`, and `quit(n>0)` (which loads another cart or the
+///   boot app). `init()` (a cart reloading itself) stays.
+/// - `audio`: the sound natives exist but send nowhere; `mic` and `midi` do nothing.
+/// - `host_messages`: the `host` table.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Policy {
     /// `conn`: sockets and websockets.
     pub network: bool,
@@ -66,6 +85,122 @@ impl Policy {
 impl Default for Policy {
     fn default() -> Self {
         Self::open()
+    }
+}
+
+impl Policy {
+    /// The folder a cart's `io.get`/`io.set`/`glb` paths resolve against, given
+    /// the folder its bundle was loaded from. `None`: no file access at all.
+    ///
+    /// `files: Some("")` (what [`Policy::open`] uses) is today's behaviour: the
+    /// bundle's own folder, or nothing for a cart with no folder (a packed one).
+    /// Any other root replaces the bundle folder. Either way the path a cart
+    /// passes is then checked by `file_util`'s scrubbed readers and writers,
+    /// which refuse absolute paths, `..` and drive prefixes, so it can't leave
+    /// this folder (a symlink inside it is still followed).
+    pub fn files_dir(&self, bundle_dir: Option<&str>) -> Option<String> {
+        match &self.files {
+            None => None,
+            Some(root) if root.as_os_str().is_empty() => bundle_dir.map(str::to_string),
+            Some(root) => Some(root.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+/// The most messages either direction of the host channel holds. Past it the
+/// oldest is dropped, so a side that never drains can't grow the other's memory.
+pub const HOST_QUEUE_CAP: usize = 1024;
+
+/// Host → cart messages waiting for the cart's `host.recv()`. Shared between
+/// [`Core`](crate::root::Core) and the Lua threads of its cart's bundles, so a
+/// `recv` is a lock and a pop, with no trip through the main thread. It lives on
+/// the `Core`, not the VM, so a message posted before the cart has loaded (or
+/// while it reloads) waits for it.
+pub type HostInbox = Arc<Mutex<VecDeque<String>>>;
+
+/// Push onto a host-channel queue, dropping the oldest past [`HOST_QUEUE_CAP`].
+pub fn push_capped(q: &mut VecDeque<String>, msg: String) {
+    while q.len() >= HOST_QUEUE_CAP {
+        q.pop_front();
+    }
+    q.push_back(msg);
+}
+
+/// The main-thread end of the host channel, on [`Core`](crate::root::Core).
+#[derive(Default)]
+pub struct HostLink {
+    /// Host → cart (see [`HostInbox`]).
+    pub(crate) inbox: HostInbox,
+    /// Cart → host: what the cart `host.send`'d, until `Core::host_take`.
+    pub(crate) outbox: VecDeque<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_dir_follows_policy() {
+        let open = Policy::open();
+        assert_eq!(open.files_dir(Some("apps/game")), Some("apps/game".into()));
+        assert_eq!(open.files_dir(None), None);
+
+        let sandbox = Policy::sandbox();
+        assert_eq!(sandbox.files_dir(Some("apps/game")), None);
+
+        let rooted = Policy {
+            files: Some(PathBuf::from("saves/cart1")),
+            ..Policy::sandbox()
+        };
+        assert_eq!(rooted.files_dir(Some("apps/game")), Some("saves/cart1".into()));
+        assert_eq!(rooted.files_dir(None), Some("saves/cart1".into()));
+    }
+
+    #[test]
+    fn rooted_paths_cannot_escape() {
+        let rooted = Policy {
+            files: Some(PathBuf::from("test/target")),
+            ..Policy::sandbox()
+        };
+        let dir = rooted.files_dir(None).unwrap();
+        for bad in ["../Cargo.toml", "/etc/passwd", "a/../../Cargo.toml", ""] {
+            assert!(
+                matches!(
+                    crate::file_util::get_file_string_scrubbed(&dir, bad),
+                    Err(crate::error::P64Error::PermPathTraversal)
+                ),
+                "{bad} escaped"
+            );
+            assert!(matches!(
+                crate::file_util::write_file_string_scrubbed(&dir, bad, "x"),
+                Err(crate::error::P64Error::PermPathTraversal)
+            ));
+        }
+    }
+
+    #[test]
+    fn queues_drop_oldest_past_cap() {
+        let mut q = VecDeque::new();
+        for i in 0..HOST_QUEUE_CAP + 5 {
+            push_capped(&mut q, i.to_string());
+        }
+        assert_eq!(q.len(), HOST_QUEUE_CAP);
+        assert_eq!(q.front().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn policy_round_trips_and_defaults() {
+        let p = Policy::sandbox();
+        let s = serde_json::to_string(&p).unwrap();
+        assert_eq!(serde_json::from_str::<Policy>(&s).unwrap(), p);
+
+        // An Init from a main that predates the field still parses, as open.
+        use crate::worker_protocol::HostToVm;
+        let old = r#"{"Init":{"bundle_id":0,"width":4,"height":4}}"#;
+        match serde_json::from_str::<HostToVm>(old).unwrap() {
+            HostToVm::Init { policy, .. } => assert_eq!(policy, Policy::open()),
+            other => panic!("{:?}", other),
+        }
     }
 }
 

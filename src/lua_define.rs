@@ -194,6 +194,10 @@ impl<'lt> LuaCore {
         /* Engine-marked overlay? Gates the `app.*` table on the VM being built below,
         so it must arrive before the first line of Lua runs. */
         privileged: bool,
+        /* The instance's policy, and the host channel's inbox: both decide what
+        `init_lua_sys` registers, so they too arrive before any Lua runs. */
+        policy: crate::host::Policy,
+        host_inbox: crate::host::HostInbox,
     ) -> LuaHandle {
         //     let receiver = self.get_receiver();
         //     Self::_start(
@@ -354,6 +358,8 @@ impl<'lt> LuaCore {
                         mc,
                         bundle_id,
                         privileged,
+                        &policy,
+                        host_inbox.clone(),
                         pitcher.clone(),
                         world_sender.clone(),
                         Rc::clone(&gui_handle),

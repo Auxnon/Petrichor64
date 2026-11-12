@@ -34,6 +34,8 @@ pub enum P64Error {
     BundleSlotsFull,
     ChannelTimeoutError(u8),
     ChannelDisconnectedError,
+    /// The instance's `Policy` doesn't allow this (`host.rs`).
+    PolicyDenied(&'static str),
 }
 
 impl Display for P64Error {
@@ -68,6 +70,7 @@ impl Display for P64Error {
             }
             P64Error::BundleSlotsFull => write!(f, "No free bundle slot (256 in use)"),
             P64Error::ChannelDisconnectedError => write!(f, "Lua thread channel broken"),
+            P64Error::PolicyDenied(what) => write!(f, "Not allowed for this cart: {}", what),
             P64Error::LuaGenericError => write!(f, "Lua unknown failure occured"),
             P64Error::LuaRunError(err, _) => {
                 let s = err

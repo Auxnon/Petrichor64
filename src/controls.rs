@@ -47,9 +47,17 @@ pub fn controls_evaluate(
     let held_shift = bits.0[249];
     let held_cmd = key_held(COMMAND_KEY_L) || key_held(COMMAND_KEY_R);
 
+    // No console for this cart (`Policy::console`): keep it shut, whatever
+    // opened it (the boot default, an unlock), so none of the console keys
+    // below ever run.
+    if !core.policy.console && core.global.console {
+        core.global.console = false;
+        core.gui.disable_console();
+    }
+
     // Backtick toggles the developer console.
     if key_released(KeyCode::Backquote) {
-        if !core.global.locked {
+        if !core.global.locked && core.policy.console {
             core.global.console = !core.global.console;
             if core.global.console {
                 core.gui.enable_console(&core.loggy);
@@ -158,7 +166,7 @@ pub fn controls_evaluate(
             } else if key_pressed(KeyCode::Enter) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
-            } else if key_pressed(KeyCode::KeyV) {
+            } else if key_pressed(KeyCode::KeyV) && core.policy.clipboard {
                 #[cfg(desktop)]
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
