@@ -50,6 +50,7 @@ mod gpu_loss;
 mod global;
 mod gltf_io;
 mod gui;
+pub mod host;
 #[cfg(any(feature = "ws", feature = "online_capable"))]
 mod json;
 mod log;

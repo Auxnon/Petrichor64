@@ -84,6 +84,9 @@ pub struct Core {
     pub loggy: crate::log::Loggy,
 
     pub instance_buffers: IB,
+
+    /// What this instance's cart may reach (`host.rs`). `chor` runs open.
+    pub policy: crate::host::Policy,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
@@ -259,6 +262,7 @@ impl<'core> Core {
             model_manager,
             ent_manager,
             bundle_manager: BundleManager::new(),
+            policy: crate::host::Policy::open(),
             loggy,
             gfx,
             completed_bundles: FxHashMap::default(),
@@ -354,6 +358,7 @@ impl<'core> Core {
             model_manager,
             ent_manager,
             bundle_manager: BundleManager::new(),
+            policy: crate::host::Policy::open(),
             loggy,
             completed_bundles: FxHashMap::default(),
             instance_buffers: (),
