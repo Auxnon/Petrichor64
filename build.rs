@@ -273,7 +273,7 @@ mod web_embed {
                 for input in [
                     "build.rs", "Cargo.toml", "Cargo.lock", "Trunk.toml", "src", "synth/src",
                     "synth/Cargo.toml", "web/index.html", "web/worker.js", "web/synth-worklet.js",
-                    "web/worklet-polyfill.js", "web/petrichor64-element.js", "web/default.game.png",
+                    "web/worklet-polyfill.js", "web/petrichor64-element.js", "web/two.html", "web/default.game.png",
                 ] {
                     println!("cargo::rerun-if-changed={}", input);
                 }

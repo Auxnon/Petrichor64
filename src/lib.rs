@@ -289,6 +289,9 @@ pub struct App {
     /// ready; the frame loop routes it to the worker/GPU/audio once present.
     #[cfg(target_arch = "wasm32")]
     pending_bundle: std::rc::Rc<std::cell::RefCell<Option<WasmBundle>>>,
+    /// Where on the page this engine runs and what it loads (`start(root, ..)`).
+    #[cfg(target_arch = "wasm32")]
+    web: WebHost,
 }
 
 #[cfg(feature = "headed")]
@@ -336,6 +339,8 @@ impl Default for App {
             audio_ctx: std::rc::Rc::new(std::cell::RefCell::new(None)),
             #[cfg(target_arch = "wasm32")]
             pending_bundle: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            web: WebHost::default(),
         }
     }
 }
@@ -389,8 +394,12 @@ impl App {
                     // borrowing the canvas its event loop may hold ("RefCell
                     // already borrowed"); the page's title is what a window
                     // title means in a browser.
+                    // On a <petrichor-64> element (one of maybe several
+                    // engines on the page) it's the element's `title` event.
                     #[cfg(target_arch = "wasm32")]
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                    if let Some(root) = self.web.root.as_ref() {
+                        dispatch_detail(root, "title", &title);
+                    } else if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                         doc.set_title(&title);
                     }
                     #[cfg(not(target_arch = "wasm32"))]
@@ -556,7 +565,13 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let win_attr = window_attributes();
+        #[allow(unused_mut)]
+        let mut win_attr = window_attributes();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(c) = self.web.canvas.clone() {
+            use winit::platform::web::WindowAttributesExtWebSys;
+            win_attr = win_attr.with_canvas(Some(c));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(win_attr)
@@ -654,8 +669,12 @@ impl ApplicationHandler for App {
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowExtWebSys;
+            crate::gpu_loss::set_target(self.web.root.clone());
             if let Some(canvas) = window.canvas() {
-                attach_canvas_to_dom(&canvas);
+                // A canvas the host handed over is already where it wants it.
+                if self.web.canvas.is_none() {
+                    attach_canvas_to_dom(&canvas, self.web.root.as_ref());
+                }
                 install_keyboard_sink(&canvas);
                 crate::gpu_loss::watch_canvas(&canvas);
                 install_web_input_handlers(
@@ -666,8 +685,17 @@ impl ApplicationHandler for App {
                 );
             }
             let pending = self.pending_core.clone();
+            let policy = self.web.policy.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let (core, catcher) = Core::new(window).await;
+                // Core::new, with this engine's policy from the start (it decides
+                // whether there's an audio stream at all).
+                let (core, catcher) = match crate::gfx::Gfx::connect(window, None).await {
+                    Ok(link) => Core::build(link, policy),
+                    Err(e) => {
+                        crate::error_window(e.into());
+                        return;
+                    }
+                };
                 ::log::info!("petrichor64: core ready — wgpu initialised");
                 *pending.borrow_mut() = Some((core, catcher));
             });
@@ -675,9 +703,10 @@ impl ApplicationHandler for App {
             // Load the game bundle in parallel (fetch /game.game.png or embedded
             // default), unzip in memory; the frame loop routes it once ready.
             let pending_bundle = self.pending_bundle.clone();
+            let cart = self.web.cart.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 const EMBEDDED: &[u8] = include_bytes!("../web/default.game.png");
-                if let Some(bundle) = load_wasm_bundle(EMBEDDED).await {
+                if let Some(bundle) = load_wasm_bundle(EMBEDDED, cart.as_deref()).await {
                     *pending_bundle.borrow_mut() = Some(bundle);
                 }
             });
@@ -1029,7 +1058,7 @@ impl ApplicationHandler for App {
         {
             use crate::worker_protocol::HostToVm;
             if self.worker.is_none() {
-                match crate::web_worker::WorkerHandle::spawn("/worker.js") {
+                match crate::web_worker::WorkerHandle::spawn(&self.web.worker) {
                     Ok(w) => {
                         ::log::info!("petrichor64: VM worker spawned");
                         self.worker = Some(w);
@@ -1073,8 +1102,15 @@ impl ApplicationHandler for App {
                         // Once the bundle has finished unzipping, route it: load
                         // textures into the GPU atlas + decode sounds into the
                         // mixer (main thread), and send scripts + main() to the
-                        // VM worker. Until then, retry next frame.
-                        let bundle = self.pending_bundle.borrow_mut().take();
+                        // VM worker. Until then, retry next frame. Not before
+                        // the Core is up either: its textures, console and
+                        // policy are what this routes into (with several
+                        // engines starting at once the bundle can win the race,
+                        // and the cart then ran with `Policy::open()`).
+                        let bundle = match self.inst.is_some() {
+                            true => self.pending_bundle.borrow_mut().take(),
+                            false => None,
+                        };
                         if let Some(bundle) = bundle {
                             if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                                 // Set up bundle 0's main-side world (GPU meshing +
@@ -1165,10 +1201,15 @@ impl ApplicationHandler for App {
                         // immediately when the app drops grab or the console opens.
                         let want = g.mouse_grab && !g.console;
                         *self.pointer_lock_wanted.borrow_mut() = want;
+                        // Only our own lock: another engine on the page may hold one.
                         if !want {
+                            use winit::platform::web::WindowExtWebSys;
+                            let ours = self.window.as_ref().and_then(|w| w.canvas());
                             if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                                if doc.pointer_lock_element().is_some() {
-                                    doc.exit_pointer_lock();
+                                if let (Some(locked), Some(ours)) = (doc.pointer_lock_element(), ours) {
+                                    if locked.is_same_node(Some(ours.as_ref())) {
+                                        doc.exit_pointer_lock();
+                                    }
                                 }
                             }
                         }
@@ -1191,6 +1232,13 @@ impl ApplicationHandler for App {
                         let clock = self.inst.as_ref().map(|i| &i.core).map_or(0., |c| c.model_manager.rig.clock());
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
+                        }
+                        // The element's `post()`s since the last loop.
+                        let posted: Vec<String> = self.web.inbox.borrow_mut().drain(..).collect();
+                        if let Some(i) = self.inst.as_mut() {
+                            for m in posted {
+                                i.post(m);
+                            }
                         }
                         // Host messages posted so far (kept on main until Init), ahead of this loop.
                         for m in self.inst.as_mut().map(|i| &mut i.core).map(|c| c.host_inbox_drain()).unwrap_or_default() {
@@ -1217,6 +1265,12 @@ impl ApplicationHandler for App {
             for m in drained {
                 if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                     core.apply_vm_message(m);
+                }
+            }
+            // cart -> host: a `message` event on the element per `host.send`.
+            if let (Some(root), Some(i)) = (self.web.root.as_ref(), self.inst.as_mut()) {
+                for m in i.messages() {
+                    dispatch_detail(root, "message", &m);
                 }
             }
             if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
@@ -1438,10 +1492,18 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
 /// the lib, not the `chor` bin, which needs the default-only `bin` feature).
 /// Also runs in
 /// the VM worker's instance, where `start()` finds no window and returns.
+///
+/// A page of `<petrichor-64>` elements (web/petrichor64-element.js) sets
+/// `globalThis.__petrichor64_manual` before loading any copy of the module;
+/// then nothing starts here and each element calls the exported `start`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn wasm_main() {
-    start();
+    let manual = js_sys::Reflect::get(&js_sys::global(), &"__petrichor64_manual".into())
+        .is_ok_and(|v| v.is_truthy());
+    if !manual {
+        start();
+    }
 }
 
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
@@ -1565,7 +1627,7 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
 /// build time. Unzips the `.game.png` in memory (same as the native packed path)
 /// and splits it into scripts/textures/sounds for the caller to route.
 #[cfg(target_arch = "wasm32")]
-async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
+async fn load_wasm_bundle(embedded: &'static [u8], cart: Option<&str>) -> Option<WasmBundle> {
     // A bundle is a raw zip (`PK\x03\x04`) or a PNG-prefixed .game.png. A dev
     // server (trunk) answers a missing /game.game.png with its index.html SPA
     // fallback (200 OK), so verify the bytes actually look like a bundle —
@@ -1575,10 +1637,15 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
             && (b[..4] == [0x50, 0x4B, 0x03, 0x04] // raw zip
                 || b[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) // PNG
     };
-    let bytes = match fetch_bytes("/game.game.png").await {
+    let url = cart.unwrap_or("/game.game.png");
+    let bytes = match fetch_bytes(url).await {
         Some(b) if looks_like_bundle(&b) => {
-            ::log::info!("web: loaded /game.game.png ({} bytes)", b.len());
+            ::log::info!("web: loaded {} ({} bytes)", url, b.len());
             b
+        }
+        _ if cart.is_some() => {
+            ::log::error!("web: cart {} didn't load, using embedded default bundle", url);
+            embedded.to_vec()
         }
         _ => {
             ::log::info!("web: no deployed /game.game.png, using embedded default bundle");
@@ -1654,8 +1721,6 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
 
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 pub fn start() {
-    use winit::platform::web::EventLoopExtWebSys;
-
     // The bin's main() runs on module init in EVERY wasm instance, including the
     // VM web worker's. A worker has no `Window` (only WorkerGlobalScope), so
     // winit's event loop would panic there ("only callable from inside the
@@ -1669,24 +1734,167 @@ pub fn start() {
     // Route `log` output to the browser console.
     let _ = console_log::init_with_level(::log::Level::Info);
 
-    let event_loop = match EventLoop::<()>::new() {
-        Ok(el) => el,
-        Err(e) => {
-            web_sys::console::error_1(&format!("event loop error: {e}").into());
-            return;
-        }
-    };
+    if let Err(e) = start_web(WebHost::default()) {
+        web_sys::console::error_1(&e);
+    }
+}
 
+/// Where a web engine runs and what it loads. The default is the zero-config
+/// page (`web/index.html`, `chor -w`): canvas in `#petrichor64-root` or
+/// `<body>`, `/game.game.png`, `/worker.js`, everything allowed, the title on
+/// `document.title`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+struct WebHost {
+    /// The element the canvas goes in, and that hears this engine's events
+    /// (`message`, `title`, the gpu ones). None: the default page.
+    root: Option<web_sys::Element>,
+    /// A canvas to draw on instead of making one (`start(canvas, ..)`).
+    canvas: Option<web_sys::HtmlCanvasElement>,
+    /// The cart's URL; None: `/game.game.png`, else the embedded default.
+    cart: Option<String>,
+    /// The VM worker script's URL.
+    worker: String,
+    policy: crate::host::Policy,
+    /// host -> cart messages from `Engine::post`, handed to the instance each frame.
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+impl Default for WebHost {
+    fn default() -> Self {
+        Self {
+            root: None,
+            canvas: None,
+            cart: None,
+            worker: "/worker.js".into(),
+            policy: crate::host::Policy::open(),
+            inbox: Default::default(),
+        }
+    }
+}
+
+/// One engine per module copy: winit makes one event loop per module, and the
+/// engine's statics are the module's. A page with several engines loads a
+/// copy for each (web/petrichor64-element.js).
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn start_web(host: WebHost) -> Result<(), wasm_bindgen::JsValue> {
+    use winit::platform::web::EventLoopExtWebSys;
+    let event_loop = EventLoop::<()>::new()
+        .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("event loop error: {e}")))?;
+    let mut app = App::default();
+    app.web = host;
     // spawn_app returns immediately; the closure-owned App lives on inside the
     // browser's event loop.
-    event_loop.spawn_app(App::default());
+    event_loop.spawn_app(app);
+    Ok(())
+}
+
+/// A running engine, as `start` hands it to JS: the host's end of the channel.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub struct Engine {
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl Engine {
+    /// host -> cart: a message for the cart's `host.recv()` (`Instance::post`).
+    /// The cart's `host.send`s come back as `message` events on the root.
+    pub fn post(&self, msg: String) {
+        let mut q = self.inbox.borrow_mut();
+        q.push(msg);
+        // as `host::HOST_QUEUE_CAP` does: a page posting to a stalled engine
+        // can't grow it without bound
+        if q.len() > crate::host::HOST_QUEUE_CAP {
+            q.remove(0);
+        }
+    }
+}
+
+/// Start an engine in `root`: an element the canvas goes in (and that hears
+/// its `message`, `title` and `petrichor-gpu-*` events), or a `<canvas>` to
+/// draw on. `opts`: `{ cart, worker, policy }`, all optional. `cart` and
+/// `worker` are URLs (default `/game.game.png`, `/worker.js`). `policy` is
+/// `"open"`, `"sandbox"`, or an object or JSON string of `host::Policy`
+/// fields, each overriding `Policy::open()` (`files: null` is no `io`).
+/// Once per module copy (see `start_web`).
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = start)]
+pub fn start_on(root: wasm_bindgen::JsValue, opts: wasm_bindgen::JsValue) -> Result<Engine, wasm_bindgen::JsValue> {
+    use wasm_bindgen::{JsCast, JsValue};
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(::log::Level::Info);
+
+    let root: web_sys::Element = root
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("start: the first argument must be an element or canvas"))?;
+    let get = |k: &str| {
+        if opts.is_object() {
+            js_sys::Reflect::get(&opts, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null())
+        } else {
+            None
+        }
+    };
+    let mut host = WebHost::default();
+    host.cart = get("cart").and_then(|v| v.as_string()).filter(|s| !s.is_empty());
+    if let Some(w) = get("worker").and_then(|v| v.as_string()).filter(|s| !s.is_empty()) {
+        host.worker = w;
+    }
+    if let Some(p) = get("policy") {
+        let text = match p.as_string() {
+            Some(s) => s,
+            None => js_sys::JSON::stringify(&p).map(String::from).unwrap_or_default(),
+        };
+        host.policy = parse_web_policy(&text).map_err(|e| JsValue::from_str(&format!("start: policy: {e}")))?;
+    }
+    host.canvas = root.clone().dyn_into::<web_sys::HtmlCanvasElement>().ok();
+    host.root = Some(root);
+    let engine = Engine { inbox: host.inbox.clone() };
+    start_web(host)?;
+    Ok(engine)
+}
+
+/// `"open"`, `"sandbox"`, or a JSON object of `Policy` fields over `Policy::open()`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn parse_web_policy(text: &str) -> Result<crate::host::Policy, String> {
+    use crate::host::Policy;
+    match text.trim() {
+        "" | "open" => return Ok(Policy::open()),
+        "sandbox" => return Ok(Policy::sandbox()),
+        _ => {}
+    }
+    let over: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let serde_json::Value::Object(over) = over else {
+        return Err("not an object".into());
+    };
+    let mut base = serde_json::to_value(Policy::open()).map_err(|e| e.to_string())?;
+    if let serde_json::Value::Object(b) = &mut base {
+        for (k, v) in over {
+            if !b.contains_key(&k) {
+                return Err(format!("unknown field `{k}`"));
+            }
+            b.insert(k, v);
+        }
+    }
+    serde_json::from_value(base).map_err(|e| e.to_string())
+}
+
+/// A `CustomEvent` named `name` with `detail` on `el`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn dispatch_detail(el: &web_sys::Element, name: &str, detail: &str) {
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail.into());
+    if let Ok(e) = web_sys::CustomEvent::new_with_event_init_dict(name, &init) {
+        let _ = el.dispatch_event(&e);
+    }
 }
 
 /// Append winit's canvas to the page. Prefers an element with id
 /// `petrichor64-root` (provided by the `<petrichor-64>` web component) so the
 /// engine renders inside the component; falls back to <body>.
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
-fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
+fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement, root: Option<&web_sys::Element>) {
     use wasm_bindgen::JsCast;
     let document = match web_sys::window().and_then(|w| w.document()) {
         Some(d) => d,
@@ -1713,7 +1921,7 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     let _ = style.set_property("inset", "0");
     let _ = style.set_property("width", "100%");
     let _ = style.set_property("height", "100%");
-    let parent = document.get_element_by_id("petrichor64-root").or_else(|| {
+    let parent = root.cloned().or_else(|| document.get_element_by_id("petrichor64-root")).or_else(|| {
         document
             .body()
             .map(|b| b.unchecked_into::<web_sys::Element>())

@@ -101,6 +101,13 @@ impl ScreenLayer {
         // check_render's write_tex copies the new (larger) image onto the old
         // (smaller) texture and wgpu rejects it as an out-of-bounds copy.
         self.texture = crate::texture::make_tex(device, queue, &RgbaImage::new(size[0], size[1]));
+        // wasm: the VM worker only resends a raster it was told to resize, so a
+        // rebuild at the same size (a resize the gui scale absorbed) would
+        // otherwise blank a layer the cart drew once, like a sky filled in main().
+        #[cfg(target_arch = "wasm32")]
+        if let Some(img) = self.last.as_ref().filter(|i| i.dimensions() == (size[0], size[1])) {
+            crate::texture::write_tex(queue, &self.texture.texture, img);
+        }
 
         // Keep the Rust-owned buffer (used directly by the System/console layer)
         // sized to the texture so its upload can't overrun either.

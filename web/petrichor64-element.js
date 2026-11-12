@@ -1,64 +1,86 @@
-// <petrichor-64> — drop-in custom element that hosts the Petrichor64 engine.
+// <petrichor-64> — drop-in custom element that hosts a Petrichor64 engine.
+// Any number of them can share a page, each running its own cart.
 //
 // Usage:
-//   <script type="module" src="./petrichor64-element.js"></script>
-//   <petrichor-64 module="./pkg/petrichor64.js"></petrichor-64>
+//   <script type="module" src="/petrichor64-element.js"></script>
+//   <petrichor-64 cart="/a.game.png"></petrichor-64>
+//   <petrichor-64 cart="/b.game.png" policy="sandbox"></petrichor-64>
 //
-// The `module` attribute points at the wasm-bindgen ES module (build with
-// `wasm-bindgen --target web`, or use trunk's emitted JS during dev). On
-// connect the element creates the render host that the Rust side mounts
-// winit's canvas into (`#petrichor64-root`, see attach_canvas_to_dom in
-// lib.rs), then loads and initialises the wasm module.
+// Attributes (read once, when the element is connected):
+//   module  URL of the wasm-bindgen JS module (default `/Petrichor64.js`, what
+//           trunk emits into web/dist).
+//   cart    URL of the .game.png to run (default `/game.game.png`, else the
+//           engine's embedded default cart).
+//   worker  URL of the VM worker script (default `/worker.js`).
+//   policy  what the cart may reach: `open` (default), `sandbox`, or a JSON
+//           object of host::Policy fields over `open`, e.g.
+//           '{"network":false,"files":null}' (src/host.rs).
 //
-// NOTE: the engine's Lua VM will run on a web worker spawned once the module
-// signals "core ready" — that wiring lands with the worker message bridge
-// (see WASM.md §2). This element already sets up the host + module load so
-// wgpu initialises and the canvas renders.
+// JS API:
+//   el.post(str)  host -> cart, read by the cart's `host.recv()`. Posts made
+//                 before the engine is up are kept and sent once it is.
+//   "message"     CustomEvent per cart `host.send(str)`; `detail` is the string.
+//   "title"       CustomEvent when the cart asks for a window title (`detail`);
+//                 the element leaves document.title alone.
+//   "petrichor-gpu-lost" / "petrichor-gpu-restored"  plain Events (also on window).
+//   el.engine     the module's `Engine` once started, el.ready a Promise of it.
+//
+// Each element imports its own copy of the module (the URL gets `?i=N`): the
+// engine's statics and winit's one event loop per module mean one engine per
+// copy. Each copy then spawns its own VM worker and AudioContext.
+//
+// The canvas goes in the element itself (light DOM), sized to fill it; size
+// the element to size the game (it defaults to 640x548 if nothing does).
 
-const ROOT_ID = "petrichor64-root";
+// Before any copy of the module loads: tells its auto-start (wasm_main in
+// lib.rs) to leave starting to the elements. A page that loads the module
+// without this file (web/index.html) starts one engine as before.
+globalThis.__petrichor64_manual = true;
+
+let copies = 0;
 
 class Petrichor64Element extends HTMLElement {
-  static get observedAttributes() {
-    return ["module"];
+  constructor() {
+    super();
+    this.engine = null;
+    this._pending = [];
+    this.ready = new Promise((resolve, reject) => {
+      this._resolve = resolve;
+      this._reject = reject;
+    });
   }
 
   connectedCallback() {
     if (this._booted) return;
     this._booted = true;
-
-    // Light DOM (not shadow): Rust locates the host via
-    // document.getElementById, which does not cross shadow boundaries.
-    let root = document.getElementById(ROOT_ID);
-    if (!root) {
-      root = document.createElement("div");
-      root.id = ROOT_ID;
-      root.style.width = "100%";
-      root.style.height = "100%";
-      this.appendChild(root);
-    }
-
-    const moduleUrl = this.getAttribute("module");
-    if (!moduleUrl) {
-      console.error(
-        "<petrichor-64>: missing `module` attribute (URL of the wasm-bindgen JS module)."
-      );
-      return;
-    }
-
+    if (getComputedStyle(this).display === "inline") this.style.display = "block";
+    const moduleUrl = this.getAttribute("module") || "/Petrichor64.js";
     this._boot(moduleUrl).catch((err) => {
       console.error("<petrichor-64>: failed to start engine:", err);
+      this._reject(err);
     });
   }
 
   async _boot(moduleUrl) {
-    // The wasm-bindgen module's default export initialises the wasm instance;
-    // our bin's main() (the module entry) then runs start() → spawn_app.
-    const mod = await import(moduleUrl);
-    const init = mod.default ?? mod.init;
-    if (typeof init === "function") {
-      await init();
+    const url = new URL(moduleUrl, document.baseURI);
+    url.searchParams.set("i", String(++copies));
+    const mod = await import(url.href);
+    await (mod.default ?? mod.init)();
+    const opts = {};
+    for (const k of ["cart", "worker", "policy"]) {
+      const v = this.getAttribute(k);
+      if (v !== null && v !== "") opts[k] = v;
     }
-    // Worker(s) will be spawned here once the message bridge exists.
+    this.engine = mod.start(this, opts);
+    for (const m of this._pending) this.engine.post(m);
+    this._pending.length = 0;
+    this._resolve(this.engine);
+  }
+
+  post(msg) {
+    msg = String(msg);
+    if (this.engine) this.engine.post(msg);
+    else this._pending.push(msg);
   }
 }
 

@@ -15,7 +15,8 @@
 //!   until `webglcontextrestored` (`watch_canvas`).
 //!
 //! On the web the page hears about it too: `petrichor-gpu-lost` and
-//! `petrichor-gpu-restored` events on `window`, for a host page that wants to
+//! `petrichor-gpu-restored` events on `window` (and on the `<petrichor-64>`
+//! element, when the engine was started on one), for a host page that wants to
 //! show something meanwhile. `CHOR_GPU_LOSE=secs` (native) loses the device on
 //! purpose that long after start, for testing.
 
@@ -145,8 +146,26 @@ pub fn watch_canvas(canvas: &web_sys::HtmlCanvasElement) {
 }
 
 #[cfg(target_arch = "wasm32")]
+thread_local! {
+    /// The element this engine was started on (`start(root, ..)`), which hears
+    /// the events too: with several engines on a page, `window` can't say whose.
+    static TARGET: std::cell::RefCell<Option<web_sys::Element>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Also dispatch the loss events on `el`.
+#[cfg(target_arch = "wasm32")]
+pub fn set_target(el: Option<web_sys::Element>) {
+    TARGET.with(|t| *t.borrow_mut() = el);
+}
+
+#[cfg(target_arch = "wasm32")]
 fn dispatch(name: &str) {
     if let (Some(w), Ok(e)) = (web_sys::window(), web_sys::Event::new(name)) {
         let _ = w.dispatch_event(&e);
     }
+    TARGET.with(|t| {
+        if let (Some(el), Ok(e)) = (t.borrow().as_ref(), web_sys::Event::new(name)) {
+            let _ = el.dispatch_event(&e);
+        }
+    });
 }
