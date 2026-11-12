@@ -1,5 +1,9 @@
 # Handoff: a cart running inside another cart
 
+> **Superseded** by `HANDOFF-host-library.md`: sosh now hosts the engine in its
+> own app, one cart per instance, so nothing here is planned. Kept for the
+> notes on what leaks between bundles.
+
 sosh wants to run a Petrichor64 cart shared in chat as its own, sandboxed instance,
 in a box in the chat. This note covers what the engine has for that and what's
 missing. All references are against `main` at `76c0f91`.
