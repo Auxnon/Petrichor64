@@ -2835,6 +2835,91 @@ impl Core {
         );
     }
 
+    /// `attr{...}`, from bundle `id`: screen effects, the gui's size, the
+    /// window. Native gets these as `MainCommmand::Globals`; the web build's
+    /// VM worker sends them as `VmToHost::Globals` (bundle 0), which used to
+    /// be dropped, so no `attr` (gui_px, modernize, title...) did anything
+    /// on the web.
+    fn apply_globals(&mut self, id: u8, table: &[(String, crate::types::ValueMap)]) {
+        let _ = id;
+        for (k, v) in table.iter() {
+            #[cfg(feature = "headed")]
+            match k.as_str() {
+                "resolution" => {
+                    self.global.screen_effects.crt_resolution = Self::val2float(v)
+                }
+                "curvature" => {
+                    self.global.screen_effects.corner_harshness = Self::val2float(v)
+                }
+                "flatness" => {
+                    self.global.screen_effects.corner_ease = Self::val2float(v)
+                }
+                "dark" => self.global.screen_effects.dark_factor = Self::val2float(v),
+                "bleed" => {
+                    self.global.screen_effects.lumen_threshold = Self::val2float(v)
+                }
+                "glitch" => self.global.screen_effects.glitchiness = Self::val2vec3(v),
+                "high" => self.global.screen_effects.high_range = Self::val2float(v),
+                "low" => self.global.screen_effects.low_range = Self::val2float(v),
+                "modernize" => {
+                    self.global.screen_effects.modernize = Self::val2float(v)
+                }
+                "fog" => self.global.screen_effects.fog = Self::val2float(v),
+                "gui_px" => {
+                    let px = Self::val2float(v).max(0.);
+                    if px != self.global.gui_params.px {
+                        self.global.gui_params.px = px;
+                        self.debounced_resize();
+                    }
+                }
+                "fullscreen" => {
+                    self.global.fullscreen = Self::val2bool(v);
+                    self.check_fullscreen();
+                    self.global.fullscreen_state = self.global.fullscreen;
+                }
+                "mouse_grab" => self.global.mouse_grab = Self::val2bool(v),
+                // Per bundle, not global: draw the *sender's* entities in
+                // the front pass (see `Bundle::front`).
+                "front" => self.bundle_manager.set_front(id, Self::val2bool(v)),
+                "size" => {
+                    let arr = Self::val2array(v);
+
+                    self.gfx.set_window_size(arr.get(0), arr.get(1));
+                }
+                "title" => {
+                    if let Some(s) = Self::val2string(v) {
+                        self.gfx.set_title(&s);
+                    }
+                }
+                // Honour the value like every other boolean attr: this
+                // used to lock unconditionally, so `attr{lock=false}`
+                // still locked and nothing could ever unlock — leaving
+                // the console unreachable for the rest of the session.
+                "lock" => {
+                    let lock = Self::val2bool(v);
+                    self.global.locked = lock;
+                    self.global.console = !lock;
+                    if lock {
+                        self.gui.disable_console();
+                    } else {
+                        self.gui.enable_console(&self.loggy);
+                    }
+                }
+
+                _ => {}
+            }
+            #[cfg(not(feature = "headed"))]
+            match k.as_str() {
+                "lock" => {
+                    let lock = Self::val2bool(v);
+                    self.global.locked = lock;
+                    self.global.console = !lock;
+                }
+                _ => {}
+            }
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
@@ -3028,8 +3113,10 @@ impl Core {
                 self.world
                     .define_tileset(&self.gfx.device, 0, def, &self.model_manager);
             }
-            VmToHost::Globals(_) => {
-                // TODO: Globals → screen effects.
+            VmToHost::Globals(table) => {
+                let table: Vec<(String, crate::types::ValueMap)> =
+                    table.iter().map(|(k, v)| (k.clone(), crate::types::ValueMap::from(v))).collect();
+                self.apply_globals(0, &table);
             }
             VmToHost::Raster { sky, w, h, px } => {
                 #[cfg(feature = "headed")]
@@ -3357,84 +3444,7 @@ impl Core {
                 MainCommmand::Group(parent, child) => {
                     self.ent_manager.group(id, parent, child);
                 }
-                MainCommmand::Globals(table) => {
-                    for (k, v) in table.iter() {
-                        #[cfg(feature = "headed")]
-                        match k.as_str() {
-                            "resolution" => {
-                                self.global.screen_effects.crt_resolution = Self::val2float(v)
-                            }
-                            "curvature" => {
-                                self.global.screen_effects.corner_harshness = Self::val2float(v)
-                            }
-                            "flatness" => {
-                                self.global.screen_effects.corner_ease = Self::val2float(v)
-                            }
-                            "dark" => self.global.screen_effects.dark_factor = Self::val2float(v),
-                            "bleed" => {
-                                self.global.screen_effects.lumen_threshold = Self::val2float(v)
-                            }
-                            "glitch" => self.global.screen_effects.glitchiness = Self::val2vec3(v),
-                            "high" => self.global.screen_effects.high_range = Self::val2float(v),
-                            "low" => self.global.screen_effects.low_range = Self::val2float(v),
-                            "modernize" => {
-                                self.global.screen_effects.modernize = Self::val2float(v)
-                            }
-                            "fog" => self.global.screen_effects.fog = Self::val2float(v),
-                            "gui_px" => {
-                                let px = Self::val2float(v).max(0.);
-                                if px != self.global.gui_params.px {
-                                    self.global.gui_params.px = px;
-                                    self.debounced_resize();
-                                }
-                            }
-                            "fullscreen" => {
-                                self.global.fullscreen = Self::val2bool(v);
-                                self.check_fullscreen();
-                                self.global.fullscreen_state = self.global.fullscreen;
-                            }
-                            "mouse_grab" => self.global.mouse_grab = Self::val2bool(v),
-                            // Per bundle, not global: draw the *sender's* entities in
-                            // the front pass (see `Bundle::front`).
-                            "front" => self.bundle_manager.set_front(id, Self::val2bool(v)),
-                            "size" => {
-                                let arr = Self::val2array(v);
-
-                                self.gfx.set_window_size(arr.get(0), arr.get(1));
-                            }
-                            "title" => {
-                                if let Some(s) = Self::val2string(v) {
-                                    self.gfx.set_title(&s);
-                                }
-                            }
-                            // Honour the value like every other boolean attr: this
-                            // used to lock unconditionally, so `attr{lock=false}`
-                            // still locked and nothing could ever unlock — leaving
-                            // the console unreachable for the rest of the session.
-                            "lock" => {
-                                let lock = Self::val2bool(v);
-                                self.global.locked = lock;
-                                self.global.console = !lock;
-                                if lock {
-                                    self.gui.disable_console();
-                                } else {
-                                    self.gui.enable_console(&self.loggy);
-                                }
-                            }
-
-                            _ => {}
-                        }
-                        #[cfg(not(feature = "headed"))]
-                        match k.as_str() {
-                            "lock" => {
-                                let lock = Self::val2bool(v);
-                                self.global.locked = lock;
-                                self.global.console = !lock;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                MainCommmand::Globals(table) => self.apply_globals(id, &table),
                 MainCommmand::GetGlobal(tx) => {
                     #[cfg(feature = "headed")]
                     let resolution = self.global.gui_params.resolution;

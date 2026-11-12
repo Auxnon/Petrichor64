@@ -1094,6 +1094,14 @@ impl<'w> Gfx<'w> {
     }
 
     pub fn set_title(&self, title: &str) {
+        // winit's web window only sets the canvas's `alt`, borrowing the
+        // canvas its event loop may hold ("RefCell already borrowed"); the
+        // page's title is what a window title means in a browser.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            doc.set_title(title);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         self.win_ref.set_title(title);
     }
 
