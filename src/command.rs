@@ -672,6 +672,7 @@ pub fn command_docs() -> Result<HashMap<String, (String, String)>, P64Error> {
             Rc::new(Mutex::new(2u64)),
             loggy.clone(),
             LocalPool::new(),
+            crate::skeleton::Rig::new(),
         )
     })?;
     Ok(COMMAND_DOCS.with(|d| d.borrow().iter().cloned().collect()))
@@ -701,6 +702,8 @@ pub fn init_lua_sys<'a, 'gc>(
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
     shared: LocalPool,
+    // The instance's skeletons and clock (`skeleton::Rig`).
+    rig: std::sync::Arc<crate::skeleton::Rig>,
 ) -> Result<(), P64Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -709,6 +712,7 @@ pub fn init_lua_sys<'a, 'gc>(
 // Option<bool>
 {
     println!("init lua sys");
+    crate::skeleton::bind_vm(std::sync::Arc::clone(&rig));
 
     // let c = *ctx;
     // let v = Value::String(piccolo::String::from_static(
@@ -3205,7 +3209,7 @@ function irnd(a, b) end"
 
     lua!(
         "now",
-        move |_, _, (): ()| { Ok(crate::skeleton::clock()) },
+        move |_, _, (): ()| { Ok(rig.clock()) },
         "Seconds since the engine started, as of this frame. Steps are paced by the display, so use the difference between frames to move things at a steady speed",
         "
 ---@return number
@@ -4121,6 +4125,7 @@ pub fn load_empty(core: &mut Core) {
         core.loggy.make_sender(),
         #[cfg(feature = "audio")]
         core.singer.clone(),
+        core.model_manager.rig.clone(),
         core.global.debug,
         false,
     ));
@@ -4362,6 +4367,7 @@ async fn async_load_app(
         core.loggy.make_sender(),
         #[cfg(feature = "audio")]
         core.singer.clone(),
+        core.model_manager.rig.clone(),
         core.global.debug,
         privileged,
     ));

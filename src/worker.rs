@@ -103,6 +103,10 @@ impl EntLook {
 
 thread_local! {
     static WORKER_VM: RefCell<Option<WorkerVm>> = RefCell::new(None);
+    /// The worker's skeletons and clock, mirrored from the main thread's
+    /// (`HostToVm::Skeletons`, `HostToVm::Loop`). The worker is its own wasm
+    /// module serving one instance, so one per worker is per instance.
+    static WORKER_RIG: std::sync::Arc<crate::skeleton::Rig> = crate::skeleton::Rig::new();
 }
 
 /// Called once when the worker's wasm module finishes initialising.
@@ -252,13 +256,15 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     let mut _load_rx = None;
     let talk: Option<LuaTalk> = match msg {
         HostToVm::Loop { keys, analog, clock } => {
-            crate::skeleton::set_clock(clock);
+            WORKER_RIG.with(|r| r.set_clock(clock));
             Some(LuaTalk::Loop(control_state_from_wire(&keys, &analog)))
         }
         HostToVm::Skeletons(list) => {
-            for (name, skel) in list {
-                crate::skeleton::register(&name, skel);
-            }
+            WORKER_RIG.with(|r| {
+                for (name, skel) in list {
+                    r.register(&name, skel);
+                }
+            });
             None
         }
         HostToVm::Load { name, content } => {
@@ -534,6 +540,7 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             Rc::clone(&ent_counter),
             loggy_tx.clone(),
             LocalPool::new(),
+            WORKER_RIG.with(std::sync::Arc::clone),
         )?;
 
 

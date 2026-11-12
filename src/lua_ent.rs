@@ -203,13 +203,14 @@ impl UserData for LuaEnt {
             let force = force.unwrap_or(false);
             // A clip of the entity's skeleton takes precedence over a sprite
             // animation of the same name; "" returns to the rest pose.
-            if let Some(sk) = crate::skeleton::lookup(&this.asset) {
+            let rig = crate::skeleton::vm_rig();
+            if let Some(sk) = rig.lookup(&this.asset) {
                 let clip = tex.to_lowercase();
                 if clip.is_empty() || sk.clip_index(&clip).is_some() {
                     let st = this.skel.get_or_insert_with(Default::default);
                     if st.clip != clip || force {
                         st.clip = clip;
-                        st.start = crate::skeleton::clock();
+                        st.start = rig.clock();
                     }
                     if let Some(sp) = speed {
                         st.speed = sp as f32;
@@ -235,7 +236,8 @@ impl UserData for LuaEnt {
             "bone",
             |vm, mc, this_res, (name, rot, pos): (String, Option<Value>, Option<Value>)| {
                 let this = safe_unwrap!(this_res);
-                let Some(sk) = crate::skeleton::lookup(&this.asset) else {
+                let rig = crate::skeleton::vm_rig();
+                let Some(sk) = rig.lookup(&this.asset) else {
                     return Ok(Value::Nil);
                 };
                 let Some(index) = sk.joint_index(&name) else {
@@ -261,7 +263,7 @@ impl UserData for LuaEnt {
                     None => {}
                 }
                 let st = this.skel.clone().unwrap_or_default();
-                let g = st.globals(&sk, crate::skeleton::clock());
+                let g = st.globals(&sk, rig.clock());
                 let joint16 = g[index].transform_point3(glam::Vec3::ZERO) * 16.;
                 let world = entity_matrix(this).transform_point3(joint16) / 16.;
                 let o = st.bone(&name).unwrap_or_default();
@@ -414,7 +416,8 @@ impl UserData for LuaEnt {
 
         // Joint names of the model's skeleton (empty if it has none).
         fields.add_field_method_get("bones", |_, mc, this| {
-            crate::skeleton::lookup(&this.asset)
+            crate::skeleton::vm_rig()
+                .lookup(&this.asset)
                 .map(|sk| sk.joints.iter().map(|j| lstr(mc, j.name.as_str())).collect::<Vec<Value>>())
                 .unwrap_or_default()
         });

@@ -420,18 +420,6 @@ pub fn from_gltf(
     Ok((skel, remap))
 }
 
-/// Engine time in seconds, published by the main loop each frame so the Lua
-/// thread and the renderer sample clips against the same clock.
-static CLOCK: AtomicU64 = AtomicU64::new(0);
-
-pub fn set_clock(secs: f64) {
-    CLOCK.store(secs.to_bits(), Ordering::Relaxed);
-}
-
-pub fn clock() -> f64 {
-    f64::from_bits(CLOCK.load(Ordering::Relaxed))
-}
-
 /// An entity's skeletal animation state, owned by its `LuaEnt`. The pose is a
 /// pure function of this, the skeleton and the clock, so the renderer and
 /// `ent:bone()` always agree.
@@ -501,54 +489,93 @@ pub fn palette16(skel: &Skeleton, globals: &[Mat4]) -> Vec<Mat4> {
         .collect()
 }
 
-/// Register a model file's skeleton without building any GPU mesh, for builds
-/// with no device (headless, terminal) so `ent:bone()` still works there.
-/// `name` is the model's base name (file stem).
-pub fn register_from_bytes(name: &str, bytes: &[u8]) -> Result<(), String> {
-    let (doc, buffers, _) = gltf::import_slice(bytes).map_err(|e| e.to_string())?;
-    let Some((skin, mesh)) = doc.nodes().find_map(|n| Some((n.skin()?, n.mesh()?))) else {
-        return Ok(());
-    };
-    let (skel, _) = from_gltf(&doc, &skin, &buffers)?;
-    let base = name.to_lowercase();
-    if let Some(mesh_name) = mesh.name() {
-        register(&format!("{}.{}", base, mesh_name.to_lowercase()), skel.clone());
+/// One engine instance's skeletons (by model name) and animation clock. Each
+/// `Core` owns one (`ModelManager::rig`) and hands a clone of the `Arc` to the
+/// Lua threads of its bundles, so two instances in one process keep apart: a
+/// model of the same name in two carts doesn't trample the other's skeleton.
+/// The model loader fills it; on the web the main thread forwards entries to
+/// the VM worker, which keeps its own.
+#[derive(Default)]
+pub struct Rig {
+    skeletons: RwLock<HashMap<String, Arc<Skeleton>>>,
+    /// Engine time in seconds, published by the main loop each frame so the Lua
+    /// thread and the renderer sample clips against the same clock.
+    clock: AtomicU64,
+}
+
+impl Rig {
+    pub fn new() -> Arc<Rig> {
+        Arc::new(Rig::default())
     }
-    register(&base, skel);
-    Ok(())
-}
 
-lazy_static::lazy_static! {
-    /// Skeletons by model name, readable from the Lua thread. The model loader
-    /// fills it; on the web the main thread forwards entries to the worker.
-    pub static ref SKELETONS: RwLock<HashMap<String, Arc<Skeleton>>> = RwLock::new(HashMap::new());
-}
+    pub fn set_clock(&self, secs: f64) {
+        self.clock.store(secs.to_bits(), Ordering::Relaxed);
+    }
 
-pub fn register(name: &str, skel: Skeleton) {
-    if let Ok(mut m) = SKELETONS.write() {
-        m.insert(name.to_lowercase(), Arc::new(skel));
+    pub fn clock(&self) -> f64 {
+        f64::from_bits(self.clock.load(Ordering::Relaxed))
+    }
+
+    /// Register a model file's skeleton without building any GPU mesh, for
+    /// builds with no device (headless, terminal) so `ent:bone()` still works
+    /// there. `name` is the model's base name (file stem).
+    pub fn register_from_bytes(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let (doc, buffers, _) = gltf::import_slice(bytes).map_err(|e| e.to_string())?;
+        let Some((skin, mesh)) = doc.nodes().find_map(|n| Some((n.skin()?, n.mesh()?))) else {
+            return Ok(());
+        };
+        let (skel, _) = from_gltf(&doc, &skin, &buffers)?;
+        let base = name.to_lowercase();
+        if let Some(mesh_name) = mesh.name() {
+            self.register(&format!("{}.{}", base, mesh_name.to_lowercase()), skel.clone());
+        }
+        self.register(&base, skel);
+        Ok(())
+    }
+
+    /// Model names are stored lowercased, as the model dictionary does.
+    pub fn register(&self, name: &str, skel: Skeleton) {
+        if let Ok(mut m) = self.skeletons.write() {
+            m.insert(name.to_lowercase(), Arc::new(skel));
+        }
+    }
+
+    /// Registry entries beyond the first `sent`, for forwarding to the web VM
+    /// worker; bumps `sent`. Entries are only ever added, never replaced in bulk.
+    pub fn take_new(&self, sent: &mut usize) -> Vec<(String, Skeleton)> {
+        let Ok(m) = self.skeletons.read() else {
+            return vec![];
+        };
+        if m.len() <= *sent {
+            return vec![];
+        }
+        *sent = m.len();
+        m.iter().map(|(k, v)| (k.clone(), (**v).clone())).collect()
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<Arc<Skeleton>> {
+        self.skeletons
+            .read()
+            .ok()
+            .and_then(|m| m.get(&name.to_lowercase()).cloned())
     }
 }
 
-/// Model names are stored lowercased, as the model dictionary does.
-/// Registry entries beyond the first `sent`, for forwarding to the web VM
-/// worker; bumps `sent`. Entries are only ever added, never replaced in bulk.
-pub fn take_new(sent: &mut usize) -> Vec<(String, Skeleton)> {
-    let Ok(m) = SKELETONS.read() else {
-        return vec![];
-    };
-    if m.len() <= *sent {
-        return vec![];
-    }
-    *sent = m.len();
-    m.iter().map(|(k, v)| (k.clone(), (**v).clone())).collect()
+thread_local! {
+    /// The rig of the instance whose VM runs on this thread, for entity methods
+    /// (`ent:anim`, `ent:bone`, `ent.bones`), which get no handle of their own.
+    /// Set by `init_lua_sys`; a VM thread only ever serves one instance.
+    static VM_RIG: std::cell::RefCell<Option<Arc<Rig>>> = const { std::cell::RefCell::new(None) };
 }
 
-pub fn lookup(name: &str) -> Option<Arc<Skeleton>> {
-    SKELETONS
-        .read()
-        .ok()
-        .and_then(|m| m.get(&name.to_lowercase()).cloned())
+/// Bind this VM thread to its instance's rig (see `VM_RIG`).
+pub fn bind_vm(rig: Arc<Rig>) {
+    VM_RIG.with(|r| *r.borrow_mut() = Some(rig));
+}
+
+/// This VM thread's rig; an unbound thread gets an empty one.
+pub fn vm_rig() -> Arc<Rig> {
+    VM_RIG.with(|r| r.borrow_mut().get_or_insert_with(Rig::new).clone())
 }
 
 #[cfg(test)]
@@ -705,5 +732,20 @@ mod tests {
         }
         let pal = s.palette(&s.globals(&rest));
         assert!(pal[1].abs_diff_eq(Mat4::IDENTITY, 1e-5));
+    }
+
+    #[test]
+    fn rigs_do_not_share() {
+        // two instances in one process: same model name, separate clocks
+        let (a, b) = (Rig::new(), Rig::new());
+        a.register("Walker", two_bone());
+        assert!(a.lookup("walker").is_some());
+        assert!(b.lookup("walker").is_none());
+        a.set_clock(2.5);
+        assert_eq!(a.clock(), 2.5);
+        assert_eq!(b.clock(), 0.);
+        let mut sent = 0;
+        assert_eq!(a.take_new(&mut sent).len(), 1);
+        assert!(a.take_new(&mut sent).is_empty());
     }
 }
