@@ -49,6 +49,9 @@ pub struct Policy {
     pub load_apps: bool,
     /// Sound out. Off: the sound natives still exist and do nothing.
     pub audio: bool,
+    /// `mic`: recording from the microphone (also needs `audio`).
+    #[serde(default)]
+    pub mic: bool,
     /// The host channel: Lua `host.send` / `host.recv`.
     pub host_messages: bool,
 }
@@ -63,6 +66,7 @@ impl Policy {
             console: true,
             load_apps: true,
             audio: true,
+            mic: true,
             host_messages: true,
         }
     }
@@ -77,6 +81,7 @@ impl Policy {
             console: false,
             load_apps: false,
             audio: true,
+            mic: false,
             host_messages: false,
         }
     }

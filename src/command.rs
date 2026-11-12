@@ -760,6 +760,7 @@ pub fn init_lua_sys<'a, 'gc>(
         std::sync::mpsc::channel().0
     };
     let audio_on = policy.audio;
+    let mic_on = policy.audio && policy.mic;
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
     let mut io = vm_init.raw_table();
@@ -2359,7 +2360,7 @@ function verb(channel, room, damp, wet) end"
             // into sample slot `id`; `mic()` reports whether one is in flight.
             // Recording is always explicit — the engine never opens the mic on
             // its own, and the stream is released as soon as the capture lands.
-            if !audio_on {
+            if !mic_on {
                 return Ok(Value::Bool(false)); // `audio: false`: never opens the mic
             }
             let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
@@ -5070,7 +5071,7 @@ impl MainCommmand {
             MainCommmand::Subload(..) | MainCommmand::Load(_) => policy.load_apps,
             MainCommmand::Quit(u) => *u == 0 || policy.load_apps,
             // A query (`None`) never opens the mic.
-            MainCommmand::MicRecord(Some(_), ..) => policy.audio,
+            MainCommmand::MicRecord(Some(_), ..) => policy.audio && policy.mic,
             MainCommmand::HostSend(_) => policy.host_messages,
             _ => true,
         }
