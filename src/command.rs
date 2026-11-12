@@ -6014,6 +6014,7 @@ mod policy_tests {
                     Rc::new(Mutex::new(2u64)),
                     loggy.clone(),
                     LocalPool::new(),
+                    crate::skeleton::Rig::new(),
                 )?;
                 Ok(vm.build_and_run(mc, Some("test"), code, &mut Compiler::new())?)
             })
