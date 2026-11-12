@@ -1824,25 +1824,35 @@ function cue(freq, length, channel, instrument, at, grid) end"
 
     #[cfg(feature = "audio")]
     let sing_seq = singer.clone();
+    // For `seq(nil, steps)`: the next id to hand out (well above any a script
+    // would pick by hand), and the last sequence sent to each channel, which a
+    // pushed sequence plays after.
+    #[cfg(feature = "audio")]
+    let seq_queue: Rc<Mutex<(usize, HashMap<usize, usize>)>> =
+        Rc::new(Mutex::new((1 << 20, HashMap::new())));
     lua!(
         "seq",
         move |_, _, (id, steps, cfg): (Option<usize>, Option<Value>, Option<Value>)| {
             #[cfg(feature = "audio")]
             {
-                let id = match id {
-                    Some(id) => id,
-                    None => {
-                        let _ = sing_seq.send(SoundCommand::StopSequence(None));
-                        return Ok(());
-                    }
-                };
-                let steps = match steps {
-                    Some(Value::Table(t)) => parse_steps(&t.borrow()),
-                    _ => {
+                let steps = match (id, steps) {
+                    (_, Some(Value::Table(t))) => parse_steps(&t.borrow()),
+                    (Some(id), _) => {
                         let _ = sing_seq.send(SoundCommand::StopSequence(Some(id)));
-                        return Ok(());
+                        return Ok(Value::Nil);
+                    }
+                    (None, _) => {
+                        seq_queue.lock().1.clear();
+                        let _ = sing_seq.send(SoundCommand::StopSequence(None));
+                        return Ok(Value::Nil);
                     }
                 };
+                let pushed = id.is_none();
+                let id = id.unwrap_or_else(|| {
+                    let mut q = seq_queue.lock();
+                    q.0 += 1;
+                    q.0
+                });
                 let (steps, natural_len) = steps;
                 let mut seq = Sequence {
                     id,
@@ -1854,7 +1864,11 @@ function cue(freq, length, channel, instrument, at, grid) end"
                     grid: None,
                     after: None,
                     choke: false,
+                    bpm: None,
                 };
+                // A push chains after the channel's last sequence unless it says
+                // when to start itself (`at`, `after`, or `after = false`).
+                let mut chain = pushed;
                 if let Some(Value::Table(c)) = &cfg {
                     let c = c.borrow();
                     if let Some(v) = c.get_str("ch") {
@@ -1875,29 +1889,132 @@ function cue(freq, length, channel, instrument, at, grid) end"
                     }
                     if let Some(v) = c.get_str("at") {
                         seq.at = Some(v.into());
+                        chain = false;
                     }
                     if let Some(v) = c.get_str("grid") {
                         seq.grid = Some(v.into());
                     }
-                    if let Some(v) = c.get_str("after") {
-                        let a: f32 = v.into();
-                        seq.after = Some(a.max(0.) as usize);
+                    match c.get_str("after") {
+                        Some(Value::Bool(_)) => chain = false,
+                        Some(v) => {
+                            let a: f32 = v.into();
+                            seq.after = Some(a.max(0.) as usize);
+                            chain = false;
+                        }
+                        None => {}
                     }
                     if let Some(Value::Bool(b)) = c.get_str("choke") {
                         seq.choke = *b;
                     }
+                    if let Some(v) = c.get_str("bpm") {
+                        let b: f32 = v.into();
+                        if b > 0. {
+                            seq.bpm = Some(b);
+                        }
+                    }
+                }
+                {
+                    let mut q = seq_queue.lock();
+                    if chain {
+                        seq.after = q.1.get(&seq.channel).copied();
+                    }
+                    q.1.insert(seq.channel, id);
                 }
                 lua_err!(sing_seq.send(SoundCommand::Sequence(seq)));
+                return Ok(Value::Integer(id as i64));
             }
-            Ok(())
+            #[allow(unreachable_code)]
+            Ok(Value::Nil)
         },
         "Play a sequence of steps on the transport: once, a counted number of times, or looped; chain with after",
         "
 ---@alias SeqStep { [1]: number, [2]: number|number[]|nil, [3]: integer?, [4]: number?, len?: number, at?: number, say?: string }
----@param id integer? the sequence's handle; seq() alone stops every sequence
+---@param id integer? the sequence's handle; nil pushes it after the channel's last sequence; seq() alone stops every sequence
 ---@param steps SeqStep[]? {beats, freq|{freqs}|0 (rest), instrument?, volume?, len=beats, at=beat, say='la'}; omit to stop `id`
----@param cfg? { ch?: integer, loop?: integer|boolean, len?: number, at?: number, grid?: number, after?: integer, choke?: boolean }
+---@param cfg? { ch?: integer, loop?: integer|boolean, len?: number, at?: number, grid?: number, after?: integer|false, choke?: boolean, bpm?: number }
+---@return integer? id the sequence's id (the new one, for a push)
 function seq(id, steps, cfg) end"
+    );
+
+    lua!(
+        "sounds",
+        move |vm, mc, t: Option<Value>| {
+            // Refill the caller's table when given one, so polling every frame
+            // makes no garbage; otherwise a new one.
+            let t = match t {
+                Some(v @ Value::Table(_)) => v,
+                _ => vm.wrap_table(mc, vm.raw_table()),
+            };
+            let Value::Table(tb) = &t else { unreachable!() };
+            let mut tb = tb.borrow_mut(mc);
+            let old = tb.len() as i64;
+            let mut n: i64 = 0;
+            macro_rules! put {
+                ($tb:expr, $v:expr) => {{
+                    n += 1;
+                    $tb.set(n, $v);
+                }};
+            }
+            #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+            {
+                // The audio thread only ever try_locks this, so holding it while
+                // copying out delays its next snapshot by a sample, never a frame.
+                let s = crate::sound::SOUND_STATE.lock().unwrap_or_else(|e| e.into_inner());
+                fn f<'v>(x: f32) -> Value<'v> {
+                    Value::Number(x as f64)
+                }
+                fn i<'v>(x: usize) -> Value<'v> {
+                    Value::Integer(x as i64)
+                }
+                put!(tb, Value::Number(s.beat));
+                put!(tb, f(s.bpm));
+                put!(tb, i(s.peaks.len()));
+                put!(tb, i(s.seqs.len()));
+                put!(tb, i(s.voices.len()));
+                for &p in &s.peaks {
+                    put!(tb, f(p));
+                }
+                for q in &s.seqs {
+                    put!(tb, i(q.id));
+                    put!(tb, i(q.channel));
+                    put!(tb, i(q.pass as usize));
+                    put!(tb, i(q.loops as usize));
+                    put!(tb, i(q.step));
+                    put!(tb, i(q.hits as usize));
+                    put!(tb, f(q.phase));
+                    put!(tb, f(q.length));
+                    put!(tb, i(q.state as usize));
+                }
+                for v in &s.voices {
+                    put!(tb, i(v.channel));
+                    put!(tb, i(v.lane));
+                    put!(tb, i(v.instrument));
+                    put!(tb, f(v.freq));
+                    put!(tb, f(v.level));
+                    put!(tb, i(v.kind as usize));
+                    put!(tb, i(v.releasing as usize));
+                }
+            }
+            #[cfg(not(all(feature = "audio", not(target_arch = "wasm32"))))]
+            {
+                // No audio thread in this VM's memory (the browser's runs in its
+                // worklet): an empty snapshot, same shape.
+                for _ in 0..5 {
+                    put!(tb, Value::Integer(0));
+                }
+                tb.set(2i64, Value::Number(0.));
+            }
+            for k in n + 1..=old {
+                tb.set(k, Value::Nil);
+            }
+            drop(tb);
+            Ok(t)
+        },
+        "What's sounding: the transport, channel levels, running sequences and voices, as a flat number array",
+        "
+---@param t number[]? a table to refill (pass the last result back to poll without garbage)
+---@return number[] t beat, bpm, nch, nseq, nvoice, then nch peaks, nseq x 9 (id, ch, pass, loops, step, hits, phase, len, state), nvoice x 7 (ch, lane, instrument, freq, level, kind, releasing)
+function sounds(t) end"
     );
 
     #[cfg(feature = "audio")]
