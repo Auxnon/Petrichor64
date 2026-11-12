@@ -1105,6 +1105,7 @@ impl ApplicationHandler for App {
                                 bundle_id: 0,
                                 width: size[0],
                                 height: size[1],
+                                policy: self.core.as_ref().map(|c| c.policy.clone()).unwrap_or_default(),
                             });
                             self.worker_gui_size = size;
                             // Skeletons from the models just loaded, before main()
@@ -1185,6 +1186,10 @@ impl ApplicationHandler for App {
                         let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
+                        }
+                        // Host messages posted so far (kept on main until Init), ahead of this loop.
+                        for m in self.core.as_mut().map(|c| c.host_inbox_drain()).unwrap_or_default() {
+                            w.post(&HostToVm::Host(m));
                         }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
@@ -2023,6 +2028,11 @@ pub fn drain_stray_messages(catcher: &Receiver<MainPacket>) {
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str, catcher: Option<&Receiver<MainPacket>>) {
+    // Typed console lines (the backtick console, headless stdin): nothing runs
+    // for an instance whose policy has no console.
+    if !core.policy.console {
+        return;
+    }
     let mut com = com_in.trim().to_owned();
     if let Some(alias) = core.global.aliases.get(&com) {
         com = alias.to_string();
@@ -2832,8 +2842,9 @@ impl Core {
                 "lock" => {
                     let lock = Self::val2bool(v);
                     self.global.locked = lock;
-                    self.global.console = !lock;
-                    if lock {
+                    // Unlocking opens the console only for a cart allowed one.
+                    self.global.console = !lock && self.policy.console;
+                    if !self.global.console {
                         self.gui.disable_console();
                     } else {
                         self.gui.enable_console(&self.loggy);
@@ -2847,7 +2858,7 @@ impl Core {
                 "lock" => {
                     let lock = Self::val2bool(v);
                     self.global.locked = lock;
-                    self.global.console = !lock;
+                    self.global.console = !lock && self.policy.console;
                 }
                 _ => {}
             }
@@ -2857,6 +2868,9 @@ impl Core {
     #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
+        if !msg.allowed_by(&self.policy) {
+            return;
+        }
         match msg {
             VmToHost::Spawn(lent) => {
                 #[cfg(feature = "headed")]
@@ -3089,6 +3103,9 @@ impl Core {
             VmToHost::Sound(cmd) => {
                 let _ = self.singer.send(cmd);
             }
+            VmToHost::Host(s) => {
+                crate::host::push_capped(&mut self.host.outbox, s);
+            }
         }
     }
 
@@ -3106,6 +3123,11 @@ impl Core {
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
             // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
+            // The second lock behind `init_lua_sys` not registering these.
+            if !p.allowed_by(&self.policy) {
+                self.log(LogType::Config, "!!dropped a command this cart's policy forbids");
+                return;
+            }
             match p {
                 MainCommmand::Cam(p, r, o) => {
                     // A camera belongs to the bundle that set it. This used to write
@@ -3442,8 +3464,8 @@ impl Core {
                 }
                 MainCommmand::Read(path, tx) => {
                     println!("read {}", path);
-                    let pak = match self.bundle_manager.get_main_bundle().get_directory() {
-                        Some(dir) => match crate::file_util::get_file_string_scrubbed(dir, &path) {
+                    let pak = match self.cart_files_dir() {
+                        Some(dir) => match crate::file_util::get_file_string_scrubbed(&dir, &path) {
                             Ok(s) => Some(s),
                             Err(e) => {
                                 self.log(LogType::IoError, &format!("!!{}", e));
@@ -3480,9 +3502,9 @@ impl Core {
                     } else {
                         crate::gltf_io::to_glb(&mesh, image.as_ref())
                     };
-                    let res = match (bytes, self.bundle_manager.get_main_bundle().get_directory()) {
+                    let res = match (bytes, self.cart_files_dir()) {
                         (Ok(b), Some(dir)) => {
-                            match crate::file_util::write_file_bytes_scrubbed(dir, &file, &b) {
+                            match crate::file_util::write_file_bytes_scrubbed(&dir, &file, &b) {
                                 Ok(()) => true,
                                 Err(e) => {
                                     self.log(LogType::IoError, &format!("!!{}", e));
@@ -3502,8 +3524,8 @@ impl Core {
                     self.log_check(tx.send(res));
                 }
                 MainCommmand::GlbRead(file, tx) => {
-                    let mesh = match self.bundle_manager.get_main_bundle().get_directory() {
-                        Some(dir) => crate::file_util::get_file_buffer_scrubbed(dir, &file)
+                    let mesh = match self.cart_files_dir() {
+                        Some(dir) => crate::file_util::get_file_buffer_scrubbed(&dir, &file)
                             .map_err(|e| e.to_string())
                             .and_then(|b| crate::gltf_io::read(&b)),
                         None => Err("No relative path access".to_string()),
@@ -3518,10 +3540,10 @@ impl Core {
                     self.log_check(tx.send(out));
                 }
                 MainCommmand::Write(file, contents, tx) => {
-                    let res = match self.bundle_manager.get_main_bundle().get_directory() {
+                    let res = match self.cart_files_dir() {
                         Some(dir) => {
                             if let Err(e) =
-                                crate::file_util::write_file_string_scrubbed(dir, &file, &contents)
+                                crate::file_util::write_file_string_scrubbed(&dir, &file, &contents)
                             {
                                 self.log(LogType::IoError, &format!("!!{}", e));
                                 false
@@ -3846,6 +3868,9 @@ impl Core {
                     }
                     #[cfg(target_arch = "wasm32")]
                     let _ = s;
+                }
+                MainCommmand::HostSend(s) => {
+                    crate::host::push_capped(&mut self.host.outbox, s);
                 }
                 MainCommmand::LuaClose() => {
                     // println!("close lua channel {}",id);
