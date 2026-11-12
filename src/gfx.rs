@@ -225,6 +225,7 @@ impl<'w> Gfx<'w> {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
             })
             .await
             .map_err(|e| format!("no graphics adapter: {e}"))?;
@@ -329,6 +330,7 @@ impl<'w> Gfx<'w> {
                 surface_caps.alpha_modes[0]
             },
             view_formats: vec![],
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
 
         // TODO match
@@ -539,8 +541,8 @@ impl<'w> Gfx<'w> {
                 module: &shader,
                 entry_point: Some("shadow_vs_main"),
                 buffers: &[
-                    crate::model::Vertex::desc(),
-                    crate::ent::EntityUniforms::desc(),
+                    Some(crate::model::Vertex::desc()),
+                    Some(crate::ent::EntityUniforms::desc()),
                 ],
             },
             fragment: None,
@@ -585,8 +587,8 @@ impl<'w> Gfx<'w> {
                 entry_point: Some("vs_main"),
                 //targets:&[wgpu::],
                 buffers: &[
-                    crate::model::Vertex::desc(),
-                    crate::ent::EntityUniforms::desc(),
+                    Some(crate::model::Vertex::desc()),
+                    Some(crate::ent::EntityUniforms::desc()),
                 ], //&vertex_buffers, //,
             },
 
@@ -1221,9 +1223,9 @@ fn skinned_pipelines(
     format: wgpu::TextureFormat,
 ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
     let buffers = [
-        crate::model::Vertex::desc(),
-        crate::ent::EntityUniforms::desc(),
-        crate::skeleton::SkinVertex::desc(),
+        Some(crate::model::Vertex::desc()),
+        Some(crate::ent::EntityUniforms::desc()),
+        Some(crate::skeleton::SkinVertex::desc()),
     ];
     let primitive = wgpu::PrimitiveState {
         topology: wgpu::PrimitiveTopology::TriangleList,

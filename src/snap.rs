@@ -103,7 +103,13 @@ pub fn save(device: &wgpu::Device, p: Pending) {
         eprintln!("snap: poll failed for {}", p.path);
         return;
     }
-    let data = slice.get_mapped_range();
+    let data = match slice.get_mapped_range() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("snap: map failed for {}: {e}", p.path);
+            return;
+        }
+    };
     let mut img = image::RgbaImage::new(p.width, p.height);
     for y in 0..p.height {
         let row = &data[(y * p.padded_row) as usize..][..(p.width * 4) as usize];

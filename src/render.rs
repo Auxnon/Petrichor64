@@ -634,7 +634,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     if let Some(p) = snap {
         crate::snap::save(&gfx.device, p);
     }
-    output.present();
+    gfx.queue.present(output);
 
     DrawState::Success
 }
