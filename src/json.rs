@@ -5,8 +5,8 @@
 //! object with stringified keys. Decoded arrays are built with `push` so `#t`
 //! works, and a JSON `null` inside an array still occupies its slot.
 
-use silt_lua::gc_arena::Mutation;
 use serde_json::{Map, Number, Value as Json};
+use silt_lua::gc_arena::Mutation;
 use silt_lua::{prelude::Value, VM};
 
 /// Deep enough for any sane payload, shallow enough to stop a cyclic table.

@@ -76,9 +76,16 @@ pub fn tile_box(ix: i32, iy: i32, iz: i32) -> Collider {
 /// always points away from `b`, toward where `a` should move).
 pub fn test(a: &Collider, b: &Collider) -> Option<Hit> {
     match (a, b) {
-        (Collider::Box { center: ac, half: ah }, Collider::Box { center: bc, half: bh }) => {
-            box_box(*ac, *ah, *bc, *bh)
-        }
+        (
+            Collider::Box {
+                center: ac,
+                half: ah,
+            },
+            Collider::Box {
+                center: bc,
+                half: bh,
+            },
+        ) => box_box(*ac, *ah, *bc, *bh),
         (
             Collider::Cyl {
                 center: ac,
@@ -91,10 +98,28 @@ pub fn test(a: &Collider, b: &Collider) -> Option<Hit> {
                 half_height: bhh,
             },
         ) => cyl_cyl(*ac, *ar, *ahh, *bc, *br, *bhh),
-        (Collider::Cyl { center: ac, radius: ar, half_height: ahh }, Collider::Box { center: bc, half: bh }) => {
-            cyl_box(*ac, *ar, *ahh, *bc, *bh)
-        }
-        (Collider::Box { center: ac, half: ah }, Collider::Cyl { center: bc, radius: br, half_height: bhh }) => {
+        (
+            Collider::Cyl {
+                center: ac,
+                radius: ar,
+                half_height: ahh,
+            },
+            Collider::Box {
+                center: bc,
+                half: bh,
+            },
+        ) => cyl_box(*ac, *ar, *ahh, *bc, *bh),
+        (
+            Collider::Box {
+                center: ac,
+                half: ah,
+            },
+            Collider::Cyl {
+                center: bc,
+                radius: br,
+                half_height: bhh,
+            },
+        ) => {
             // Reuse cyl_box with the arguments swapped, then flip the normal
             // back so it still points away from `b` (the box here).
             cyl_box(*bc, *br, *bhh, *ac, *ah).map(|h| Hit {
@@ -272,7 +297,11 @@ pub fn test_grid(
     for chunk in grid.chunks.values() {
         // Tier 2: chunk AABB reject, in local space — cheap before touching
         // any cell data.
-        let cmin = Vec3::new(chunk.pos[0] as f32, chunk.pos[1] as f32, chunk.pos[2] as f32) * TILE_SIZE;
+        let cmin = Vec3::new(
+            chunk.pos[0] as f32,
+            chunk.pos[1] as f32,
+            chunk.pos[2] as f32,
+        ) * TILE_SIZE;
         let cmax = cmin + Vec3::splat(chunk_extent);
         if lqmax.x < cmin.x
             || lqmin.x > cmax.x
@@ -336,8 +365,14 @@ mod tests {
 
     #[test]
     fn separated_boxes_do_not_hit() {
-        let a = Collider::Box { center: Vec3::ZERO, half: Vec3::splat(1.) };
-        let b = Collider::Box { center: Vec3::new(5., 0., 0.), half: Vec3::splat(1.) };
+        let a = Collider::Box {
+            center: Vec3::ZERO,
+            half: Vec3::splat(1.),
+        };
+        let b = Collider::Box {
+            center: Vec3::new(5., 0., 0.),
+            half: Vec3::splat(1.),
+        };
         assert_eq!(test(&a, &b), None);
     }
 
@@ -345,8 +380,14 @@ mod tests {
     fn overlapping_boxes_push_along_least_overlap_axis() {
         // a is a 2x2x2 box at origin, b is a 2x2x2 box overlapping mostly on X
         // (small overlap) but fully on Y/Z (large overlap) — X should win.
-        let a = Collider::Box { center: Vec3::ZERO, half: Vec3::splat(1.) };
-        let b = Collider::Box { center: Vec3::new(1.8, 0., 0.), half: Vec3::splat(1.) };
+        let a = Collider::Box {
+            center: Vec3::ZERO,
+            half: Vec3::splat(1.),
+        };
+        let b = Collider::Box {
+            center: Vec3::new(1.8, 0., 0.),
+            half: Vec3::splat(1.),
+        };
         let hit = test(&a, &b).expect("must overlap");
         approx(hit.normal, Vec3::new(-1., 0., 0.));
         assert!((hit.depth - 0.2).abs() < 1e-4, "depth {}", hit.depth);
@@ -356,22 +397,40 @@ mod tests {
     fn box_box_normal_points_away_from_b() {
         // a sits to the left of b — pushing a "away from b" means further
         // left (-X), not toward b.
-        let a = Collider::Box { center: Vec3::new(-1.8, 0., 0.), half: Vec3::splat(1.) };
-        let b = Collider::Box { center: Vec3::ZERO, half: Vec3::splat(1.) };
+        let a = Collider::Box {
+            center: Vec3::new(-1.8, 0., 0.),
+            half: Vec3::splat(1.),
+        };
+        let b = Collider::Box {
+            center: Vec3::ZERO,
+            half: Vec3::splat(1.),
+        };
         let hit = test(&a, &b).expect("must overlap");
         approx(hit.normal, Vec3::new(-1., 0., 0.));
     }
 
     #[test]
     fn cylinders_push_radially_and_ignore_far_z() {
-        let a = Collider::Cyl { center: Vec3::new(0., 0., 0.), radius: 1., half_height: 1. };
-        let b = Collider::Cyl { center: Vec3::new(1.5, 0., 0.), radius: 1., half_height: 1. };
+        let a = Collider::Cyl {
+            center: Vec3::new(0., 0., 0.),
+            radius: 1.,
+            half_height: 1.,
+        };
+        let b = Collider::Cyl {
+            center: Vec3::new(1.5, 0., 0.),
+            radius: 1.,
+            half_height: 1.,
+        };
         let hit = test(&a, &b).expect("must overlap");
         approx(hit.normal, Vec3::new(-1., 0., 0.));
         assert!((hit.depth - 0.5).abs() < 1e-4);
 
         // Same XY, but far enough apart on Z that the ranges don't overlap.
-        let c = Collider::Cyl { center: Vec3::new(0., 0., 10.), radius: 1., half_height: 1. };
+        let c = Collider::Cyl {
+            center: Vec3::new(0., 0., 10.),
+            radius: 1.,
+            half_height: 1.,
+        };
         assert_eq!(test(&a, &c), None);
     }
 
@@ -379,8 +438,15 @@ mod tests {
     fn cylinder_vs_box_corner_gives_true_contact_normal() {
         // Box at origin, half-extent 1 (spans -1..1). Cylinder centered
         // beyond the box's corner (1,1), radius large enough to reach it.
-        let cyl = Collider::Cyl { center: Vec3::new(2., 2., 0.), radius: 1.6, half_height: 1. };
-        let bx = Collider::Box { center: Vec3::ZERO, half: Vec3::splat(1.) };
+        let cyl = Collider::Cyl {
+            center: Vec3::new(2., 2., 0.),
+            radius: 1.6,
+            half_height: 1.,
+        };
+        let bx = Collider::Box {
+            center: Vec3::ZERO,
+            half: Vec3::splat(1.),
+        };
         let hit = test(&cyl, &bx).expect("must overlap the corner");
         // Closest point is the box corner (1,1,0); normal should point
         // diagonally away from it, not straight along an axis.
@@ -389,8 +455,15 @@ mod tests {
 
     #[test]
     fn cyl_box_normal_direction_is_consistent_regardless_of_argument_order() {
-        let cyl = Collider::Cyl { center: Vec3::new(1.5, 0., 0.), radius: 1., half_height: 1. };
-        let bx = Collider::Box { center: Vec3::ZERO, half: Vec3::splat(1.) };
+        let cyl = Collider::Cyl {
+            center: Vec3::new(1.5, 0., 0.),
+            radius: 1.,
+            half_height: 1.,
+        };
+        let bx = Collider::Box {
+            center: Vec3::ZERO,
+            half: Vec3::splat(1.),
+        };
         let cyl_first = test(&cyl, &bx).expect("overlap");
         let box_first = test(&bx, &cyl).expect("overlap");
         // box_first's normal should point away from the cylinder, i.e. the
@@ -429,9 +502,9 @@ mod tests {
     fn test_grid_rotates_the_normal_back_to_world_space() {
         let mut g = crate::tile_grid::TileGrid::new();
         g.set_tile("wall".to_string(), 0, 0, 0, 0); // local tile center (8,8,8), half 8
-        // Grid rotated 90 degrees around Z and moved to world (100,0,0).
-        let transform =
-            Mat4::from_translation(Vec3::new(100., 0., 0.)) * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+                                                    // Grid rotated 90 degrees around Z and moved to world (100,0,0).
+        let transform = Mat4::from_translation(Vec3::new(100., 0., 0.))
+            * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
         // A query that, in the grid's local space, sits to the tile's -X side
         // (local center (2,8,8), half 2) — world center is that local point
         // carried through `transform`.

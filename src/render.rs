@@ -203,9 +203,11 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
         .layer_order()
         .into_iter()
         .partition(|id| core.bundle_manager.is_front(*id));
-    let has_front = front_order
-        .iter()
-        .any(|id| core.instance_buffers.get(id).map_or(false, |b| !b.is_empty()));
+    let has_front = front_order.iter().any(|id| {
+        core.instance_buffers
+            .get(id)
+            .map_or(false, |b| !b.is_empty())
+    });
     // shdw{size=} may have asked for a new map size; rebuild it before borrowing gfx
     let shadow_size = core.gfx.set_shadow_size(core.global.shadow_size);
     let gfx = &core.gfx;
@@ -366,8 +368,7 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
                     for (model, instance_buffer, size, palettes) in batches.iter() {
                         shadow_pass.set_vertex_buffer(0, model.vertex_buf.slice(..));
                         shadow_pass.set_vertex_buffer(1, instance_buffer.slice(..));
-                        shadow_pass
-                            .set_index_buffer(model.index_buf.slice(..), model.index_format);
+                        shadow_pass.set_index_buffer(model.index_buf.slice(..), model.index_format);
                         match (model.skin.as_ref(), palettes) {
                             (Some(skin), Some(palettes)) => {
                                 // one draw per instance, each with its own palette
@@ -376,12 +377,20 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
                                 for i in 0..*size as u32 {
                                     let offset = i * crate::skeleton::PALETTE_STRIDE as u32;
                                     shadow_pass.set_bind_group(3, palettes, &[offset]);
-                                    shadow_pass.draw_indexed(0..model.index_count as u32, 0, i..i + 1);
+                                    shadow_pass.draw_indexed(
+                                        0..model.index_count as u32,
+                                        0,
+                                        i..i + 1,
+                                    );
                                 }
                                 shadow_pass.set_pipeline(&gfx.shadow_pipeline);
                             }
                             _ => {
-                                shadow_pass.draw_indexed(0..model.index_count as u32, 0, 0..*size as _);
+                                shadow_pass.draw_indexed(
+                                    0..model.index_count as u32,
+                                    0,
+                                    0..*size as _,
+                                );
                             }
                         }
                     }
@@ -622,7 +631,10 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // otherwise the scene texture.
     #[cfg(not(target_arch = "wasm32"))]
     let snap = crate::snap::wanted(core.global.iteration).map(|path| {
-        let src = if final_texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+        let src = if final_texture
+            .usage()
+            .contains(wgpu::TextureUsages::COPY_SRC)
+        {
             final_texture
         } else {
             &gfx.post.post_texture

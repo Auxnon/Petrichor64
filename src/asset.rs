@@ -159,19 +159,22 @@ pub async fn unpack(
             return None;
         }
     };
-    let map =
-        match crate::file_util::unpack_and_walk(&mut archive, vec!["assets", "scripts", "sounds"], loggy)
-            .await
-        {
-            Ok(a) => a,
-            Err(e) => {
-                loggy.log(
-                    LogType::ConfigError,
-                    &format!("failed to unpack {} -> {}", name, e),
-                );
-                return None;
-            }
-        };
+    let map = match crate::file_util::unpack_and_walk(
+        &mut archive,
+        vec!["assets", "scripts", "sounds"],
+        loggy,
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            loggy.log(
+                LogType::ConfigError,
+                &format!("failed to unpack {} -> {}", name, e),
+            );
+            return None;
+        }
+    };
 
     let mut sources: SourceMap = HashMap::new();
     #[cfg(feature = "headed")]
@@ -181,7 +184,13 @@ pub async fn unpack(
     if let Some(dir) = map.get("assets") {
         for (item_name, item_buffer) in dir {
             if item_name.ends_with(".glb") || item_name.ends_with(".gltf") {
-                register_skeleton_source(&model_manager.rig, item_name, "", Some(item_buffer.as_slice()), loggy);
+                register_skeleton_source(
+                    &model_manager.rig,
+                    item_name,
+                    "",
+                    Some(item_buffer.as_slice()),
+                    loggy,
+                );
             }
         }
     }
@@ -514,7 +523,10 @@ pub fn bundle_output_name(name: Option<&str>, path: &Path) -> String {
         Some(n) if n.contains('.') => n.to_string(),
         Some(n) => format!("{}.game.png", n),
         None => {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
             format!("{}.game.png", stem)
         }
     }
@@ -757,10 +769,7 @@ pub fn get_asset_items(
 /// optional, so a missing one is not an error — it just yields an empty list.
 pub fn get_sound_items(current_path: &Path) -> Vec<PathBuf> {
     match read_dir(current_path.join("sounds")) {
-        Ok(dir) => dir
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .collect(),
+        Ok(dir) => dir.filter_map(Result::ok).map(|e| e.path()).collect(),
         Err(_) => Vec::new(),
     }
 }
@@ -855,7 +864,12 @@ pub fn load_sounds_from_dir(
             Some((pcm, rate)) => {
                 loggy.log(
                     LogType::Config,
-                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
+                    &format!(
+                        "loaded sound '{}' ({} samples @ {}Hz)",
+                        stem,
+                        pcm.len(),
+                        rate
+                    ),
                 );
                 let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
             }
@@ -886,7 +900,12 @@ pub fn load_sounds_from_buffers(
             Some((pcm, rate)) => {
                 loggy.log(
                     LogType::Config,
-                    &format!("loaded sound '{}' ({} samples @ {}Hz)", stem, pcm.len(), rate),
+                    &format!(
+                        "loaded sound '{}' ({} samples @ {}Hz)",
+                        stem,
+                        pcm.len(),
+                        rate
+                    ),
                 );
                 let _ = singer.send(crate::sound::SoundCommand::LoadSample(stem, pcm, rate));
             }
@@ -971,7 +990,13 @@ pub fn walk_files<'a>(
     #[cfg(not(feature = "headed"))]
     for (name, ext, path, buffer) in sources.values() {
         if *ext == "glb" || *ext == "gltf" {
-            register_skeleton_source(&model_manager.rig, name, path, buffer.map(|b| b.as_slice()), loggy);
+            register_skeleton_source(
+                &model_manager.rig,
+                name,
+                path,
+                buffer.map(|b| b.as_slice()),
+                loggy,
+            );
         }
     }
 
@@ -1191,7 +1216,13 @@ fn parse_assets<'a>(
                     ),
                 },
                 // No GPU: no mesh, but still register the skeleton.
-                _ => register_skeleton_source(&model_manager.rig, file_name, path, buffer.map(|b| b.as_slice()), loggy),
+                _ => register_skeleton_source(
+                    &model_manager.rig,
+                    file_name,
+                    path,
+                    buffer.map(|b| b.as_slice()),
+                    loggy,
+                ),
             };
         } else if ext == "png" {
             match device {

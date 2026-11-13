@@ -74,7 +74,10 @@ fn is_game_dir(dir: &Path) -> bool {
 /// checkout chor was built from (covers `cargo install` from a local path).
 fn web_root_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from("web/dist")];
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
         candidates.push(exe_dir.join("web"));
         candidates.push(exe_dir.join("../../web/dist"));
     }
@@ -85,7 +88,9 @@ fn web_root_candidates() -> Vec<PathBuf> {
 /// The web build to serve a game on: `--root`, then `$CHOR_WEB`, then the
 /// embedded copy (always the same version as this chor), then disk.
 fn find_web(root: Option<&str>) -> Result<Web, String> {
-    let explicit = root.map(PathBuf::from).or_else(|| std::env::var_os("CHOR_WEB").map(PathBuf::from));
+    let explicit = root
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("CHOR_WEB").map(PathBuf::from));
     if let Some(dir) = explicit {
         let dir = std::fs::canonicalize(&dir).map_err(|e| format!("'{}': {}", dir.display(), e))?;
         return Ok(Web::Dir(dir));
@@ -96,9 +101,14 @@ fn find_web(root: Option<&str>) -> Result<Web, String> {
     #[allow(unreachable_code)]
     let candidates = web_root_candidates();
     if let Some(found) = candidates.iter().find(|c| c.join("index.html").is_file()) {
-        return std::fs::canonicalize(found).map(Web::Dir).map_err(|e| e.to_string());
+        return std::fs::canonicalize(found)
+            .map(Web::Dir)
+            .map_err(|e| e.to_string());
     }
-    let tried: Vec<String> = candidates.iter().map(|c| format!("  {}", c.display())).collect();
+    let tried: Vec<String> = candidates
+        .iter()
+        .map(|c| format!("  {}", c.display()))
+        .collect();
     Err(format!(
         "no built web dir found for this game. Looked in:\n{}\n\
          build one with `just web-build` in the engine repo, set CHOR_WEB, pass --root <dir>,\n\
@@ -119,7 +129,11 @@ pub fn run(path: &str, root: Option<&str>, port: u16, lan: bool) -> Result<(), S
         let web = find_web(root)?;
         let out = std::env::temp_dir().join(format!("chor-web-{}.game.png", port));
         let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-        let game = Game { dir: path, out: Mutex::new(out), rt };
+        let game = Game {
+            dir: path,
+            out: Mutex::new(out),
+            rt,
+        };
         // Pack once up front so a broken game fails here, not in the browser.
         game.pack()?;
         (web, Some(std::sync::Arc::new(game)))
@@ -188,7 +202,13 @@ fn handle(mut stream: TcpStream, web: &Web, game: Option<&Game>) -> std::io::Res
     let target = parts.next().unwrap_or("/");
     let head = method == "HEAD";
     if method != "GET" && !head {
-        return respond(&mut stream, "405 Method Not Allowed", "text/plain", b"method not allowed", head);
+        return respond(
+            &mut stream,
+            "405 Method Not Allowed",
+            "text/plain",
+            b"method not allowed",
+            head,
+        );
     }
 
     if let Some(game) = game {
@@ -197,7 +217,13 @@ fn handle(mut stream: TcpStream, web: &Web, game: Option<&Game>) -> std::io::Res
                 Ok(body) => respond(&mut stream, "200 OK", "image/png", &body, head),
                 Err(e) => {
                     eprintln!("pack failed: {}", e);
-                    respond(&mut stream, "500 Internal Server Error", "text/plain", e.as_bytes(), head)
+                    respond(
+                        &mut stream,
+                        "500 Internal Server Error",
+                        "text/plain",
+                        e.as_bytes(),
+                        head,
+                    )
                 }
             };
         }
@@ -207,16 +233,34 @@ fn handle(mut stream: TcpStream, web: &Web, game: Option<&Game>) -> std::io::Res
         Web::Dir(root) => root,
         #[cfg(feature = "web-embed")]
         Web::Embedded => {
-            let path = target.split(['?', '#']).next().unwrap_or("/").trim_start_matches('/');
+            let path = target
+                .split(['?', '#'])
+                .next()
+                .unwrap_or("/")
+                .trim_start_matches('/');
             let path = if path.is_empty() { "index.html" } else { path };
             return match embedded::FILES.iter().find(|(name, _)| *name == path) {
-                Some((name, gz)) => send(&mut stream, "200 OK", mime(Path::new(name)), gz, head, true),
-                None => respond(&mut stream, "404 Not Found", "text/plain", b"not found", head),
+                Some((name, gz)) => {
+                    send(&mut stream, "200 OK", mime(Path::new(name)), gz, head, true)
+                }
+                None => respond(
+                    &mut stream,
+                    "404 Not Found",
+                    "text/plain",
+                    b"not found",
+                    head,
+                ),
             };
         }
     };
     let Some(mut path) = resolve(root, target) else {
-        return respond(&mut stream, "403 Forbidden", "text/plain", b"forbidden", head);
+        return respond(
+            &mut stream,
+            "403 Forbidden",
+            "text/plain",
+            b"forbidden",
+            head,
+        );
     };
     if path.is_dir() {
         path.push("index.html");
@@ -225,7 +269,13 @@ fn handle(mut stream: TcpStream, web: &Web, game: Option<&Game>) -> std::io::Res
         Ok(body) => respond(&mut stream, "200 OK", mime(&path), &body, head),
         // A real 404, not an index.html fallback: the engine probes
         // /game.game.png and falls back to its embedded bundle when it's missing.
-        Err(_) => respond(&mut stream, "404 Not Found", "text/plain", b"not found", head),
+        Err(_) => respond(
+            &mut stream,
+            "404 Not Found",
+            "text/plain",
+            b"not found",
+            head,
+        ),
     }
 }
 
@@ -302,7 +352,11 @@ fn send(
     head: bool,
     gzip: bool,
 ) -> std::io::Result<()> {
-    let encoding = if gzip { "Content-Encoding: gzip\r\n" } else { "" };
+    let encoding = if gzip {
+        "Content-Encoding: gzip\r\n"
+    } else {
+        ""
+    };
     let header = format!(
         "HTTP/1.1 {status}\r\n\
          Content-Type: {content_type}\r\n\

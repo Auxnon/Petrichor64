@@ -277,13 +277,18 @@ impl Filter {
         self.sr = sample_rate;
         self.to_cutoff = cutoff.max(10.0);
         // Sweep from the current cutoff (or start there if it was inactive).
-        self.from_cutoff = if self.active { self.from_cutoff } else { self.to_cutoff };
+        self.from_cutoff = if self.active {
+            self.from_cutoff
+        } else {
+            self.to_cutoff
+        };
         if secs > 0.0 {
             self.sweep = Crossfade::new(secs, sample_rate);
         } else {
             self.from_cutoff = self.to_cutoff;
             self.sweep = Crossfade::default();
-            self.biquad.retune_kind(kind, self.to_cutoff, self.q, sample_rate);
+            self.biquad
+                .retune_kind(kind, self.to_cutoff, self.q, sample_rate);
         }
         self.active = true;
     }

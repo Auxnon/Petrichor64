@@ -276,7 +276,14 @@ impl UserData for LuaImg {
                             limg.image.height() * scale,
                             image::imageops::FilterType::Nearest,
                         );
-                        direct_image(&mut this.image, &big, numop(x), numop(y), this.width, this.height);
+                        direct_image(
+                            &mut this.image,
+                            &big,
+                            numop(x),
+                            numop(y),
+                            this.width,
+                            this.height,
+                        );
                     } else {
                         direct_image(
                             &mut this.image,

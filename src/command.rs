@@ -1,13 +1,13 @@
-#[cfg(feature = "silt")]
-#[allow(unused_imports)]
-use crate::silt_str::{lstr, TableStr};
-use crate::root::Core;
-#[cfg(feature = "audio")]
-use crate::sound::{Envelope, Instrument, Note, Sequence, SoundCommand, Step, WaveType};
 #[cfg(feature = "audio")]
 use crate::fx::{DriveShape, FilterKind};
 #[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
+use crate::root::Core;
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
+#[cfg(feature = "audio")]
+use crate::sound::{Envelope, Instrument, Note, Sequence, SoundCommand, Step, WaveType};
 use crate::{
     bundle::{BundleMutations, BundleResources},
     error::P64Error,
@@ -195,10 +195,8 @@ fn run_con_sys_single(
         }
         "overlay" => {
             if segments.len() < 2 {
-                core.loggy.log(
-                    LogType::Config,
-                    "usage: overlay <app path> | overlay off",
-                );
+                core.loggy
+                    .log(LogType::Config, "usage: overlay <app path> | overlay off");
             } else if segments[1] == "off" || segments[1] == "close" {
                 let n = close_overlays(core);
                 core.loggy
@@ -348,10 +346,8 @@ fn run_con_sys_single(
         // wrapping this whole function): `pwd | copy` logs the path and puts
         // it straight on the clipboard.
         "pwd" => {
-            core.loggy.log(
-                LogType::Config,
-                main_bundle.get_directory().unwrap_or(""),
-            );
+            core.loggy
+                .log(LogType::Config, main_bundle.get_directory().unwrap_or(""));
         }
         // Clipboard write. Takes its text as trailing args, or — the point of
         // this command existing — whatever the previous pipeline stage logged:
@@ -947,7 +943,12 @@ function dtile( x, y, z) end"
             }
             lua_err!(pitcher.send((
                 bundle_id,
-                MainCommmand::Tileset(crate::tileset::TilesetDef { name, tiles, look, pieces })
+                MainCommmand::Tileset(crate::tileset::TilesetDef {
+                    name,
+                    tiles,
+                    look,
+                    pieces
+                })
             )));
             Ok(())
         },
@@ -979,10 +980,13 @@ function istile(x, y, z) end"
         "gtile",
         move |_, mc, (x, y, z): (i32, i32, i32)| {
             let t = World::get_tile(&sender, x, y, z);
-            Ok(lstr(mc, match t {
-                Some(s) => s.0,
-                None => "".to_string(),
-            }))
+            Ok(lstr(
+                mc,
+                match t {
+                    Some(s) => s.0,
+                    None => "".to_string(),
+                },
+            ))
         },
         "Return the asset name of the tile at a given location",
         "
@@ -1227,7 +1231,6 @@ function make(asset, x, y, z, scale) end"
         Ok(Value::Nil)
     });
 
-
     let pitcher = main_pitcher.clone();
     lua!(
         "lot",
@@ -1245,7 +1248,10 @@ function make(asset, x, y, z, scale) end"
                     // shared entity before anything draws it. Waiting cost a
                     // frame per call (a model editor parenting a handle per
                     // vertex stalled for seconds).
-                    if pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id))).is_err() {
+                    if pitcher
+                        .send((bundle_id, MainCommmand::Group(parent_id, child_id)))
+                        .is_err()
+                    {
                         return Err(static_err("Unable to group entity"));
                     }
                 } else {
@@ -1825,12 +1831,7 @@ function bpm(tempo) end"
                 let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
                 // Beats go to the audio thread unconverted: it owns the tempo and the
                 // frame counter, so a bpm change can't race a scheduled note.
-                let _ = sing_cue.send(SoundCommand::PlayAt(
-                    note,
-                    channel,
-                    at.unwrap_or(0.),
-                    grid,
-                ));
+                let _ = sing_cue.send(SoundCommand::PlayAt(note, channel, at.unwrap_or(0.), grid));
             }
             Ok(())
         },
@@ -2428,12 +2429,10 @@ function mic(id, secs) end"
                         });
                     }
                     Some(ref a) if a == "open" => {
-                        return Ok(
-                            match crate::midi::open(sing.clone(), name.as_deref()) {
-                                Ok(p) => lstr(mc, p),
-                                Err(_) => Value::Nil,
-                            },
-                        );
+                        return Ok(match crate::midi::open(sing.clone(), name.as_deref()) {
+                            Ok(p) => lstr(mc, p),
+                            Err(_) => Value::Nil,
+                        });
                     }
                     Some(ref a) if a == "close" => {
                         crate::midi::close();
@@ -2734,7 +2733,9 @@ function nimg(w, h) end"
 
     let pitcher = main_pitcher.clone();
     let tiles = world_sender.clone();
-    let tile_named = std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::<String>::new()));
+    let tile_named = std::rc::Rc::new(std::cell::RefCell::new(
+        std::collections::HashSet::<String>::new(),
+    ));
     lua!(
             "mod",
             move |vm,mc, (asset, tval): (String, Value)| {
@@ -3062,8 +3063,8 @@ function unwrap(mesh, opts) end"
     // existing model. The heavy lifting is in gltf_io.rs; this only moves tables.
     // It reads and writes the cart's files, so it's `policy.files`'s, like `io`.
     if policy.files.is_some() {
-    let pitcher = main_pitcher.clone();
-    lua!(
+        let pitcher = main_pitcher.clone();
+        lua!(
         "glb",
         move |vm, mc, (path, data): (String, Value)| {
             let opts = match &data {
@@ -3347,64 +3348,64 @@ function log(f) end"
     // `load_apps: false`: a cart can't bring up other carts, as children or
     // overlaid. (Reloading itself, `init()`, is a separate native and stays.)
     if policy.load_apps {
-    let pitcher = main_pitcher.clone();
-    lua!(
-        "sub",
-        move |_, _, str: String| {
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, false))));
-            Ok(())
-        },
-        "Load a sub bundle",
-        "
+        let pitcher = main_pitcher.clone();
+        lua!(
+            "sub",
+            move |_, _, str: String| {
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, false))));
+                Ok(())
+            },
+            "Load a sub bundle",
+            "
 ---@param str string
 function sub(str) end"
-    );
+        );
 
-    let pitcher = main_pitcher.clone();
-    lua!(
-        "over",
-        move |_, _, str: String| {
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, true))));
-            Ok(())
-        },
-        "load an overlaying bundle",
-        "   
+        let pitcher = main_pitcher.clone();
+        lua!(
+            "over",
+            move |_, _, str: String| {
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Subload(str, true))));
+                Ok(())
+            },
+            "load an overlaying bundle",
+            "   
 ---@param str string
 function over(str) end"
-    );
+        );
     }
 
     // `network: false`: no sockets, so `conn` is nil.
     if policy.network {
-    lua!(
-        "conn",
-        move |vm, mc, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
-            #[cfg(any(feature = "ws", feature = "online_capable"))]
-            {
-                return match crate::lua_connection::LuaConnection::open(
-                    &addr,
-                    udp.unwrap_or(false),
-                    server.unwrap_or(false),
-                ) {
-                    Ok(c) => Ok(vm.create_userdata(mc, c)),
-                    Err(er) => Err(LuaError::Custom(format!("conn fail, {}", er))),
-                };
-            }
-            // No transport compiled in: nil, as before, so `if socket then` holds.
-            #[cfg(not(any(feature = "ws", feature = "online_capable")))]
-            {
-                let _ = (vm, mc, addr, udp, server);
-                Ok(Value::Nil)
-            }
-        },
-        "Open a connection: ws://, wss:// or /path for a websocket, else ip:port tcp",
-        "
+        lua!(
+            "conn",
+            move |vm, mc, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
+                #[cfg(any(feature = "ws", feature = "online_capable"))]
+                {
+                    return match crate::lua_connection::LuaConnection::open(
+                        &addr,
+                        udp.unwrap_or(false),
+                        server.unwrap_or(false),
+                    ) {
+                        Ok(c) => Ok(vm.create_userdata(mc, c)),
+                        Err(er) => Err(LuaError::Custom(format!("conn fail, {}", er))),
+                    };
+                }
+                // No transport compiled in: nil, as before, so `if socket then` holds.
+                #[cfg(not(any(feature = "ws", feature = "online_capable")))]
+                {
+                    let _ = (vm, mc, addr, udp, server);
+                    Ok(Value::Nil)
+                }
+            },
+            "Open a connection: ws://, wss:// or /path for a websocket, else ip:port tcp",
+            "
 --- @param addr string
 --- @param udp? boolean
 --- @param server? boolean
 --- @return connection
 function conn(addr,udp,server) end"
-    );
+        );
     }
 
     let pitcher = main_pitcher.clone();
@@ -3442,7 +3443,10 @@ function quit(u) end"
                     t.set_str(
                         mc,
                         k,
-                        vm.table_from_array(mc, [lstr(mc, desc.as_str()), lstr(mc, examp.as_str())]),
+                        vm.table_from_array(
+                            mc,
+                            [lstr(mc, desc.as_str()), lstr(mc, examp.as_str())],
+                        ),
                     );
                 } else {
                     t.set_str(mc, k, lstr(mc, desc.as_str()));
@@ -3460,76 +3464,76 @@ function help() end"
     // `files: None`: no `io` table at all. Its paths resolve on the main thread
     // against `Policy::files_dir` (the cart's folder, or the policy's root).
     if policy.files.is_some() {
-    let pitcher = main_pitcher.clone();
-    lua_lib!(
-        "get",
-        move |_, mc, file: String| {
-            let (tx, rx) = sync_channel::<Option<String>>(0);
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
-            match rx.recv() {
-                Ok(o) => match o {
-                    Some(s) => Ok(lstr(mc, s)),
-                    None => Ok(Value::Nil),
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "get",
+            move |_, mc, file: String| {
+                let (tx, rx) = sync_channel::<Option<String>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Read(file, tx))));
+                match rx.recv() {
+                    Ok(o) => match o {
+                        Some(s) => Ok(lstr(mc, s)),
+                        None => Ok(Value::Nil),
+                    },
+                    _ => Ok(Value::Nil),
+                }
+            },
+            "load a file relative to the game directory",
+            "
+---@return table
+function get() end",
+            &mut io
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "set",
+            move |_, _, (file, contents): (String, String)| {
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::Write(file, contents, tx))));
+                match rx.recv() {
+                    Ok(o) => Ok(Value::Bool(o)),
+                    Err(_) => Ok(Value::Bool(false)),
+                }
+            },
+            "load a file relative to the game directory",
+            "
+---@return table
+function get() end",
+            &mut io
+        );
+
+        // `clipboard: false`: no `io.copy`.
+        if policy.clipboard {
+            let pitcher = main_pitcher.clone();
+            lua_lib!(
+                "copy",
+                move |_, _, content: String| {
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
+                    Ok(())
                 },
-                _ => Ok(Value::Nil),
-            }
-        },
-        "load a file relative to the game directory",
-        "
----@return table
-function get() end",
-        &mut io
-    );
-
-    let pitcher = main_pitcher.clone();
-    lua_lib!(
-        "set",
-        move |_, _, (file, contents): (String, String)| {
-            let (tx, rx) = sync_channel::<bool>(0);
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Write(file, contents, tx))));
-            match rx.recv() {
-                Ok(o) => Ok(Value::Bool(o)),
-                Err(_) => Ok(Value::Bool(false)),
-            }
-        },
-        "load a file relative to the game directory",
-        "
----@return table
-function get() end",
-        &mut io
-    );
-
-    // `clipboard: false`: no `io.copy`.
-    if policy.clipboard {
-    let pitcher = main_pitcher.clone();
-    lua_lib!(
-        "copy",
-        move |_, _, content: String| {
-            lua_err!(pitcher.send((bundle_id, MainCommmand::Copy(content))));
-            Ok(())
-        },
-        "Copy text to the clipboard",
-        "
+                "Copy text to the clipboard",
+                "
 ---@return table
 function help() end",
-        &mut io
-    );
-    }
+                &mut io
+            );
+        }
 
-    // lua!(
-    //     "test420",
-    //     move |lu, b: Table| {
-    //         crate::packet::table_serial(b);
-    //         Ok(())
-    //     },
-    //     "Test 4/20/2023",
-    //     ""
-    // );
+        // lua!(
+        //     "test420",
+        //     move |lu, b: Table| {
+        //         crate::packet::table_serial(b);
+        //         Ok(())
+        //     },
+        //     "Test 4/20/2023",
+        //     ""
+        // );
 
-    vm_init
-        .globals
-        .borrow_mut(mc_in)
-        .set_str(mc_in, "io", vm_init.wrap_table(mc_in, io));
+        vm_init
+            .globals
+            .borrow_mut(mc_in)
+            .set_str(mc_in, "io", vm_init.wrap_table(mc_in, io));
     }
 
     // The host channel (guide/host.md): strings to and from the app hosting this
@@ -4277,9 +4281,16 @@ pub fn load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false)
-        .block_on()
-        .map(|_id| ())
+    async_load_app(
+        core,
+        game_path_in,
+        payload,
+        bundle_in,
+        bundle_relations,
+        false,
+    )
+    .block_on()
+    .map(|_id| ())
 }
 
 /// Close every overlay and drop what they owned outside the bundle manager.
@@ -4355,8 +4366,10 @@ fn toggle_builtin_overlay(core: &mut Core, dir: &str, missing: &str) {
         return;
     }
     if let Err(e) = load_overlay(core, dir) {
-        core.loggy
-            .log(LogType::ConfigError, &format!("{} overlay failed: {}", dir, e));
+        core.loggy.log(
+            LogType::ConfigError,
+            &format!("{} overlay failed: {}", dir, e),
+        );
     }
 }
 
@@ -4373,7 +4386,9 @@ pub fn load_overlay(core: &mut Core, path: &str) -> Result<u8, P64Error> {
     // gets none. This is the one door (console `overlay`/`edit`, ctrl+P/M,
     // `--overlay`), so the check lives here.
     if !(core.policy.console && core.policy.load_apps) {
-        return Err(P64Error::PolicyDenied("overlays need console and load_apps"));
+        return Err(P64Error::PolicyDenied(
+            "overlays need console and load_apps",
+        ));
     }
     // The id comes back from the load. It used to be predicted by reading the id
     // counter beforehand, which only held while ids were handed out in order and
@@ -5563,7 +5578,10 @@ fn mesh_from_table<'v>(
                     _ => 0,
                 };
                 if n < 1 {
-                    return Some(Err(format!("face {} has index {} (indices start at 1)", i, n)));
+                    return Some(Err(format!(
+                        "face {} has index {} (indices start at 1)",
+                        i, n
+                    )));
                 }
                 idx.push((n - 1) as u32);
                 k += 1;
@@ -6025,7 +6043,13 @@ mod policy_tests {
     }
 
     fn type_of(policy: &Policy, global: &str) -> String {
-        match run(policy, Default::default(), &format!("return type({global})")).0 {
+        match run(
+            policy,
+            Default::default(),
+            &format!("return type({global})"),
+        )
+        .0
+        {
             LuaResponse::String(s) => s,
             other => panic!("type() gave {:?}", other),
         }
@@ -6057,10 +6081,16 @@ mod policy_tests {
 
     #[test]
     fn each_flag_gates_its_own() {
-        let no_clip = Policy { clipboard: false, ..Policy::open() };
+        let no_clip = Policy {
+            clipboard: false,
+            ..Policy::open()
+        };
         assert_eq!(type_of(&no_clip, "io.get"), "function");
         assert_eq!(type_of(&no_clip, "io.copy"), "nil");
-        let no_net = Policy { network: false, ..Policy::open() };
+        let no_net = Policy {
+            network: false,
+            ..Policy::open()
+        };
         assert_eq!(type_of(&no_net, "conn"), "nil");
         assert_eq!(type_of(&no_net, "io"), "table");
     }
@@ -6074,7 +6104,11 @@ mod policy_tests {
             inbox.clone(),
             "host.send('up') local a = host.recv() local b = host.recv() return a .. tostring(b)",
         );
-        assert!(matches!(out, LuaResponse::String(ref s) if s == "hellonil"), "{:?}", out);
+        assert!(
+            matches!(out, LuaResponse::String(ref s) if s == "hellonil"),
+            "{:?}",
+            out
+        );
         assert!(inbox.lock().is_empty());
         assert!(sent
             .iter()
@@ -6101,7 +6135,10 @@ mod policy_tests {
         }
         assert!(MainCommmand::Quit(0).allowed_by(&sandbox));
         assert!(MainCommmand::Reload().allowed_by(&sandbox));
-        let muted = Policy { audio: false, ..Policy::open() };
+        let muted = Policy {
+            audio: false,
+            ..Policy::open()
+        };
         assert!(!MainCommmand::MicRecord(Some(1), 1.0, tx.clone()).allowed_by(&muted));
         assert!(MainCommmand::MicRecord(None, 1.0, tx).allowed_by(&muted));
     }

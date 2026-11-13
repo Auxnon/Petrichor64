@@ -1,11 +1,11 @@
+#[cfg(feature = "headed")]
+use crate::gpu_loss::BufferInit;
 use bytemuck::{Pod, Zeroable};
 use glam::{ivec3, vec4, IVec3, Vec3, Vec4};
 #[cfg(feature = "headed")]
 use glam::{Mat4, Quat};
 use itertools::izip;
 use std::{collections::HashMap, rc::Rc};
-#[cfg(feature = "headed")]
-use crate::gpu_loss::BufferInit;
 #[cfg(feature = "headed")]
 use wgpu::Device;
 
@@ -331,7 +331,6 @@ impl ModelManager {
                         };
 
                         if let Some(indices) = indices_opt {
-
                             let model = Self::build_complex_model(
                                 #[cfg(feature = "headed")]
                                 device,

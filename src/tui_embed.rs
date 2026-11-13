@@ -14,7 +14,11 @@ fn unpacked() -> std::io::Result<PathBuf> {
     let dir = dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
         .join("chor");
-    let path = dir.join(format!("chor-tui-{}{}", TUI_ID, std::env::consts::EXE_SUFFIX));
+    let path = dir.join(format!(
+        "chor-tui-{}{}",
+        TUI_ID,
+        std::env::consts::EXE_SUFFIX
+    ));
     if path.exists() {
         return Ok(path);
     }

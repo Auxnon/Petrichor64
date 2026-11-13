@@ -2,11 +2,7 @@
 #[allow(unused_imports)]
 use crate::silt_str::{lstr, TableStr};
 #[cfg(feature = "silt")]
-use silt_lua::{
-    gc_arena::Mutation,
-    prelude::Table,
-    VM,
-};
+use silt_lua::{gc_arena::Mutation, prelude::Table, VM};
 
 #[cfg(feature = "puc_lua")]
 use mlua::{prelude::LuaError, Table};
@@ -29,7 +25,8 @@ pub enum ValueMap {
 /// the mouse (position, delta, buttons, scroll, unprojected cursor).
 pub const ANALOG_TOUCH: usize = 11;
 /// The analog array's length: the mouse, then the touch slots (`pack_touches`).
-pub const ANALOG_LEN: usize = ANALOG_TOUCH + crate::global::TOUCH_FLOATS * crate::global::TOUCH_SLOTS;
+pub const ANALOG_LEN: usize =
+    ANALOG_TOUCH + crate::global::TOUCH_FLOATS * crate::global::TOUCH_SLOTS;
 
 /// The script side's copy of the pointer (`mus()`, `touches()`): the 13 mouse
 /// values (with last frame's position as px, py), then the touch slots.

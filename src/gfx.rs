@@ -1,16 +1,16 @@
+use crate::host::Request;
 #[cfg(feature = "audio")]
 use crate::sound::{self, SoundCommand};
-use crate::{global::GuiParams, render, texture::TexManager};
 use crate::{ent::EntityUniforms, global::GuiStyle, post::Post, texture::TexTuple};
+use crate::{global::GuiParams, render, texture::TexManager};
 use bytemuck::{Pod, Zeroable};
 use glam::{vec2, vec3, Mat4};
+use std::mem;
 #[cfg(feature = "audio")]
 use std::sync::mpsc::channel;
 use std::sync::Arc;
-use std::mem;
 use wgpu::{util::DeviceExt, BindGroup, Buffer, CompositeAlphaMode, RenderPipeline, Texture};
 use wgpu::{BackendOptions, ExperimentalFeatures, Features, Trace};
-use crate::host::Request;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const MAX_ENTS: u64 = 10000;
@@ -328,7 +328,10 @@ impl<'w> Gfx<'w> {
 
     /// Everything on the device: pipelines, the atlas (from `tex_manager`'s
     /// CPU copy), the scene targets. Returns the gui and sky pipelines for `Gui`.
-    pub fn build(link: GpuLink<'w>, tex_manager: &TexManager) -> (Self, RenderPipeline, RenderPipeline) {
+    pub fn build(
+        link: GpuLink<'w>,
+        tex_manager: &TexManager,
+    ) -> (Self, RenderPipeline, RenderPipeline) {
         let GpuLink {
             device,
             queue,
@@ -549,8 +552,8 @@ impl<'w> Gfx<'w> {
             specs: [0.0, 0.0, 0.0, 0.0],
             light_dir: [0.0, 0.0, -1.0, 0.0],
             light_color: [0.0, 0.0, 0.0, 1.0], // fullbright: color 0 + ambient 1
-            fog_color: [0.0, 0.0, 0.0, 0.0], // fog off
-            amb_sky: [0.0, 0.0, 0.0, 0.0],   // w=0 => flat ambient
+            fog_color: [0.0, 0.0, 0.0, 0.0],   // fog off
+            amb_sky: [0.0, 0.0, 0.0, 0.0],     // w=0 => flat ambient
             amb_ground: [0.0, 0.0, 0.0, 0.0],
             light_pos: [0.0, 0.0, 0.0, 0.0],
             light_shape: [0.0, 0.0, 0.0, 0.0], // shape=0 => sun
@@ -655,7 +658,11 @@ impl<'w> Gfx<'w> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[Some(&main_layout), Some(&entity_layout), Some(&shadow_layout)],
+                bind_group_layouts: &[
+                    Some(&main_layout),
+                    Some(&entity_layout),
+                    Some(&shadow_layout),
+                ],
                 ..Default::default()
             });
 
@@ -726,7 +733,12 @@ impl<'w> Gfx<'w> {
         let (skinned_pipeline, skinned_shadow_pipeline) = skinned_pipelines(
             &device,
             &shader,
-            [&main_layout, &entity_layout, &shadow_layout, &palette_layout],
+            [
+                &main_layout,
+                &entity_layout,
+                &shadow_layout,
+                &palette_layout,
+            ],
             format,
         );
 
@@ -951,7 +963,11 @@ impl<'w> Gfx<'w> {
     }
     /// The gui raster's size for a window of `new_size` physical pixels at
     /// `scale` physical pixels a logical one.
-    pub fn compute_gui_size(gui_params: &GuiParams, new_size: PhysicalSize<u32>, scale: f64) -> (u32, u32) {
+    pub fn compute_gui_size(
+        gui_params: &GuiParams,
+        new_size: PhysicalSize<u32>,
+        scale: f64,
+    ) -> (u32, u32) {
         let fixed = Self::fixed_gui_size(gui_params, new_size);
         if !(gui_params.px > 0.) || !(scale > 0.) {
             return fixed;

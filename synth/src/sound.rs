@@ -8,8 +8,8 @@ use std::{
 
 #[cfg(all(feature = "host-io", not(target_arch = "wasm32")))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use serde::{Deserialize, Serialize};
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
 use crate::fx::{Biquad, Crossfade, Crush, Drive, DriveShape, Echo, Filter, FilterKind, Reverb};
 use crate::vocaloid::{Cluster, Consonant, Formant, FormantBank};
@@ -197,19 +197,59 @@ pub fn record_mic(
     let err_fn = |err| log::warn!("mic stream error: {}", err);
     match config.sample_format() {
         cpal::SampleFormat::F32 => capture::<f32>(
-            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+            &device,
+            &stream_config,
+            channels,
+            target,
+            id,
+            sample_rate,
+            singer,
+            done,
+            err_fn,
         ),
         cpal::SampleFormat::I16 => capture::<i16>(
-            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+            &device,
+            &stream_config,
+            channels,
+            target,
+            id,
+            sample_rate,
+            singer,
+            done,
+            err_fn,
         ),
         cpal::SampleFormat::U16 => capture::<u16>(
-            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+            &device,
+            &stream_config,
+            channels,
+            target,
+            id,
+            sample_rate,
+            singer,
+            done,
+            err_fn,
         ),
         cpal::SampleFormat::I32 => capture::<i32>(
-            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+            &device,
+            &stream_config,
+            channels,
+            target,
+            id,
+            sample_rate,
+            singer,
+            done,
+            err_fn,
         ),
         cpal::SampleFormat::F64 => capture::<f64>(
-            &device, &stream_config, channels, target, id, sample_rate, singer, done, err_fn,
+            &device,
+            &stream_config,
+            channels,
+            target,
+            id,
+            sample_rate,
+            singer,
+            done,
+            err_fn,
         ),
         other => Err(anyhow::anyhow!("unsupported mic sample format {:?}", other)),
     }
@@ -514,7 +554,9 @@ fn make_mixer(
                         }
                     }
                     let beat_at = frame_of(target, frame0, beat0, fpb);
-                    let at = beat_at.saturating_sub(preroll_frames(&note, sample_rate)).max(frames);
+                    let at = beat_at
+                        .saturating_sub(preroll_frames(&note, sample_rate))
+                        .max(frames);
                     let mut note = note;
                     note.preroll = (beat_at - at.min(beat_at)) as f32 / sample_rate;
                     match pending.iter_mut().find(|slot| slot.is_none()) {
@@ -568,7 +610,11 @@ fn make_mixer(
                     // the name bank (normalised, Arc-shared) with its source
                     // sample-rate; a later `smpl(id, name)` binds it into a slot.
                     normalize_pcm(&mut pcm);
-                    let source_rate = if source_rate > 0.0 { source_rate } else { sample_rate };
+                    let source_rate = if source_rate > 0.0 {
+                        source_rate
+                    } else {
+                        sample_rate
+                    };
                     loaded.insert(name, (pcm.into(), source_rate));
                 }
                 SoundCommand::BindSample(id, name, base, env, (from, to)) => {
@@ -875,7 +921,11 @@ fn make_mixer(
                     } else {
                         instr.env.release
                     };
-                    v.env -= if rel > 0.0 { 1.0 / (rel * sample_rate) } else { 1.0 };
+                    v.env -= if rel > 0.0 {
+                        1.0 / (rel * sample_rate)
+                    } else {
+                        1.0
+                    };
                     if v.env <= 0.0 {
                         chan.fading[l] = None;
                     } else {
@@ -917,7 +967,6 @@ fn make_mixer(
                         }
                     }
                 }
-
             }
 
             // Channel effects, in chain order (like a pedal chain): drive and
@@ -1008,7 +1057,13 @@ fn make_mixer(
                                     instrument: v.instrument,
                                     freq: v.freq,
                                     level: v.volume * v.env,
-                                    kind: if v.sung { 2 } else if sample { 1 } else { 0 },
+                                    kind: if v.sung {
+                                        2
+                                    } else if sample {
+                                        1
+                                    } else {
+                                        0
+                                    },
                                     releasing,
                                 });
                             }
@@ -1038,13 +1093,21 @@ where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
     let out_channels = config.channels as usize;
-    let mut next_value = make_mixer(config.sample_rate.0 as f32, audience, Some(SOUND_STATE.clone()));
+    let mut next_value = make_mixer(
+        config.sample_rate.0 as f32,
+        audience,
+        Some(SOUND_STATE.clone()),
+    );
     let err_fn = |err| eprintln!("audio stream error: {}", err);
     // Dev aids for checking sound without ears: `CHOR_WAV=path` records the master
     // bus to a mono WAV, and `CHOR_MUTE=1` sends silence to the device while the
     // mixer (and the recording) runs as normal, so a test needn't play aloud.
-    let tap = std::env::var("CHOR_WAV").ok().map(|p| wav_tap(p, config.sample_rate.0));
-    let mute = std::env::var("CHOR_MUTE").map(|v| v == "1").unwrap_or(false);
+    let tap = std::env::var("CHOR_WAV")
+        .ok()
+        .map(|p| wav_tap(p, config.sample_rate.0));
+    let mute = std::env::var("CHOR_MUTE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let mut block: Vec<f32> = Vec::new();
     let stream = device.build_output_stream(
         config,
@@ -1216,7 +1279,10 @@ impl WebAudioOut {
 
 /// Create the web audio driver + the command sender the engine sends notes on.
 #[cfg(all(feature = "host-io", feature = "web-fallback", target_arch = "wasm32"))]
-pub fn init_web() -> (Result<WebAudioOut, wasm_bindgen::JsValue>, Sender<SoundCommand>) {
+pub fn init_web() -> (
+    Result<WebAudioOut, wasm_bindgen::JsValue>,
+    Sender<SoundCommand>,
+) {
     let (singer, audience) = channel::<SoundCommand>();
     (WebAudioOut::new(audience), singer)
 }
@@ -1296,7 +1362,10 @@ fn start_sung(chan: &mut Channel, voice: &mut Voice, note: &Note, target: &[Form
     let vot = voice.onset.last().map(|k| k.vot).unwrap_or(0.0);
     let lanes = chan.lanes();
     let prev = chan.last_sung.filter(|&pl| {
-        pl < lanes && chan.fading[pl].as_ref().is_some_and(|p| p.sung && p.env > 0.02)
+        pl < lanes
+            && chan.fading[pl]
+                .as_ref()
+                .is_some_and(|p| p.sung && p.env > 0.02)
     });
     // Only a voice still voicing carries on. One that ended on s/t/k is in its
     // burst or closed for it: cutting that off to carry on would chop the
@@ -1313,7 +1382,8 @@ fn start_sung(chan: &mut Channel, voice: &mut Voice, note: &Note, target: &[Form
             };
             voice.phase = p.phase;
             voice.voice_bank = p.voice_bank;
-            voice.voice_bank
+            voice
+                .voice_bank
                 .glide_on(note.glide_from.as_ref(), 0.03, target, glide.max(0.04), f0);
             voice.porta_from = p.cur_freq.max(1.0);
             voice.porta = Crossfade::new((note.duration * 0.3).min(0.04), sr);
@@ -1433,7 +1503,12 @@ fn osc(phase: f32, instr: &Instrument, rng: &mut u32) -> f32 {
 /// One sample of a voice: advances its cursor and returns the raw signal.
 /// Sample instruments resample their PCM by pitch (freq/base_freq) with linear
 /// interpolation; everything else advances phase and runs `osc`.
-fn voice_out(v: &mut Voice, instr: &Instrument, samples: &FxHashMap<usize, Sample>, sr: f32) -> f32 {
+fn voice_out(
+    v: &mut Voice,
+    instr: &Instrument,
+    samples: &FxHashMap<usize, Sample>,
+    sr: f32,
+) -> f32 {
     if let WaveType::Sample(sid) = instr.wave {
         return if let Some(s) = samples.get(&sid) {
             let i = s.start + v.sample_pos as usize;
@@ -1710,9 +1785,7 @@ fn frame_of(beat: f64, frame0: u64, beat0: f64, fpb: f64) -> u64 {
 
 impl Playing {
     fn next_beat(&self) -> f64 {
-        self.start
-            + self.pass as f64 * self.seq.length as f64
-            + self.seq.steps[self.next].at as f64
+        self.start + self.pass as f64 * self.seq.length as f64 + self.seq.steps[self.next].at as f64
     }
     /// The beat this sequence's last pass ends on (only meaningful when counted).
     fn end_beat(&self) -> f64 {
@@ -2124,8 +2197,14 @@ impl Voice {
                         // Close toward the coming stop/fricative: the formants
                         // slide to its locus while the voice dies away, so the
                         // burst lands at the end of a closing vowel.
-                        let secs = self.coda.iter().map(|k| k.secs).sum::<f32>().clamp(0.015, 0.035);
-                        self.voice_bank.glide_on(None, secs, &target, 0.0, self.freq);
+                        let secs = self
+                            .coda
+                            .iter()
+                            .map(|k| k.secs)
+                            .sum::<f32>()
+                            .clamp(0.015, 0.035);
+                        self.voice_bank
+                            .glide_on(None, secs, &target, 0.0, self.freq);
                         self.voice_toward(0.0, secs, sr);
                         self.asp = 0.0;
                         self.remaining = secs;
@@ -2163,7 +2242,11 @@ impl Voice {
     fn advance_env(&mut self, env: &Envelope, sr: f32) {
         match self.stage {
             EnvStage::Attack => {
-                self.env += if env.attack > 0.0 { 1.0 / (env.attack * sr) } else { 1.0 };
+                self.env += if env.attack > 0.0 {
+                    1.0 / (env.attack * sr)
+                } else {
+                    1.0
+                };
                 if self.env >= 1.0 {
                     self.env = 1.0;
                     self.stage = EnvStage::Decay;
@@ -2350,7 +2433,6 @@ fn normalize_pcm(pcm: &mut [f32]) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2434,7 +2516,11 @@ mod tests {
         )
         .expect("scheduled note never sounded");
         // Frame 0 is exactly on the grid, so "next beat" is beat 0 itself.
-        assert!(at < 100, "expected an immediate start on the grid, got {}", at);
+        assert!(
+            at < 100,
+            "expected an immediate start on the grid, got {}",
+            at
+        );
     }
 
     /// A note scheduled for a beat already gone must not be dropped or fire in the
@@ -2479,7 +2565,11 @@ mod tests {
         let mut at = 0.0;
         let mut steps = Vec::new();
         for &b in beats {
-            steps.push(Step { at, len: 0.1, note: Note::new(0, 440.0, 0.0, 1.0) });
+            steps.push(Step {
+                at,
+                len: 0.1,
+                note: Note::new(0, 440.0, 0.0, 1.0),
+            });
             at += b;
         }
         Sequence {
@@ -2497,7 +2587,11 @@ mod tests {
     }
 
     /// Like `onsets`, with commands sent part-way through, at the given frames.
-    fn onsets_with(cmds: Vec<SoundCommand>, mut later: Vec<(usize, SoundCommand)>, n: usize) -> Vec<usize> {
+    fn onsets_with(
+        cmds: Vec<SoundCommand>,
+        mut later: Vec<(usize, SoundCommand)>,
+        n: usize,
+    ) -> Vec<usize> {
         let (tx, rx) = channel::<SoundCommand>();
         for c in cmds {
             tx.send(c).unwrap();
@@ -2547,9 +2641,16 @@ mod tests {
         assert_eq!(s.bpm, 120.0);
         assert_eq!(s.seqs.len(), 1);
         let q = s.seqs[0];
-        assert_eq!((q.id, q.channel, q.pass, q.loops, q.step, q.hits, q.state), (5, 3, 0, 0, 2, 2, 0));
+        assert_eq!(
+            (q.id, q.channel, q.pass, q.loops, q.step, q.hits, q.state),
+            (5, 3, 0, 0, 2, 2, 0)
+        );
         assert!((q.phase - 1.05).abs() < 0.02 && q.length == 2.0, "{:?}", q);
-        assert!(s.voices.iter().any(|v| v.channel == 3 && v.freq == 440.0), "{:?}", s.voices);
+        assert!(
+            s.voices.iter().any(|v| v.channel == 3 && v.freq == 440.0),
+            "{:?}",
+            s.voices
+        );
         assert!(s.peaks[3] > 0.01 && s.peaks[0] == 0.0, "{:?}", s.peaks);
         // Into the second pass: the pass counts and the phase wraps.
         for _ in 0..48000 {
@@ -2568,11 +2669,18 @@ mod tests {
         // 120bpm (24000 frames a beat) to 240 at beat 2.5: beat 3 is half a
         // beat (12000 frames at 240) later.
         let hits = onsets_with(
-            vec![SoundCommand::SetBpm(120.0), SoundCommand::Sequence(seq_of(1, &[1.0], 0, None))],
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::Sequence(seq_of(1, &[1.0], 0, None)),
+            ],
             vec![(60000, SoundCommand::SetBpm(240.0))],
             96000,
         );
-        assert!(near(&hits, &[0, 24000, 48000, 66000, 78000, 90000]), "got {:?}", hits);
+        assert!(
+            near(&hits, &[0, 24000, 48000, 66000, 78000, 90000]),
+            "got {:?}",
+            hits
+        );
     }
 
     /// Slowing down didn't stall the sequence until the run caught up.
@@ -2580,11 +2688,18 @@ mod tests {
     fn slowing_down_carries_on_from_the_beat() {
         // 240bpm to 120 at beat 2.5 (frame 30000): beat 3 is 12000 frames on.
         let hits = onsets_with(
-            vec![SoundCommand::SetBpm(240.0), SoundCommand::Sequence(seq_of(1, &[1.0], 0, None))],
+            vec![
+                SoundCommand::SetBpm(240.0),
+                SoundCommand::Sequence(seq_of(1, &[1.0], 0, None)),
+            ],
             vec![(30000, SoundCommand::SetBpm(120.0))],
             80000,
         );
-        assert!(near(&hits, &[0, 12000, 24000, 42000, 66000]), "got {:?}", hits);
+        assert!(
+            near(&hits, &[0, 12000, 24000, 42000, 66000]),
+            "got {:?}",
+            hits
+        );
     }
 
     /// A sequence with a `bpm` sets the tempo on its first beat; one without
@@ -2603,7 +2718,11 @@ mod tests {
             100000,
         );
         // 2 beats at 120, then 4 at 240 (2 with its own tempo, 2 inheriting it).
-        assert!(near(&hits, &[0, 24000, 48000, 60000, 72000, 84000]), "got {:?}", hits);
+        assert!(
+            near(&hits, &[0, 24000, 48000, 60000, 72000, 84000]),
+            "got {:?}",
+            hits
+        );
     }
 
     /// A `bpm()` while a sequence with its own tempo plays overrides it.
@@ -2616,7 +2735,11 @@ mod tests {
             vec![(30000, SoundCommand::SetBpm(120.0))],
             80000,
         );
-        assert!(near(&hits, &[0, 12000, 24000, 42000, 66000]), "got {:?}", hits);
+        assert!(
+            near(&hits, &[0, 12000, 24000, 42000, 66000]),
+            "got {:?}",
+            hits
+        );
     }
 
     /// A counted loop plays its pattern that many times, each pass on the beat,
@@ -2624,13 +2747,22 @@ mod tests {
     #[test]
     fn a_counted_sequence_loops_then_stops() {
         let hits = onsets(
-            vec![SoundCommand::SetBpm(120.0), SoundCommand::Sequence(seq_of(1, &[1.0, 1.0], 3, None))],
+            vec![
+                SoundCommand::SetBpm(120.0),
+                SoundCommand::Sequence(seq_of(1, &[1.0, 1.0], 3, None)),
+            ],
             48000 * 4,
         );
         assert_eq!(hits.len(), 6, "2 steps x 3 passes, got {:?}", hits);
         for (k, &h) in hits.iter().enumerate() {
             let want = k * 24000;
-            assert!(h >= want && h < want + 100, "hit {} at {}, want ~{}", k, h, want);
+            assert!(
+                h >= want && h < want + 100,
+                "hit {} at {}, want ~{}",
+                k,
+                h,
+                want
+            );
         }
     }
 
@@ -2646,7 +2778,11 @@ mod tests {
             48000 * 3,
         );
         assert_eq!(hits.len(), 3, "got {:?}", hits);
-        assert!((48000..48100).contains(&hits[2]), "chained start at {}", hits[2]);
+        assert!(
+            (48000..48100).contains(&hits[2]),
+            "chained start at {}",
+            hits[2]
+        );
     }
 
     /// An infinite loop keeps going until stopped.
@@ -2654,7 +2790,8 @@ mod tests {
     fn a_forever_sequence_stops_on_request() {
         let (tx, rx) = channel::<SoundCommand>();
         tx.send(SoundCommand::SetBpm(240.0)).unwrap();
-        tx.send(SoundCommand::Sequence(seq_of(7, &[1.0], 0, None))).unwrap();
+        tx.send(SoundCommand::Sequence(seq_of(7, &[1.0], 0, None)))
+            .unwrap();
         let mut mixer = make_mixer_boxed(48000.0, rx);
         let mut loud_late = 0.0f32;
         for i in 0..48000 * 2 {
@@ -2700,10 +2837,7 @@ mod tests {
     #[test]
     fn plain_note_makes_sound() {
         let peak = peak_of(
-            vec![SoundCommand::PlayNote(
-                Note::new(0, 440.0, 1.0, 1.0),
-                None,
-            )],
+            vec![SoundCommand::PlayNote(Note::new(0, 440.0, 1.0, 1.0), None)],
             4800, // 100ms
         );
         assert!(peak > 0.01, "expected signal, got peak {}", peak);
@@ -2821,8 +2955,11 @@ mod tests {
     fn sing_alone(syl: &str, hz: f32, secs: f32, n: usize) -> Vec<f32> {
         let (tx, rx) = channel::<SoundCommand>();
         let s = crate::vocaloid::parse_syllable(syl);
-        tx.send(SoundCommand::PlayNote(Note::sung(hz, secs, 1.0, &s), Some(1)))
-            .unwrap();
+        tx.send(SoundCommand::PlayNote(
+            Note::sung(hz, secs, 1.0, &s),
+            Some(1),
+        ))
+        .unwrap();
         let mut mixer = make_mixer_boxed(48000.0, rx);
         (0..n).map(|_| mixer()).collect()
     }
@@ -2847,7 +2984,12 @@ mod tests {
         let lo = levels.iter().map(|l| l.2).fold(f32::MAX, f32::min);
         let hi = levels.iter().map(|l| l.2).fold(0.0, f32::max);
         assert!(lo > 0.01, "a vowel went silent: {:?}", levels);
-        assert!(hi / lo < 1.2, "vowel levels spread {:.2}x: {:?}", hi / lo, levels);
+        assert!(
+            hi / lo < 1.2,
+            "vowel levels spread {:.2}x: {:?}",
+            hi / lo,
+            levels
+        );
     }
 
     /// A consonant is quieter than the vowel it leads into (real speech puts an
@@ -2874,8 +3016,13 @@ mod tests {
         tx.send(SoundCommand::SetBpm(60.0)).unwrap();
         for (sy, at, len, hz) in sylls {
             let s = crate::vocaloid::parse_syllable(sy);
-            tx.send(SoundCommand::PlayAt(Note::sung(*hz, *len, 1.0, &s), Some(1), *at, None))
-                .unwrap();
+            tx.send(SoundCommand::PlayAt(
+                Note::sung(*hz, *len, 1.0, &s),
+                Some(1),
+                *at,
+                None,
+            ))
+            .unwrap();
         }
         let mut mixer = make_mixer_boxed(48000.0, rx);
         (0..n).map(|_| mixer()).collect()
@@ -2904,7 +3051,10 @@ mod tests {
     /// is two pitches at once and periodicity falls to ~0.6; with it, ~0.92+.
     #[test]
     fn voiced_syllables_run_together() {
-        let x = sing_phrase(&[("la", 0.0, 0.092, 300.0), ("lo", 0.1, 0.092, 260.0)], 9600);
+        let x = sing_phrase(
+            &[("la", 0.0, 0.092, 300.0), ("lo", 0.1, 0.092, 260.0)],
+            9600,
+        );
         let worst = (4600..6200)
             .step_by(160)
             .map(|i| periodicity(&x[i..i + 480]))
@@ -2919,7 +3069,12 @@ mod tests {
         let last = x.iter().rposition(|v| v.abs() > 1e-4).unwrap();
         let tail = rms(&x[last - 96..last]);
         let body = rms(&x[last - 2400..last - 1200]);
-        assert!(tail < body * 0.25, "hiss ends at {:.3} (body {:.3})", tail, body);
+        assert!(
+            tail < body * 0.25,
+            "hiss ends at {:.3} (body {:.3})",
+            tail,
+            body
+        );
     }
 
     /// A note-off doesn't play the voice twice in one sample. Releasing used to
@@ -2932,7 +3087,12 @@ mod tests {
         let spike = |i: usize| (x[i] - (x[i - 1] + x[i + 1]) * 0.5).abs();
         let steady = (1000..3000).map(spike).fold(0.0f32, f32::max);
         let off = (3200..3500).map(spike).fold(0.0f32, f32::max);
-        assert!(off < steady * 1.5, "note-off spike {:.4} vs steady {:.4}", off, steady);
+        assert!(
+            off < steady * 1.5,
+            "note-off spike {:.4} vs steady {:.4}",
+            off,
+            steady
+        );
     }
 
     /// Carrying the voice on to a new pitch doesn't step the filters or the
@@ -2944,7 +3104,12 @@ mod tests {
         let spike = |i: usize| (x[i] - (x[i - 1] + x[i + 1]) * 0.5).abs();
         let steady = (1000..3000).map(spike).fold(0.0f32, f32::max);
         let join = (3500..4000).map(spike).fold(0.0f32, f32::max);
-        assert!(join < steady * 1.5, "hand-over spike {:.4} vs steady {:.4}", join, steady);
+        assert!(
+            join < steady * 1.5,
+            "hand-over spike {:.4} vs steady {:.4}",
+            join,
+            steady
+        );
     }
 
     /// A sung onset consonant starts ahead of the beat so the vowel lands on it:
@@ -2954,8 +3119,16 @@ mod tests {
     fn onset_consonant_starts_before_the_beat() {
         let x = sing_phrase(&[("sa", 0.2, 0.12, 220.0)], 19200);
         let before = rms(&x[7440..9360]); // 155..195ms
-        assert!(before > 0.002, "nothing before the beat (rms {:.4})", before);
+        assert!(
+            before > 0.002,
+            "nothing before the beat (rms {:.4})",
+            before
+        );
         let vowel = periodicity(&x[10320..11280]); // 215..235ms
-        assert!(vowel > 0.85, "vowel not voicing just after the beat ({:.2})", vowel);
+        assert!(
+            vowel > 0.85,
+            "vowel not voicing just after the beat ({:.2})",
+            vowel
+        );
     }
 }

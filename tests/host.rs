@@ -40,7 +40,10 @@ fn cart_dir(name: &str) -> PathBuf {
     std::fs::write(dir.join("scripts/main.lua"), CART).unwrap();
     // `pack` wants an icon in the cart's root: the png the zip rides on.
     std::fs::copy(
-        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/petrichor-small-icon.png"),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/petrichor-small-icon.png"
+        ),
         dir.join("icon.png"),
     )
     .unwrap();
@@ -80,7 +83,10 @@ fn run(
         if done(heard) {
             return;
         }
-        assert!(Instant::now() < until, "timed out waiting for {what}: heard {heard:?}");
+        assert!(
+            Instant::now() < until,
+            "timed out waiting for {what}: heard {heard:?}"
+        );
         std::thread::sleep(Duration::from_millis(4));
     }
 }
@@ -159,7 +165,11 @@ fn two_instances_side_by_side() {
         policy,
     };
     let mut insts = vec![
-        Instance::new(&gpu, options(Cart::Path(dir.clone()), quiet(Policy::open()))).unwrap(),
+        Instance::new(
+            &gpu,
+            options(Cart::Path(dir.clone()), quiet(Policy::open())),
+        )
+        .unwrap(),
         Instance::new(
             &gpu,
             options(
@@ -179,7 +189,10 @@ fn two_instances_side_by_side() {
     run(&mut insts, &mut heard, start, "both carts to start", |h| {
         h.iter().all(|h| h.iter().any(|m| m.starts_with("reach")))
     });
-    assert!(has(&heard[0], "reach conn=function io=table sub=function"), "{heard:?}");
+    assert!(
+        has(&heard[0], "reach conn=function io=table sub=function"),
+        "{heard:?}"
+    );
     assert!(has(&heard[1], "reach conn=nil io=nil sub=nil"), "{heard:?}");
 
     // What a cart wants of a window arrives as a request, to grant or not.
@@ -198,7 +211,9 @@ fn two_instances_side_by_side() {
 
     // Host messages go to the instance they were posted to.
     insts[1].post("ping".into());
-    run(&mut insts, &mut heard, start, "the echo", |h| has(&h[1], "echo ping"));
+    run(&mut insts, &mut heard, start, "the echo", |h| {
+        has(&h[1], "echo ping")
+    });
     assert!(!has(&heard[0], "echo ping"));
 
     // Input goes to the instance it was given to, and no other.
@@ -206,9 +221,13 @@ fn two_instances_side_by_side() {
         code: KeyCode::KeyA,
         pressed: true,
     });
-    run(&mut insts, &mut heard, start, "the key", |h| has(&h[0], "a down"));
+    run(&mut insts, &mut heard, start, "the key", |h| {
+        has(&h[0], "a down")
+    });
     insts[0].input(Input::FocusLost);
-    run(&mut insts, &mut heard, start, "the key let go", |h| has(&h[0], "a up"));
+    run(&mut insts, &mut heard, start, "the key let go", |h| {
+        has(&h[0], "a up")
+    });
     assert!(!heard[1].iter().any(|m| m.starts_with("a ")), "{heard:?}");
 
     // Both draw into textures of their own, of the size asked for.
@@ -216,7 +235,10 @@ fn two_instances_side_by_side() {
         let t = inst.texture().texture();
         assert_eq!((t.width(), t.height()), size);
         let px = middle_pixel(&gpu, inst, size);
-        assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "the red sky, got {px:?}");
+        assert!(
+            px[0] > 200 && px[1] < 60 && px[2] < 60,
+            "the red sky, got {px:?}"
+        );
     }
     insts[1].resize((200, 100), 1.0);
     let t = insts[1].texture().texture();

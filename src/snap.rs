@@ -15,7 +15,10 @@ fn plan() -> &'static Option<(String, Vec<u64>)> {
     PLAN.get_or_init(|| {
         let prefix = std::env::var("CHOR_SNAP").ok()?;
         let at = std::env::var("CHOR_SNAP_AT").unwrap_or_else(|_| "120".into());
-        let frames = at.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        let frames = at
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
         Some((prefix, frames))
     })
 }

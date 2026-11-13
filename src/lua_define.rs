@@ -346,9 +346,7 @@ impl<'lt> LuaCore {
                     drop(globals);
                     // Clone before handing the refs to the main thread: the loop needs
                     // them to publish each finished frame (see LuaImg::publish).
-                    let gui_ref_local = main_ref
-                        .upgrade()
-                        .map(|w| WeakWrapper::from_wrapper(&w));
+                    let gui_ref_local = main_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
                     let sky_ref_local = sky_ref.upgrade().map(|w| WeakWrapper::from_wrapper(&w));
                     let pong = Box::new((main_ref, sky_ref));
 
@@ -862,9 +860,13 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             // app read THIS frame's input. Updating it after the call (as it was)
             // meant every frame saw the previous frame's input — a one-frame lag.
             let mut h = ctx.diff_keys_mutex.borrow_mut();
-            ctx.keys_mutex.borrow().iter().enumerate().for_each(|(i, k)| {
-                h[i] = !k && key_state[i];
-            });
+            ctx.keys_mutex
+                .borrow()
+                .iter()
+                .enumerate()
+                .for_each(|(i, k)| {
+                    h[i] = !k && key_state[i];
+                });
             drop(h);
 
             *ctx.keys_mutex.borrow_mut() = key_state;

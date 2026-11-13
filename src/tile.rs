@@ -1,11 +1,11 @@
 use rustc_hash::FxHashMap;
 use std::{collections::hash_map::Entry, ops::Mul, rc::Rc};
 
-use glam::{ivec3, IVec3, Vec4};
-#[cfg(feature = "headed")]
-use glam::Mat4;
 #[cfg(feature = "headed")]
 use crate::gpu_loss::BufferInit;
+#[cfg(feature = "headed")]
+use glam::Mat4;
+use glam::{ivec3, IVec3, Vec4};
 #[cfg(feature = "headed")]
 use wgpu::{Buffer, Device};
 
@@ -97,7 +97,7 @@ impl Layer {
         ix: i32,
         iy: i32,
         iz: i32,
-    ) -> Option<(String, u8)>  {
+    ) -> Option<(String, u8)> {
         let t = match self.get_chunk(ix, iy, iz) {
             Some(c) => {
                 let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
@@ -403,8 +403,7 @@ pub fn chunks_below(chunk: &Chunk) -> Vec<IVec3> {
 pub fn is_tile_in(chunks: &FxHashMap<String, Chunk>, ix: i32, iy: i32, iz: i32) -> bool {
     match chunks.get(&chunk_key(ix, iy, iz)) {
         Some(c) => {
-            let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE)
-                + iy.rem_euclid(CHUNK_SIZE))
+            let index = ((((ix.rem_euclid(CHUNK_SIZE) * CHUNK_SIZE) + iy.rem_euclid(CHUNK_SIZE))
                 * CHUNK_SIZE)
                 + iz.rem_euclid(CHUNK_SIZE)) as usize;
             c.cells[index].0 > 0
@@ -557,7 +556,10 @@ mod chunk_key_tests {
         chunk.cells[local_index] = (7, 0);
         chunks.insert(key, chunk);
 
-        assert!(is_tile_in(&chunks, ix, iy, iz), "the solid cell must be found");
+        assert!(
+            is_tile_in(&chunks, ix, iy, iz),
+            "the solid cell must be found"
+        );
         assert!(
             !is_tile_in(&chunks, ix + 1, iy, iz),
             "a neighboring air cell must not be"
@@ -710,7 +712,16 @@ impl ChunkModel {
 
         for (&idx, cell) in chunk.cells.iter() {
             let (ix, iy, iz) = crate::tile_grid::unpack_local_index(idx);
-            _add_named_tile_model(tex_manager, model_manager, self, &cell.asset, cell.meta, ix, iy, iz);
+            _add_named_tile_model(
+                tex_manager,
+                model_manager,
+                self,
+                &cell.asset,
+                cell.meta,
+                ix,
+                iy,
+                iz,
+            );
         }
     }
 

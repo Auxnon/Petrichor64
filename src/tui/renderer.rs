@@ -280,7 +280,10 @@ fn present(so: &mut dyn Write, fb: &Framebuffer, cols: u16, rows: u16, fps: f32,
                 last_fg = Some(top);
             }
             if last_bg != Some(bottom) {
-                out.push_str(&format!("\x1b[48;2;{};{};{}m", bottom[0], bottom[1], bottom[2]));
+                out.push_str(&format!(
+                    "\x1b[48;2;{};{};{}m",
+                    bottom[0], bottom[1], bottom[2]
+                ));
                 last_bg = Some(bottom);
             }
             out.push('\u{2580}');
@@ -297,7 +300,10 @@ fn present(so: &mut dyn Write, fb: &Framebuffer, cols: u16, rows: u16, fps: f32,
         out.push_str(&clipped);
         out.push_str("\x1b[K\x1b[0m\r\n");
     }
-    out.push_str(&format!("\x1b[0mpetrichor64 (tui) — fps: {:.0}  esc to quit\x1b[K", fps));
+    out.push_str(&format!(
+        "\x1b[0mpetrichor64 (tui) — fps: {:.0}  esc to quit\x1b[K",
+        fps
+    ));
     let _ = so.write_all(out.as_bytes());
     let _ = so.flush();
 }

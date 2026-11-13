@@ -254,7 +254,12 @@ impl Host {
             slot.rect = rect;
             slot.inst.resize((rect[2], rect[3]), scale);
             // a resized instance has a new texture
-            slot.bind = bind(&self.gpu.device, &self.layout, &self.sampler, slot.inst.texture());
+            slot.bind = bind(
+                &self.gpu.device,
+                &self.layout,
+                &self.sampler,
+                slot.inst.texture(),
+            );
         }
     }
 
@@ -310,7 +315,8 @@ impl Host {
 
     fn draw(&mut self) {
         let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.gpu.device, &self.config);
                 return;

@@ -41,10 +41,10 @@ mod file_util;
 mod fx;
 #[cfg(feature = "headed")]
 mod gfx;
-#[cfg(feature = "headed")]
-mod gpu_loss;
 mod global;
 mod gltf_io;
+#[cfg(feature = "headed")]
+mod gpu_loss;
 mod gui;
 pub mod host;
 #[cfg(feature = "headed")]
@@ -248,7 +248,8 @@ pub struct App {
     gpu_down: bool,
     /// wasm: a device request is in flight, and lands here.
     #[cfg(target_arch = "wasm32")]
-    pending_gpu: std::rc::Rc<std::cell::RefCell<Option<Result<crate::gfx::GpuLink<'static>, String>>>>,
+    pending_gpu:
+        std::rc::Rc<std::cell::RefCell<Option<Result<crate::gfx::GpuLink<'static>, String>>>>,
     #[cfg(target_arch = "wasm32")]
     gpu_asking: bool,
     /// `CHOR_GPU_LOSE=secs`: when to lose the device on purpose, for testing.
@@ -436,7 +437,8 @@ impl App {
     /// had, get one and rebuild onto it. Native asks inline; the web can't
     /// block, so it asks once and picks the answer up on a later frame.
     fn restore_gpu(&mut self, #[allow(unused)] event_loop: &ActiveEventLoop) {
-        let (Some(core), Some(window)) = (self.inst.as_mut().map(|i| &mut i.core), self.window.clone())
+        let (Some(core), Some(window)) =
+            (self.inst.as_mut().map(|i| &mut i.core), self.window.clone())
         else {
             return;
         };
@@ -444,10 +446,17 @@ impl App {
             self.gpu_down = true;
             // Lost again within two seconds of coming back: wait 1s, 2s, 4s...
             // (to ~30s) before the next try, rather than rebuilding in a loop.
-            self.gpu_quick = if self.gpu_drawn < 120 { self.gpu_quick + 1 } else { 0 };
+            self.gpu_quick = if self.gpu_drawn < 120 {
+                self.gpu_quick + 1
+            } else {
+                0
+            };
             if self.gpu_quick > 0 {
                 self.gpu_retry = (60u32 << (self.gpu_quick - 1).min(5)).min(1800);
-                ::log::warn!("gpu lost again soon after a restore; waiting {} frames", self.gpu_retry);
+                ::log::warn!(
+                    "gpu lost again soon after a restore; waiting {} frames",
+                    self.gpu_retry
+                );
             }
         }
         #[cfg(target_arch = "wasm32")]
@@ -482,7 +491,11 @@ impl App {
             let window = {
                 let title = window.title();
                 let attrs = window_attributes()
-                    .with_title(if title.is_empty() { "Petrichor64".into() } else { title })
+                    .with_title(if title.is_empty() {
+                        "Petrichor64".into()
+                    } else {
+                        title
+                    })
                     .with_inner_size(window.inner_size())
                     .with_fullscreen(window.fullscreen());
                 match event_loop.create_window(attrs) {
@@ -1074,7 +1087,9 @@ impl ApplicationHandler for App {
             // mid-stream would reorder `instr`/`smpl` against the notes using them.
             #[cfg(feature = "audio")]
             if !self.sound_lane_settled {
-                if let (Some(w), Some(core)) = (&self.worker, self.inst.as_mut().map(|i| &mut i.core)) {
+                if let (Some(w), Some(core)) =
+                    (&self.worker, self.inst.as_mut().map(|i| &mut i.core))
+                {
                     if w.is_ready() {
                         if let Some(out) = core.web_audio.as_mut() {
                             if let Some(port) = out.take_command_port() {
@@ -1134,19 +1149,29 @@ impl ApplicationHandler for App {
                                     &mut core.loggy,
                                 );
                             }
-                            let size = self.inst.as_ref().map(|i| &i.core).map_or([256, 256], |c| c.gui.size());
+                            let size = self
+                                .inst
+                                .as_ref()
+                                .map(|i| &i.core)
+                                .map_or([256, 256], |c| c.gui.size());
                             w.post(&HostToVm::Init {
                                 bundle_id: 0,
                                 width: size[0],
                                 height: size[1],
-                                policy: self.inst.as_ref().map(|i| &i.core).map(|c| c.policy.clone()).unwrap_or_default(),
+                                policy: self
+                                    .inst
+                                    .as_ref()
+                                    .map(|i| &i.core)
+                                    .map(|c| c.policy.clone())
+                                    .unwrap_or_default(),
                             });
                             self.worker_gui_size = size;
                             // Skeletons from the models just loaded, before main()
                             // can ask an entity to play a clip.
-                            let skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
-                                c.model_manager.rig.take_new(&mut self.skeletons_sent)
-                            });
+                            let skeletons =
+                                self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                                    c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                                });
                             if !skeletons.is_empty() {
                                 w.post(&HostToVm::Skeletons(skeletons));
                             }
@@ -1204,7 +1229,9 @@ impl ApplicationHandler for App {
                             use winit::platform::web::WindowExtWebSys;
                             let ours = self.window.as_ref().and_then(|w| w.canvas());
                             if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                                if let (Some(locked), Some(ours)) = (doc.pointer_lock_element(), ours) {
+                                if let (Some(locked), Some(ours)) =
+                                    (doc.pointer_lock_element(), ours)
+                                {
                                     if locked.is_same_node(Some(ours.as_ref())) {
                                         doc.exit_pointer_lock();
                                     }
@@ -1218,16 +1245,23 @@ impl ApplicationHandler for App {
                     if self.worker_inited {
                         // Keep the worker's gui/sky rasters the size of the
                         // layers they're uploaded into (native's Gui::resize).
-                        if let Some(size) = self.inst.as_ref().map(|i| &i.core).map(|c| c.gui.size()) {
+                        if let Some(size) =
+                            self.inst.as_ref().map(|i| &i.core).map(|c| c.gui.size())
+                        {
                             if size != self.worker_gui_size && size[0] > 0 && size[1] > 0 {
                                 w.post(&HostToVm::Resize(size[0], size[1]));
                                 self.worker_gui_size = size;
                             }
                         }
-                        let new_skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
-                            c.model_manager.rig.take_new(&mut self.skeletons_sent)
-                        });
-                        let clock = self.inst.as_ref().map(|i| &i.core).map_or(0., |c| c.model_manager.rig.clock());
+                        let new_skeletons =
+                            self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                                c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                            });
+                        let clock = self
+                            .inst
+                            .as_ref()
+                            .map(|i| &i.core)
+                            .map_or(0., |c| c.model_manager.rig.clock());
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
                         }
@@ -1239,12 +1273,22 @@ impl ApplicationHandler for App {
                             }
                         }
                         // Host messages posted so far (kept on main until Init), ahead of this loop.
-                        for m in self.inst.as_mut().map(|i| &mut i.core).map(|c| c.host_inbox_drain()).unwrap_or_default() {
+                        for m in self
+                            .inst
+                            .as_mut()
+                            .map(|i| &mut i.core)
+                            .map(|c| c.host_inbox_drain())
+                            .unwrap_or_default()
+                        {
                             w.post(&HostToVm::Host(m));
                         }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
-                        let console_open = self.inst.as_ref().map(|i| &i.core).map_or(false, |c| c.global.console);
+                        let console_open = self
+                            .inst
+                            .as_ref()
+                            .map(|i| &i.core)
+                            .map_or(false, |c| c.global.console);
                         if console_open {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
@@ -1650,7 +1694,10 @@ async fn load_wasm_bundle(embedded: &'static [u8], cart: Option<&str>) -> Option
             b
         }
         _ if cart.is_some() => {
-            ::log::error!("web: cart {} didn't load, using embedded default bundle", url);
+            ::log::error!(
+                "web: cart {} didn't load, using embedded default bundle",
+                url
+            );
             embedded.to_vec()
         }
         _ => {
@@ -1827,7 +1874,10 @@ impl Engine {
 /// Once per module copy (see `start_web`).
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = start)]
-pub fn start_on(root: wasm_bindgen::JsValue, opts: wasm_bindgen::JsValue) -> Result<Engine, wasm_bindgen::JsValue> {
+pub fn start_on(
+    root: wasm_bindgen::JsValue,
+    opts: wasm_bindgen::JsValue,
+) -> Result<Engine, wasm_bindgen::JsValue> {
     use wasm_bindgen::{JsCast, JsValue};
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(::log::Level::Info);
@@ -1837,26 +1887,38 @@ pub fn start_on(root: wasm_bindgen::JsValue, opts: wasm_bindgen::JsValue) -> Res
         .map_err(|_| JsValue::from_str("start: the first argument must be an element or canvas"))?;
     let get = |k: &str| {
         if opts.is_object() {
-            js_sys::Reflect::get(&opts, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null())
+            js_sys::Reflect::get(&opts, &k.into())
+                .ok()
+                .filter(|v| !v.is_undefined() && !v.is_null())
         } else {
             None
         }
     };
     let mut host = WebHost::default();
-    host.cart = get("cart").and_then(|v| v.as_string()).filter(|s| !s.is_empty());
-    if let Some(w) = get("worker").and_then(|v| v.as_string()).filter(|s| !s.is_empty()) {
+    host.cart = get("cart")
+        .and_then(|v| v.as_string())
+        .filter(|s| !s.is_empty());
+    if let Some(w) = get("worker")
+        .and_then(|v| v.as_string())
+        .filter(|s| !s.is_empty())
+    {
         host.worker = w;
     }
     if let Some(p) = get("policy") {
         let text = match p.as_string() {
             Some(s) => s,
-            None => js_sys::JSON::stringify(&p).map(String::from).unwrap_or_default(),
+            None => js_sys::JSON::stringify(&p)
+                .map(String::from)
+                .unwrap_or_default(),
         };
-        host.policy = parse_web_policy(&text).map_err(|e| JsValue::from_str(&format!("start: policy: {e}")))?;
+        host.policy = parse_web_policy(&text)
+            .map_err(|e| JsValue::from_str(&format!("start: policy: {e}")))?;
     }
     host.canvas = root.clone().dyn_into::<web_sys::HtmlCanvasElement>().ok();
     host.root = Some(root);
-    let engine = Engine { inbox: host.inbox.clone() };
+    let engine = Engine {
+        inbox: host.inbox.clone(),
+    };
     start_web(host)?;
     Ok(engine)
 }
@@ -1927,11 +1989,14 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement, root: Option<&web_s
     let _ = style.set_property("inset", "0");
     let _ = style.set_property("width", "100%");
     let _ = style.set_property("height", "100%");
-    let parent = root.cloned().or_else(|| document.get_element_by_id("petrichor64-root")).or_else(|| {
-        document
-            .body()
-            .map(|b| b.unchecked_into::<web_sys::Element>())
-    });
+    let parent = root
+        .cloned()
+        .or_else(|| document.get_element_by_id("petrichor64-root"))
+        .or_else(|| {
+            document
+                .body()
+                .map(|b| b.unchecked_into::<web_sys::Element>())
+        });
     let Some(parent) = parent else {
         return;
     };
@@ -3008,25 +3073,15 @@ impl Core {
         for (k, v) in table.iter() {
             #[cfg(feature = "headed")]
             match k.as_str() {
-                "resolution" => {
-                    self.global.screen_effects.crt_resolution = Self::val2float(v)
-                }
-                "curvature" => {
-                    self.global.screen_effects.corner_harshness = Self::val2float(v)
-                }
-                "flatness" => {
-                    self.global.screen_effects.corner_ease = Self::val2float(v)
-                }
+                "resolution" => self.global.screen_effects.crt_resolution = Self::val2float(v),
+                "curvature" => self.global.screen_effects.corner_harshness = Self::val2float(v),
+                "flatness" => self.global.screen_effects.corner_ease = Self::val2float(v),
                 "dark" => self.global.screen_effects.dark_factor = Self::val2float(v),
-                "bleed" => {
-                    self.global.screen_effects.lumen_threshold = Self::val2float(v)
-                }
+                "bleed" => self.global.screen_effects.lumen_threshold = Self::val2float(v),
                 "glitch" => self.global.screen_effects.glitchiness = Self::val2vec3(v),
                 "high" => self.global.screen_effects.high_range = Self::val2float(v),
                 "low" => self.global.screen_effects.low_range = Self::val2float(v),
-                "modernize" => {
-                    self.global.screen_effects.modernize = Self::val2float(v)
-                }
+                "modernize" => self.global.screen_effects.modernize = Self::val2float(v),
                 "fog" => self.global.screen_effects.fog = Self::val2float(v),
                 "gui_px" => {
                     let px = Self::val2float(v).max(0.);
@@ -3287,8 +3342,10 @@ impl Core {
                     .define_tileset(&self.gfx.device, 0, def, &self.model_manager);
             }
             VmToHost::Globals(table) => {
-                let table: Vec<(String, crate::types::ValueMap)> =
-                    table.iter().map(|(k, v)| (k.clone(), crate::types::ValueMap::from(v))).collect();
+                let table: Vec<(String, crate::types::ValueMap)> = table
+                    .iter()
+                    .map(|(k, v)| (k.clone(), crate::types::ValueMap::from(v)))
+                    .collect();
                 self.apply_globals(0, &table);
             }
             VmToHost::Raster { sky, w, h, px } => {
@@ -3344,7 +3401,10 @@ impl Core {
             // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
             // The second lock behind `init_lua_sys` not registering these.
             if !p.allowed_by(&self.policy) {
-                self.log(LogType::Config, "!!dropped a command this cart's policy forbids");
+                self.log(
+                    LogType::Config,
+                    "!!dropped a command this cart's policy forbids",
+                );
                 return;
             }
             match p {
@@ -3684,13 +3744,15 @@ impl Core {
                 MainCommmand::Read(path, tx) => {
                     println!("read {}", path);
                     let pak = match self.cart_files_dir() {
-                        Some(dir) => match crate::file_util::get_file_string_scrubbed(&dir, &path) {
-                            Ok(s) => Some(s),
-                            Err(e) => {
-                                self.log(LogType::IoError, &format!("!!{}", e));
-                                None
+                        Some(dir) => {
+                            match crate::file_util::get_file_string_scrubbed(&dir, &path) {
+                                Ok(s) => Some(s),
+                                Err(e) => {
+                                    self.log(LogType::IoError, &format!("!!{}", e));
+                                    None
+                                }
                             }
-                        },
+                        }
                         None => {
                             self.log(LogType::IoError, &format!("!! No relative path access"));
                             None

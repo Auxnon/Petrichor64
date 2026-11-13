@@ -1,15 +1,10 @@
-#[cfg(feature = "audio")]
-use crate::sound::{self, SoundCommand};
 #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
 use crate::midi;
+#[cfg(feature = "audio")]
+use crate::sound::{self, SoundCommand};
 use crate::{
-    bundle::BundleManager,
-    ent_manager::EntManager,
-    global::Global,
-    lua_define::MainPacket,
-    model::ModelManager,
-    texture::TexManager,
-    types::ValueMap,
+    bundle::BundleManager, ent_manager::EntManager, global::Global, lua_define::MainPacket,
+    model::ModelManager, texture::TexManager, types::ValueMap,
 };
 #[cfg(feature = "headed")]
 use crate::{
@@ -20,7 +15,10 @@ use crate::{
 };
 
 use std::sync::mpsc::{channel, Receiver, Sender};
-#[cfg(any(feature = "headed", all(feature = "audio", not(target_arch = "wasm32"))))]
+#[cfg(any(
+    feature = "headed",
+    all(feature = "audio", not(target_arch = "wasm32"))
+))]
 use std::sync::Arc;
 
 // use tracy::frame;

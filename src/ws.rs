@@ -128,9 +128,7 @@ mod native {
         loop {
             loop {
                 match out.try_recv() {
-                    Ok(Out::Text(t)) => {
-                        sock.send(Message::text(t)).map_err(|e| e.to_string())?
-                    }
+                    Ok(Out::Text(t)) => sock.send(Message::text(t)).map_err(|e| e.to_string())?,
                     Ok(Out::Close) | Err(TryRecvError::Disconnected) => {
                         let _ = sock.close(None);
                         let _ = sock.flush();
@@ -207,7 +205,11 @@ mod web {
             .dyn_into()
             .map_err(|_| "relative websocket path needs a worker scope".to_owned())?;
         let loc = scope.location();
-        let proto = if loc.protocol() == "https:" { "wss:" } else { "ws:" };
+        let proto = if loc.protocol() == "https:" {
+            "wss:"
+        } else {
+            "ws:"
+        };
         Ok(format!("{}//{}{}", proto, loc.host(), url))
     }
 
@@ -248,7 +250,9 @@ mod web {
                 if sh.status.is_some() {
                     return;
                 }
-                let Some(t) = e.data().as_string() else { return };
+                let Some(t) = e.data().as_string() else {
+                    return;
+                };
                 if sh.inbox.len() >= INBOX_FRAMES || sh.inbox_bytes + t.len() > INBOX_BYTES {
                     // Nobody's reading: let go of it all and close, so the
                     // script reconnects instead of the worker running out.

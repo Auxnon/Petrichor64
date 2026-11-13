@@ -267,15 +267,36 @@ impl FormantBank {
 pub fn vowel_formants(vowel: &str) -> [Formant; 3] {
     let f = |freq, q, gain| Formant { freq, q, gain };
     // Match the first char so "la"/"aah"/"a" all read as the vowel.
-    let v = vowel.trim().chars().next().unwrap_or('a').to_ascii_lowercase();
+    let v = vowel
+        .trim()
+        .chars()
+        .next()
+        .unwrap_or('a')
+        .to_ascii_lowercase();
     match v {
-        'e' => [f(400.0, 8.0, 1.0), f(1600.0, 10.0, 0.5), f(2700.0, 12.0, 0.3)],
-        'i' => [f(270.0, 8.0, 1.0), f(2300.0, 11.0, 0.5), f(3000.0, 13.0, 0.3)],
+        'e' => [
+            f(400.0, 8.0, 1.0),
+            f(1600.0, 10.0, 0.5),
+            f(2700.0, 12.0, 0.3),
+        ],
+        'i' => [
+            f(270.0, 8.0, 1.0),
+            f(2300.0, 11.0, 0.5),
+            f(3000.0, 13.0, 0.3),
+        ],
         'o' => [f(450.0, 8.0, 1.0), f(800.0, 9.0, 0.6), f(2600.0, 12.0, 0.3)],
         // u ("oo") needs F2 clearly *below* o's, or it just reads as another o.
-        'u' => [f(320.0, 9.0, 1.0), f(620.0, 10.0, 0.5), f(2200.0, 11.0, 0.25)],
+        'u' => [
+            f(320.0, 9.0, 1.0),
+            f(620.0, 10.0, 0.5),
+            f(2200.0, 11.0, 0.25),
+        ],
         // 'a' and anything else
-        _ => [f(800.0, 8.0, 1.0), f(1150.0, 9.0, 0.6), f(2900.0, 12.0, 0.3)],
+        _ => [
+            f(800.0, 8.0, 1.0),
+            f(1150.0, 9.0, 0.6),
+            f(2900.0, 12.0, 0.3),
+        ],
     }
 }
 
@@ -291,15 +312,27 @@ fn spelled_vowel(nucleus: &[char], lax: bool) -> Option<[Formant; 3]> {
     let f = |freq, q, gain| Formant { freq, q, gain };
     if lax && nucleus.len() == 1 {
         return match nucleus[0] {
-            'i' => Some([f(400.0, 8.0, 1.0), f(1900.0, 10.0, 0.5), f(2550.0, 12.0, 0.3)]),
-            'u' => Some([f(640.0, 8.0, 1.0), f(1190.0, 9.0, 0.6), f(2390.0, 12.0, 0.3)]),
+            'i' => Some([
+                f(400.0, 8.0, 1.0),
+                f(1900.0, 10.0, 0.5),
+                f(2550.0, 12.0, 0.3),
+            ]),
+            'u' => Some([
+                f(640.0, 8.0, 1.0),
+                f(1190.0, 9.0, 0.6),
+                f(2390.0, 12.0, 0.3),
+            ]),
             c => Some(vowel_formants(&c.to_string())),
         };
     }
     match nucleus {
         ['e', 'e'] => Some(vowel_formants("i")),
         ['o', 'o'] => Some(vowel_formants("u")),
-        ['a', 'e'] => Some([f(660.0, 8.0, 1.0), f(1720.0, 10.0, 0.55), f(2410.0, 12.0, 0.3)]),
+        ['a', 'e'] => Some([
+            f(660.0, 8.0, 1.0),
+            f(1720.0, 10.0, 0.55),
+            f(2410.0, 12.0, 0.3),
+        ]),
         _ => None,
     }
 }
@@ -493,12 +526,36 @@ fn parse_consonants(s: &str) -> Vec<Cons> {
 fn voiced_onset(c: char) -> Option<[Formant; 3]> {
     let f = |freq, q, gain| Formant { freq, q, gain };
     match c {
-        'm' => Some([f(250.0, 10.0, 1.0), f(1000.0, 10.0, 0.4), f(2200.0, 12.0, 0.2)]), // nasal
-        'n' => Some([f(250.0, 10.0, 1.0), f(1400.0, 11.0, 0.5), f(2500.0, 12.0, 0.2)]), // nasal
-        'l' => Some([f(360.0, 9.0, 1.0), f(1300.0, 10.0, 0.6), f(2800.0, 12.0, 0.3)]),  // lateral
-        'r' => Some([f(490.0, 9.0, 1.0), f(1350.0, 10.0, 0.6), f(1700.0, 11.0, 0.4)]),  // low F3
-        'w' => Some([f(300.0, 9.0, 1.0), f(610.0, 10.0, 0.5), f(2200.0, 11.0, 0.25)]),  // ~/u/
-        'y' => Some([f(270.0, 9.0, 1.0), f(2300.0, 11.0, 0.5), f(3000.0, 12.0, 0.25)]), // ~/i/
+        'm' => Some([
+            f(250.0, 10.0, 1.0),
+            f(1000.0, 10.0, 0.4),
+            f(2200.0, 12.0, 0.2),
+        ]), // nasal
+        'n' => Some([
+            f(250.0, 10.0, 1.0),
+            f(1400.0, 11.0, 0.5),
+            f(2500.0, 12.0, 0.2),
+        ]), // nasal
+        'l' => Some([
+            f(360.0, 9.0, 1.0),
+            f(1300.0, 10.0, 0.6),
+            f(2800.0, 12.0, 0.3),
+        ]), // lateral
+        'r' => Some([
+            f(490.0, 9.0, 1.0),
+            f(1350.0, 10.0, 0.6),
+            f(1700.0, 11.0, 0.4),
+        ]), // low F3
+        'w' => Some([
+            f(300.0, 9.0, 1.0),
+            f(610.0, 10.0, 0.5),
+            f(2200.0, 11.0, 0.25),
+        ]), // ~/u/
+        'y' => Some([
+            f(270.0, 9.0, 1.0),
+            f(2300.0, 11.0, 0.5),
+            f(3000.0, 12.0, 0.25),
+        ]), // ~/i/
         _ => None,
     }
 }
@@ -515,7 +572,15 @@ pub const DENTAL: [f32; 3] = [250.0, 1450.0, 2600.0];
 /// Map a leading character to its consonant onset, if any.
 fn consonant_for(c: char) -> Option<Consonant> {
     let cons = |freq, q, secs, gain, locus, vot, plosive| {
-        Some(Consonant { freq, q, secs, gain: gain * BURST, locus, vot, plosive })
+        Some(Consonant {
+            freq,
+            q,
+            secs,
+            gain: gain * BURST,
+            locus,
+            vot,
+            plosive,
+        })
     };
     match c {
         // A broad hiss (Q 1.3, not a narrow "pssh"), ~14 dB under the vowel.
@@ -525,9 +590,9 @@ fn consonant_for(c: char) -> Option<Consonant> {
         'h' => cons(1500.0, 0.7, 0.003, 0.0, [0.0; 3], 0.07, false),
         't' | 'd' => cons(4000.0, 1.5, 0.012, 0.19, ALVEOLAR, 0.03, true), // sharp tick
         'k' | 'g' | 'c' | 'q' => cons(2000.0, 1.5, 0.015, 0.24, VELAR, 0.035, true), // mid pop
-        'j' => cons(2800.0, 1.2, 0.05, 0.22, PALATAL, 0.01, false), // a short ch
-        'p' | 'b' => cons(800.0, 1.2, 0.01, 0.235, LABIAL, 0.025, true), // low pop
-        _ => None, // vowels + l/r/m/n/w/y
+        'j' => cons(2800.0, 1.2, 0.05, 0.22, PALATAL, 0.01, false),        // a short ch
+        'p' | 'b' => cons(800.0, 1.2, 0.01, 0.235, LABIAL, 0.025, true),   // low pop
+        _ => None,                                                         // vowels + l/r/m/n/w/y
     }
 }
 

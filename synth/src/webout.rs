@@ -490,9 +490,10 @@ impl WebOut {
         // Fires when a message *arrives* but cannot be deserialized — the one
         // failure mode that produces no error on either side and no message. Worth
         // a handler purely so it can never again look like nothing happened.
-        let on_err = Closure::<dyn FnMut(web_sys::MessageEvent)>::new(|_: web_sys::MessageEvent| {
-            log::error!("web audio: a message from the worklet could not be deserialized");
-        });
+        let on_err =
+            Closure::<dyn FnMut(web_sys::MessageEvent)>::new(|_: web_sys::MessageEvent| {
+                log::error!("web audio: a message from the worklet could not be deserialized");
+            });
         port.set_onmessageerror(Some(on_err.as_ref().unchecked_ref()));
         on_err.forget();
 

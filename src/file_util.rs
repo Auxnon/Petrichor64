@@ -526,7 +526,10 @@ pub fn unpack(gamefile: Vec<u8>, loggy: &mut Loggy) -> Vec<u8> {
     // (Without this, the IEND scan finds the marker *inside* an embedded PNG
     // asset and returns a corrupted fragment — no entries load.)
     if gamefile.len() >= 4 && gamefile[..4] == [0x50, 0x4B, 0x03, 0x04] {
-        loggy.log(LogType::Config, &format!("raw zip bundle, {} bytes", gamefile.len()));
+        loggy.log(
+            LogType::Config,
+            &format!("raw zip bundle, {} bytes", gamefile.len()),
+        );
         return gamefile;
     }
 
@@ -613,10 +616,10 @@ mod tests {
         );
 
         for bad in [
-            "/etc/passwd",     // absolute: replaces the base entirely
-            "../secret",       // classic traversal
-            "sub/../../secret",// traversal after a valid component
-            "",                // nothing to resolve
+            "/etc/passwd",      // absolute: replaces the base entirely
+            "../secret",        // classic traversal
+            "sub/../../secret", // traversal after a valid component
+            "",                 // nothing to resolve
         ] {
             assert!(
                 scrub_path(dir, bad).is_err(),

@@ -157,7 +157,10 @@ mod tests {
             files: Some(PathBuf::from("saves/cart1")),
             ..Policy::sandbox()
         };
-        assert_eq!(rooted.files_dir(Some("apps/game")), Some("saves/cart1".into()));
+        assert_eq!(
+            rooted.files_dir(Some("apps/game")),
+            Some("saves/cart1".into())
+        );
         assert_eq!(rooted.files_dir(None), Some("saves/cart1".into()));
     }
 

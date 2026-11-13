@@ -66,7 +66,10 @@ impl MeshData {
             ));
         }
         if let Some(bad) = self.ind.iter().find(|&&i| i as usize >= n) {
-            return Err(format!("glb: index {} out of range for {} vertices", bad, n));
+            return Err(format!(
+                "glb: index {} out of range for {} vertices",
+                bad, n
+            ));
         }
         if self.norm.len() != n {
             self.norm = flat_normals(&self.pos, &self.ind);
@@ -131,7 +134,12 @@ impl MeshData {
                 continue;
             }
             if let Some(bad) = face.iter().find(|&&i| i as usize >= pos.len()) {
-                return Err(format!("face {} uses vertex {} of {}", fi + 1, bad + 1, pos.len()));
+                return Err(format!(
+                    "face {} uses vertex {} of {}",
+                    fi + 1,
+                    bad + 1,
+                    pos.len()
+                ));
             }
             let n = polygon_normal(pos, face).to_array();
             let uv = face_uv.get(fi).copied().unwrap_or([0., 0.]);
@@ -163,7 +171,8 @@ impl MeshData {
             for &i in tri {
                 let i = i as usize;
                 out.pos.push(self.pos[i]);
-                out.norm.push(self.norm.get(i).copied().unwrap_or([0., 0., 1.]));
+                out.norm
+                    .push(self.norm.get(i).copied().unwrap_or([0., 0., 1.]));
                 out.uv.push(self.uv.get(i).copied().unwrap_or([0., 0.]));
             }
             tri_tex.push(self.tex.get(tri[0] as usize).copied().unwrap_or(0));
@@ -178,7 +187,10 @@ impl MeshData {
     /// clamped to their texture, which can't repeat once it shares an image.
     pub fn bake(&mut self, images: &[Option<RgbaImage>]) -> RgbaImage {
         let white = RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]));
-        let parts: Vec<&RgbaImage> = images.iter().map(|i| i.as_ref().unwrap_or(&white)).collect();
+        let parts: Vec<&RgbaImage> = images
+            .iter()
+            .map(|i| i.as_ref().unwrap_or(&white))
+            .collect();
         let w: u32 = parts.iter().map(|i| i.width()).sum::<u32>().max(1);
         let h: u32 = parts.iter().map(|i| i.height()).max().unwrap_or(1).max(1);
         let mut out = RgbaImage::new(w, h);
@@ -213,9 +225,15 @@ impl MeshData {
         for (si, seg) in pts.chunks_exact(2).enumerate() {
             let a = glam::Vec3::from(seg[0]);
             let b = glam::Vec3::from(seg[1]);
-            let Some(dir) = (b - a).try_normalize() else { continue };
+            let Some(dir) = (b - a).try_normalize() else {
+                continue;
+            };
             let w = widths.get(si).or(widths.last()).copied().unwrap_or(0.02);
-            let reference = if dir.z.abs() > 0.9 { glam::Vec3::X } else { glam::Vec3::Z };
+            let reference = if dir.z.abs() > 0.9 {
+                glam::Vec3::X
+            } else {
+                glam::Vec3::Z
+            };
             let s1 = dir.cross(reference).normalize();
             let s2 = dir.cross(s1);
             let (u, v) = (s1 * w, s2 * w);
@@ -230,7 +248,8 @@ impl MeshData {
                     m.norm.push(n);
                     m.uv.push(uv);
                 }
-                m.ind.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                m.ind
+                    .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
             }
         }
         m
@@ -239,7 +258,11 @@ impl MeshData {
 
 /// The binary payload (vertex attributes then indices, each 4-byte aligned) and
 /// the matching glTF JSON, before either container wraps them.
-fn build(mesh: &MeshData, image: Option<&RgbaImage>, uri: Option<&dyn Fn(&[u8]) -> String>) -> Result<(Value, Vec<u8>), String> {
+fn build(
+    mesh: &MeshData,
+    image: Option<&RgbaImage>,
+    uri: Option<&dyn Fn(&[u8]) -> String>,
+) -> Result<(Value, Vec<u8>), String> {
     let mut bin: Vec<u8> = vec![];
     let mut views: Vec<Value> = vec![];
 
@@ -257,8 +280,10 @@ fn build(mesh: &MeshData, image: Option<&RgbaImage>, uri: Option<&dyn Fn(&[u8]) 
         views.len() - 1
     };
 
-    let f3 = |a: &[[f32; 3]]| -> Vec<u8> { a.iter().flatten().flat_map(|f| f.to_le_bytes()).collect() };
-    let f2 = |a: &[[f32; 2]]| -> Vec<u8> { a.iter().flatten().flat_map(|f| f.to_le_bytes()).collect() };
+    let f3 =
+        |a: &[[f32; 3]]| -> Vec<u8> { a.iter().flatten().flat_map(|f| f.to_le_bytes()).collect() };
+    let f2 =
+        |a: &[[f32; 2]]| -> Vec<u8> { a.iter().flatten().flat_map(|f| f.to_le_bytes()).collect() };
 
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     for p in &mesh.pos {
@@ -389,7 +414,10 @@ pub fn read(bytes: &[u8]) -> Result<MeshData, String> {
             };
             let base = out.pos.len() as u32;
             let n = pos.len();
-            let norm: Vec<[f32; 3]> = reader.read_normals().map(|i| i.collect()).unwrap_or_default();
+            let norm: Vec<[f32; 3]> = reader
+                .read_normals()
+                .map(|i| i.collect())
+                .unwrap_or_default();
             let uv: Vec<[f32; 2]> = reader
                 .read_tex_coords(0)
                 .map(|t| t.into_f32().collect())
@@ -511,7 +539,13 @@ mod tests {
 
     #[test]
     fn polygons_fan_and_carry_face_normals() {
-        let pos = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.]];
+        let pos = [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+        ];
         let faces = vec![vec![0, 1, 2, 3], vec![0, 4, 1]];
         let m = MeshData::from_polygons(&pos, &faces, &[[0.5, 0.25]], &[], &[]).unwrap();
         assert_eq!(m.pos.len(), 7); // 4 + 3, unshared
@@ -526,9 +560,18 @@ mod tests {
 
     #[test]
     fn polygons_take_corner_uvs_and_a_texture_per_face() {
-        let pos = [[0., 0., 0.], [1., 0., 0.], [1., 1., 0.], [0., 1., 0.], [0., 0., 1.]];
+        let pos = [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+        ];
         let faces = vec![vec![0, 1, 2, 3], vec![0, 4, 1]];
-        let corners = vec![vec![[0., 1.], [1., 1.], [1., 0.], [0., 0.]], vec![[0.5, 0.5]]];
+        let corners = vec![
+            vec![[0., 1.], [1., 1.], [1., 0.], [0., 0.]],
+            vec![[0.5, 0.5]],
+        ];
         let m = MeshData::from_polygons(&pos, &faces, &[], &corners, &[1, 0]).unwrap();
         assert_eq!(m.uv[..4], [[0., 1.], [1., 1.], [1., 0.], [0., 0.]]);
         // a corner list of the wrong length falls back to the face uv (0,0)
@@ -546,7 +589,10 @@ mod tests {
             &[[0., 0., 0.], [1., 0., 0.], [1., 1., 0.]],
             &[vec![0, 1, 2], vec![0, 1, 2]],
             &[],
-            &[vec![[0., 0.], [1., 0.], [1., 1.]], vec![[0., 0.], [1., 0.], [2., 0.5]]],
+            &[
+                vec![[0., 0.], [1., 0.], [1., 1.]],
+                vec![[0., 0.], [1., 0.], [2., 0.5]],
+            ],
             &[0, 1],
         )
         .unwrap();
@@ -567,7 +613,11 @@ mod tests {
 
     #[test]
     fn lines_make_four_sided_beams() {
-        let m = MeshData::from_lines(&[[0., 0., 0.], [2., 0., 0.], [0., 0., 0.], [0., 0., 0.]], &[0.1], &[]);
+        let m = MeshData::from_lines(
+            &[[0., 0., 0.], [2., 0., 0.], [0., 0., 0.], [0., 0., 0.]],
+            &[0.1],
+            &[],
+        );
         // the zero-length second segment is skipped
         assert_eq!(m.pos.len(), 16);
         assert_eq!(m.ind.len(), 24);
