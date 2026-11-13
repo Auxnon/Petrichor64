@@ -43,8 +43,8 @@ pub struct LuaEnt {
     /// rectangular prisms (a piano key, a wall) not just uniform cubes.
     pub size: [f64; 3],
     pub offset: [f64; 3], // pub meta: mlua::Table,
-                          // pub sender: Option<Sender<(u8, MainCommmand)>>,
-                          // pub cloned: bool,
+    // pub sender: Option<Sender<(u8, MainCommmand)>>,
+    // pub cloned: bool,
     /// Collider shape override for the collision system (`hit.*`, `ent:hit`):
     /// 0 = auto (cylinder for a billboard sprite, baked model AABB otherwise),
     /// 1 = box, 2 = cylinder. See `guide/hit.md`.
@@ -199,32 +199,32 @@ impl UserData for LuaEnt {
         methods.add_method_mut(
             "anim",
             |_, _, this_res, (tex, force, speed): (String, Option<bool>, Option<f64>)| {
-            let this = safe_unwrap!(this_res);
-            let force = force.unwrap_or(false);
-            // A clip of the entity's skeleton takes precedence over a sprite
-            // animation of the same name; "" returns to the rest pose.
-            if let Some(sk) = crate::skeleton::lookup(&this.asset) {
-                let clip = tex.to_lowercase();
-                if clip.is_empty() || sk.clip_index(&clip).is_some() {
-                    let st = this.skel.get_or_insert_with(Default::default);
-                    if st.clip != clip || force {
-                        st.clip = clip;
-                        st.start = crate::skeleton::clock();
+                let this = safe_unwrap!(this_res);
+                let force = force.unwrap_or(false);
+                // A clip of the entity's skeleton takes precedence over a sprite
+                // animation of the same name; "" returns to the rest pose.
+                if let Some(sk) = crate::skeleton::lookup(&this.asset) {
+                    let clip = tex.to_lowercase();
+                    if clip.is_empty() || sk.clip_index(&clip).is_some() {
+                        let st = this.skel.get_or_insert_with(Default::default);
+                        if st.clip != clip || force {
+                            st.clip = clip;
+                            st.start = crate::skeleton::clock();
+                        }
+                        if let Some(sp) = speed {
+                            st.speed = sp as f32;
+                        }
+                        return Ok(Value::Bool(true));
                     }
-                    if let Some(sp) = speed {
-                        st.speed = sp as f32;
-                    }
-                    return Ok(Value::Bool(true));
                 }
-            }
-            if tex != this.tex || force {
-                this.dirty = true;
-                this.tex = tex;
-            }
-            this.anim = true;
+                if tex != this.tex || force {
+                    this.dirty = true;
+                    this.tex = tex;
+                }
+                this.anim = true;
 
-            Ok(Value::Bool(true))
-        },
+                Ok(Value::Bool(true))
+            },
         );
 
         // ent:bone(name) -> {x, y, z, rx, ry, rz} or nil: the bone's world
@@ -350,10 +350,13 @@ impl UserData for LuaEnt {
         methods.add_method_mut("gtile", |_, mc, this_res, (x, y, z): (i32, i32, i32)| {
             let this = safe_unwrap!(this_res);
             Ok(match &this.grid {
-                Some(g) => lstr(mc, match g.get_tile(x, y, z) {
-                    Some((name, _)) => name,
-                    None => String::new(),
-                }),
+                Some(g) => lstr(
+                    mc,
+                    match g.get_tile(x, y, z) {
+                        Some((name, _)) => name,
+                        None => String::new(),
+                    },
+                ),
                 None => Value::Nil,
             })
         });
@@ -369,10 +372,8 @@ impl UserData for LuaEnt {
                     Some(g) => {
                         let tt = if t.is_empty() { None } else { Some(t.as_str()) };
                         match g.first_tile(tt, x, y, z, dx, dy, dz, 100) {
-                            Some(v) => Ok(lua.table_from_array(
-                                mc,
-                                vec![v[0] as f64, v[1] as f64, v[2] as f64],
-                            )),
+                            Some(v) => Ok(lua
+                                .table_from_array(mc, vec![v[0] as f64, v[1] as f64, v[2] as f64])),
                             None => {
                                 let t = lua.raw_table();
                                 Ok(lua.wrap_table(mc, t))
@@ -415,7 +416,12 @@ impl UserData for LuaEnt {
         // Joint names of the model's skeleton (empty if it has none).
         fields.add_field_method_get("bones", |_, mc, this| {
             crate::skeleton::lookup(&this.asset)
-                .map(|sk| sk.joints.iter().map(|j| lstr(mc, j.name.as_str())).collect::<Vec<Value>>())
+                .map(|sk| {
+                    sk.joints
+                        .iter()
+                        .map(|j| lstr(mc, j.name.as_str()))
+                        .collect::<Vec<Value>>()
+                })
                 .unwrap_or_default()
         });
         fields.add_field_method_set("flipped", |_, _, this, flipped: bool| {

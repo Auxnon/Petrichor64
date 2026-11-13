@@ -95,7 +95,10 @@ pub fn start() {
             core.global.fps = fps;
         }
         #[cfg(unix)]
-        let log = capture.as_ref().map(|c| c.tail.recent(4)).unwrap_or_default();
+        let log = capture
+            .as_ref()
+            .map(|c| c.tail.recent(4))
+            .unwrap_or_default();
         #[cfg(not(unix))]
         let log: Vec<String> = Vec::new();
         renderer.render_frame(&mut core, &mut term, &log);

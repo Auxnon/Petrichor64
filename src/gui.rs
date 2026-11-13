@@ -4,8 +4,7 @@ use atomicell::AtomicCell;
 use glam::{vec4, Vec4};
 
 use crate::{
-    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse,
-    pool::SharedPool,
+    bundle::BundleManager, global::GuiParams, log::Loggy, lua_define::LuaResponse, pool::SharedPool,
 };
 
 #[cfg(feature = "headed")]
@@ -62,7 +61,10 @@ impl ScreenLayer {
         queue: &wgpu::Queue,
         size: &[u32; 2],
     ) {
-        match self.bundle_target.and_then(|id| bundle_manager.get_pool(id)) {
+        match self
+            .bundle_target
+            .and_then(|id| bundle_manager.get_pool(id))
+        {
             Some(pool) => {
                 // Get the weak ref for this screen index
                 let weak_ref = match self.index {
@@ -137,8 +139,10 @@ impl ScreenLayer {
                 let target = match self.bundle_target {
                     Some(t) => t,
                     None => {
-                        let blank =
-                            RgbaImage::new(self.texture.texture.width(), self.texture.texture.height());
+                        let blank = RgbaImage::new(
+                            self.texture.texture.width(),
+                            self.texture.texture.height(),
+                        );
                         crate::texture::write_tex(queue, &self.texture.texture, &blank);
                         self.dirty = false;
                         return;
@@ -560,8 +564,7 @@ impl Gui {
         };
         for layer in layers.iter_mut() {
             let t = &layer.texture.texture;
-            if layer.bundle_target == Some(bundle_id)
-                && (t.width(), t.height()) == img.dimensions()
+            if layer.bundle_target == Some(bundle_id) && (t.width(), t.height()) == img.dimensions()
             {
                 crate::texture::write_tex(queue, t, img);
                 layer.dirty = false;
@@ -1389,11 +1392,35 @@ mod blend_tests {
     fn a_translucent_box_blends_over_what_is_drawn() {
         let mut img = RgbaImage::new(8, 8);
         let i = |v: i64| LuaResponse::Integer(v);
-        direct_rect(&mut img, 8, 8, i(0), i(0), i(8), i(8), Vec4::new(1., 1., 1., 1.), None);
-        direct_rect(&mut img, 8, 8, i(2), i(2), i(4), i(4), Vec4::new(0., 0., 0., 0.6), Some(i(1)));
+        direct_rect(
+            &mut img,
+            8,
+            8,
+            i(0),
+            i(0),
+            i(8),
+            i(8),
+            Vec4::new(1., 1., 1., 1.),
+            None,
+        );
+        direct_rect(
+            &mut img,
+            8,
+            8,
+            i(2),
+            i(2),
+            i(4),
+            i(4),
+            Vec4::new(0., 0., 0., 0.6),
+            Some(i(1)),
+        );
         let inside = px(&img, 4, 4);
         assert_eq!(inside[3], 255, "still opaque: no hole");
-        assert!(inside[0] > 80 && inside[0] < 120, "white tinted dark, got {:?}", inside);
+        assert!(
+            inside[0] > 80 && inside[0] < 120,
+            "white tinted dark, got {:?}",
+            inside
+        );
         assert_eq!(px(&img, 0, 0), [255, 255, 255, 255], "outside untouched");
         // rounded: the box's own corner pixel is left alone
         assert_eq!(px(&img, 2, 2), [255, 255, 255, 255]);
@@ -1405,13 +1432,53 @@ mod blend_tests {
     fn opaque_replaces_and_alpha_zero_still_erases() {
         let mut img = RgbaImage::new(4, 4);
         let i = |v: i64| LuaResponse::Integer(v);
-        direct_rect(&mut img, 4, 4, i(0), i(0), i(4), i(4), Vec4::new(1., 0., 0., 1.), None);
-        direct_rect(&mut img, 4, 4, i(0), i(0), i(2), i(2), Vec4::new(0., 0., 1., 1.), None);
+        direct_rect(
+            &mut img,
+            4,
+            4,
+            i(0),
+            i(0),
+            i(4),
+            i(4),
+            Vec4::new(1., 0., 0., 1.),
+            None,
+        );
+        direct_rect(
+            &mut img,
+            4,
+            4,
+            i(0),
+            i(0),
+            i(2),
+            i(2),
+            Vec4::new(0., 0., 1., 1.),
+            None,
+        );
         assert_eq!(px(&img, 0, 0), [0, 0, 255, 255]);
-        direct_rect(&mut img, 4, 4, i(0), i(0), i(2), i(2), Vec4::new(0., 0., 0., 0.), None);
+        direct_rect(
+            &mut img,
+            4,
+            4,
+            i(0),
+            i(0),
+            i(2),
+            i(2),
+            Vec4::new(0., 0., 0., 0.),
+            None,
+        );
         assert_eq!(px(&img, 1, 1), [0, 0, 0, 0]);
         assert_eq!(px(&img, 3, 3), [255, 0, 0, 255]);
         // off the edge is clipped, not a panic
-        direct_rect(&mut img, 4, 4, i(-5), i(2), i(20), i(9), Vec4::new(0., 1., 0., 1.), Some(i(3)));
+        direct_rect(
+            &mut img,
+            4,
+            4,
+            i(-5),
+            i(2),
+            i(20),
+            i(9),
+            Vec4::new(0., 1., 0., 1.),
+            Some(i(3)),
+        );
     }
 }

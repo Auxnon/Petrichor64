@@ -30,8 +30,8 @@ use crate::lua_img::LuaImg;
 use crate::pad::Pad;
 use crate::pool::{LocalPool, SharedPool};
 use crate::types::Script;
-use crate::world::{TileCommand, TileResponse, WorldInstance};
 use crate::worker_protocol::{control_state_from_wire, ChunkWire, EntXform, HostToVm, VmToHost};
+use crate::world::{TileCommand, TileResponse, WorldInstance};
 
 /// Everything the worker's VM needs, held for its lifetime. Non-`'gc` state
 /// (`ctx`, `shared`, the channels) lives here; the `'gc` VM state lives in the
@@ -251,7 +251,11 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // postMessage). Must outlive `talk`, hence a fn-scope binding.
     let mut _load_rx = None;
     let talk: Option<LuaTalk> = match msg {
-        HostToVm::Loop { keys, analog, clock } => {
+        HostToVm::Loop {
+            keys,
+            analog,
+            clock,
+        } => {
             crate::skeleton::set_clock(clock);
             Some(LuaTalk::Loop(control_state_from_wire(&keys, &analog)))
         }
@@ -285,7 +289,9 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         let mut talk_holder = Some(talk);
         let res = lua.enter(|vm, mc| {
             let mut local_pool = LocalPool::new();
-            let t = talk_holder.take().expect("dispatch enter ran more than once");
+            let t = talk_holder
+                .take()
+                .expect("dispatch enter ran more than once");
             handle_lua_talk(t, vm, mc, ctx, &mut local_pool, shared)
         });
         if let Err(e) = res {
@@ -311,7 +317,8 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                 entities.push(wrapper);
             }
             crate::command::MainCommmand::LoopComplete(m) => {
-                for (changed, r, sky) in [(m.gui, &ctx.gui_ref, false), (m.sky, &ctx.sky_ref, true)] {
+                for (changed, r, sky) in [(m.gui, &ctx.gui_ref, false), (m.sky, &ctx.sky_ref, true)]
+                {
                     if !changed {
                         continue;
                     }
@@ -322,7 +329,10 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                         out.push(VmToHost::Raster { sky, w, h, px });
                     }
                 }
-                out.push(VmToHost::LoopComplete { gui: m.gui, sky: m.sky });
+                out.push(VmToHost::LoopComplete {
+                    gui: m.gui,
+                    sky: m.sky,
+                });
             }
             other => {
                 if let Some(v) = main_command_to_host(other) {
@@ -349,8 +359,7 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
                         });
                     }
                     // v = ivec4(meta/rot, x, y, z) — see set_tile in command.rs.
-                    world_layer
-                        .set_tile(world_instance, &name, v.x as u8, v.y, v.z, v.w);
+                    world_layer.set_tile(world_instance, &name, v.x as u8, v.y, v.z, v.w);
                 }
             }
             TileCommand::Clear() | TileCommand::Destroy() => {
@@ -493,7 +502,13 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         let diff_keys_mutex = Rc::new(RefCell::new([false; 256]));
         let mice_mutex = Rc::new(RefCell::new([0f32; crate::types::MICE_LEN]));
 
-        let main_rast = LuaImg::new(bundle_id, main_im.clone(), size[0], size[1], letters.clone());
+        let main_rast = LuaImg::new(
+            bundle_id,
+            main_im.clone(),
+            size[0],
+            size[1],
+            letters.clone(),
+        );
         let sky_rast = LuaImg::new(bundle_id, sky_im.clone(), size[0], size[1], letters.clone());
         let (main_val, main_ref) = vm.create_userdata_tuple(mc, main_rast);
         let (sky_val, sky_ref) = vm.create_userdata_tuple(mc, sky_rast);
@@ -529,7 +544,6 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             loggy_tx.clone(),
             LocalPool::new(),
         )?;
-
 
         Ok(LuaContext {
             bundle_id,

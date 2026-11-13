@@ -118,7 +118,11 @@ fn ignore(args: &[String]) -> Result<(), String> {
 
     if let Ok(old) = std::fs::read_to_string(&target) {
         if old == fresh {
-            println!("{} is already up to date ({})", target.display(), codex_name());
+            println!(
+                "{} is already up to date ({})",
+                target.display(),
+                codex_name()
+            );
             return Ok(());
         }
         let new_ver = codex_version(&fresh).unwrap_or_default();
@@ -192,7 +196,7 @@ fn game_root(start: &Path) -> Option<PathBuf> {
                                 .and_then(|x| x.to_str())
                                 .is_some_and(crate::asset::is_script_ext)
                         })
-                            .unwrap_or(false)
+                        .unwrap_or(false)
                     })
                 })
                 .unwrap_or(false)
@@ -225,7 +229,11 @@ fn codex_version(script: &str) -> Option<[u16; 3]> {
         .split(|c: char| !c.is_ascii_digit())
         .filter(|n| !n.is_empty())
         .map(|n| n.parse::<u16>().unwrap_or(0));
-    Some([nums.next()?, nums.next().unwrap_or(0), nums.next().unwrap_or(0)])
+    Some([
+        nums.next()?,
+        nums.next().unwrap_or(0),
+        nums.next().unwrap_or(0),
+    ])
 }
 
 fn dotted(v: [u16; 3]) -> String {
@@ -234,7 +242,10 @@ fn dotted(v: [u16; 3]) -> String {
 
 fn confirm(question: &str) -> Result<bool, String> {
     if !std::io::stdin().is_terminal() {
-        return Err(format!("{} (no terminal to ask on; pass -y to replace)", question));
+        return Err(format!(
+            "{} (no terminal to ask on; pass -y to replace)",
+            question
+        ));
     }
     eprint!("{} [y/N] ", question);
     let _ = std::io::stderr().flush();
@@ -252,7 +263,10 @@ mod tests {
 
     #[test]
     fn reads_codex_versions() {
-        assert_eq!(codex_version("-- Codex 3.0.0 \"Artichoke\"\nfoo"), Some([3, 0, 0]));
+        assert_eq!(
+            codex_version("-- Codex 3.0.0 \"Artichoke\"\nfoo"),
+            Some([3, 0, 0])
+        );
         assert_eq!(codex_version("\n-- codex 2.1\n"), Some([2, 1, 0]));
         assert_eq!(codex_version("print(1)\n"), None);
         assert!(codex_version(&crate::asset::get_codex_version_string()).is_some());

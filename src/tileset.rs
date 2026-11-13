@@ -214,7 +214,11 @@ pub struct GenPiece {
 }
 
 fn corner_pos(i: usize) -> [i16; 3] {
-    [(i & 1) as i16 * S, ((i >> 1) & 1) as i16 * S, ((i >> 2) & 1) as i16 * S]
+    [
+        (i & 1) as i16 * S,
+        ((i >> 1) & 1) as i16 * S,
+        ((i >> 2) & 1) as i16 * S,
+    ]
 }
 
 /// Texture coordinates on a cube face, matching `model::create_cube`'s, for
@@ -259,7 +263,11 @@ fn block_piece(case: u8) -> GenPiece {
                 p[u] = lo(u) + du * H;
                 p[v] = lo(v) + dv * H;
                 // the same point within the corner's own cell
-                let cell = [p[0] + H - o[0] * S, p[1] + H - o[1] * S, p[2] + H - o[2] * S];
+                let cell = [
+                    p[0] + H - o[0] * S,
+                    p[1] + H - o[1] * S,
+                    p[2] + H - o[2] * S,
+                ];
                 piece.verts.push(GenVert {
                     pos: p,
                     normal,
@@ -318,7 +326,11 @@ fn smooth_piece(case: u8) -> GenPiece {
     }
     let mid = |(a, b): (usize, usize)| {
         let (pa, pb) = (corner_pos(a), corner_pos(b));
-        [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2]
+        [
+            (pa[0] + pb[0]) / 2,
+            (pa[1] + pb[1]) / 2,
+            (pa[2] + pb[2]) / 2,
+        ]
     };
     let mut starts: Vec<(usize, usize)> = next.keys().copied().collect();
     starts.sort();
@@ -374,7 +386,11 @@ fn split_eighths(tri: [[i16; 3]; 3]) -> Vec<[[i16; 3]; 3]> {
         for t in 1..poly.len() - 1 {
             let tri = [poly[0], poly[t], poly[t + 1]];
             let v = |p: [i16; 3]| Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
-            if (v(tri[1]) - v(tri[0])).cross(v(tri[2]) - v(tri[0])).length_squared() > 0.01 {
+            if (v(tri[1]) - v(tri[0]))
+                .cross(v(tri[2]) - v(tri[0]))
+                .length_squared()
+                > 0.01
+            {
                 tris.push(tri);
             }
         }
@@ -524,8 +540,11 @@ pub fn mesh(
                 counts.iter_mut().for_each(|c| *c = 0);
                 let mut any = false;
                 for i in 0..8usize {
-                    let cell =
-                        apron.get(x + (i & 1) as i32, y + ((i >> 1) & 1) as i32, z + (i >> 2) as i32);
+                    let cell = apron.get(
+                        x + (i & 1) as i32,
+                        y + ((i >> 1) & 1) as i32,
+                        z + (i >> 2) as i32,
+                    );
                     cells[i] = cell;
                     if cell != 0 {
                         case |= 1 << i;
@@ -590,16 +609,27 @@ pub fn mesh(
                             .find(|&c| sets.member(c) == Some(owner as u16))
                             .unwrap_or(cell);
                     }
-                    let uv = tex_map.get(&cell).copied().unwrap_or(Vec4::new(1., 1., 0., 0.));
+                    let uv = tex_map
+                        .get(&cell)
+                        .copied()
+                        .unwrap_or(Vec4::new(1., 1., 0., 0.));
                     kept[k] = verts.len() as u32;
                     verts.push(Vertex::new(
-                        [g.pos[0] + at.x as i16, g.pos[1] + at.y as i16, g.pos[2] + at.z as i16],
+                        [
+                            g.pos[0] + at.x as i16,
+                            g.pos[1] + at.y as i16,
+                            g.pos[2] + at.z as i16,
+                        ],
                         g.normal,
                         [g.uv[0] * uv.z + uv.x, g.uv[1] * uv.w + uv.y],
                     ));
                 }
                 for tri in piece.inds.chunks_exact(3) {
-                    let t = [kept[tri[0] as usize], kept[tri[1] as usize], kept[tri[2] as usize]];
+                    let t = [
+                        kept[tri[0] as usize],
+                        kept[tri[1] as usize],
+                        kept[tri[2] as usize],
+                    ];
                     if t.iter().all(|&i| i != u32::MAX) {
                         inds.extend_from_slice(&t);
                     }
@@ -634,8 +664,11 @@ mod tests {
                 for z in -1..n {
                     let mut case = 0u8;
                     for i in 0..8usize {
-                        let (cx, cy, cz) =
-                            (x + (i & 1) as i32, y + ((i >> 1) & 1) as i32, z + (i >> 2) as i32);
+                        let (cx, cy, cz) = (
+                            x + (i & 1) as i32,
+                            y + ((i >> 1) & 1) as i32,
+                            z + (i >> 2) as i32,
+                        );
                         if solid(cx, cy, cz) {
                             case |= 1 << i;
                         }
@@ -675,7 +708,11 @@ mod tests {
     fn assert_manifold(p: &GenPiece) {
         let e = edges(p);
         for d in &e {
-            assert_eq!(e.iter().filter(|x| *x == d).count(), 1, "edge {d:?} used twice");
+            assert_eq!(
+                e.iter().filter(|x| *x == d).count(),
+                1,
+                "edge {d:?} used twice"
+            );
         }
     }
 
@@ -708,12 +745,19 @@ mod tests {
         assert_eq!(volume6(&p), 6 * 16 * 16 * 16);
         // spans the cell around its centre, like a cube tile
         let xs: Vec<i16> = p.verts.iter().map(|v| v.pos[0]).collect();
-        assert_eq!((*xs.iter().min().unwrap(), *xs.iter().max().unwrap()), (-8, 8));
+        assert_eq!(
+            (*xs.iter().min().unwrap(), *xs.iter().max().unwrap()),
+            (-8, 8)
+        );
     }
 
     #[test]
     fn blocks_hide_the_faces_they_share() {
-        let p = mesh_cells(Look::Block, &|x, y, z| inside(2, x, y, z) && y == 0 && z == 0, 2);
+        let p = mesh_cells(
+            Look::Block,
+            &|x, y, z| inside(2, x, y, z) && y == 0 && z == 0,
+            2,
+        );
         assert_watertight(&p);
         // 10 faces of a 2x1x1 bar
         assert_eq!(p.inds.len() / 6, 40);
@@ -735,8 +779,16 @@ mod tests {
         let shapes: [(&str, &dyn Fn(i32, i32, i32) -> bool, i32); 4] = [
             ("one cell", &|x, y, z| (x, y, z) == (0, 0, 0), 1),
             ("a slab", &|x, y, z| inside(3, x, y, z) && z == 0, 3),
-            ("a diagonal pair", &|x, y, z| (x, y, z) == (0, 0, 0) || (x, y, z) == (1, 1, 0), 2),
-            ("a corner-touching pair", &|x, y, z| (x, y, z) == (0, 0, 0) || (x, y, z) == (1, 1, 1), 2),
+            (
+                "a diagonal pair",
+                &|x, y, z| (x, y, z) == (0, 0, 0) || (x, y, z) == (1, 1, 0),
+                2,
+            ),
+            (
+                "a corner-touching pair",
+                &|x, y, z| (x, y, z) == (0, 0, 0) || (x, y, z) == (1, 1, 1),
+                2,
+            ),
         ];
         for (name, solid, n) in shapes {
             let p = mesh_cells(Look::Smooth, solid, n);
@@ -778,7 +830,11 @@ mod tests {
                     assert_eq!(v.cell as usize, cell);
                     for a in 0..3 {
                         let lo = ((cell >> a) & 1) as i16 * H;
-                        assert!((lo..=lo + H).contains(&v.pos[a]), "case {case}: {:?} outside eighth {cell}", v.pos);
+                        assert!(
+                            (lo..=lo + H).contains(&v.pos[a]),
+                            "case {case}: {:?} outside eighth {cell}",
+                            v.pos
+                        );
                     }
                 }
             }
@@ -834,8 +890,11 @@ mod tests {
                     [p[0], p[1], p[2]]
                 })
                 .collect();
-            let mut want: Vec<[i16; 3]> =
-                generated(Look::Block, turn_case(case)).verts.iter().map(|g| g.pos).collect();
+            let mut want: Vec<[i16; 3]> = generated(Look::Block, turn_case(case))
+                .verts
+                .iter()
+                .map(|g| g.pos)
+                .collect();
             turned.sort();
             turned.dedup();
             want.sort();

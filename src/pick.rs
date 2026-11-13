@@ -94,10 +94,11 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
 
     if let Some(b) = core.ent_manager.bundles.get(&bundle) {
         for (eref, ent, uni) in b.array.iter() {
-            let (id, asset, dead) = match eref.with_ref(|l| Ok((l.get_id(), l.get_asset(), l.is_dead()))) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+            let (id, asset, dead) =
+                match eref.with_ref(|l| Ok((l.get_id(), l.get_asset(), l.is_dead()))) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
             if dead || b.hidden.contains(&id) {
                 continue;
             }
@@ -106,7 +107,15 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
             let uv_mod = Vec4::from_array(u.uv_mod);
             let kind = PickKind::Ent { id, asset };
             if u.effects[0] > 0. {
-                if let Some(h) = billboard_hit(origin, dir, view, model_mat, u.effects[0], u.effects[1], uv_mod) {
+                if let Some(h) = billboard_hit(
+                    origin,
+                    dir,
+                    view,
+                    model_mat,
+                    u.effects[0],
+                    u.effects[1],
+                    uv_mod,
+                ) {
                     hits.push(RawHit { kind, ..h });
                 }
                 continue;
@@ -115,7 +124,17 @@ pub fn pick(core: &Core, bundle: u8, tiles: bool, ray: (Vec3, Vec3)) -> Option<P
                 continue;
             };
             let bounds = (ent.model.bounds_min * 16., ent.model.bounds_max * 16.);
-            mesh_hits(origin, dir, model_mat, verts, inds, Some(bounds), uv_mod, &kind, &mut hits);
+            mesh_hits(
+                origin,
+                dir,
+                model_mat,
+                verts,
+                inds,
+                Some(bounds),
+                uv_mod,
+                &kind,
+                &mut hits,
+            );
         }
     }
 
@@ -359,8 +378,12 @@ pub fn texel_at(core: &Core, uv: Vec2) -> Option<PickTex> {
     let (name, r) = tex_rect_at(core, uv)?;
     let w = (r.z * aw).round().max(1.) as u32;
     let h = (r.w * ah).round().max(1.) as u32;
-    let x = (((uv.x - r.x) / r.z) * w as f32).floor().clamp(0., (w - 1) as f32) as u32;
-    let y = (((uv.y - r.y) / r.w) * h as f32).floor().clamp(0., (h - 1) as f32) as u32;
+    let x = (((uv.x - r.x) / r.z) * w as f32)
+        .floor()
+        .clamp(0., (w - 1) as f32) as u32;
+    let y = (((uv.y - r.y) / r.w) * h as f32)
+        .floor()
+        .clamp(0., (h - 1) as f32) as u32;
     let ax = ((r.x * aw).round() as u32 + x).min(tm.atlas_dim.x - 1);
     let ay = ((r.y * ah).round() as u32 + y).min(tm.atlas_dim.y - 1);
     let rgba = tm.atlas.get_pixel(ax, ay).0;
@@ -481,11 +504,18 @@ mod tests {
     fn ray_hits_a_triangle_and_reports_barycentrics() {
         let o = vec3(0.25, 0.25, 5.);
         let d = vec3(0., 0., -1.);
-        let (t, u, v) = ray_tri(o, d, vec3(0., 0., 0.), vec3(1., 0., 0.), vec3(0., 1., 0.)).unwrap();
+        let (t, u, v) =
+            ray_tri(o, d, vec3(0., 0., 0.), vec3(1., 0., 0.), vec3(0., 1., 0.)).unwrap();
         assert!((t - 5.).abs() < 1e-5);
         assert!((u - 0.25).abs() < 1e-5 && (v - 0.25).abs() < 1e-5);
         // and from behind: the engine draws both sides, so picking does too
-        let back = ray_tri(vec3(0.25, 0.25, -5.), vec3(0., 0., 1.), vec3(0., 0., 0.), vec3(1., 0., 0.), vec3(0., 1., 0.));
+        let back = ray_tri(
+            vec3(0.25, 0.25, -5.),
+            vec3(0., 0., 1.),
+            vec3(0., 0., 0.),
+            vec3(1., 0., 0.),
+            vec3(0., 1., 0.),
+        );
         assert!(back.is_some());
     }
 
@@ -502,7 +532,10 @@ mod tests {
         let hi = Vec3::splat(1.);
         assert!(ray_aabb(vec3(0., 0., 5.), vec3(0., 0., -1.), lo, hi));
         assert!(!ray_aabb(vec3(3., 0., 5.), vec3(0., 0., -1.), lo, hi));
-        assert!(!ray_aabb(vec3(0., 0., 5.), vec3(0., 0., 1.), lo, hi), "pointing away");
+        assert!(
+            !ray_aabb(vec3(0., 0., 5.), vec3(0., 0., 1.), lo, hi),
+            "pointing away"
+        );
     }
 
     #[test]
@@ -510,7 +543,16 @@ mod tests {
         // camera at the origin looking down −z; sprite 10 units ahead
         let view = Mat4::IDENTITY;
         let model = Mat4::from_translation(vec3(0., 0., -10.));
-        let h = billboard_hit(Vec3::ZERO, vec3(0., 0., -1.), view, model, 1., 0., vec4(0., 0., 1., 1.)).unwrap();
+        let h = billboard_hit(
+            Vec3::ZERO,
+            vec3(0., 0., -1.),
+            view,
+            model,
+            1.,
+            0.,
+            vec4(0., 0., 1., 1.),
+        )
+        .unwrap();
         assert!((h.atlas_uv - vec2(0.5, 0.5)).length() < 1e-5);
         assert!((h.t - 10.).abs() < 1e-5);
         // upper-left corner region: −x is u=0, +y is v=0
@@ -518,7 +560,16 @@ mod tests {
         let h = billboard_hit(Vec3::ZERO, d, view, model, 1., 0., vec4(0., 0., 1., 1.)).unwrap();
         assert!(h.atlas_uv.x < 0.02 && h.atlas_uv.y < 0.02);
         // and the uv_mod puts it into the sprite's atlas rect
-        let h = billboard_hit(Vec3::ZERO, vec3(0., 0., -1.), view, model, 1., 0., vec4(0.5, 0.25, 0.1, 0.1)).unwrap();
+        let h = billboard_hit(
+            Vec3::ZERO,
+            vec3(0., 0., -1.),
+            view,
+            model,
+            1.,
+            0.,
+            vec4(0.5, 0.25, 0.1, 0.1),
+        )
+        .unwrap();
         assert!((h.atlas_uv - vec2(0.55, 0.30)).length() < 1e-5);
     }
 }

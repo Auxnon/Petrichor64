@@ -225,7 +225,11 @@ fn charts(pos: &[[f32; 3]], tris: &[[u32; 3]], dirs: &[u8]) -> Vec<usize> {
 /// charts than texels), they overlap rather than fail.
 fn pack(size: &[[f32; 2]], w: u32, h: u32, pad: u32) -> (f32, Vec<[f32; 2]>) {
     let mut order: Vec<usize> = (0..size.len()).collect();
-    order.sort_by(|&a, &b| size[b][1].total_cmp(&size[a][1]).then(size[b][0].total_cmp(&size[a][0])));
+    order.sort_by(|&a, &b| {
+        size[b][1]
+            .total_cmp(&size[a][1])
+            .then(size[b][0].total_cmp(&size[a][0]))
+    });
 
     let place = |scale: f32, pad: u32| -> Option<Vec<[f32; 2]>> {
         let mut at = vec![[0f32; 2]; size.len()];
@@ -273,7 +277,11 @@ fn pack(size: &[[f32; 2]], w: u32, h: u32, pad: u32) -> (f32, Vec<[f32; 2]>) {
         // prefer a scale that makes the biggest chart a whole number of texels
         // across, so its texels line up with the mesh's own edges
         let round = (lo * biggest).round() / biggest;
-        let scale = if round > lo && place(round, pad).is_some() { round } else { lo };
+        let scale = if round > lo && place(round, pad).is_some() {
+            round
+        } else {
+            lo
+        };
         if let Some(at) = place(scale, pad) {
             return (scale, at);
         }
@@ -346,12 +354,14 @@ pub fn bake(
                 if before[(y * w + x) as usize] {
                     continue;
                 }
-                let near = [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)].iter().find_map(|(dx, dy)| {
-                    let (nx, ny) = (x as i32 + dx, y as i32 + dy);
-                    let inside = nx >= 0 && ny >= 0 && (nx as u32) < w && (ny as u32) < h;
-                    (inside && before[(ny as u32 * w + nx as u32) as usize])
-                        .then(|| *img.get_pixel(nx as u32, ny as u32))
-                });
+                let near = [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)]
+                    .iter()
+                    .find_map(|(dx, dy)| {
+                        let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                        let inside = nx >= 0 && ny >= 0 && (nx as u32) < w && (ny as u32) < h;
+                        (inside && before[(ny as u32 * w + nx as u32) as usize])
+                            .then(|| *img.get_pixel(nx as u32, ny as u32))
+                    });
                 if let Some(c) = near {
                     img.put_pixel(x, y, c);
                     filled[(y * w + x) as usize] = true;
@@ -393,13 +403,20 @@ mod tests {
         assert_eq!(u.charts, 6);
         assert_eq!(u.ind.len(), ind.len());
         assert_eq!(u.pos.len(), u.uv.len());
-        assert!(u.uv.iter().all(|t| (0. ..=1.).contains(&t[0]) && (0. ..=1.).contains(&t[1])));
+        assert!(u
+            .uv
+            .iter()
+            .all(|t| (0. ..=1.).contains(&t[0]) && (0. ..=1.).contains(&t[1])));
         // every face is a square of the same size (one shared scale)
         let mut rects = vec![];
         for t in u.ind.chunks_exact(6) {
             let us: Vec<[f32; 2]> = t.iter().map(|&i| u.uv[i as usize]).collect();
-            let lo = us.iter().fold([f32::MAX; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
-            let hi = us.iter().fold([f32::MIN; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
+            let lo = us
+                .iter()
+                .fold([f32::MAX; 2], |m, p| [m[0].min(p[0]), m[1].min(p[1])]);
+            let hi = us
+                .iter()
+                .fold([f32::MIN; 2], |m, p| [m[0].max(p[0]), m[1].max(p[1])]);
             rects.push([lo[0] * 32., lo[1] * 32., hi[0] * 32., hi[1] * 32.]);
         }
         let side = rects[0][2] - rects[0][0];
@@ -459,8 +476,12 @@ mod tests {
     fn a_shared_edge_joins_triangles_split_at_their_vertices() {
         // two triangles of one face, no shared vertex indices
         let pos = vec![
-            [0., 0., 0.], [1., 0., 0.], [1., 1., 0.],
-            [0., 0., 0.], [1., 1., 0.], [0., 1., 0.],
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
         ];
         let ind = vec![0, 1, 2, 3, 4, 5];
         let u = unwrap(&pos, &ind, Mode::Box, 16, 16, 1);
@@ -473,7 +494,13 @@ mod tests {
         let u = unwrap(&pos, &ind, Mode::Box, 16, 16, 1);
         // the old look: red where the source vertex had x = 1, blue elsewhere
         let old: Vec<[f32; 2]> = u.from.iter().map(|&f| [pos[f as usize][0], 0.]).collect();
-        let img = bake(&u, &old, 16, 16, |p| if p[0] > 0.5 { [255, 0, 0, 255] } else { [0, 0, 255, 255] });
+        let img = bake(&u, &old, 16, 16, |p| {
+            if p[0] > 0.5 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        });
         // the +x face is solid red: find its chart's middle
         let face: Vec<[f32; 2]> = u.ind[0..6].iter().map(|&i| u.uv[i as usize]).collect();
         let cx = face.iter().map(|p| p[0]).sum::<f32>() / 6. * 16.;

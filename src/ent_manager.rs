@@ -1,4 +1,3 @@
-
 use crate::lua_ent::{lua_ent_flags, LuaEnt};
 
 #[cfg(feature = "headed")]
@@ -56,7 +55,12 @@ fn push_grid_ent(out: &mut Vec<GridEnt>, l: &LuaEnt) {
     }
     if let Some(grid) = &l.grid {
         let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
-        let quat = Quat::from_euler(glam::EulerRot::XYZ, l.rot_x as f32, l.rot_y as f32, l.rot_z as f32);
+        let quat = Quat::from_euler(
+            glam::EulerRot::XYZ,
+            l.rot_x as f32,
+            l.rot_y as f32,
+            l.rot_z as f32,
+        );
         let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
         out.push(GridEnt {
             id: l.get_id(),
@@ -403,7 +407,12 @@ impl EntManager {
     ) {
         let (ent, uni) = wrapped_lua
             .downcast_ref::<LuaEnt, _, _>(|lent| {
-                Ok(Self::build_ent(tex_manager, model_manager, lent, self.uniform_alignment))
+                Ok(Self::build_ent(
+                    tex_manager,
+                    model_manager,
+                    lent,
+                    self.uniform_alignment,
+                ))
             })
             .unwrap(); // should be safe since no errors within our closure
 
@@ -494,7 +503,9 @@ impl EntManager {
             let mut parent_index: i64 = -1;
             for (i, e) in b.array.iter().enumerate() {
                 #[cfg(feature = "headed")]
-                let id = e.0.with_ref(|l: &LuaEnt| Ok(l.get_id())).unwrap_or(u64::MAX);
+                let id =
+                    e.0.with_ref(|l: &LuaEnt| Ok(l.get_id()))
+                        .unwrap_or(u64::MAX);
                 #[cfg(not(feature = "headed"))]
                 let id = e
                     .downcast_ref::<LuaEnt, _, _>(|l| Ok(l.get_id()))
@@ -657,7 +668,10 @@ impl EntManager {
         let ents = self.hit_snapshot(bundle_id, model_manager);
         let mut buckets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
         for (i, e) in ents.iter().enumerate() {
-            buckets.entry(bucket_key(e.collider.center())).or_default().push(i);
+            buckets
+                .entry(bucket_key(e.collider.center()))
+                .or_default()
+                .push(i);
         }
         let mut out = Vec::new();
         for idxs in buckets.values() {
@@ -745,19 +759,19 @@ impl EntManager {
         // Headless has no GPU instances to build; just reap dead entities and
         // clear their dirty flags so per-frame Lua mutations settle.
         for b in self.bundles.values_mut() {
-        b.array.retain_mut(|lent| {
-            let mut alive = true;
-            let _ = lent.downcast_mut::<LuaEnt, _, _>(|l| {
-                if l.is_dirty() {
-                    if l.get_flags() & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
-                        alive = false;
+            b.array.retain_mut(|lent| {
+                let mut alive = true;
+                let _ = lent.downcast_mut::<LuaEnt, _, _>(|l| {
+                    if l.is_dirty() {
+                        if l.get_flags() & lua_ent_flags::DEAD == lua_ent_flags::DEAD {
+                            alive = false;
+                        }
+                        l.clear_dirt();
                     }
-                    l.clear_dirt();
-                }
-                Ok(())
+                    Ok(())
+                });
+                alive
             });
-            alive
-        });
         }
     }
 
@@ -896,7 +910,8 @@ impl EntManager {
             // Taken out and put back so the per-bundle pass can hold `&mut self` for
             // the texture/model managers without aliasing the map.
             if let Some(mut b) = self.bundles.remove(&id) {
-                let buffers = self.check_bundle_ents(&mut b, device, tm, mm, iteration, palette_layout);
+                let buffers =
+                    self.check_bundle_ents(&mut b, device, tm, mm, iteration, palette_layout);
                 out.insert(id, buffers);
                 self.bundles.insert(id, b);
             }
@@ -914,7 +929,13 @@ impl EntManager {
     /// split the world's own static chunks vs. per-frame entity transforms
     /// already have.
     #[cfg(feature = "headed")]
-    fn check_entity_grids(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, tm: &TexManager, mm: &ModelManager) {
+    fn check_entity_grids(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tm: &TexManager,
+        mm: &ModelManager,
+    ) {
         let mut rebuilds: Vec<(u64, String, crate::tile_grid::GridChunk)> = Vec::new();
         let mut live: FxHashMap<u64, (Mat4, Vec<String>)> = FxHashMap::default();
 
@@ -926,7 +947,12 @@ impl EntManager {
                     }
                     let id = l.get_id();
                     let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
-                    let quat = Quat::from_euler(glam::EulerRot::XYZ, l.rot_x as f32, l.rot_y as f32, l.rot_z as f32);
+                    let quat = Quat::from_euler(
+                        glam::EulerRot::XYZ,
+                        l.rot_x as f32,
+                        l.rot_y as f32,
+                        l.rot_z as f32,
+                    );
                     let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
                     let Some(grid) = l.grid.as_mut() else {
                         return Ok(());
@@ -949,7 +975,8 @@ impl EntManager {
 
         // Drop cached meshes for entities that died or lost their grid, and
         // cached chunks a `dtile`/`clear` removed from their owner's grid.
-        self.entity_grid_models.retain(|id, _| live.contains_key(id));
+        self.entity_grid_models
+            .retain(|id, _| live.contains_key(id));
         for (id, (_, keys)) in live.iter() {
             if let Some(models) = self.entity_grid_models.get_mut(id) {
                 let keep: rustc_hash::FxHashSet<&String> = keys.iter().collect();
@@ -960,7 +987,14 @@ impl EntManager {
         for (id, key, chunk) in rebuilds {
             let models = self.entity_grid_models.entry(id).or_default();
             let model = models.entry(key.clone()).or_insert_with(|| {
-                crate::tile::ChunkModel::new(device, key, chunk.pos[0], chunk.pos[1], chunk.pos[2], true)
+                crate::tile::ChunkModel::new(
+                    device,
+                    key,
+                    chunk.pos[0],
+                    chunk.pos[1],
+                    chunk.pos[2],
+                    true,
+                )
             });
             model.build_grid_chunk(tm, mm, &chunk);
             model.cook(device);
@@ -970,7 +1004,8 @@ impl EntManager {
             if let Some(models) = self.entity_grid_models.get_mut(id) {
                 for model in models.values_mut() {
                     let chunk_offset = Mat4::from_translation(
-                        vec3(model.pos.x as f32, model.pos.y as f32, model.pos.z as f32) * crate::collide::TILE_SIZE,
+                        vec3(model.pos.x as f32, model.pos.y as f32, model.pos.z as f32)
+                            * crate::collide::TILE_SIZE,
                     );
                     model.update_transform(queue, *transform * chunk_offset);
                 }

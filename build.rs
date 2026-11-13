@@ -56,22 +56,40 @@ fn nested_target(manifest: &std::path::Path, name: &str) -> std::path::PathBuf {
 
 /// A `Command` for a cargo-driven tool run from inside this build script, for a
 /// separate build of this crate, in its own target dir (see nested_target).
-fn nested_command(program: &str, manifest: &std::path::Path, target_dir: &std::path::Path) -> std::process::Command {
+fn nested_command(
+    program: &str,
+    manifest: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> std::process::Command {
     let mut c = std::process::Command::new(program);
     // This script's env describes the outer build (CARGO_CFG_*, CARGO_FEATURE_*,
     // TARGET, flags...). The nested cargo passes inherited env on to its own build
     // scripts, so leftovers either compile deps for the wrong OS (CARGO_CFG_UNIX
     // on wasm) or recurse (CARGO_FEATURE_WEB_EMBED). Keep only the user's cargo
     // config.
-    const KEEP: [&str; 5] =
-        ["CARGO_HOME", "CARGO_NET_", "CARGO_HTTP_", "CARGO_REGISTRIES_", "CARGO_REGISTRY_"];
+    const KEEP: [&str; 5] = [
+        "CARGO_HOME",
+        "CARGO_NET_",
+        "CARGO_HTTP_",
+        "CARGO_REGISTRIES_",
+        "CARGO_REGISTRY_",
+    ];
     for (key, _) in std::env::vars_os() {
         let k = key.to_string_lossy();
         if k.starts_with("CARGO_") && !KEEP.iter().any(|keep| k.starts_with(keep)) {
             c.env_remove(&key);
         }
     }
-    for key in ["TARGET", "HOST", "PROFILE", "OPT_LEVEL", "DEBUG", "NUM_JOBS", "OUT_DIR", "RUSTFLAGS"] {
+    for key in [
+        "TARGET",
+        "HOST",
+        "PROFILE",
+        "OPT_LEVEL",
+        "DEBUG",
+        "NUM_JOBS",
+        "OUT_DIR",
+        "RUSTFLAGS",
+    ] {
         c.env_remove(key);
     }
     c.current_dir(manifest).env("CARGO_TARGET_DIR", target_dir);
@@ -146,7 +164,9 @@ mod editors {
         /// The checkout this build compiled in, once run() has made sure of it.
         pub fn fetched(&self) -> Option<PathBuf> {
             std::env::var_os("CARGO_FEATURE_STUDIO")?;
-            let dir = std::env::var_os(self.dir_env).map(PathBuf::from).unwrap_or_else(|| self.checkout());
+            let dir = std::env::var_os(self.dir_env)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.checkout());
             dir.join("scripts").is_dir().then_some(dir)
         }
 
@@ -165,7 +185,10 @@ mod editors {
                     if !dir.join("scripts").is_dir() {
                         let want = std::env::var(self.ref_env).unwrap_or_else(|_| "main".into());
                         if let Err(e) = clone(&dir, self.url, &want) {
-                            println!("cargo::warning={}: couldn't clone {} from {}: {}", self.name, want, self.url, e);
+                            println!(
+                                "cargo::warning={}: couldn't clone {} from {}: {}",
+                                self.name, want, self.url, e
+                            );
                         }
                     }
                     // Rebuild when its scripts change: an edit, a pull, another
@@ -190,12 +213,20 @@ mod editors {
             });
             scripts.sort();
             if scripts.is_empty() {
-                println!("cargo::warning={}: no scripts in {}; building without it", self.name, dir.display());
+                println!(
+                    "cargo::warning={}: no scripts in {}; building without it",
+                    self.name,
+                    dir.display()
+                );
             }
             let mut src = format!("pub static {}: &[(&str, &str)] = &[\n", self.scripts_static);
             for path in &scripts {
                 let name = path.file_name().unwrap().to_string_lossy();
-                src += &format!("    ({:?}, include_str!({:?})),\n", name, path.to_string_lossy());
+                src += &format!(
+                    "    ({:?}, include_str!({:?})),\n",
+                    name,
+                    path.to_string_lossy()
+                );
             }
             src += "];\n";
             let rev = git(Some(dir), &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
@@ -226,7 +257,10 @@ mod editors {
     /// other checkout.
     fn clone(dir: &Path, url: &str, want: &str) -> Result<(), String> {
         if dir.exists() {
-            return Err(format!("{} is there but has no scripts/; move it aside to clone again", dir.display()));
+            return Err(format!(
+                "{} is there but has no scripts/; move it aside to clone again",
+                dir.display()
+            ));
         }
         git(None, &["clone", "-q", url, &dir.to_string_lossy()])?;
         if want != "main" {
@@ -246,7 +280,9 @@ mod editors {
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
         } else {
-            Err(String::from_utf8_lossy(&out.stderr).trim().replace('\n', " "))
+            Err(String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .replace('\n', " "))
         }
     }
 }
@@ -271,9 +307,19 @@ mod web_embed {
                 // include web/synth, which wasm-pack rewrites on every build,
                 // so it would never settle.
                 for input in [
-                    "build.rs", "Cargo.toml", "Cargo.lock", "Trunk.toml", "src", "synth/src",
-                    "synth/Cargo.toml", "web/index.html", "web/worker.js", "web/synth-worklet.js",
-                    "web/worklet-polyfill.js", "web/petrichor64-element.js", "web/default.game.png",
+                    "build.rs",
+                    "Cargo.toml",
+                    "Cargo.lock",
+                    "Trunk.toml",
+                    "src",
+                    "synth/src",
+                    "synth/Cargo.toml",
+                    "web/index.html",
+                    "web/worker.js",
+                    "web/synth-worklet.js",
+                    "web/worklet-polyfill.js",
+                    "web/petrichor64-element.js",
+                    "web/default.game.png",
                 ] {
                     println!("cargo::rerun-if-changed={}", input);
                 }
@@ -321,15 +367,30 @@ mod web_embed {
         // The AudioWorklet's own small wasm module; web/index.html copies it
         // in from web/synth/. Mirrors the justfile's `synth-wasm`.
         exec(nested("wasm-pack").args([
-            "build", "synth", "--release", "--target", "web", "--out-dir", "../web/synth",
-            "--", "--no-default-features", "--features", "worklet",
+            "build",
+            "synth",
+            "--release",
+            "--target",
+            "web",
+            "--out-dir",
+            "../web/synth",
+            "--",
+            "--no-default-features",
+            "--features",
+            "worklet",
         ]));
-        exec(nested("trunk").args(["build", "--release", "--dist"]).arg(&dist));
+        exec(
+            nested("trunk")
+                .args(["build", "--release", "--dist"])
+                .arg(&dist),
+        );
         dist
     }
 
     fn exec(cmd: &mut Command) {
-        let status = cmd.status().unwrap_or_else(|e| panic!("web-embed: {:?}: {}", cmd, e));
+        let status = cmd
+            .status()
+            .unwrap_or_else(|e| panic!("web-embed: {:?}: {}", cmd, e));
         if !status.success() {
             panic!("web-embed: {:?} failed ({})", cmd, status);
         }
@@ -351,7 +412,11 @@ mod web_embed {
             if path.is_dir() {
                 collect(root, &path, files);
             } else {
-                let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 files.push(rel);
             }
         }
@@ -386,7 +451,11 @@ mod tui_embed {
         let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
         let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let target = std::env::var("TARGET").unwrap();
-        let exe = if target.contains("windows") { "chor.exe" } else { "chor" };
+        let exe = if target.contains("windows") {
+            "chor.exe"
+        } else {
+            "chor"
+        };
 
         println!("cargo::rerun-if-env-changed=CHOR_TUI_BIN");
         let bin = match std::env::var_os("CHOR_TUI_BIN") {
@@ -401,8 +470,14 @@ mod tui_embed {
                 // target as the chor that carries it.
                 let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
                 let mut cmd = super::nested_command(&cargo, &manifest, &target_dir);
-                cmd.args(["build", "--release", "--bin", "chor", "--no-default-features"])
-                    .args(["--features", FEATURES, "--target", &target]);
+                cmd.args([
+                    "build",
+                    "--release",
+                    "--bin",
+                    "chor",
+                    "--no-default-features",
+                ])
+                .args(["--features", FEATURES, "--target", &target]);
                 let status = cmd
                     .status()
                     .unwrap_or_else(|e| panic!("tui-embed: {:?}: {}", cmd, e));
@@ -413,8 +488,8 @@ mod tui_embed {
             }
         };
 
-        let data = std::fs::read(&bin)
-            .unwrap_or_else(|e| panic!("tui-embed: {}: {}", bin.display(), e));
+        let data =
+            std::fs::read(&bin).unwrap_or_else(|e| panic!("tui-embed: {}: {}", bin.display(), e));
         let gz = out.join("chor-tui.gz");
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
         std::io::Write::write_all(&mut enc, &data).unwrap();

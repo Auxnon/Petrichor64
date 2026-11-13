@@ -45,12 +45,18 @@ impl LogTail {
         if lines.len() >= KEEP {
             lines.pop_front();
         }
-        lines.push_back(Line { text, count: 1, seen: now });
+        lines.push_back(Line {
+            text,
+            count: 1,
+            seen: now,
+        });
     }
 
     /// The most recent `max` lines printed within `SHOW_FOR`, oldest first.
     pub fn recent(&self, max: usize) -> Vec<String> {
-        let Ok(lines) = self.0.lock() else { return vec![] };
+        let Ok(lines) = self.0.lock() else {
+            return vec![];
+        };
         let now = Instant::now();
         let mut out: Vec<String> = lines
             .iter()
@@ -64,7 +70,9 @@ impl LogTail {
     }
 
     fn all(&self) -> Vec<String> {
-        let Ok(lines) = self.0.lock() else { return vec![] };
+        let Ok(lines) = self.0.lock() else {
+            return vec![];
+        };
         lines.iter().map(label).collect()
     }
 }

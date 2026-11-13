@@ -1,13 +1,13 @@
-#[cfg(feature = "silt")]
-#[allow(unused_imports)]
-use crate::silt_str::{lstr, TableStr};
-use crate::root::Core;
-#[cfg(feature = "audio")]
-use crate::sound::{Envelope, Instrument, Note, Sequence, SoundCommand, Step, WaveType};
 #[cfg(feature = "audio")]
 use crate::fx::{DriveShape, FilterKind};
 #[cfg(feature = "audio")]
 use crate::lua_define::SoundSender;
+use crate::root::Core;
+#[cfg(feature = "silt")]
+#[allow(unused_imports)]
+use crate::silt_str::{lstr, TableStr};
+#[cfg(feature = "audio")]
+use crate::sound::{Envelope, Instrument, Note, Sequence, SoundCommand, Step, WaveType};
 use crate::{
     bundle::{BundleMutations, BundleResources},
     error::P64Error,
@@ -195,10 +195,8 @@ fn run_con_sys_single(
         }
         "overlay" => {
             if segments.len() < 2 {
-                core.loggy.log(
-                    LogType::Config,
-                    "usage: overlay <app path> | overlay off",
-                );
+                core.loggy
+                    .log(LogType::Config, "usage: overlay <app path> | overlay off");
             } else if segments[1] == "off" || segments[1] == "close" {
                 let n = close_overlays(core);
                 core.loggy
@@ -348,10 +346,8 @@ fn run_con_sys_single(
         // wrapping this whole function): `pwd | copy` logs the path and puts
         // it straight on the clipboard.
         "pwd" => {
-            core.loggy.log(
-                LogType::Config,
-                main_bundle.get_directory().unwrap_or(""),
-            );
+            core.loggy
+                .log(LogType::Config, main_bundle.get_directory().unwrap_or(""));
         }
         // Clipboard write. Takes its text as trailing args, or — the point of
         // this command existing — whatever the previous pipeline stage logged:
@@ -924,7 +920,12 @@ function dtile( x, y, z) end"
             }
             lua_err!(pitcher.send((
                 bundle_id,
-                MainCommmand::Tileset(crate::tileset::TilesetDef { name, tiles, look, pieces })
+                MainCommmand::Tileset(crate::tileset::TilesetDef {
+                    name,
+                    tiles,
+                    look,
+                    pieces
+                })
             )));
             Ok(())
         },
@@ -956,10 +957,13 @@ function istile(x, y, z) end"
         "gtile",
         move |_, mc, (x, y, z): (i32, i32, i32)| {
             let t = World::get_tile(&sender, x, y, z);
-            Ok(lstr(mc, match t {
-                Some(s) => s.0,
-                None => "".to_string(),
-            }))
+            Ok(lstr(
+                mc,
+                match t {
+                    Some(s) => s.0,
+                    None => "".to_string(),
+                },
+            ))
         },
         "Return the asset name of the tile at a given location",
         "
@@ -1204,7 +1208,6 @@ function make(asset, x, y, z, scale) end"
         Ok(Value::Nil)
     });
 
-
     let pitcher = main_pitcher.clone();
     lua!(
         "lot",
@@ -1222,7 +1225,10 @@ function make(asset, x, y, z, scale) end"
                     // shared entity before anything draws it. Waiting cost a
                     // frame per call (a model editor parenting a handle per
                     // vertex stalled for seconds).
-                    if pitcher.send((bundle_id, MainCommmand::Group(parent_id, child_id))).is_err() {
+                    if pitcher
+                        .send((bundle_id, MainCommmand::Group(parent_id, child_id)))
+                        .is_err()
+                    {
                         return Err(static_err("Unable to group entity"));
                     }
                 } else {
@@ -1802,12 +1808,7 @@ function bpm(tempo) end"
                 let note = Note::new(instrument.unwrap_or(0), freq, len, 1.);
                 // Beats go to the audio thread unconverted: it owns the tempo and the
                 // frame counter, so a bpm change can't race a scheduled note.
-                let _ = sing_cue.send(SoundCommand::PlayAt(
-                    note,
-                    channel,
-                    at.unwrap_or(0.),
-                    grid,
-                ));
+                let _ = sing_cue.send(SoundCommand::PlayAt(note, channel, at.unwrap_or(0.), grid));
             }
             Ok(())
         },
@@ -2280,12 +2281,10 @@ function mic(id, secs) end"
                         });
                     }
                     Some(ref a) if a == "open" => {
-                        return Ok(
-                            match crate::midi::open(sing.clone(), name.as_deref()) {
-                                Ok(p) => lstr(mc, p),
-                                Err(_) => Value::Nil,
-                            },
-                        );
+                        return Ok(match crate::midi::open(sing.clone(), name.as_deref()) {
+                            Ok(p) => lstr(mc, p),
+                            Err(_) => Value::Nil,
+                        });
                     }
                     Some(ref a) if a == "close" => {
                         crate::midi::close();
@@ -2586,7 +2585,9 @@ function nimg(w, h) end"
 
     let pitcher = main_pitcher.clone();
     let tiles = world_sender.clone();
-    let tile_named = std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::<String>::new()));
+    let tile_named = std::rc::Rc::new(std::cell::RefCell::new(
+        std::collections::HashSet::<String>::new(),
+    ));
     lua!(
             "mod",
             move |vm,mc, (asset, tval): (String, Value)| {
@@ -3284,7 +3285,10 @@ function quit(u) end"
                     t.set_str(
                         mc,
                         k,
-                        vm.table_from_array(mc, [lstr(mc, desc.as_str()), lstr(mc, examp.as_str())]),
+                        vm.table_from_array(
+                            mc,
+                            [lstr(mc, desc.as_str()), lstr(mc, examp.as_str())],
+                        ),
                     );
                 } else {
                     t.set_str(mc, k, lstr(mc, desc.as_str()));
@@ -4064,9 +4068,16 @@ pub fn load_app(
     bundle_in: Option<u8>,
     bundle_relations: Option<(u8, bool)>,
 ) -> Result<(), P64Error> {
-    async_load_app(core, game_path_in, payload, bundle_in, bundle_relations, false)
-        .block_on()
-        .map(|_id| ())
+    async_load_app(
+        core,
+        game_path_in,
+        payload,
+        bundle_in,
+        bundle_relations,
+        false,
+    )
+    .block_on()
+    .map(|_id| ())
 }
 
 /// Close every overlay and drop what they owned outside the bundle manager.
@@ -4142,8 +4153,10 @@ fn toggle_builtin_overlay(core: &mut Core, dir: &str, missing: &str) {
         return;
     }
     if let Err(e) = load_overlay(core, dir) {
-        core.loggy
-            .log(LogType::ConfigError, &format!("{} overlay failed: {}", dir, e));
+        core.loggy.log(
+            LogType::ConfigError,
+            &format!("{} overlay failed: {}", dir, e),
+        );
     }
 }
 
@@ -5313,7 +5326,10 @@ fn mesh_from_table<'v>(
                     _ => 0,
                 };
                 if n < 1 {
-                    return Some(Err(format!("face {} has index {} (indices start at 1)", i, n)));
+                    return Some(Err(format!(
+                        "face {} has index {} (indices start at 1)",
+                        i, n
+                    )));
                 }
                 idx.push((n - 1) as u32);
                 k += 1;

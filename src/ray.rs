@@ -1,4 +1,3 @@
-
 use glam::{vec3, vec4, Mat4};
 
 use crate::Core;

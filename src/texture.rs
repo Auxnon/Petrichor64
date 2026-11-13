@@ -646,7 +646,8 @@ impl TexManager {
             kind: SourceKind::Png,
         };
         if is_tile == 0 {
-            self.sources.insert(name, at(0, 0, img.width(), img.height()));
+            self.sources
+                .insert(name, at(0, 0, img.width(), img.height()));
             return;
         }
         let dw = img.width() / d;
@@ -682,7 +683,15 @@ impl TexManager {
 
     /// A texture the paint overlay just made, to be written to `path` (not
     /// there yet) on the first save.
-    pub fn record_new_source(&mut self, name: &str, path: &str, bundle: u8, w: u32, h: u32, kind: SourceKind) {
+    pub fn record_new_source(
+        &mut self,
+        name: &str,
+        path: &str,
+        bundle: u8,
+        w: u32,
+        h: u32,
+        kind: SourceKind,
+    ) {
         self.sources.insert(
             name.to_string(),
             TexSource {
@@ -754,7 +763,10 @@ impl TexManager {
         }
         let (w, h, pixels) = self.get_img(&name.to_string());
         if (w, h) != (src.w, src.h) {
-            return Err(format!("size changed ({}x{}, file has {}x{})", w, h, src.w, src.h));
+            return Err(format!(
+                "size changed ({}x{}, file has {}x{})",
+                w, h, src.w, src.h
+            ));
         }
         let path = std::path::Path::new(&src.path);
         let bytes = match &src.kind {
@@ -928,7 +940,8 @@ fn extrude(atlas: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32) {
     let y0 = y as i64 - GUTTER as i64;
     for gy in y0..(y + h + GUTTER) as i64 {
         for gx in x0..(x + w + GUTTER) as i64 {
-            let inside = gx >= x as i64 && gx < (x + w) as i64 && gy >= y as i64 && gy < (y + h) as i64;
+            let inside =
+                gx >= x as i64 && gx < (x + w) as i64 && gy >= y as i64 && gy < (y + h) as i64;
             if inside || gx < 0 || gy < 0 || gx >= aw as i64 || gy >= ah as i64 {
                 continue;
             }
@@ -1148,11 +1161,20 @@ mod tests {
         let mut tm = TexManager::new();
         tm.record_sources(inside.to_str().unwrap(), &img, 1, None);
         assert!(tm.saveable_source("wall", 1, dir_s).is_ok());
-        assert!(tm.saveable_source("wall", 2, dir_s).is_err(), "another app's texture");
-        assert!(tm.saveable_source("codey", 1, dir_s).is_err(), "made by code");
+        assert!(
+            tm.saveable_source("wall", 2, dir_s).is_err(),
+            "another app's texture"
+        );
+        assert!(
+            tm.saveable_source("codey", 1, dir_s).is_err(),
+            "made by code"
+        );
 
         tm.record_sources(outside.to_str().unwrap(), &img, 1, None);
-        assert!(tm.saveable_source("wall", 1, dir_s).is_err(), "outside the app's folder");
+        assert!(
+            tm.saveable_source("wall", 1, dir_s).is_err(),
+            "outside the app's folder"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&other);
     }
@@ -1170,12 +1192,23 @@ mod tests {
         tm.record_new_source("fresh", path.to_str().unwrap(), 1, 8, 8, SourceKind::NewPng);
 
         tm.save_to_source("fresh", 1, dir_s).unwrap();
-        assert_eq!(image::open(&path).unwrap().into_rgba8().get_pixel(3, 3).0, [9, 8, 7, 255]);
+        assert_eq!(
+            image::open(&path).unwrap().into_rgba8().get_pixel(3, 3).0,
+            [9, 8, 7, 255]
+        );
         assert!(matches!(tm.sources["fresh"].kind, SourceKind::Png));
-        tm.save_to_source("fresh", 1, dir_s).expect("then saves like any png");
+        tm.save_to_source("fresh", 1, dir_s)
+            .expect("then saves like any png");
 
         let other = dir.join("assets").join("taken.png");
-        tm.record_new_source("taken", other.to_str().unwrap(), 1, 8, 8, SourceKind::NewPng);
+        tm.record_new_source(
+            "taken",
+            other.to_str().unwrap(),
+            1,
+            8,
+            8,
+            SourceKind::NewPng,
+        );
         std::fs::write(&other, b"someone else's").unwrap();
         assert!(tm.saveable_source("taken", 1, dir_s).is_err());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1201,7 +1234,12 @@ mod tests {
         let kind = SourceKind::NewGlb(Box::new(mesh.clone()));
         tm.record_new_source("crate", path.to_str().unwrap(), 1, 4, 4, kind);
         tm.save_to_source("crate", 1, dir_s).unwrap();
-        assert_eq!(crate::gltf_io::read(&std::fs::read(&path).unwrap()).unwrap().uv, mesh.uv);
+        assert_eq!(
+            crate::gltf_io::read(&std::fs::read(&path).unwrap())
+                .unwrap()
+                .uv,
+            mesh.uv
+        );
 
         let pos = tm.locate(RgbaImage::from_pixel(4, 4, image::Rgba([1, 1, 1, 255])));
         tm.dictionary.insert("crate".into(), pos);
@@ -1224,7 +1262,10 @@ mod tests {
         // the first slot, inside its gutter
         assert_eq!(
             (pos.x, pos.y),
-            (GUTTER as f32 / MAX_WIDTH as f32, GUTTER as f32 / MAX_HEIGHT as f32),
+            (
+                GUTTER as f32 / MAX_WIDTH as f32,
+                GUTTER as f32 / MAX_HEIGHT as f32
+            ),
             "must be the first slot"
         );
         assert_eq!(pos.z, DEFAULT_TEX_SIZE as f32 / MAX_WIDTH as f32);
@@ -1232,7 +1273,8 @@ mod tests {
 
         // An app load resets the atlas; the fallback is not a bundle's asset and must
         // come back rather than vanish with it.
-        tm.dictionary.insert("game_art".to_string(), vec4(0.5, 0.5, 0.1, 0.1));
+        tm.dictionary
+            .insert("game_art".to_string(), vec4(0.5, 0.5, 0.1, 0.1));
         tm.reset();
         assert!(tm.dictionary.contains_key(DEFAULT_TEX), "survives a reset");
         assert!(!tm.dictionary.contains_key("game_art"), "app art does not");
@@ -1291,6 +1333,10 @@ mod tests {
         let t1 = tm.get_tex("sheet1");
         assert_eq!(t0.z, 16. / MAX_WIDTH as f32);
         assert_eq!(px(&tm, t0, 16, 8), [255, 0, 0, 255], "red's gutter is red");
-        assert_eq!(px(&tm, t1, -1, 8), [0, 0, 255, 255], "blue's gutter is blue");
+        assert_eq!(
+            px(&tm, t1, -1, 8),
+            [0, 0, 255, 255],
+            "blue's gutter is blue"
+        );
     }
 }

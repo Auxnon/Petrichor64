@@ -64,8 +64,7 @@ impl WorkerHandle {
                         if let Ok(arr) = sounds.dyn_into::<js_sys::Array>() {
                             for blob in arr.iter() {
                                 if let Ok(bytes) = blob.dyn_into::<js_sys::Uint8Array>() {
-                                    if let Some(cmd) =
-                                        crate::sound::decode_command(&bytes.to_vec())
+                                    if let Some(cmd) = crate::sound::decode_command(&bytes.to_vec())
                                     {
                                         inbox.push_back(VmToHost::Sound(cmd));
                                     }
@@ -78,8 +77,7 @@ impl WorkerHandle {
                     // per-entity JS objects crossed the boundary).
                     if let Ok(ents) = js_sys::Reflect::get(&data, &JsValue::from_str("ents")) {
                         if let Ok(arr) = ents.dyn_into::<js_sys::Uint8Array>() {
-                            let xforms =
-                                crate::worker_protocol::unpack_ent_xforms(&arr.to_vec());
+                            let xforms = crate::worker_protocol::unpack_ent_xforms(&arr.to_vec());
                             if !xforms.is_empty() {
                                 inbox.push_back(VmToHost::EntUpdate(xforms));
                             }

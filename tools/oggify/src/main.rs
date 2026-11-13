@@ -45,7 +45,11 @@ fn main() {
         return;
     }
 
-    println!("oggify: converting {} file(s) under {}", sources.len(), root.display());
+    println!(
+        "oggify: converting {} file(s) under {}",
+        sources.len(),
+        root.display()
+    );
     let mut converted: Vec<PathBuf> = Vec::new();
     for src in &sources {
         let out = src.with_extension("ogg");
@@ -85,7 +89,9 @@ fn main() {
 }
 
 fn ext_lower(p: &Path) -> Option<String> {
-    p.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase())
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
 }
 
 /// Decode `src` (wav/mp3) to planar f32 and encode it as OGG Vorbis at `out`.
@@ -95,7 +101,8 @@ fn convert(src: &Path, out: &Path) -> Result<(), String> {
     let sr = NonZeroU32::new(sample_rate).ok_or("zero sample rate")?;
     let ch = NonZeroU8::new(channels as u8).ok_or("zero channels")?;
 
-    let file = std::fs::File::create(out).map_err(|e| format!("create {}: {}", out.display(), e))?;
+    let file =
+        std::fs::File::create(out).map_err(|e| format!("create {}: {}", out.display(), e))?;
     let mut encoder = VorbisEncoderBuilder::new(sr, ch, file)
         .map_err(|e| format!("encoder init: {}", e))?
         .build()
@@ -118,7 +125,12 @@ fn decode(src: &Path) -> Result<(Vec<Vec<f32>>, u32, usize), String> {
     }
 
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("probe: {}", e))?;
     let mut format = probed.format;
 

@@ -312,7 +312,6 @@ impl ModelManager {
                         };
 
                         if let Some(indices) = indices_opt {
-
                             let model = Self::build_complex_model(
                                 #[cfg(feature = "headed")]
                                 device,

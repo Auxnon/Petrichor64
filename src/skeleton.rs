@@ -194,7 +194,11 @@ fn key_span(times: &[f32], t: f32) -> (usize, usize, f32) {
     let hi = times.partition_point(|&k| k <= t);
     let lo = hi - 1;
     let span = times[hi] - times[lo];
-    let f = if span > 0. { (t - times[lo]) / span } else { 0. };
+    let f = if span > 0. {
+        (t - times[lo]) / span
+    } else {
+        0.
+    };
     (lo, hi, f)
 }
 
@@ -322,8 +326,11 @@ pub fn from_gltf(
     for (new, &slot) in order.iter().enumerate() {
         remap[slot] = new as u16;
     }
-    let slot_of_node: HashMap<usize, usize> =
-        skin_nodes.iter().enumerate().map(|(s, &n)| (n, s)).collect();
+    let slot_of_node: HashMap<usize, usize> = skin_nodes
+        .iter()
+        .enumerate()
+        .map(|(s, &n)| (n, s))
+        .collect();
 
     let ibms: Option<Vec<[[f32; 4]; 4]>> = skin
         .reader(|b| Some(&buffers[b.index()]))
@@ -347,7 +354,10 @@ pub fn from_gltf(
         }
         let n = doc.nodes().nth(node).unwrap();
         joints.push(Joint {
-            name: n.name().map(str::to_owned).unwrap_or_else(|| format!("joint{}", node)),
+            name: n
+                .name()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("joint{}", node)),
             parent,
             link: link.to_cols_array(),
             rest: local_of(node),
@@ -512,7 +522,10 @@ pub fn register_from_bytes(name: &str, bytes: &[u8]) -> Result<(), String> {
     let (skel, _) = from_gltf(&doc, &skin, &buffers)?;
     let base = name.to_lowercase();
     if let Some(mesh_name) = mesh.name() {
-        register(&format!("{}.{}", base, mesh_name.to_lowercase()), skel.clone());
+        register(
+            &format!("{}.{}", base, mesh_name.to_lowercase()),
+            skel.clone(),
+        );
     }
     register(&base, skel);
     Ok(())

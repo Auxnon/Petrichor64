@@ -121,7 +121,10 @@ pub enum VmToHost {
     Globals(Vec<(String, ValueWire)>),
     /// The VM finished a `Loop`; `gui`/`sky` flag which rasters changed so the
     /// host re-uploads them.
-    LoopComplete { gui: bool, sky: bool },
+    LoopComplete {
+        gui: bool,
+        sky: bool,
+    },
     /// A finished gui (`sky: false`) or sky frame from the VM. The worker owns
     /// these pixels — main can't reach into its arena the way native reads the
     /// shared LuaImg — so each changed frame is shipped whole.
@@ -145,10 +148,16 @@ pub enum VmToHost {
     /// Dirty world chunks the worker's VM built (bulk terrain edits stay local
     /// to the VM and sync as whole chunks — the "phantom chunk" batching). Main
     /// rebuilds the GPU chunk models via World::process_sync.
-    WorldSync { chunks: Vec<ChunkWire>, dropped: bool },
+    WorldSync {
+        chunks: Vec<ChunkWire>,
+        dropped: bool,
+    },
     /// Sync a tile-texture name→index mapping so main's local mapper can resolve
     /// a chunk cell's int back to an atlas uv.
-    MapTex { name: String, index: u32 },
+    MapTex {
+        name: String,
+        index: u32,
+    },
     /// A `tileset(...)` definition; main meshes its members on the dual grid.
     Tileset(crate::tileset::TilesetDef),
     /// A runtime/async error to surface in the engine console.

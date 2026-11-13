@@ -761,10 +761,7 @@ mod tests {
         assert!(bm.get(tool).is_none(), "the overlay must be gone");
         assert_eq!(bm.input_owner(), game, "input returns to the app");
         assert_eq!(bm.layer_order(), vec![game]);
-        assert!(
-            bm.close_overlays().is_empty(),
-            "closing again is a no-op"
-        );
+        assert!(bm.close_overlays().is_empty(), "closing again is a no-op");
     }
 
     /// An overlay edits the app, never a fellow tool. Two editors open at once must
@@ -833,7 +830,10 @@ mod tests {
         bm.mark_overlay(tool);
 
         assert!(!bm.has_camera(game), "nobody has a camera until they ask");
-        assert!(!bm.has_camera(tool), "so a gui-only overlay stays in the cheap path");
+        assert!(
+            !bm.has_camera(tool),
+            "so a gui-only overlay stays in the cheap path"
+        );
 
         bm.set_camera(tool, Some(glam::vec3(1., 2., 3.)), None);
         assert!(bm.has_camera(tool), "setting one opts into its own 3D pass");
@@ -887,7 +887,10 @@ mod tests {
         bm.set_paused(game, true);
         assert_eq!(ticks_over(&mut bm, game, 5), 0, "paused: no frames run");
 
-        assert!(!bm.close_overlay(game), "closing a non-overlay does nothing");
+        assert!(
+            !bm.close_overlay(game),
+            "closing a non-overlay does nothing"
+        );
         assert!(bm.get(game).unwrap().paused, "and leaves the pause alone");
 
         assert!(bm.close_overlay(tool));
@@ -902,7 +905,9 @@ mod tests {
         let mut bm = BundleManager::new();
         // as `async_load_app` makes them: the path is the name and the directory
         let game = bm.make_bundle(Some("game"), None, Some("game")).id;
-        let paint = bm.make_bundle(Some("builtin:paint"), None, Some("builtin:paint")).id;
+        let paint = bm
+            .make_bundle(Some("builtin:paint"), None, Some("builtin:paint"))
+            .id;
         assert_eq!(bm.find_by_directory("builtin:paint"), Some(paint));
         assert_eq!(bm.find_by_directory("game"), Some(game));
         assert_eq!(bm.find_by_directory("nope"), None);
