@@ -45,6 +45,9 @@ pub struct ModelManager {
     /// dropped from here, so anything missing was made by code. The model
     /// editor overlay reads the file itself rather than the packed mesh.
     pub sources: HashMap<String, (u8, String)>,
+    /// This instance's skeletons and animation clock, shared with its Lua
+    /// threads (see `skeleton::Rig`).
+    pub rig: std::sync::Arc<crate::skeleton::Rig>,
 }
 
 impl ModelManager {
@@ -123,6 +126,7 @@ impl ModelManager {
             // CUSTOM,
             DICTIONARY,
             sources: HashMap::new(),
+            rig: crate::skeleton::Rig::new(),
         }
     }
 
@@ -347,9 +351,9 @@ impl ModelManager {
                 if let Some((skel, _, _)) = skinned {
                     // Every name an entity could be made with resolves to it.
                     for m in meshes.iter().filter(|m| m.skin.is_some()) {
-                        crate::skeleton::register(&m.name, skel.clone());
+                        self.rig.register(&m.name, skel.clone());
                     }
-                    crate::skeleton::register(&base_name, skel);
+                    self.rig.register(&base_name, skel);
                 }
 
                 if meshes.len() > 0 {
@@ -1115,7 +1119,7 @@ pub struct Model {
     #[cfg(feature = "headed")]
     pub index_format: wgpu::IndexFormat,
     /// Per-vertex joints/weights for a skinned glTF mesh; its skeleton lives in
-    /// `skeleton::SKELETONS` under this model's names.
+    /// the `ModelManager`'s `skeleton::Rig` under this model's names.
     pub skin: Option<ModelSkin>,
 }
 

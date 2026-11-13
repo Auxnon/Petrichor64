@@ -30,7 +30,13 @@ pub enum HostToVm {
         bundle_id: u8,
         width: u32,
         height: u32,
+        /// What the cart may reach (`host::Policy`), which decides what the VM
+        /// registers. Missing (an older main) means open, as before.
+        #[serde(default)]
+        policy: crate::host::Policy,
     },
+    /// A host → cart message for the cart's `host.recv()` (`Core::host_post`).
+    Host(String),
     /// Compile + run a script into the VM (e.g. a bundle's main.lua).
     Load { name: String, content: String },
     /// Call the app's `main()` once (after scripts are loaded).
@@ -44,8 +50,8 @@ pub enum HostToVm {
         #[serde(with = "serde_bytes")]
         keys: Vec<u8>,
         analog: Vec<f32>,
-        /// Main's animation clock (skeleton::clock), so clips sampled in the
-        /// worker line up with the ones the renderer draws.
+        /// Main's animation clock (its `skeleton::Rig::clock`), so clips
+        /// sampled in the worker line up with the ones the renderer draws.
         #[serde(default)]
         clock: f64,
     },
@@ -161,6 +167,23 @@ pub enum VmToHost {
     /// the main thread, which replays them into its cpal stream.
     #[cfg(feature = "audio")]
     Sound(crate::sound::SoundCommand),
+    /// `host.send(msg)`: a cart → host message (`Core::host_take`).
+    Host(String),
+}
+
+impl VmToHost {
+    /// Whether the main thread acts on this, under the instance's policy: the
+    /// worker's VM was built without the natives that send the forbidden ones,
+    /// and this drops them anyway (see `MainCommmand::allowed_by`, which the
+    /// worker's own commands pass through first).
+    pub fn allowed_by(&self, policy: &crate::host::Policy) -> bool {
+        match self {
+            VmToHost::Host(_) => policy.host_messages,
+            #[cfg(feature = "audio")]
+            VmToHost::Sound(_) => policy.audio,
+            _ => true,
+        }
+    }
 }
 
 /// Serializable form of a world [`Chunk`]. Its `cells` are a fixed 32³ array of
@@ -274,11 +297,11 @@ pub enum ValueWire {
 
 impl HostToVm {
     /// Pack a `ControlState` into a `Loop` message (bools → 0/1 bytes).
-    pub fn loop_from(cs: &ControlState) -> Self {
+    pub fn loop_from(cs: &ControlState, clock: f64) -> Self {
         HostToVm::Loop {
             keys: cs.0.iter().map(|b| *b as u8).collect(),
             analog: cs.1.to_vec(),
-            clock: crate::skeleton::clock(),
+            clock,
         }
     }
 }

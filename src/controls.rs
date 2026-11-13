@@ -6,7 +6,6 @@ use crate::{bundle::BundleManager, Core};
 use clipboard::{ClipboardContext, ClipboardProvider};
 
 use winit::event::ElementState;
-use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::KeyCode;
 
 #[cfg(target_os = "macos")]
@@ -28,7 +27,6 @@ const COMMAND_KEY_R: KeyCode = KeyCode::ControlRight;
 /// arrives before this function runs; only non-text key logic lives here.
 pub fn controls_evaluate(
     core: &mut Core,
-    window_target: &ActiveEventLoop,
     bits: &ControlState,
     bits_prev: &[bool; 256],
     catcher: Option<&std::sync::mpsc::Receiver<crate::lua_define::MainPacket>>,
@@ -47,9 +45,17 @@ pub fn controls_evaluate(
     let held_shift = bits.0[249];
     let held_cmd = key_held(COMMAND_KEY_L) || key_held(COMMAND_KEY_R);
 
+    // No console for this cart (`Policy::console`): keep it shut, whatever
+    // opened it (the boot default, an unlock), so none of the console keys
+    // below ever run.
+    if !core.policy.console && core.global.console {
+        core.global.console = false;
+        core.gui.disable_console();
+    }
+
     // Backtick toggles the developer console.
     if key_released(KeyCode::Backquote) {
-        if !core.global.locked {
+        if !core.global.locked && core.policy.console {
             core.global.console = !core.global.console;
             if core.global.console {
                 core.gui.enable_console(&core.loggy);
@@ -90,7 +96,7 @@ pub fn controls_evaluate(
             } else if key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if key_pressed(KeyCode::Escape) || key_pressed(KeyCode::KeyW) {
-                window_target.exit();
+                core.requests.push(crate::host::Request::Quit);
             } else if key_pressed(KeyCode::Enter) {
                 core.toggle_fullscreen();
                 core.global.fullscreen_state = core.global.fullscreen;
@@ -158,7 +164,7 @@ pub fn controls_evaluate(
             } else if key_pressed(KeyCode::Enter) {
                 core.global.fullscreen = !core.global.fullscreen;
                 core.check_fullscreen();
-            } else if key_pressed(KeyCode::KeyV) {
+            } else if key_pressed(KeyCode::KeyV) && core.policy.clipboard {
                 #[cfg(desktop)]
                 if let Ok(mut ctx) = ClipboardContext::new() {
                     if let Ok(s) = ctx.get_contents() {
@@ -166,7 +172,7 @@ pub fn controls_evaluate(
                     }
                 }
             } else if key_pressed(KeyCode::KeyW) {
-                window_target.exit();
+                core.requests.push(crate::host::Request::Quit);
             }
         }
     }

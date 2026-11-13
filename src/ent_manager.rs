@@ -870,9 +870,9 @@ impl EntManager {
                 }
                 uni_ref.replace(uni);
                 if ent.model.skin.is_some() {
-                    if let Some(sk) = crate::skeleton::lookup(&ent.model.name) {
+                    if let Some(sk) = mm.rig.lookup(&ent.model.name) {
                         let st = l.skel.clone().unwrap_or_default();
-                        let g = st.globals(&sk, crate::skeleton::clock());
+                        let g = st.globals(&sk, mm.rig.clock());
                         ent.palette.replace(crate::skeleton::palette16(&sk, &g));
                     }
                 }

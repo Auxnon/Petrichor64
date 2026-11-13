@@ -660,6 +660,8 @@ pub fn command_docs() -> Result<HashMap<String, (String, String)>, P64Error> {
             mc,
             0,
             false,
+            &crate::host::Policy::open(),
+            Default::default(),
             pitcher.clone(),
             world.clone(),
             Rc::clone(&gui),
@@ -672,6 +674,7 @@ pub fn command_docs() -> Result<HashMap<String, (String, String)>, P64Error> {
             Rc::new(Mutex::new(2u64)),
             loggy.clone(),
             LocalPool::new(),
+            crate::skeleton::Rig::new(),
         )
     })?;
     Ok(COMMAND_DOCS.with(|d| d.borrow().iter().cloned().collect()))
@@ -688,6 +691,11 @@ pub fn init_lua_sys<'a, 'gc>(
     // table gets built at all, so it has to be known before the VM runs a line —
     // which is why overlays are marked as they load rather than afterwards.
     is_overlay: bool,
+    // What the cart may reach (`host.rs`). Natives it forbids are never
+    // registered, so Lua sees `nil` for them rather than a call that fails.
+    policy: &crate::host::Policy,
+    // Host → cart messages for `host.recv` (shared with `Core`).
+    host_inbox: crate::host::HostInbox,
     main_pitcher: Sender<MainPacket>,
     world_sender: Sender<(TileCommand, SyncSender<TileResponse>)>,
     gui_in: Rc<RefCell<GuiMorsel>>,
@@ -701,6 +709,8 @@ pub fn init_lua_sys<'a, 'gc>(
     ent_counter: Rc<Mutex<u64>>,
     loggy: Sender<(LogType, String)>,
     shared: LocalPool,
+    // The instance's skeletons and clock (`skeleton::Rig`).
+    rig: std::sync::Arc<crate::skeleton::Rig>,
 ) -> Result<(), P64Error>
 // where N: 
 // #[cfg(feature = "online_capable")]
@@ -709,6 +719,7 @@ pub fn init_lua_sys<'a, 'gc>(
 // Option<bool>
 {
     println!("init lua sys");
+    crate::skeleton::bind_vm(std::sync::Arc::clone(&rig));
 
     // let c = *ctx;
     // let v = Value::String(piccolo::String::from_static(
@@ -738,6 +749,18 @@ pub fn init_lua_sys<'a, 'gc>(
     //
     let mut compiler = Compiler::new();
     let gui = gui_in.clone();
+
+    // `audio: false`: the sound natives stay registered but send into a channel
+    // nobody listens on. Their sends all ignore a closed channel, so a cart's
+    // sound calls quietly do nothing (`mic` and `midi` check the flag themselves).
+    #[cfg(feature = "audio")]
+    let singer: SoundSender = if policy.audio {
+        singer
+    } else {
+        std::sync::mpsc::channel().0
+    };
+    let audio_on = policy.audio;
+    let mic_on = policy.audio && policy.mic;
 
     let mut command_map: Vec<(String, (String, String))> = vec![];
     let mut io = vm_init.raw_table();
@@ -1920,7 +1943,7 @@ function cue(freq, length, channel, instrument, at, grid) end"
                     }
                     q.1.insert(seq.channel, id);
                 }
-                lua_err!(sing_seq.send(SoundCommand::Sequence(seq)));
+                let _ = sing_seq.send(SoundCommand::Sequence(seq));
                 return Ok(Value::Integer(id as i64));
             }
             #[allow(unreachable_code)]
@@ -2079,7 +2102,7 @@ function note(freq, length, channel, instrument) end"
                     .collect::<Vec<Note>>();
 
                 // A song is one sequential voice — auto-allocate a single channel.
-                lua_err!(sing.send(SoundCommand::Chain(converted, None)));
+                let _ = sing.send(SoundCommand::Chain(converted, None));
             }
             Ok(())
         },
@@ -2337,6 +2360,9 @@ function verb(channel, room, damp, wet) end"
             // into sample slot `id`; `mic()` reports whether one is in flight.
             // Recording is always explicit — the engine never opens the mic on
             // its own, and the stream is released as soon as the capture lands.
+            if !mic_on {
+                return Ok(Value::Bool(false)); // `audio: false`: never opens the mic
+            }
             let (tx, rx) = std::sync::mpsc::sync_channel::<bool>(0);
             // `None` id is a pure query (is a capture running?) and never opens
             // the microphone; `Some(id)` starts one.
@@ -2359,6 +2385,11 @@ function mic(id, secs) end"
     lua!(
         "midi",
         move |lu, mc, (action, name): (Option<String>, Option<String>)| {
+            // `audio: false`: no MIDI either (it plays the synth, and the device
+            // and its event queue are shared by every instance in the process).
+            if !audio_on {
+                return Ok(Value::Nil);
+            }
             #[cfg(all(feature = "midi", not(target_arch = "wasm32")))]
             {
                 // One native, selected by the (optional) first argument:
@@ -2543,13 +2574,13 @@ function vox(channel, cfg) end"
                     // `id`. The lookup happens once, here — the mixer stays purely
                     // index-keyed.
                     Value::String(name) => {
-                        lua_err!(sing.send(SoundCommand::BindSample(
+                        let _ = sing.send(SoundCommand::BindSample(
                             id,
                             name.to_string(),
                             base,
                             env,
                             range
-                        )));
+                        ));
                     }
                     // A table is raw PCM. Read it by index (getn loop) rather than
                     // Vec<f32> FromLua so we don't hit silt's hash-order Table->Vec
@@ -2562,12 +2593,12 @@ function vox(channel, cfg) end"
                             pcm.push(v.into());
                             i += 1;
                         }
-                        lua_err!(sing.send(SoundCommand::MakeSample(
+                        let _ = sing.send(SoundCommand::MakeSample(
                             id,
                             pcm,
                             base.unwrap_or(440.0),
                             env
-                        )));
+                        ));
                     }
                     _ => {}
                 }
@@ -2617,7 +2648,7 @@ function smpl(id, data, cfg) end"
                     _ => Instrument::oscillator(id, WaveType::Square),
                 }
                 .with_env(env);
-                lua_err!(singer.send(SoundCommand::MakeInstrument(inst)));
+                let _ = singer.send(SoundCommand::MakeInstrument(inst));
             }
             Ok(())
         },
@@ -3029,6 +3060,8 @@ function unwrap(mesh, opts) end"
     // modelling tool saves its work as an asset the engine (or anything else) can
     // load; reading hands a file's triangles back as tables so a tool can edit an
     // existing model. The heavy lifting is in gltf_io.rs; this only moves tables.
+    // It reads and writes the cart's files, so it's `policy.files`'s, like `io`.
+    if policy.files.is_some() {
     let pitcher = main_pitcher.clone();
     lua!(
         "glb",
@@ -3141,6 +3174,7 @@ function unwrap(mesh, opts) end"
 ---@return boolean|{v:number[3][], i:integer[], n:number[3][], u:number[2][]}|nil
 function glb(path, data) end"
     );
+    }
 
     //     lua!(
     //         "clr",
@@ -3205,7 +3239,7 @@ function irnd(a, b) end"
 
     lua!(
         "now",
-        move |_, _, (): ()| { Ok(crate::skeleton::clock()) },
+        move |_, _, (): ()| { Ok(rig.clock()) },
         "Seconds since the engine started, as of this frame. Steps are paced by the display, so use the difference between frames to move things at a steady speed",
         "
 ---@return number
@@ -3310,6 +3344,9 @@ function pow(f,e) end"
 function log(f) end"
     );
 
+    // `load_apps: false`: a cart can't bring up other carts, as children or
+    // overlaid. (Reloading itself, `init()`, is a separate native and stays.)
+    if policy.load_apps {
     let pitcher = main_pitcher.clone();
     lua!(
         "sub",
@@ -3335,7 +3372,10 @@ function sub(str) end"
 ---@param str string
 function over(str) end"
     );
+    }
 
+    // `network: false`: no sockets, so `conn` is nil.
+    if policy.network {
     lua!(
         "conn",
         move |vm, mc, (addr, udp, server): (String, Option<bool>, Option<bool>)| {
@@ -3365,6 +3405,7 @@ function over(str) end"
 --- @return connection
 function conn(addr,udp,server) end"
     );
+    }
 
     let pitcher = main_pitcher.clone();
     lua!(
@@ -3416,6 +3457,9 @@ function quit(u) end"
 function help() end"
     );
 
+    // `files: None`: no `io` table at all. Its paths resolve on the main thread
+    // against `Policy::files_dir` (the cart's folder, or the policy's root).
+    if policy.files.is_some() {
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "get",
@@ -3455,6 +3499,8 @@ function get() end",
         &mut io
     );
 
+    // `clipboard: false`: no `io.copy`.
+    if policy.clipboard {
     let pitcher = main_pitcher.clone();
     lua_lib!(
         "copy",
@@ -3468,6 +3514,7 @@ function get() end",
 function help() end",
         &mut io
     );
+    }
 
     // lua!(
     //     "test420",
@@ -3483,6 +3530,52 @@ function help() end",
         .globals
         .borrow_mut(mc_in)
         .set_str(mc_in, "io", vm_init.wrap_table(mc_in, io));
+    }
+
+    // The host channel (guide/host.md): strings to and from the app hosting this
+    // instance (`Core::host_post` / `Core::host_take`). `host_messages: false`
+    // leaves `host` nil. Not for overlays either: they're the engine's own tools,
+    // and these messages are the cart's.
+    if policy.host_messages && !is_overlay {
+        let mut host = vm_init.raw_table();
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "send",
+            move |_, _, msg: String| {
+                lua_err!(pitcher.send((bundle_id, MainCommmand::HostSend(msg))));
+                Ok(())
+            },
+            "Send a string to the app hosting this cart",
+            "
+---@param msg string
+function host.send(msg) end",
+            &mut host
+        );
+
+        // Straight off the shared queue: no round trip to the main thread.
+        let inbox = host_inbox.clone();
+        lua_lib!(
+            "recv",
+            move |_, mc, (): ()| {
+                let next = inbox.lock().pop_front();
+                Ok(match next {
+                    Some(s) => lstr(mc, s),
+                    None => Value::Nil,
+                })
+            },
+            "The next string the hosting app sent, or nil when there's none",
+            "
+---@return string|nil
+function host.recv() end",
+            &mut host
+        );
+
+        vm_init
+            .globals
+            .borrow_mut(mc_in)
+            .set_str(mc_in, "host", vm_init.wrap_table(mc_in, host));
+    }
 
     // if let Err(e) = lua_globals.set(*ctx, "io", io) {
     //     return Err(context_err("Failed to set io lib"));
@@ -4121,8 +4214,11 @@ pub fn load_empty(core: &mut Core) {
         core.loggy.make_sender(),
         #[cfg(feature = "audio")]
         core.singer.clone(),
+        core.model_manager.rig.clone(),
         core.global.debug,
         false,
+        core.policy.clone(),
+        core.host.inbox.clone(),
     ));
 
     #[cfg(feature = "headed")]
@@ -4272,6 +4368,13 @@ fn toggle_builtin_overlay(core: &mut Core, dir: &str, missing: &str) {
 /// the whole sequence in one function is the point: the mark has to be set before the
 /// VM is built, and two call sites hand-rolling that is how it drifts.
 pub fn load_overlay(core: &mut Core, path: &str) -> Result<u8, P64Error> {
+    // The editors are developer tools that load another app over this one and
+    // reach into its files: a cart that may have neither a console nor other apps
+    // gets none. This is the one door (console `overlay`/`edit`, ctrl+P/M,
+    // `--overlay`), so the check lives here.
+    if !(core.policy.console && core.policy.load_apps) {
+        return Err(P64Error::PolicyDenied("overlays need console and load_apps"));
+    }
     // The id comes back from the load. It used to be predicted by reading the id
     // counter beforehand, which only held while ids were handed out in order and
     // never reused; they are now allocated from the lowest free slot.
@@ -4362,8 +4465,11 @@ async fn async_load_app(
         core.loggy.make_sender(),
         #[cfg(feature = "audio")]
         core.singer.clone(),
+        core.model_manager.rig.clone(),
         core.global.debug,
         privileged,
+        core.policy.clone(),
+        core.host.inbox.clone(),
     ));
 
     let debug = core.global.debug;
@@ -4939,11 +5045,37 @@ pub enum MainCommmand {
     /// unwrapping its mesh onto it.
     AppNewTex(Box<NewTexIn>, SyncSender<Result<NewTexOut, String>>),
     Copy(String),
+    /// `host.send(msg)`: a string for the hosting app (`Core::host_take`).
+    HostSend(String),
     LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
     InitBack(Box<(WeakWrapper, WeakWrapper)>),
     Quit(u8),
+}
+
+impl MainCommmand {
+    /// Whether an instance with this `policy` acts on this command. The natives
+    /// that send the forbidden ones are never registered (`init_lua_sys`), so
+    /// this is the second lock: `Core::update` drops whatever fails it. A dropped
+    /// request's reply channel closes with it, so the Lua side reads that as a
+    /// failure (nil/false) instead of blocking.
+    pub fn allowed_by(&self, policy: &crate::host::Policy) -> bool {
+        match self {
+            MainCommmand::Read(..)
+            | MainCommmand::Write(..)
+            | MainCommmand::GlbRead(..)
+            | MainCommmand::GlbWrite(..) => policy.files.is_some(),
+            MainCommmand::Copy(_) => policy.clipboard,
+            // `quit(n > 0)` loads the queued cart, or the boot app.
+            MainCommmand::Subload(..) | MainCommmand::Load(_) => policy.load_apps,
+            MainCommmand::Quit(u) => *u == 0 || policy.load_apps,
+            // A query (`None`) never opens the mic.
+            MainCommmand::MicRecord(Some(_), ..) => policy.audio && policy.mic,
+            MainCommmand::HostSend(_) => policy.host_messages,
+            _ => true,
+        }
+    }
 }
 
 /// An `app.pick` hit, as plain data for the trip back to the VM. Built from
@@ -5120,6 +5252,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
             sky: m.sky,
         }),
         MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
+        MainCommmand::HostSend(s) => Some(VmToHost::Host(s)),
         MainCommmand::SetImg(name, img, _tx) => {
             let (w, h) = img.dimensions();
             Some(VmToHost::SetImg {
@@ -5842,4 +5975,134 @@ fn get_com_hash(svec: Vec<&str>, paired: Vec<&str>) -> (Vec<String>, HashMap<Str
         }
     }
     (regular, comhash)
+}
+
+#[cfg(all(test, feature = "silt", not(target_arch = "wasm32")))]
+mod policy_tests {
+    use super::*;
+    use crate::host::{HostInbox, Policy};
+
+    /// Build a VM the way `command_docs` does, under `policy`, and run `code`
+    /// in it; returns what it returned, and every command it sent the main thread.
+    fn run(policy: &Policy, inbox: HostInbox, code: &str) -> (LuaResponse, Vec<MainCommmand>) {
+        let letters = crate::gui::Gui::letter_init(&mut crate::log::Loggy::new());
+        let gui = Rc::new(RefCell::new(GuiMorsel::new(letters, [1, 1])));
+        let (pitcher, catcher) = std::sync::mpsc::channel::<MainPacket>();
+        let (loggy, _loggy_rx) = std::sync::mpsc::channel::<(LogType, String)>();
+        let (world, _world_rx) =
+            std::sync::mpsc::channel::<(TileCommand, SyncSender<TileResponse>)>();
+        #[cfg(feature = "audio")]
+        let (singer, _singer_rx) = std::sync::mpsc::channel::<SoundCommand>();
+        let mut lua = silt_lua::Lua::new_with_standard();
+        let out = lua
+            .enter::<_, Result<LuaResponse, P64Error>>(|vm, mc| {
+                init_lua_sys(
+                    vm,
+                    mc,
+                    0,
+                    false,
+                    policy,
+                    inbox.clone(),
+                    pitcher.clone(),
+                    world.clone(),
+                    Rc::clone(&gui),
+                    #[cfg(feature = "audio")]
+                    singer.clone(),
+                    Rc::new(RefCell::new([false; 256])),
+                    Rc::new(RefCell::new([false; 256])),
+                    Rc::new(RefCell::new([0f32; crate::types::MICE_LEN])),
+                    Rc::new(RefCell::new(Pad::new())),
+                    Rc::new(Mutex::new(2u64)),
+                    loggy.clone(),
+                    LocalPool::new(),
+                    crate::skeleton::Rig::new(),
+                )?;
+                Ok(vm.build_and_run(mc, Some("test"), code, &mut Compiler::new())?)
+            })
+            .unwrap();
+        let sent = catcher.try_iter().map(|(_, c)| c).collect();
+        (out, sent)
+    }
+
+    fn type_of(policy: &Policy, global: &str) -> String {
+        match run(policy, Default::default(), &format!("return type({global})")).0 {
+            LuaResponse::String(s) => s,
+            other => panic!("type() gave {:?}", other),
+        }
+    }
+
+    #[test]
+    fn sandbox_leaves_reach_nil() {
+        let p = Policy::sandbox();
+        for g in ["conn", "io", "host", "sub", "over", "glb"] {
+            assert_eq!(type_of(&p, g), "nil", "{g} under sandbox");
+        }
+        // What a sandboxed cart keeps.
+        for g in ["cout", "note", "init", "quit"] {
+            assert_eq!(type_of(&p, g), "function", "{g} under sandbox");
+        }
+    }
+
+    #[test]
+    fn open_registers_everything() {
+        let p = Policy::open();
+        for g in ["conn", "sub", "over", "glb"] {
+            assert_eq!(type_of(&p, g), "function", "{g} under open");
+        }
+        for g in ["io", "host"] {
+            assert_eq!(type_of(&p, g), "table", "{g} under open");
+        }
+        assert_eq!(type_of(&p, "io.copy"), "function");
+    }
+
+    #[test]
+    fn each_flag_gates_its_own() {
+        let no_clip = Policy { clipboard: false, ..Policy::open() };
+        assert_eq!(type_of(&no_clip, "io.get"), "function");
+        assert_eq!(type_of(&no_clip, "io.copy"), "nil");
+        let no_net = Policy { network: false, ..Policy::open() };
+        assert_eq!(type_of(&no_net, "conn"), "nil");
+        assert_eq!(type_of(&no_net, "io"), "table");
+    }
+
+    #[test]
+    fn host_channel_round_trip() {
+        let inbox = HostInbox::default();
+        inbox.lock().push_back("hello".into());
+        let (out, sent) = run(
+            &Policy::open(),
+            inbox.clone(),
+            "host.send('up') local a = host.recv() local b = host.recv() return a .. tostring(b)",
+        );
+        assert!(matches!(out, LuaResponse::String(ref s) if s == "hellonil"), "{:?}", out);
+        assert!(inbox.lock().is_empty());
+        assert!(sent
+            .iter()
+            .any(|c| matches!(c, MainCommmand::HostSend(s) if s == "up")));
+    }
+
+    #[test]
+    fn main_thread_drops_what_policy_forbids() {
+        let sandbox = Policy::sandbox();
+        let open = Policy::open();
+        let (tx, _rx) = sync_channel::<bool>(1);
+        let (rtx, _rrx) = sync_channel::<Option<String>>(1);
+        let cases: Vec<MainCommmand> = vec![
+            MainCommmand::Read("a".into(), rtx),
+            MainCommmand::Write("a".into(), "b".into(), tx.clone()),
+            MainCommmand::Copy("x".into()),
+            MainCommmand::Subload("x".into(), false),
+            MainCommmand::Quit(1),
+            MainCommmand::HostSend("x".into()),
+        ];
+        for c in &cases {
+            assert!(!c.allowed_by(&sandbox));
+            assert!(c.allowed_by(&open));
+        }
+        assert!(MainCommmand::Quit(0).allowed_by(&sandbox));
+        assert!(MainCommmand::Reload().allowed_by(&sandbox));
+        let muted = Policy { audio: false, ..Policy::open() };
+        assert!(!MainCommmand::MicRecord(Some(1), 1.0, tx.clone()).allowed_by(&muted));
+        assert!(MainCommmand::MicRecord(None, 1.0, tx).allowed_by(&muted));
+    }
 }

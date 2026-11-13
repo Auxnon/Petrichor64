@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Petrichor64: two engines</title>
+    <!-- Two <petrichor-64> elements, two carts, one page. Copied into dist as is
+         (web/index.html). The carts aren't part of the build; pack them beside it:
+           cargo run -- pack test/chip web/dist/chip.game.png
+           cargo run -- pack test/host-echo web/dist/host-echo.game.png
+         then serve: cargo run -- --web web/dist, and open /two.html.
+         The right one runs with no network, files, clipboard, console or other
+         carts, but keeps the host channel: it reports what it was left
+         (conn=nil io=nil) and echoes what the box below posts. -->
+    <script type="module" src="/petrichor64-element.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #111;
+        color: #ddd;
+        font: 14px system-ui, sans-serif;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+      }
+      petrichor-64 {
+        width: 480px;
+        height: 360px;
+        outline: 1px solid #333;
+      }
+      petrichor-64:focus-within {
+        outline-color: #6af;
+      }
+      canvas {
+        image-rendering: pixelated;
+      }
+      canvas:focus,
+      canvas:focus-visible {
+        outline: none;
+      }
+      #log {
+        white-space: pre-wrap;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <petrichor-64 id="a" cart="/chip.game.png"></petrichor-64>
+      <petrichor-64
+        id="b"
+        cart="/host-echo.game.png"
+        policy='{"network":false,"files":null,"clipboard":false,"console":false,"load_apps":false}'
+      ></petrichor-64>
+    </div>
+    <p>
+      <input id="msg" value="hello" />
+      <button id="send">post to the right cart</button>
+    </p>
+    <div id="log"></div>
+    <script type="module">
+      const log = (s) => {
+        document.getElementById("log").textContent += s + "\n";
+        console.log("[two] " + s);
+      };
+      const b = document.getElementById("b");
+      for (const el of document.querySelectorAll("petrichor-64")) {
+        el.addEventListener("message", (e) => log(`${el.id} message: ${e.detail}`));
+        el.addEventListener("title", (e) => log(`${el.id} title: ${e.detail}`));
+        el.addEventListener("petrichor-gpu-lost", () => log(`${el.id} gpu lost`));
+        el.addEventListener("petrichor-gpu-restored", () => log(`${el.id} gpu restored`));
+      }
+      document.getElementById("send").onclick = () =>
+        b.post(document.getElementById("msg").value);
+      // ?post=x: post once at load (headless checks)
+      const auto = new URLSearchParams(location.search).get("post");
+      if (auto) b.post(auto);
+    </script>
+  </body>
+</html>

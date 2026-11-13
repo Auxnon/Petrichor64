@@ -194,6 +194,13 @@ Design notes:
     - `<petrichor-64 cart="..." worker="...">` attributes, no fixed id;
     - the host channel as a JS API on the element (`el.post(str)`, a `message`
       event).
+
+    Done: `start(root, { cart, worker, policy })` (`start_on`/`WebHost` in
+    `lib.rs`), a module copy per element (`?i=N`, `web/petrichor64-element.js`,
+    which sets `__petrichor64_manual` so `wasm_main` doesn't auto-start), and
+    `web/two.html` (packing its two carts is described in it). On an element a
+    title request is a `title` event and the gpu events fire on it too;
+    `web/index.html` behaves as before.
 11. **Later, optional: Android.** A JNI entry that runs an `Instance` on a
     `SurfaceView`'s window, as aqua does (`aqua/app/.../CanvasSurfaceView.kt`,
     `aqua/engine/src/android.rs`). sosh's Android app could then drop its web

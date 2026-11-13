@@ -10,15 +10,11 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-#[cfg(feature = "headed")]
-use crate::controls::bit_check;
 use crate::log::LogType;
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(desktop)]
-use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
 #[cfg(feature = "headed")]
 use ent_manager::InstanceBuffer;
+#[cfg(target_arch = "wasm32")]
 use glam::vec2;
 use global::StateChange;
 use image::GenericImageView;
@@ -26,7 +22,7 @@ use itertools::Itertools;
 use lua_define::{LuaResponse, MainPacket};
 use pollster::block_on;
 use root::Core;
-use types::{ControlState, GlobalMap};
+use types::GlobalMap;
 
 mod asset;
 mod builtin;
@@ -50,6 +46,15 @@ mod gpu_loss;
 mod global;
 mod gltf_io;
 mod gui;
+pub mod host;
+#[cfg(feature = "headed")]
+mod instance;
+#[cfg(feature = "headed")]
+pub use instance::Instance;
+/// The wgpu and winit this engine was built with, for a host to share: its
+/// device must be this wgpu's, and `Input::Key` takes this winit's `KeyCode`.
+#[cfg(feature = "headed")]
+pub use {wgpu, winit};
 #[cfg(any(feature = "ws", feature = "online_capable"))]
 mod json;
 mod log;
@@ -117,6 +122,8 @@ mod worker_protocol;
 mod world;
 
 use command::MainCommmand;
+#[cfg(feature = "headed")]
+use host::{Input, Request};
 #[cfg(feature = "headed")]
 use winit::error::EventLoopError;
 #[cfg(feature = "headed")]
@@ -202,14 +209,11 @@ pub struct App {
     /// cursor. (It was a LogicalPosition holding physical numbers, so on a 2x
     /// display the cursor went to the bottom-right corner.)
     center: PhysicalPosition<f64>,
-    core: Option<Core>,
+    /// The engine: `chor` is a host with one instance, drawn to the window's
+    /// surface. Input goes in through it and its requests are all granted.
+    inst: Option<Instance>,
     next_frame_time: Instant,
     frame_duration: Duration,
-    catcher: Option<Receiver<MainPacket>>,
-    /// Current key/mouse-button state sent to Lua each frame.
-    bits: ControlState,
-    /// Key state from the previous Lua frame — used for pressed/released detection.
-    bits_prev: [bool; 256],
     /// A game named on the command line (or found by auto-load), applied on the
     /// first frame rather than during `resumed`. Unpacking a game is slow enough
     /// that doing it while the window is being created stops the OS activating it.
@@ -254,20 +258,13 @@ pub struct App {
     /// happens on the first frame, so window activation isn't blocked by unpacking.
     #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
     deferred_auto: bool,
-    /// The finger acting as the cursor, by winit touch id — see the `Touch` arm.
-    /// `None` when nothing is touching. Not cfg'd to mobile: desktop touchscreens
-    /// send these events too.
-    primary_touch: Option<u64>,
-    /// Last primary-touch position in window pixels, for computing drag deltas
-    /// (touch has no equivalent of DeviceEvent::MouseMotion).
-    touch_last: Option<(f64, f64)>,
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
     /// gui size the worker's rasters were last given (Init or Resize).
     #[cfg(target_arch = "wasm32")]
     worker_gui_size: [u32; 2],
-    /// How many skeletons have been forwarded to the worker (skeleton::take_new).
+    /// How many skeletons have been forwarded to the worker (skeleton::Rig::take_new).
     #[cfg(target_arch = "wasm32")]
     skeletons_sent: usize,
     /// Whether the worker has been told how its sound commands travel — given the
@@ -288,6 +285,9 @@ pub struct App {
     /// ready; the frame loop routes it to the worker/GPU/audio once present.
     #[cfg(target_arch = "wasm32")]
     pending_bundle: std::rc::Rc<std::cell::RefCell<Option<WasmBundle>>>,
+    /// Where on the page this engine runs and what it loads (`start(root, ..)`).
+    #[cfg(target_arch = "wasm32")]
+    web: WebHost,
 }
 
 #[cfg(feature = "headed")]
@@ -296,12 +296,9 @@ impl Default for App {
         Self {
             window: None,
             center: PhysicalPosition::new(320.0f64, 240.0f64),
-            core: None,
+            inst: None,
             next_frame_time: Instant::now(),
             frame_duration: Duration::from_secs_f32(1.0 / FPS),
-            catcher: None,
-            bits: ControlState::default(),
-            bits_prev: [false; 256],
             #[cfg(not(target_arch = "wasm32"))]
             deferred_load: None,
             #[cfg(target_arch = "wasm32")]
@@ -324,8 +321,6 @@ impl Default for App {
             #[cfg(not(target_arch = "wasm32"))]
             gpu_test_loss: crate::gpu_loss::test_loss_at()
                 .map(|s| std::time::Instant::now() + std::time::Duration::from_secs_f32(s)),
-            primary_touch: None,
-            touch_last: None,
             #[cfg(target_arch = "wasm32")]
             worker_inited: false,
             #[cfg(target_arch = "wasm32")]
@@ -340,117 +335,10 @@ impl Default for App {
             audio_ctx: std::rc::Rc::new(std::cell::RefCell::new(None)),
             #[cfg(target_arch = "wasm32")]
             pending_bundle: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            web: WebHost::default(),
         }
     }
-}
-
-#[cfg(feature = "headed")]
-fn state_change_checker(
-    c: &mut Core,
-    control_flow: &ActiveEventLoop,
-    rwindow: &Arc<winit::window::Window>,
-    center: PhysicalPosition<f64>,
-    catcher: Option<&Receiver<MainPacket>>,
-) -> bool {
-    if c.global.is_state_changed {
-        if c.global.state_delay > 0 {
-            c.global.state_delay -= 1;
-        } else {
-            c.global.is_state_changed = false;
-            let states: Vec<StateChange> = c.global.state_changes.drain(..).collect();
-            for state in states {
-                match state {
-                    #[cfg(feature = "headed")]
-                    StateChange::MouseGrabOn => {
-                        rwindow.set_cursor_visible(false);
-                        let _ = rwindow.set_cursor_position(center);
-                        rwindow
-                            .set_cursor_grab(CursorGrabMode::Confined)
-                            .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked))
-                            .ok();
-                        c.global.mouse_grabbed_state = true;
-                    }
-                    #[cfg(feature = "headed")]
-                    StateChange::MouseGrabOff => {
-                        rwindow.set_cursor_visible(true);
-                        let _ = rwindow.set_cursor_grab(CursorGrabMode::None);
-                        c.global.mouse_grabbed_state = false;
-                    }
-                    #[cfg(feature = "headed")]
-                    StateChange::Resized => {
-                        c.debounced_resize();
-                    }
-                    #[cfg(feature = "headed")]
-                    StateChange::Quit => control_flow.exit(),
-                    #[cfg(not(feature = "headed"))]
-                    StateChange::Quit => return false,
-                    StateChange::Config => {
-                        let res = crate::asset::parse_config(&mut c.global, &mut c.loggy);
-                        if let Some(s) = res {
-                            let _ = crate::command::run_con_sys(c, &s, catcher);
-                        }
-
-                        // Also check command-line arguments here.
-                        let args: Vec<String> = std::env::args().collect();
-                        if args.len() > 1 {
-                            let mut command = None;
-                            for (_i, arg) in args.iter().enumerate() {
-                                if arg.starts_with('-') {
-                                    command = Some(arg.to_lowercase());
-                                } else if command.is_some() {
-                                    match command.unwrap().as_str() {
-                                        "--init" | "-i" => {
-                                            println!("cli-init: {:?}", arg);
-                                            let _ = crate::command::run_con_sys(c, arg, catcher);
-                                        }
-                                        "--new" | "-n" => {
-                                            println!("cli-new: {:?}", arg);
-                                            let _ = crate::command::run_con_sys(
-                                                c,
-                                                &format!("new {}", arg),
-                                                catcher,
-                                            );
-                                        }
-                                        _ => {}
-                                    }
-                                    command = None;
-                                }
-                            }
-                        }
-                    }
-                    StateChange::ModelChange(id) => {
-                        #[cfg(feature = "headed")]
-                        c.ent_manager.check_for_model_change(&c.model_manager, &id);
-                    }
-                }
-            }
-            #[cfg(feature = "headed")]
-            c.check_fullscreen();
-        }
-    }
-    // Reconcile the app's desired mouse grab (mouse_grab, set via `mgrab`) with
-    // the actual cursor state each frame. Native grabs the cursor directly; the
-    // web build defers to a canvas click (via pointer_lock_wanted), so this path
-    // is gated off wasm. Released while the console is open.
-    #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
-    {
-        let want = c.global.mouse_grab && !c.global.console;
-        if want != c.global.mouse_grabbed_state {
-            if want {
-                rwindow.set_cursor_visible(false);
-                let _ = rwindow.set_cursor_position(center);
-                rwindow
-                    .set_cursor_grab(CursorGrabMode::Confined)
-                    .or_else(|_| rwindow.set_cursor_grab(CursorGrabMode::Locked))
-                    .ok();
-            } else {
-                rwindow.set_cursor_visible(true);
-                let _ = rwindow.set_cursor_grab(CursorGrabMode::None);
-            }
-            c.global.mouse_grabbed_state = want;
-        }
-    }
-    false
 }
 
 #[cfg(feature = "headed")]
@@ -478,12 +366,78 @@ fn window_attributes() -> WindowAttributes {
         .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
 }
 
+#[cfg(feature = "headed")]
 impl App {
+    /// Do what the engine asked of the window since the last tick. `chor`
+    /// grants everything; another host picks.
+    fn grant(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some(inst), Some(w)) = (self.inst.as_mut(), self.window.as_ref()) else {
+            return;
+        };
+        for request in inst.requests() {
+            match request {
+                Request::CursorVisible(on) => w.set_cursor_visible(on),
+                Request::GrabPointer(true) => {
+                    let _ = w.set_cursor_position(self.center);
+                    w.set_cursor_grab(CursorGrabMode::Confined)
+                        .or_else(|_| w.set_cursor_grab(CursorGrabMode::Locked))
+                        .ok();
+                }
+                Request::GrabPointer(false) => {
+                    let _ = w.set_cursor_grab(CursorGrabMode::None);
+                }
+                Request::Title(title) => {
+                    // winit's web window only sets the canvas's `alt`,
+                    // borrowing the canvas its event loop may hold ("RefCell
+                    // already borrowed"); the page's title is what a window
+                    // title means in a browser.
+                    // On a <petrichor-64> element (one of maybe several
+                    // engines on the page) it's the element's `title` event.
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(root) = self.web.root.as_ref() {
+                        dispatch_detail(root, "title", &title);
+                    } else if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                        doc.set_title(&title);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    w.set_title(&title);
+                }
+                // TODO windows;; macos use Fullscreen::Borderless
+                Request::Fullscreen(on) => {
+                    w.set_fullscreen(on.then(|| winit::window::Fullscreen::Borderless(None)))
+                }
+                // In logical points; a missing one keeps the current size.
+                // The window's size is physical pixels, so it's converted
+                // first: as it was, on a 2x display the dimension left out
+                // doubled.
+                Request::Size(x, y) => {
+                    let now: winit::dpi::LogicalSize<f32> =
+                        w.inner_size().to_logical(w.scale_factor());
+                    let _ = w.request_inner_size(winit::dpi::LogicalSize::new(
+                        x.unwrap_or(now.width).clamp(10., f32::INFINITY) as u32,
+                        y.unwrap_or(now.height).clamp(10., f32::INFINITY) as u32,
+                    ));
+                }
+                Request::Quit => event_loop.exit(),
+                Request::Clipboard(_text) => {
+                    #[cfg(all(desktop, not(target_arch = "wasm32")))]
+                    {
+                        use clipboard::{ClipboardContext, ClipboardProvider};
+                        if let Ok(mut ctx) = ClipboardContext::new() {
+                            let _ = ctx.set_contents(_text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Drawing has stopped on a lost GPU (`gpu_loss.rs`): once a device can be
     /// had, get one and rebuild onto it. Native asks inline; the web can't
     /// block, so it asks once and picks the answer up on a later frame.
     fn restore_gpu(&mut self, #[allow(unused)] event_loop: &ActiveEventLoop) {
-        let (Some(core), Some(window)) = (self.core.as_mut(), self.window.clone()) else {
+        let (Some(core), Some(window)) = (self.inst.as_mut().map(|i| &mut i.core), self.window.clone())
+        else {
             return;
         };
         if !self.gpu_down {
@@ -501,7 +455,7 @@ impl App {
             self.gpu_asking = false;
             match res {
                 Ok(link) => {
-                    core.restore_gpu(link, window);
+                    core.restore_gpu(link);
                     self.gpu_down = false;
                     self.gpu_drawn = 0;
                 }
@@ -546,9 +500,9 @@ impl App {
                 }
             };
             let instance = core.gfx.release_surface();
-            match pollster::block_on(crate::gfx::Gfx::connect(window.clone(), Some(instance))) {
+            match pollster::block_on(crate::gfx::Gfx::connect(window.clone(), instance)) {
                 Ok(link) => {
-                    core.restore_gpu(link, window);
+                    core.restore_gpu(link);
                     self.gpu_down = false;
                     self.gpu_drawn = 0;
                 }
@@ -564,13 +518,14 @@ impl App {
             let slot = self.pending_gpu.clone();
             let instance = core.gfx.instance();
             wasm_bindgen_futures::spawn_local(async move {
-                let res = crate::gfx::Gfx::connect(window, Some(instance)).await;
+                let res = crate::gfx::Gfx::connect(window, instance).await;
                 *slot.borrow_mut() = Some(res);
             });
         }
     }
 }
 
+#[cfg(feature = "headed")]
 impl ApplicationHandler for App {
     /// Called when the event loop is ready and (on mobile/web) the app has resumed.
     /// This is where we create the window and initialise the engine.
@@ -585,16 +540,19 @@ impl ApplicationHandler for App {
             // pipelines and the running game.
             if self.surface_lost {
                 self.surface_lost = false;
-                let size = self.window.as_ref().map(|w| w.inner_size());
-                if let Some(core) = self.core.as_mut() {
-                    if core.gfx.recreate_surface() {
+                let size = self
+                    .window
+                    .as_ref()
+                    .map(|w| (w.inner_size(), w.scale_factor() as f32));
+                if let Some(inst) = self.inst.as_mut() {
+                    if inst.core.gfx.recreate_surface() {
                         ::log::info!("petrichor64: surface rebuilt after resume");
                         // Re-derive everything sized from the surface: the new
                         // window need not match the old one (rotation, a fold
                         // opening), and `resize` is already the path that rebuilds
                         // the depth texture, post targets and gui scaling.
-                        if let Some(size) = size {
-                            core.resize(size);
+                        if let Some((size, scale)) = size {
+                            inst.resize((size.width, size.height), scale);
                         }
                     }
                 }
@@ -605,7 +563,13 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let win_attr = window_attributes();
+        #[allow(unused_mut)]
+        let mut win_attr = window_attributes();
+        #[cfg(target_arch = "wasm32")]
+        if let Some(c) = self.web.canvas.clone() {
+            use winit::platform::web::WindowAttributesExtWebSys;
+            win_attr = win_attr.with_canvas(Some(c));
+        }
         let window = Arc::new(
             event_loop
                 .create_window(win_attr)
@@ -622,7 +586,6 @@ impl ApplicationHandler for App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (mut core, catcher) = pollster::block_on(Core::new(window.clone()));
-            self.catcher = Some(catcher);
 
             // Boot to the built-in "nil" app (embedded nil.game.png via
             // load_empty -> get_logo). A command-line/auto game replaces it
@@ -693,7 +656,7 @@ impl ApplicationHandler for App {
                 "[ 1 ]".on_bright_purple(),
                 "we built core".on_red()
             );
-            self.core = Some(core);
+            self.inst = Some(Instance::wrap(core, catcher));
         }
 
         // --- Web: attach the canvas to the DOM, then build Core asynchronously.
@@ -704,8 +667,12 @@ impl ApplicationHandler for App {
         #[cfg(target_arch = "wasm32")]
         {
             use winit::platform::web::WindowExtWebSys;
+            crate::gpu_loss::set_target(self.web.root.clone());
             if let Some(canvas) = window.canvas() {
-                attach_canvas_to_dom(&canvas);
+                // A canvas the host handed over is already where it wants it.
+                if self.web.canvas.is_none() {
+                    attach_canvas_to_dom(&canvas, self.web.root.as_ref());
+                }
                 install_keyboard_sink(&canvas);
                 crate::gpu_loss::watch_canvas(&canvas);
                 install_web_input_handlers(
@@ -716,8 +683,17 @@ impl ApplicationHandler for App {
                 );
             }
             let pending = self.pending_core.clone();
+            let policy = self.web.policy.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let (core, catcher) = Core::new(window).await;
+                // Core::new, with this engine's policy from the start (it decides
+                // whether there's an audio stream at all).
+                let (core, catcher) = match crate::gfx::Gfx::connect(window, None).await {
+                    Ok(link) => Core::build(link, policy),
+                    Err(e) => {
+                        crate::error_window(e.into());
+                        return;
+                    }
+                };
                 ::log::info!("petrichor64: core ready — wgpu initialised");
                 *pending.borrow_mut() = Some((core, catcher));
             });
@@ -725,9 +701,10 @@ impl ApplicationHandler for App {
             // Load the game bundle in parallel (fetch /game.game.png or embedded
             // default), unzip in memory; the frame loop routes it once ready.
             let pending_bundle = self.pending_bundle.clone();
+            let cart = self.web.cart.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 const EMBEDDED: &[u8] = include_bytes!("../web/default.game.png");
-                if let Some(bundle) = load_wasm_bundle(EMBEDDED).await {
+                if let Some(bundle) = load_wasm_bundle(EMBEDDED, cart.as_deref()).await {
                     *pending_bundle.borrow_mut() = Some(bundle);
                 }
             });
@@ -743,15 +720,8 @@ impl ApplicationHandler for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         ::log::info!("petrichor64: suspended — surface released");
         self.surface_lost = true;
-        // Fingers down as the app leaves won't send their lift; let them go
-        // now, or they'd be stuck down (and the mouse held) on return.
-        self.primary_touch = None;
-        self.touch_last = None;
-        if let Some(core) = &mut self.core {
-            if core.global.touches.iter().any(|t| t.is_some()) {
-                core.global.touches = [None; crate::global::TOUCH_SLOTS];
-                core.global.mouse_buttons[0] = 0.0;
-            }
+        if let Some(inst) = &mut self.inst {
+            inst.input(Input::Suspended);
         }
     }
 
@@ -770,15 +740,17 @@ impl ApplicationHandler for App {
 
             // ----------------------------------------------------------------
             WindowEvent::Destroyed => {
-                // Window gone — drop Core so GPU resources are freed.
-                self.core = None;
-                self.catcher = None;
+                // Window gone — drop the engine so GPU resources are freed.
+                self.inst = None;
             }
 
             // ----------------------------------------------------------------
             WindowEvent::Resized(physical_size) => {
-                if let Some(core) = &mut self.core {
-                    core.resize(physical_size);
+                if let (Some(inst), Some(w)) = (&mut self.inst, self.window.as_ref()) {
+                    inst.resize(
+                        (physical_size.width, physical_size.height),
+                        w.scale_factor() as f32,
+                    );
                 }
                 // Keep the mouse-grab re-center position up to date.
                 self.center = PhysicalPosition::new(
@@ -794,8 +766,9 @@ impl ApplicationHandler for App {
             // anyway in case it doesn't (same physical size, new scale), so
             // nothing sized from the old scale lingers.
             WindowEvent::ScaleFactorChanged { .. } => {
-                if let (Some(core), Some(w)) = (&mut self.core, self.window.as_ref()) {
-                    core.resize(w.inner_size());
+                if let (Some(inst), Some(w)) = (&mut self.inst, self.window.as_ref()) {
+                    let s = w.inner_size();
+                    inst.resize((s.width, s.height), w.scale_factor() as f32);
                 }
             }
 
@@ -808,10 +781,10 @@ impl ApplicationHandler for App {
                     return;
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if let (Some(at), Some(core)) = (self.gpu_test_loss, &self.core) {
+                if let (Some(at), Some(inst)) = (self.gpu_test_loss, &self.inst) {
                     if std::time::Instant::now() >= at {
                         self.gpu_test_loss = None;
-                        crate::gpu_loss::simulate(&core.gfx.device);
+                        crate::gpu_loss::simulate(&inst.core.gfx.device);
                     }
                 }
                 if crate::gpu_loss::is_lost() {
@@ -819,13 +792,13 @@ impl ApplicationHandler for App {
                     return;
                 }
                 self.gpu_drawn = self.gpu_drawn.saturating_add(1);
-                if let Some(core) = &mut self.core {
-                    match core.render() {
+                if let Some(inst) = &mut self.inst {
+                    match inst.draw() {
                         render::DrawState::Success => {}
                         // Surface lost / outdated — reconfigure and try next frame.
                         render::DrawState::Resize => {
-                            let sz = core.gfx.size;
-                            core.resize(sz);
+                            let sz = inst.core.gfx.size;
+                            inst.core.resize(sz);
                         }
                         // Timeout / skip — just wait for the next frame.
                         render::DrawState::Skip => {}
@@ -834,6 +807,8 @@ impl ApplicationHandler for App {
             }
 
             // ----------------------------------------------------------------
+            // Everything below is input: translated to the engine's `Input`
+            // and handed to the instance, as any host does.
             WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
@@ -844,79 +819,43 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                // Update the bool key-state array for Lua.
-                if let PhysicalKey::Code(keycode) = physical_key {
-                    bit_check(&state, keycode, &mut self.bits);
+                let Some(inst) = &mut self.inst else {
+                    return;
+                };
+                let pressed = state == ElementState::Pressed;
+                if let PhysicalKey::Code(code) = physical_key {
+                    inst.input(Input::Key { code, pressed });
                 }
-
-                // Feed typed characters directly into the console log so they
-                // arrive on every key-repeat, not just once per Lua frame.
-                if state == ElementState::Pressed {
-                    if let Some(core) = &mut self.core {
-                        if core.global.console {
-                            match &logical_key {
-                                Key::Character(c) => {
-                                    // Filter out backtick (console toggle key).
-                                    if c.as_str() != "`" {
-                                        core.loggy.add(c.as_str());
-                                    }
-                                }
-                                Key::Named(NamedKey::Space) => {
-                                    core.loggy.add(" ");
-                                }
-                                Key::Named(NamedKey::Backspace) => {
-                                    core.loggy.back();
-                                }
-                                _ => {}
-                            }
-                        }
+                // Typed characters, for the console: on every key-repeat, not
+                // just once per Lua frame.
+                if pressed {
+                    match &logical_key {
+                        Key::Character(c) => inst.input(Input::Text(c.to_string())),
+                        Key::Named(NamedKey::Space) => inst.input(Input::Text(" ".into())),
+                        _ => {}
                     }
                 }
             }
 
             // ----------------------------------------------------------------
             WindowEvent::CursorMoved { position, .. } => {
-                // Normalise against winit's window size — the same coordinate
-                // space the cursor position is reported in. (gfx.size can lag on
-                // the web, where it's clamped at init and only corrected on a
-                // Resized event, giving mouse.x > 1.)
-                let size = self.window.as_ref().map(|w| w.inner_size());
-                if let (Some(core), Some(size)) = (&mut self.core, size) {
-                    if size.width > 0 && size.height > 0 {
-                        core.global.mouse_pos.x = position.x as f32 / size.width as f32;
-                        core.global.mouse_pos.y = position.y as f32 / size.height as f32;
-                    }
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::PointerMoved {
+                        x: position.x as f32,
+                        y: position.y as f32,
+                    });
                 }
             }
 
             // ----------------------------------------------------------------
-            // Touch, folded into the mouse so every existing game and `mus()` call
-            // works on a phone unchanged: the *primary* finger is the cursor, and
-            // touching down is a left click.
-            //
-            // Primary means the first finger down that is still down — tracked by
-            // winit's touch id, not "whichever event arrived". That distinction is
-            // the whole point: a second finger landing and lifting during a drag
-            // must not move the cursor or release the button, which is exactly what
-            // id-less handling gets wrong. Every finger, the primary included, is
-            // also tracked for `touches()`, where a script reads gestures (pinch,
-            // two-finger drag) rather than having them smuggled through `mus`.
-            //
-            // Platform-independent on purpose: winit reports touch the same way on
-            // Android, iOS and desktop touchscreens, so this also makes a Surface or
-            // a touch-screen laptop work.
+            // winit reports touch the same way on Android, iOS and desktop
+            // touchscreens. A pen reports a calibrated force with an altitude:
+            // Apple Pencil on iOS, and a stylus on Android through the
+            // vendored winit.
             WindowEvent::Touch(touch) => {
-                use winit::event::TouchPhase;
-                let size = self.window.as_ref().map(|w| w.inner_size());
-                let (Some(core), Some(size)) = (&mut self.core, size) else {
+                let Some(inst) = &mut self.inst else {
                     return;
                 };
-                if size.width == 0 || size.height == 0 {
-                    return;
-                }
-                // Every finger, primary or not, for `touches()`. A pen reports a
-                // calibrated force with an altitude: Apple Pencil on iOS, and a
-                // stylus on Android through the vendored winit.
                 let (pen, pressure) = match touch.force {
                     Some(
                         f @ winit::event::Force::Calibrated {
@@ -927,90 +866,49 @@ impl ApplicationHandler for App {
                     Some(f) => (false, f.normalized() as f32),
                     None => (false, 1.0),
                 };
-                let down = matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved);
-                core.global.track_touch(
-                    crate::global::Touching {
-                        id: touch.id,
-                        x: touch.location.x as f32 / size.width as f32,
-                        y: touch.location.y as f32 / size.height as f32,
-                        pen,
-                        pressure,
+                inst.input(Input::Touch {
+                    id: touch.id,
+                    phase: match touch.phase {
+                        winit::event::TouchPhase::Started => host::TouchPhase::Start,
+                        winit::event::TouchPhase::Moved => host::TouchPhase::Move,
+                        winit::event::TouchPhase::Ended => host::TouchPhase::End,
+                        winit::event::TouchPhase::Cancelled => host::TouchPhase::Cancel,
                     },
-                    down,
-                );
-                match touch.phase {
-                    TouchPhase::Started => {
-                        if self.primary_touch.is_none() {
-                            self.primary_touch = Some(touch.id);
-                            // No delta on the first contact: there's no previous
-                            // position to be relative to, and inventing one makes a
-                            // tap look like a flick to anything reading `mus` delta.
-                            self.touch_last = Some((touch.location.x, touch.location.y));
-                            core.global.mouse_pos.x = touch.location.x as f32 / size.width as f32;
-                            core.global.mouse_pos.y = touch.location.y as f32 / size.height as f32;
-                            core.global.mouse_buttons[0] = 1.0;
-                        }
-                    }
-                    TouchPhase::Moved => {
-                        if self.primary_touch == Some(touch.id) {
-                            core.global.mouse_pos.x = touch.location.x as f32 / size.width as f32;
-                            core.global.mouse_pos.y = touch.location.y as f32 / size.height as f32;
-                            // Accumulated, not assigned: several moves can land in
-                            // one frame and a delta that overwrote its predecessor
-                            // would under-report the drag. Pixels, to match the
-                            // units DeviceEvent::MouseMotion reports on desktop.
-                            if let Some((lx, ly)) = self.touch_last {
-                                core.global.mouse_delta.x += (touch.location.x - lx) as f32;
-                                core.global.mouse_delta.y += (touch.location.y - ly) as f32;
-                            }
-                            self.touch_last = Some((touch.location.x, touch.location.y));
-                        }
-                    }
-                    TouchPhase::Ended | TouchPhase::Cancelled => {
-                        if self.primary_touch == Some(touch.id) {
-                            self.primary_touch = None;
-                            self.touch_last = None;
-                            core.global.mouse_buttons[0] = 0.0;
-                            // Position deliberately left where the finger lifted,
-                            // like a mouse that stopped moving. Games read the last
-                            // position on release to decide what was hit.
-                        }
-                    }
-                }
+                    x: touch.location.x as f32,
+                    y: touch.location.y as f32,
+                    pen,
+                    pressure,
+                });
             }
 
             // ----------------------------------------------------------------
             WindowEvent::MouseInput { state, button, .. } => {
-                if let Some(core) = &mut self.core {
-                    let val = if state == ElementState::Pressed {
-                        1.0f32
-                    } else {
-                        0.0
-                    };
-                    match button {
-                        winit::event::MouseButton::Left => core.global.mouse_buttons[0] = val,
-                        winit::event::MouseButton::Right => core.global.mouse_buttons[1] = val,
-                        winit::event::MouseButton::Middle => core.global.mouse_buttons[2] = val,
-                        winit::event::MouseButton::Forward => core.global.mouse_buttons[3] = val,
-                        _ => {}
-                    }
+                let button = match button {
+                    winit::event::MouseButton::Left => host::Button::Left,
+                    winit::event::MouseButton::Right => host::Button::Right,
+                    winit::event::MouseButton::Middle => host::Button::Middle,
+                    winit::event::MouseButton::Forward => host::Button::Forward,
+                    _ => return,
+                };
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::Button {
+                        button,
+                        pressed: state == ElementState::Pressed,
+                    });
                 }
             }
 
             // ----------------------------------------------------------------
             WindowEvent::MouseWheel { delta, .. } => {
-                if let Some(core) = &mut self.core {
-                    let (x, y) = match delta {
-                        MouseScrollDelta::LineDelta(x, y) => (x, y),
-                        MouseScrollDelta::PixelDelta(pos) => {
-                            // Normalise pixel scroll to approximate line units.
-                            (pos.x as f32 / 120.0, pos.y as f32 / 120.0)
-                        }
-                    };
-                    // Summed: a frame can see several wheel events (a fast
-                    // spin, a touchpad), and each used to overwrite the last.
-                    core.global.scroll_delta.0 += x;
-                    core.global.scroll_delta.1 += y;
+                let (x, y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    // Normalise pixel scroll to approximate line units.
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        (pos.x as f32 / 120.0, pos.y as f32 / 120.0)
+                    }
+                };
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::Wheel { x, y });
                 }
             }
 
@@ -1022,37 +920,30 @@ impl ApplicationHandler for App {
             // (a stuck Cmd would otherwise turn every Enter into Cmd+Enter →
             // fullscreen, etc.).
             WindowEvent::ModifiersChanged(mods) => {
-                // Only the four collapsed modifier slots. Indexing by `KeyCode as
-                // usize` (as this did) writes winit's *discriminant* into the
-                // engine's own key-index space, where the numbers mean something
-                // else entirely: ControlLeft is 55, which is f19 — and f19 is a
-                // typeable character to `cin`, so merely holding Ctrl typed an "e".
-                // Shift landed on f24, Cmd on f22. `bit_check` already collapses
-                // left/right to these same slots, which is why modifiers otherwise
-                // worked at all.
                 let s = mods.state();
-                let b = &mut self.bits.0;
-                b[247] = s.alt_key();
-                b[248] = s.control_key();
-                b[249] = s.shift_key();
-                b[250] = s.super_key();
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::Modifiers {
+                        alt: s.alt_key(),
+                        ctrl: s.control_key(),
+                        shift: s.shift_key(),
+                        logo: s.super_key(),
+                    });
+                }
             }
 
             // ----------------------------------------------------------------
             // Losing focus (tab-away, or a browser/OS shortcut stealing the
             // keyup) would otherwise leave keys stuck down. Clear all key state.
             WindowEvent::Focused(false) => {
-                self.bits.0 = [false; 256];
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::FocusLost);
+                }
             }
 
             // ----------------------------------------------------------------
             WindowEvent::DroppedFile(path) => {
-                if let Some(core) = &mut self.core {
-                    let s = path.as_os_str().to_string_lossy().to_string();
-                    if core.global.boot_state {
-                        core.global.pending_load = Some(s.clone());
-                    }
-                    core.bundle_manager.get_main_bundle().lua.call_drop(s);
+                if let Some(inst) = &mut self.inst {
+                    inst.input(Input::Drop(path.as_os_str().to_string_lossy().to_string()));
                 }
             }
 
@@ -1069,11 +960,11 @@ impl ApplicationHandler for App {
         event: DeviceEvent,
     ) {
         if let DeviceEvent::MouseMotion { delta } = event {
-            if let Some(core) = &mut self.core {
-                // Accumulate: several motion events can land between two ticks,
-                // and the tick resets this after Lua reads it. Assigning kept only
-                // the last event, so fast motion read as a fraction of itself.
-                core.global.mouse_delta += vec2(delta.0 as f32, delta.1 as f32);
+            if let Some(inst) = &mut self.inst {
+                inst.input(Input::PointerDelta {
+                    dx: delta.0 as f32,
+                    dy: delta.1 as f32,
+                });
             }
         }
     }
@@ -1087,11 +978,10 @@ impl ApplicationHandler for App {
         // behind the terminal and never took keyboard focus.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = self.deferred_load.take() {
-            if let Some(core) = self.core.as_mut() {
+            if let Some(inst) = self.inst.as_mut() {
+                let core = &mut inst.core;
                 crate::command::hard_reset(core);
-                if let Some(catcher) = self.catcher.as_ref() {
-                    drain_stray_messages(catcher);
-                }
+                drain_stray_messages(&inst.catcher);
                 if let Err(e) = crate::command::load_app(core, Some(&path), None, None, None) {
                     core.loggy.log(
                         LogType::CoreError,
@@ -1105,7 +995,7 @@ impl ApplicationHandler for App {
         #[cfg(not(target_arch = "wasm32"))]
         if self.deferred_load.is_none() {
             if let Some(path) = self.deferred_overlay.take() {
-                if let Some(core) = self.core.as_mut() {
+                if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                     match crate::command::load_overlay(core, &path) {
                         Ok(id) => ::log::info!("overlay '{}' up as bundle {}", path, id),
                         Err(e) => ::log::error!("overlay '{}' failed: {}", path, e),
@@ -1119,11 +1009,10 @@ impl ApplicationHandler for App {
         #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
         if self.deferred_auto {
             self.deferred_auto = false;
-            if let Some(core) = self.core.as_mut() {
+            if let Some(inst) = self.inst.as_mut() {
+                let core = &mut inst.core;
                 crate::command::hard_reset(core);
-                if let Some(catcher) = self.catcher.as_ref() {
-                    drain_stray_messages(catcher);
-                }
+                drain_stray_messages(&inst.catcher);
                 let payload = include_bytes!("../auto.game.png").to_vec();
                 ::log::info!("loading included game ({} bytes)", payload.len());
                 if let Err(e) =
@@ -1139,7 +1028,7 @@ impl ApplicationHandler for App {
 
         // Install the asynchronously-built Core once it's ready (web only).
         #[cfg(target_arch = "wasm32")]
-        if self.core.is_none() {
+        if self.inst.is_none() {
             if let Some((core, catcher)) = self.pending_core.borrow_mut().take() {
                 // Share the AudioContext with the gesture handlers so they can
                 // resume it on first interaction (browsers start it suspended).
@@ -1147,14 +1036,15 @@ impl ApplicationHandler for App {
                 {
                     *self.audio_ctx.borrow_mut() = core.web_audio.as_ref().map(|w| w.context());
                 }
-                self.core = Some(core);
-                self.catcher = Some(catcher);
+                let mut inst = Instance::wrap(core, catcher);
                 // Core::new sized itself while the canvas wasn't laid out (a
                 // 640x548 fallback), and any Resized that came while it was
-                // being built found no core to apply to. Catch up to the canvas.
-                if let (Some(core), Some(w)) = (self.core.as_mut(), self.window.as_ref()) {
-                    core.resize(w.inner_size());
+                // being built found no engine to apply to. Catch up to the canvas.
+                if let Some(w) = self.window.as_ref() {
+                    let s = w.inner_size();
+                    inst.resize((s.width, s.height), w.scale_factor() as f32);
                 }
+                self.inst = Some(inst);
             }
         }
 
@@ -1166,7 +1056,7 @@ impl ApplicationHandler for App {
         {
             use crate::worker_protocol::HostToVm;
             if self.worker.is_none() {
-                match crate::web_worker::WorkerHandle::spawn("/worker.js") {
+                match crate::web_worker::WorkerHandle::spawn(&self.web.worker) {
                     Ok(w) => {
                         ::log::info!("petrichor64: VM worker spawned");
                         self.worker = Some(w);
@@ -1184,7 +1074,7 @@ impl ApplicationHandler for App {
             // mid-stream would reorder `instr`/`smpl` against the notes using them.
             #[cfg(feature = "audio")]
             if !self.sound_lane_settled {
-                if let (Some(w), Some(core)) = (&self.worker, self.core.as_mut()) {
+                if let (Some(w), Some(core)) = (&self.worker, self.inst.as_mut().map(|i| &mut i.core)) {
                     if w.is_ready() {
                         if let Some(out) = core.web_audio.as_mut() {
                             if let Some(port) = out.take_command_port() {
@@ -1210,10 +1100,17 @@ impl ApplicationHandler for App {
                         // Once the bundle has finished unzipping, route it: load
                         // textures into the GPU atlas + decode sounds into the
                         // mixer (main thread), and send scripts + main() to the
-                        // VM worker. Until then, retry next frame.
-                        let bundle = self.pending_bundle.borrow_mut().take();
+                        // VM worker. Until then, retry next frame. Not before
+                        // the Core is up either: its textures, console and
+                        // policy are what this routes into (with several
+                        // engines starting at once the bundle can win the race,
+                        // and the cart then ran with `Policy::open()`).
+                        let bundle = match self.inst.is_some() {
+                            true => self.pending_bundle.borrow_mut().take(),
+                            false => None,
+                        };
                         if let Some(bundle) = bundle {
-                            if let Some(core) = self.core.as_mut() {
+                            if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                                 // Set up bundle 0's main-side world (GPU meshing +
                                 // mapper); the worker owns the tile data and syncs
                                 // chunks here.
@@ -1237,16 +1134,19 @@ impl ApplicationHandler for App {
                                     &mut core.loggy,
                                 );
                             }
-                            let size = self.core.as_ref().map_or([256, 256], |c| c.gui.size());
+                            let size = self.inst.as_ref().map(|i| &i.core).map_or([256, 256], |c| c.gui.size());
                             w.post(&HostToVm::Init {
                                 bundle_id: 0,
                                 width: size[0],
                                 height: size[1],
+                                policy: self.inst.as_ref().map(|i| &i.core).map(|c| c.policy.clone()).unwrap_or_default(),
                             });
                             self.worker_gui_size = size;
                             // Skeletons from the models just loaded, before main()
                             // can ask an entity to play a clip.
-                            let skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                            let skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                                c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                            });
                             if !skeletons.is_empty() {
                                 w.post(&HostToVm::Skeletons(skeletons));
                             }
@@ -1262,48 +1162,52 @@ impl ApplicationHandler for App {
                     }
                     // Console toggle (backtick), submit/history, and system
                     // shortcuts run on the main thread, same as native.
-                    if let Some(core) = self.core.as_mut() {
+                    if let Some(i) = self.inst.as_mut() {
                         controls::controls_evaluate(
-                            core,
-                            event_loop,
-                            &self.bits,
-                            &self.bits_prev,
-                            self.catcher.as_ref(),
+                            &mut i.core,
+                            &i.bits,
+                            &i.bits_prev,
+                            Some(&i.catcher),
                         );
                     }
                     // Same as native: re-trace the cursor ray against this frame's
                     // pointer position before the VM sees it, since render runs later.
-                    if let Some(core) = self.core.as_mut() {
+                    if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                         core.refresh_cursor_ray();
                     }
                     // Keys are already in self.bits.0 (window_event's bit_check);
                     // copy the mouse/analog state from core.global into bits.1,
                     // mirroring the native about_to_wait input copy.
-                    if let Some(core) = self.core.as_ref() {
-                        let g = &core.global;
-                        self.bits.1[0] = g.mouse_pos.x;
-                        self.bits.1[1] = g.mouse_pos.y;
-                        self.bits.1[2] = g.mouse_delta.x;
-                        self.bits.1[3] = g.mouse_delta.y;
-                        self.bits.1[4] = g.mouse_buttons[0];
-                        self.bits.1[5] = g.mouse_buttons[1];
-                        self.bits.1[6] = g.mouse_buttons[2];
+                    if let Some(i) = self.inst.as_mut() {
+                        let g = &i.core.global;
+                        i.bits.1[0] = g.mouse_pos.x;
+                        i.bits.1[1] = g.mouse_pos.y;
+                        i.bits.1[2] = g.mouse_delta.x;
+                        i.bits.1[3] = g.mouse_delta.y;
+                        i.bits.1[4] = g.mouse_buttons[0];
+                        i.bits.1[5] = g.mouse_buttons[1];
+                        i.bits.1[6] = g.mouse_buttons[2];
                         // mus().scroll: the wheel (vertical), else a sideways scroll
-                        self.bits.1[7] = g.scroll_amount();
-                        self.bits.1[8] = g.cursor_projected_pos.x;
-                        self.bits.1[9] = g.cursor_projected_pos.y;
-                        self.bits.1[10] = g.cursor_projected_pos.z;
-                        g.pack_touches(&mut self.bits.1);
+                        i.bits.1[7] = g.scroll_amount();
+                        i.bits.1[8] = g.cursor_projected_pos.x;
+                        i.bits.1[9] = g.cursor_projected_pos.y;
+                        i.bits.1[10] = g.cursor_projected_pos.z;
+                        g.pack_touches(&mut i.bits.1);
 
                         // Mirror the app's grab intent into the pointer-lock
                         // flag the canvas click handler reads. Release the lock
                         // immediately when the app drops grab or the console opens.
                         let want = g.mouse_grab && !g.console;
                         *self.pointer_lock_wanted.borrow_mut() = want;
+                        // Only our own lock: another engine on the page may hold one.
                         if !want {
+                            use winit::platform::web::WindowExtWebSys;
+                            let ours = self.window.as_ref().and_then(|w| w.canvas());
                             if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                                if doc.pointer_lock_element().is_some() {
-                                    doc.exit_pointer_lock();
+                                if let (Some(locked), Some(ours)) = (doc.pointer_lock_element(), ours) {
+                                    if locked.is_same_node(Some(ours.as_ref())) {
+                                        doc.exit_pointer_lock();
+                                    }
                                 }
                             }
                         }
@@ -1314,38 +1218,60 @@ impl ApplicationHandler for App {
                     if self.worker_inited {
                         // Keep the worker's gui/sky rasters the size of the
                         // layers they're uploaded into (native's Gui::resize).
-                        if let Some(size) = self.core.as_ref().map(|c| c.gui.size()) {
+                        if let Some(size) = self.inst.as_ref().map(|i| &i.core).map(|c| c.gui.size()) {
                             if size != self.worker_gui_size && size[0] > 0 && size[1] > 0 {
                                 w.post(&HostToVm::Resize(size[0], size[1]));
                                 self.worker_gui_size = size;
                             }
                         }
-                        let new_skeletons = crate::skeleton::take_new(&mut self.skeletons_sent);
+                        let new_skeletons = self.inst.as_ref().map(|i| &i.core).map_or(vec![], |c| {
+                            c.model_manager.rig.take_new(&mut self.skeletons_sent)
+                        });
+                        let clock = self.inst.as_ref().map(|i| &i.core).map_or(0., |c| c.model_manager.rig.clock());
                         if !new_skeletons.is_empty() {
                             w.post(&HostToVm::Skeletons(new_skeletons));
                         }
+                        // The element's `post()`s since the last loop.
+                        let posted: Vec<String> = self.web.inbox.borrow_mut().drain(..).collect();
+                        if let Some(i) = self.inst.as_mut() {
+                            for m in posted {
+                                i.post(m);
+                            }
+                        }
+                        // Host messages posted so far (kept on main until Init), ahead of this loop.
+                        for m in self.inst.as_mut().map(|i| &mut i.core).map(|c| c.host_inbox_drain()).unwrap_or_default() {
+                            w.post(&HostToVm::Host(m));
+                        }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
-                        let console_open = self.core.as_ref().map_or(false, |c| c.global.console);
+                        let console_open = self.inst.as_ref().map(|i| &i.core).map_or(false, |c| c.global.console);
                         if console_open {
                             w.post(&HostToVm::Loop {
                                 keys: vec![0u8; 256],
                                 analog: vec![0f32; crate::types::ANALOG_LEN],
-                                clock: crate::skeleton::clock(),
+                                clock,
                             });
                         } else {
-                            w.post(&HostToVm::loop_from(&self.bits));
+                            if let Some(i) = self.inst.as_ref() {
+                                w.post(&HostToVm::loop_from(&i.bits, clock));
+                            }
                         }
                         drained = w.drain();
                     }
                 }
             }
             for m in drained {
-                if let Some(core) = self.core.as_mut() {
+                if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                     core.apply_vm_message(m);
                 }
             }
-            if let Some(core) = self.core.as_mut() {
+            // cart -> host: a `message` event on the element per `host.send`.
+            if let (Some(root), Some(i)) = (self.web.root.as_ref(), self.inst.as_mut()) {
+                for m in i.messages() {
+                    dispatch_detail(root, "message", &m);
+                }
+            }
+            if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                 core.gfx.flush_unsubmitted();
             }
 
@@ -1360,123 +1286,49 @@ impl ApplicationHandler for App {
             // 2.7ms render quantum. Costs the fallback scheduler nothing: it
             // schedules ~90ms ahead regardless of where in the frame it runs.
             #[cfg(feature = "audio")]
-            if let Some(core) = self.core.as_mut() {
+            if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                 if let Some(w) = core.web_audio.as_mut() {
                     w.pump();
                 }
             }
             // Consume per-frame input deltas so they don't persist to next frame.
-            if let Some(core) = self.core.as_mut() {
+            if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
                 core.global.mouse_delta = vec2(0., 0.);
                 core.global.scroll_delta = (0., 0.);
             }
-            self.bits_prev = self.bits.0;
+            if let Some(i) = self.inst.as_mut() {
+                i.bits_prev = i.bits.0;
+            }
         }
 
         let now = Instant::now();
 
         if now >= self.next_frame_time {
-            // No core yet (the web builds it asynchronously): keep ticking, or
+            // No engine yet (the web builds it asynchronously): keep ticking, or
             // the loop sleeps until the next input event and the finished core
             // sits uninstalled until someone moves the mouse.
-            let (core, catcher) = match (self.core.as_mut(), self.catcher.as_ref()) {
-                (Some(c), Some(k)) => (c, k),
-                _ => {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.frame_duration));
-                    return;
-                }
+            let Some(inst) = self.inst.as_mut() else {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.frame_duration));
+                return;
             };
-
-            #[cfg(not(target_arch = "wasm32"))]
-            core.loop_helper.loop_start();
-
-            // Grab a clone of the window Arc so we can pass it to
-            // state_change_checker without holding a borrow of self.window
-            // while also mutably borrowing self.core.
-            let win_arc = match self.window.clone() {
-                Some(w) => w,
-                None => return,
+            let Some(win_arc) = self.window.clone() else {
+                return;
             };
-
-            state_change_checker(core, event_loop, &win_arc, self.center, Some(catcher));
 
             // The window is drawn edge to edge, under the system's bars: keep
             // `attr().inset` saying how much of each edge they cover.
             #[cfg(target_os = "android")]
             {
                 let inset = android_inset(&win_arc);
-                if inset != core.global.safe_inset {
+                if inset != inst.core.global.safe_inset {
                     ::log::info!("petrichor64: inset (top right bottom left) {:?}", inset);
-                    core.global.safe_inset = inset;
+                    inst.core.global.safe_inset = inset;
                 }
             }
 
-            // Release grabbed mouse if the console was just opened.
-            if core.global.console && core.global.mouse_grabbed_state {
-                win_arc.set_cursor_visible(true);
-                let _ = win_arc.set_cursor_grab(CursorGrabMode::None);
-                core.global.mouse_grabbed_state = false;
-            }
-
-            // Process incoming MainCommands from Lua threads. When a Lua loop
-            // completes, update() returns the freshly-built entity instance
-            // buffers; inject them into the scene the renderer draws. (These were
-            // previously discarded, so no entity/plane ever reached the 3D pass.)
-            if let Some(ib) = core.update(catcher) {
-                core.instance_buffers = ib;
-            }
-
-            // Bring the unprojected cursor up to date with this frame's pointer
-            // position before handing it to Lua — render, which is where the ray is
-            // otherwise computed, doesn't run until after the Lua loop.
-            core.refresh_cursor_ray();
-
-            // Copy mouse / analogue state into the float portion of bits
-            // so Lua can read cursor and scroll data.
-            self.bits.1[0] = core.global.mouse_pos.x;
-            self.bits.1[1] = core.global.mouse_pos.y;
-            self.bits.1[2] = core.global.mouse_delta.x;
-            self.bits.1[3] = core.global.mouse_delta.y;
-            self.bits.1[4] = core.global.mouse_buttons[0];
-            self.bits.1[5] = core.global.mouse_buttons[1];
-            self.bits.1[6] = core.global.mouse_buttons[2];
-            // mus().scroll: the wheel (vertical), else a sideways scroll
-            self.bits.1[7] = core.global.scroll_amount();
-            self.bits.1[8] = core.global.cursor_projected_pos.x;
-            self.bits.1[9] = core.global.cursor_projected_pos.y;
-            self.bits.1[10] = core.global.cursor_projected_pos.z;
-            core.global.pack_touches(&mut self.bits.1);
-
-            // Evaluate system shortcuts and console key commands.
-            controls::controls_evaluate(
-                core,
-                event_loop,
-                &self.bits,
-                &self.bits_prev,
-                Some(catcher),
-            );
-
-            // Reset per-frame deltas after they've been consumed.
-            core.global.mouse_delta = vec2(0., 0.);
-            core.global.scroll_delta = (0., 0.);
-
-            // Send the Lua loop message (~60 Hz).
-            //
-            // Nothing gets input while the console is open — the keys are being typed
-            // into the console, and they must not also drive the game. The wasm path
-            // already did this; native didn't, so on desktop typing a command was
-            // simultaneously playing the game. Same rule as an overlay taking input,
-            // just with the console as the surface on top.
-            let console_open = core.global.console;
-            let quiet = ControlState::default();
-            let feed = if console_open { &quiet } else { &self.bits };
-            core.bundle_manager
-                .call_loop(&mut core.completed_bundles, feed);
-
-            // Save current key state for next frame's pressed/released detection.
-            self.bits_prev = self.bits.0;
-
-            core.gfx.flush_unsubmitted();
+            // One engine tick, then whatever it asked of the window.
+            inst.tick();
+            self.grant(event_loop);
 
             // Request a GPU frame; rendering happens in RedrawRequested.
             win_arc.request_redraw();
@@ -1577,10 +1429,7 @@ pub fn run_cli() -> bool {
     if args.len() >= 2 && (args[1] == "pack" || args[1] == "bundle") {
         let dir = args.get(2).map(|s| s.as_str()).unwrap_or(".");
         let out = args.get(3).map(|s| s.as_str());
-        let mut loggy = crate::log::Loggy::new();
-        // pack_zip uses tokio::fs, so it needs a Tokio runtime (not pollster).
-        let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
-        match rt.block_on(crate::asset::pack_folder(dir, out, &mut loggy)) {
+        match pack(dir, out) {
             Ok(()) => println!("packed '{}' -> {}", dir, out.unwrap_or("<dir>.game.png")),
             Err(e) => {
                 eprintln!("pack failed: {}", e);
@@ -1590,6 +1439,17 @@ pub fn run_cli() -> bool {
         return true;
     }
     false
+}
+
+/// Pack a game folder into a `.game.png` (`out`, or `<dir>.game.png`): what
+/// `chor pack` does, and what `Cart::Bytes` takes.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn pack(dir: &str, out: Option<&str>) -> Result<(), String> {
+    let mut loggy = crate::log::Loggy::new();
+    // pack_zip uses tokio::fs, so it needs a Tokio runtime (not pollster).
+    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    rt.block_on(crate::asset::pack_folder(dir, out, &mut loggy))
+        .map_err(|e| e.to_string())
 }
 
 /// Android's entry point. There is no `main` on Android: the activity loads this
@@ -1638,10 +1498,18 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
 /// the lib, not the `chor` bin, which needs the default-only `bin` feature).
 /// Also runs in
 /// the VM worker's instance, where `start()` finds no window and returns.
+///
+/// A page of `<petrichor-64>` elements (web/petrichor64-element.js) sets
+/// `globalThis.__petrichor64_manual` before loading any copy of the module;
+/// then nothing starts here and each element calls the exported `start`.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn wasm_main() {
-    start();
+    let manual = js_sys::Reflect::get(&js_sys::global(), &"__petrichor64_manual".into())
+        .is_ok_and(|v| v.is_truthy());
+    if !manual {
+        start();
+    }
 }
 
 #[cfg(all(feature = "headed", not(target_arch = "wasm32")))]
@@ -1765,7 +1633,7 @@ async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
 /// build time. Unzips the `.game.png` in memory (same as the native packed path)
 /// and splits it into scripts/textures/sounds for the caller to route.
 #[cfg(target_arch = "wasm32")]
-async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
+async fn load_wasm_bundle(embedded: &'static [u8], cart: Option<&str>) -> Option<WasmBundle> {
     // A bundle is a raw zip (`PK\x03\x04`) or a PNG-prefixed .game.png. A dev
     // server (trunk) answers a missing /game.game.png with its index.html SPA
     // fallback (200 OK), so verify the bytes actually look like a bundle —
@@ -1775,10 +1643,15 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
             && (b[..4] == [0x50, 0x4B, 0x03, 0x04] // raw zip
                 || b[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) // PNG
     };
-    let bytes = match fetch_bytes("/game.game.png").await {
+    let url = cart.unwrap_or("/game.game.png");
+    let bytes = match fetch_bytes(url).await {
         Some(b) if looks_like_bundle(&b) => {
-            ::log::info!("web: loaded /game.game.png ({} bytes)", b.len());
+            ::log::info!("web: loaded {} ({} bytes)", url, b.len());
             b
+        }
+        _ if cart.is_some() => {
+            ::log::error!("web: cart {} didn't load, using embedded default bundle", url);
+            embedded.to_vec()
         }
         _ => {
             ::log::info!("web: no deployed /game.game.png, using embedded default bundle");
@@ -1854,8 +1727,6 @@ async fn load_wasm_bundle(embedded: &'static [u8]) -> Option<WasmBundle> {
 
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 pub fn start() {
-    use winit::platform::web::EventLoopExtWebSys;
-
     // The bin's main() runs on module init in EVERY wasm instance, including the
     // VM web worker's. A worker has no `Window` (only WorkerGlobalScope), so
     // winit's event loop would panic there ("only callable from inside the
@@ -1869,24 +1740,167 @@ pub fn start() {
     // Route `log` output to the browser console.
     let _ = console_log::init_with_level(::log::Level::Info);
 
-    let event_loop = match EventLoop::<()>::new() {
-        Ok(el) => el,
-        Err(e) => {
-            web_sys::console::error_1(&format!("event loop error: {e}").into());
-            return;
-        }
-    };
+    if let Err(e) = start_web(WebHost::default()) {
+        web_sys::console::error_1(&e);
+    }
+}
 
+/// Where a web engine runs and what it loads. The default is the zero-config
+/// page (`web/index.html`, `chor -w`): canvas in `#petrichor64-root` or
+/// `<body>`, `/game.game.png`, `/worker.js`, everything allowed, the title on
+/// `document.title`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+struct WebHost {
+    /// The element the canvas goes in, and that hears this engine's events
+    /// (`message`, `title`, the gpu ones). None: the default page.
+    root: Option<web_sys::Element>,
+    /// A canvas to draw on instead of making one (`start(canvas, ..)`).
+    canvas: Option<web_sys::HtmlCanvasElement>,
+    /// The cart's URL; None: `/game.game.png`, else the embedded default.
+    cart: Option<String>,
+    /// The VM worker script's URL.
+    worker: String,
+    policy: crate::host::Policy,
+    /// host -> cart messages from `Engine::post`, handed to the instance each frame.
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+impl Default for WebHost {
+    fn default() -> Self {
+        Self {
+            root: None,
+            canvas: None,
+            cart: None,
+            worker: "/worker.js".into(),
+            policy: crate::host::Policy::open(),
+            inbox: Default::default(),
+        }
+    }
+}
+
+/// One engine per module copy: winit makes one event loop per module, and the
+/// engine's statics are the module's. A page with several engines loads a
+/// copy for each (web/petrichor64-element.js).
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn start_web(host: WebHost) -> Result<(), wasm_bindgen::JsValue> {
+    use winit::platform::web::EventLoopExtWebSys;
+    let event_loop = EventLoop::<()>::new()
+        .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("event loop error: {e}")))?;
+    let mut app = App::default();
+    app.web = host;
     // spawn_app returns immediately; the closure-owned App lives on inside the
     // browser's event loop.
-    event_loop.spawn_app(App::default());
+    event_loop.spawn_app(app);
+    Ok(())
+}
+
+/// A running engine, as `start` hands it to JS: the host's end of the channel.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub struct Engine {
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+impl Engine {
+    /// host -> cart: a message for the cart's `host.recv()` (`Instance::post`).
+    /// The cart's `host.send`s come back as `message` events on the root.
+    pub fn post(&self, msg: String) {
+        let mut q = self.inbox.borrow_mut();
+        q.push(msg);
+        // as `host::HOST_QUEUE_CAP` does: a page posting to a stalled engine
+        // can't grow it without bound
+        if q.len() > crate::host::HOST_QUEUE_CAP {
+            q.remove(0);
+        }
+    }
+}
+
+/// Start an engine in `root`: an element the canvas goes in (and that hears
+/// its `message`, `title` and `petrichor-gpu-*` events), or a `<canvas>` to
+/// draw on. `opts`: `{ cart, worker, policy }`, all optional. `cart` and
+/// `worker` are URLs (default `/game.game.png`, `/worker.js`). `policy` is
+/// `"open"`, `"sandbox"`, or an object or JSON string of `host::Policy`
+/// fields, each overriding `Policy::open()` (`files: null` is no `io`).
+/// Once per module copy (see `start_web`).
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen(js_name = start)]
+pub fn start_on(root: wasm_bindgen::JsValue, opts: wasm_bindgen::JsValue) -> Result<Engine, wasm_bindgen::JsValue> {
+    use wasm_bindgen::{JsCast, JsValue};
+    console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(::log::Level::Info);
+
+    let root: web_sys::Element = root
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("start: the first argument must be an element or canvas"))?;
+    let get = |k: &str| {
+        if opts.is_object() {
+            js_sys::Reflect::get(&opts, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null())
+        } else {
+            None
+        }
+    };
+    let mut host = WebHost::default();
+    host.cart = get("cart").and_then(|v| v.as_string()).filter(|s| !s.is_empty());
+    if let Some(w) = get("worker").and_then(|v| v.as_string()).filter(|s| !s.is_empty()) {
+        host.worker = w;
+    }
+    if let Some(p) = get("policy") {
+        let text = match p.as_string() {
+            Some(s) => s,
+            None => js_sys::JSON::stringify(&p).map(String::from).unwrap_or_default(),
+        };
+        host.policy = parse_web_policy(&text).map_err(|e| JsValue::from_str(&format!("start: policy: {e}")))?;
+    }
+    host.canvas = root.clone().dyn_into::<web_sys::HtmlCanvasElement>().ok();
+    host.root = Some(root);
+    let engine = Engine { inbox: host.inbox.clone() };
+    start_web(host)?;
+    Ok(engine)
+}
+
+/// `"open"`, `"sandbox"`, or a JSON object of `Policy` fields over `Policy::open()`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn parse_web_policy(text: &str) -> Result<crate::host::Policy, String> {
+    use crate::host::Policy;
+    match text.trim() {
+        "" | "open" => return Ok(Policy::open()),
+        "sandbox" => return Ok(Policy::sandbox()),
+        _ => {}
+    }
+    let over: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let serde_json::Value::Object(over) = over else {
+        return Err("not an object".into());
+    };
+    let mut base = serde_json::to_value(Policy::open()).map_err(|e| e.to_string())?;
+    if let serde_json::Value::Object(b) = &mut base {
+        for (k, v) in over {
+            if !b.contains_key(&k) {
+                return Err(format!("unknown field `{k}`"));
+            }
+            b.insert(k, v);
+        }
+    }
+    serde_json::from_value(base).map_err(|e| e.to_string())
+}
+
+/// A `CustomEvent` named `name` with `detail` on `el`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn dispatch_detail(el: &web_sys::Element, name: &str, detail: &str) {
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail.into());
+    if let Ok(e) = web_sys::CustomEvent::new_with_event_init_dict(name, &init) {
+        let _ = el.dispatch_event(&e);
+    }
 }
 
 /// Append winit's canvas to the page. Prefers an element with id
 /// `petrichor64-root` (provided by the `<petrichor-64>` web component) so the
 /// engine renders inside the component; falls back to <body>.
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
-fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
+fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement, root: Option<&web_sys::Element>) {
     use wasm_bindgen::JsCast;
     let document = match web_sys::window().and_then(|w| w.document()) {
         Some(d) => d,
@@ -1913,7 +1927,7 @@ fn attach_canvas_to_dom(canvas: &web_sys::HtmlCanvasElement) {
     let _ = style.set_property("inset", "0");
     let _ = style.set_property("width", "100%");
     let _ = style.set_property("height", "100%");
-    let parent = document.get_element_by_id("petrichor64-root").or_else(|| {
+    let parent = root.cloned().or_else(|| document.get_element_by_id("petrichor64-root")).or_else(|| {
         document
             .body()
             .map(|b| b.unchecked_into::<web_sys::Element>())
@@ -2233,6 +2247,11 @@ pub fn drain_stray_messages(catcher: &Receiver<MainPacket>) {
 }
 
 pub fn core_console_command(core: &mut Core, com_in: &str, catcher: Option<&Receiver<MainPacket>>) {
+    // Typed console lines (the backtick console, headless stdin): nothing runs
+    // for an instance whose policy has no console.
+    if !core.policy.console {
+        return;
+    }
     let mut com = com_in.trim().to_owned();
     if let Some(alias) = core.global.aliases.get(&com) {
         com = alias.to_string();
@@ -3042,8 +3061,9 @@ impl Core {
                 "lock" => {
                     let lock = Self::val2bool(v);
                     self.global.locked = lock;
-                    self.global.console = !lock;
-                    if lock {
+                    // Unlocking opens the console only for a cart allowed one.
+                    self.global.console = !lock && self.policy.console;
+                    if !self.global.console {
                         self.gui.disable_console();
                     } else {
                         self.gui.enable_console(&self.loggy);
@@ -3057,7 +3077,7 @@ impl Core {
                 "lock" => {
                     let lock = Self::val2bool(v);
                     self.global.locked = lock;
-                    self.global.console = !lock;
+                    self.global.console = !lock && self.policy.console;
                 }
                 _ => {}
             }
@@ -3067,6 +3087,9 @@ impl Core {
     #[cfg(target_arch = "wasm32")]
     fn apply_vm_message(&mut self, msg: crate::worker_protocol::VmToHost) {
         use crate::worker_protocol::VmToHost;
+        if !msg.allowed_by(&self.policy) {
+            return;
+        }
         match msg {
             VmToHost::Spawn(lent) => {
                 #[cfg(feature = "headed")]
@@ -3299,6 +3322,9 @@ impl Core {
             VmToHost::Sound(cmd) => {
                 let _ = self.singer.send(cmd);
             }
+            VmToHost::Host(s) => {
+                crate::host::push_capped(&mut self.host.outbox, s);
+            }
         }
     }
 
@@ -3316,6 +3342,11 @@ impl Core {
         let mut only_one_gui_sync = true;
         catcher.try_iter().for_each(|(id, p)| {
             // println!("{} {}", "[ 2 ]".on_bright_purple(), "core update loop");
+            // The second lock behind `init_lua_sys` not registering these.
+            if !p.allowed_by(&self.policy) {
+                self.log(LogType::Config, "!!dropped a command this cart's policy forbids");
+                return;
+            }
             match p {
                 MainCommmand::Cam(p, r, o) => {
                     // A camera belongs to the bundle that set it. This used to write
@@ -3652,8 +3683,8 @@ impl Core {
                 }
                 MainCommmand::Read(path, tx) => {
                     println!("read {}", path);
-                    let pak = match self.bundle_manager.get_main_bundle().get_directory() {
-                        Some(dir) => match crate::file_util::get_file_string_scrubbed(dir, &path) {
+                    let pak = match self.cart_files_dir() {
+                        Some(dir) => match crate::file_util::get_file_string_scrubbed(&dir, &path) {
                             Ok(s) => Some(s),
                             Err(e) => {
                                 self.log(LogType::IoError, &format!("!!{}", e));
@@ -3690,9 +3721,9 @@ impl Core {
                     } else {
                         crate::gltf_io::to_glb(&mesh, image.as_ref())
                     };
-                    let res = match (bytes, self.bundle_manager.get_main_bundle().get_directory()) {
+                    let res = match (bytes, self.cart_files_dir()) {
                         (Ok(b), Some(dir)) => {
-                            match crate::file_util::write_file_bytes_scrubbed(dir, &file, &b) {
+                            match crate::file_util::write_file_bytes_scrubbed(&dir, &file, &b) {
                                 Ok(()) => true,
                                 Err(e) => {
                                     self.log(LogType::IoError, &format!("!!{}", e));
@@ -3712,8 +3743,8 @@ impl Core {
                     self.log_check(tx.send(res));
                 }
                 MainCommmand::GlbRead(file, tx) => {
-                    let mesh = match self.bundle_manager.get_main_bundle().get_directory() {
-                        Some(dir) => crate::file_util::get_file_buffer_scrubbed(dir, &file)
+                    let mesh = match self.cart_files_dir() {
+                        Some(dir) => crate::file_util::get_file_buffer_scrubbed(&dir, &file)
                             .map_err(|e| e.to_string())
                             .and_then(|b| crate::gltf_io::read(&b)),
                         None => Err("No relative path access".to_string()),
@@ -3728,10 +3759,10 @@ impl Core {
                     self.log_check(tx.send(out));
                 }
                 MainCommmand::Write(file, contents, tx) => {
-                    let res = match self.bundle_manager.get_main_bundle().get_directory() {
+                    let res = match self.cart_files_dir() {
                         Some(dir) => {
                             if let Err(e) =
-                                crate::file_util::write_file_string_scrubbed(dir, &file, &contents)
+                                crate::file_util::write_file_string_scrubbed(&dir, &file, &contents)
                             {
                                 self.log(LogType::IoError, &format!("!!{}", e));
                                 false
@@ -4047,15 +4078,12 @@ impl Core {
                     self.completed_bundles.insert(id, true);
                     loop_complete = true;
                 }
+                // The clipboard is the host's: `chor` grants it (`App::grant`).
                 MainCommmand::Copy(s) => {
-                    #[cfg(desktop)]
-                    if let Ok(mut ctx) = ClipboardContext::new() {
-                        if let Err(_) = ctx.set_contents(s) {
-                            self.log(LogType::IoError, &format!("!!Clipboard error"));
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    let _ = s;
+                    self.requests.push(crate::host::Request::Clipboard(s));
+                }
+                MainCommmand::HostSend(s) => {
+                    crate::host::push_capped(&mut self.host.outbox, s);
                 }
                 MainCommmand::LuaClose() => {
                     // println!("close lua channel {}",id);
@@ -4088,7 +4116,7 @@ impl Core {
         };
 
         self.global.iteration += 1;
-        publish_clock();
+        publish_clock(&self.model_manager.rig);
         instance_buffers
     }
 }
@@ -4097,9 +4125,10 @@ lazy_static::lazy_static! {
     static ref BOOT: Instant = Instant::now();
 }
 
-/// Advance the shared animation clock (see `skeleton::clock`) once a frame.
-fn publish_clock() {
-    crate::skeleton::set_clock(BOOT.elapsed().as_secs_f64());
+/// Advance this instance's animation clock (see `skeleton::Rig::clock`) once
+/// a frame. The epoch, `BOOT`, is shared by every instance in the process.
+fn publish_clock(rig: &crate::skeleton::Rig) {
+    rig.set_clock(BOOT.elapsed().as_secs_f64());
 }
 
 /// `path` shown relative to an app's folder (`assets/wall.png`), for messages.

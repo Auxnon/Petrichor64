@@ -553,37 +553,39 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     //     texture_extent,
     // );
 
-    let Some(surface) = gfx.surface.as_ref() else {
-        return DrawState::Skip;
+    // Where the finished frame goes: the window's next swapchain texture
+    // (presented below), or the instance's own texture on a host's device.
+    let (view, output) = match &gfx.target {
+        crate::gfx::Target::Surface { surface, .. } => {
+            let Some(surface) = surface.as_ref() else {
+                return DrawState::Skip;
+            };
+            let output = match surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(tex) => tex,
+                // Usable, but the surface should be reconfigured
+                wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                // Reconfigure the surface and skip this frame
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    return DrawState::Resize;
+                }
+                wgpu::CurrentSurfaceTexture::Timeout
+                | wgpu::CurrentSurfaceTexture::Validation
+                | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return DrawState::Skip;
+                }
+            };
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            (view, Some(output))
+        }
+        crate::gfx::Target::Texture { view, .. } => (view.clone(), None),
     };
-    let output = match surface.get_current_texture() {
-        wgpu::CurrentSurfaceTexture::Success(tex) => tex,
-        wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
-            // Texture is usable but the surface should be reconfigured
-            texture
-        }
-        wgpu::CurrentSurfaceTexture::Outdated => {
-            // Reconfigure surface and skip this frame
-            return DrawState::Resize;
-        }
-        wgpu::CurrentSurfaceTexture::Lost => {
-            // Reconfigure surface and skip this frame
-            return DrawState::Resize;
-        }
-        wgpu::CurrentSurfaceTexture::Timeout => {
-            return DrawState::Skip;
-        }
-        wgpu::CurrentSurfaceTexture::Validation => {
-            return DrawState::Skip;
-        }
-        wgpu::CurrentSurfaceTexture::Occluded => {
-            return DrawState::Skip;
-        }
+    let final_texture = match (&output, &gfx.target) {
+        (Some(o), _) => &o.texture,
+        (None, crate::gfx::Target::Texture { texture, .. }) => texture,
+        (None, _) => &gfx.post.post_texture,
     };
-
-    let view = output
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
     encoder.push_debug_group("Post Render");
     {
         let mut post_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -620,8 +622,8 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     // otherwise the scene texture.
     #[cfg(not(target_arch = "wasm32"))]
     let snap = crate::snap::wanted(core.global.iteration).map(|path| {
-        let src = if output.texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
-            &output.texture
+        let src = if final_texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+            final_texture
         } else {
             &gfx.post.post_texture
         };
@@ -634,7 +636,9 @@ pub fn render_loop(core: &mut Core, iteration: u64) -> DrawState {
     if let Some(p) = snap {
         crate::snap::save(&gfx.device, p);
     }
-    output.present();
+    if let Some(output) = output {
+        gfx.queue.present(output);
+    }
 
     DrawState::Success
 }

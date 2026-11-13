@@ -48,14 +48,15 @@ impl ScreenBinds {
 
 impl Post {
     pub fn new(
-        config: &wgpu::SurfaceConfiguration,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         main_layout: &wgpu::BindGroupLayout,
         uniform_buf: &Buffer,
     ) -> Post {
         let (post_texture_view, post_sampler, post_texture) =
-            crate::texture::render_sampler(&device, (config.width, config.height), config.format);
+            crate::texture::render_sampler(&device, size, format);
 
         let (post_pipeline, post_bind_group_layout) = {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -80,7 +81,7 @@ impl Post {
                         module: &shader,
                         entry_point: Some("post_fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: config.format,
+                            format,
 
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
 
@@ -144,7 +145,7 @@ impl Post {
 
             post_texture,
             post_sampler,
-            format: config.format,
+            format,
         }
     }
 

@@ -67,6 +67,10 @@ struct WorkerVm {
     last_skels: std::collections::HashMap<u64, Option<crate::skeleton::SkelState>>,
     /// Same, for what an entity looks like (`EntLook`).
     last_looks: std::collections::HashMap<u64, EntLook>,
+    /// What the cart may reach, from `HostToVm::Init`.
+    policy: crate::host::Policy,
+    /// Host → cart messages (`HostToVm::Host`) waiting for `host.recv()`.
+    host_inbox: crate::host::HostInbox,
 }
 
 /// The non-transform state main's render mirror needs: everything `EntUpdate`
@@ -103,6 +107,10 @@ impl EntLook {
 
 thread_local! {
     static WORKER_VM: RefCell<Option<WorkerVm>> = RefCell::new(None);
+    /// The worker's skeletons and clock, mirrored from the main thread's
+    /// (`HostToVm::Skeletons`, `HostToVm::Loop`). The worker is its own wasm
+    /// module serving one instance, so one per worker is per instance.
+    static WORKER_RIG: std::sync::Arc<crate::skeleton::Rig> = crate::skeleton::Rig::new();
 }
 
 /// Called once when the worker's wasm module finishes initialising.
@@ -135,9 +143,10 @@ pub fn worker_receive(msg: JsValue) -> JsValue {
                 bundle_id,
                 width,
                 height,
+                policy,
             } => {
                 crate::command::reset_vm_presets();
-                match build_worker_vm(bundle_id, width, height) {
+                match build_worker_vm(bundle_id, width, height, policy) {
                     Ok(vm) => {
                         *slot = Some(vm);
                         web_sys::console::log_1(
@@ -244,6 +253,8 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         last_xforms,
         last_skels,
         last_looks,
+        policy,
+        host_inbox,
     } = worker;
 
     // Kept alive through the enter below so Load's reply send doesn't hit a
@@ -252,13 +263,15 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     let mut _load_rx = None;
     let talk: Option<LuaTalk> = match msg {
         HostToVm::Loop { keys, analog, clock } => {
-            crate::skeleton::set_clock(clock);
+            WORKER_RIG.with(|r| r.set_clock(clock));
             Some(LuaTalk::Loop(control_state_from_wire(&keys, &analog)))
         }
         HostToVm::Skeletons(list) => {
-            for (name, skel) in list {
-                crate::skeleton::register(&name, skel);
-            }
+            WORKER_RIG.with(|r| {
+                for (name, skel) in list {
+                    r.register(&name, skel);
+                }
+            });
             None
         }
         HostToVm::Load { name, content } => {
@@ -276,6 +289,11 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
             Some(LuaTalk::Resize(w, h))
         }
         HostToVm::Drop(s) => Some(LuaTalk::Drop(s)),
+        HostToVm::Host(msg) => {
+            // Queued for `host.recv()`; the next Loop reads it.
+            crate::host::push_capped(&mut host_inbox.lock(), msg);
+            None
+        }
         HostToVm::Init { .. } => None, // handled by the caller
     };
 
@@ -307,6 +325,9 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
     // VM→host commands → serializable messages for the main thread.
     let mut out = Vec::new();
     while let Ok((_bundle, cmd)) = catcher.try_recv() {
+        if !cmd.allowed_by(policy) {
+            continue;
+        }
         match cmd {
             // Keep the live entity handle (Weak into the VM's userdata) so we can
             // stream its transform each frame, and forward the initial Spawn.
@@ -465,7 +486,12 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
 /// Build the VM the way `LuaCore::start` does, but with worker-local plumbing
 /// (its own channels, self-provisioned resources, no InitBack — the worker owns
 /// the gui/sky pixels and posts Raster instead).
-fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P64Error> {
+fn build_worker_vm(
+    bundle_id: u8,
+    width: u32,
+    height: u32,
+    policy: crate::host::Policy,
+) -> Result<WorkerVm, P64Error> {
     let size = [width.max(1), height.max(1)];
 
     // Resources: the font atlas loads from the embedded fallback on wasm.
@@ -484,6 +510,7 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
     let ent_counter = Rc::new(Mutex::new(2u64));
     let pads = Rc::new(RefCell::new(Pad::new()));
     let shared = SharedPool::new();
+    let host_inbox = crate::host::HostInbox::default();
 
     let main_im = RgbaImage::new(size[0], size[1]);
     let sky_im = RgbaImage::new(size[0], size[1]);
@@ -522,6 +549,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             // Never privileged: overlays are a native-only tool for now. The `app.*`
             // table edits files on disk, and a browser worker has no disk to edit.
             false,
+            &policy,
+            host_inbox.clone(),
             pitcher.clone(),
             world_tx.clone(),
             Rc::clone(&gui_handle),
@@ -534,6 +563,7 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
             Rc::clone(&ent_counter),
             loggy_tx.clone(),
             LocalPool::new(),
+            WORKER_RIG.with(std::sync::Arc::clone),
         )?;
 
 
@@ -567,6 +597,8 @@ fn build_worker_vm(bundle_id: u8, width: u32, height: u32) -> Result<WorkerVm, P
         last_xforms: std::collections::HashMap::new(),
         last_skels: std::collections::HashMap::new(),
         last_looks: std::collections::HashMap::new(),
+        policy,
+        host_inbox,
     })
 }
 
