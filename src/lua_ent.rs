@@ -71,6 +71,19 @@ pub struct LuaEnt {
     /// entity whose model has a skeleton.
     #[serde(default)]
     pub skel: Option<crate::skeleton::SkelState>,
+    /// The joint of `parent`'s skeleton this entity rides (`lot(parent, child,
+    /// "bone")`); empty rides the parent entity itself.
+    #[serde(default)]
+    pub bone: String,
+    /// Skinned with `parent`'s pose instead of its own (`lot(parent, child,
+    /// true)`): clothes on a body.
+    #[serde(default)]
+    pub wear: bool,
+    /// Rotation order. Off: `rz`, then `ry`, then `rx`, each about the world's
+    /// axes (the engine's first convention). On: roll `rx`, pitch `ry`, then
+    /// heading `rz` last, so a turned body tips about its own axes.
+    #[serde(default)]
+    pub zyx: bool,
 }
 pub mod lua_ent_flags {
     // pub const None: u8 = 0b0;
@@ -126,17 +139,11 @@ pub fn render_transform(lua: &LuaEnt) -> (Vec3, Vec3, Vec3) {
 /// The entity's model matrix in the renderer's packed (x16) space. Shared by
 /// `Ent::build_meta` and the Lua side (`ent:bone`) so both agree.
 pub fn entity_matrix(lua: &LuaEnt) -> glam::Mat4 {
-    use glam::{Mat4, Quat};
+    use glam::Mat4;
     let (pos, offset, sz) = render_transform(lua);
-    let quat = Quat::from_euler(
-        glam::EulerRot::XYZ,
-        lua.rot_x as f32,
-        lua.rot_y as f32,
-        lua.rot_z as f32,
-    );
     Mat4::from_translation(pos)
         * Mat4::from_scale(sz)
-        * Mat4::from_quat(quat)
+        * Mat4::from_quat(lua.quat())
         * Mat4::from_translation(offset)
 }
 
@@ -198,7 +205,16 @@ impl UserData for LuaEnt {
 
         methods.add_method_mut(
             "anim",
-            |_, _, this_res, (tex, force, speed): (String, Option<bool>, Option<f64>)| {
+            |_,
+             _,
+             this_res,
+             (tex, force, speed, fade, once): (
+                String,
+                Option<bool>,
+                Option<f64>,
+                Option<f64>,
+                Option<bool>,
+            )| {
                 let this = safe_unwrap!(this_res);
                 let force = force.unwrap_or(false);
                 // A clip of the entity's skeleton takes precedence over a sprite
@@ -209,11 +225,14 @@ impl UserData for LuaEnt {
                     if clip.is_empty() || sk.clip_index(&clip).is_some() {
                         let st = this.skel.get_or_insert_with(Default::default);
                         if st.clip != clip || force {
-                            st.clip = clip;
-                            st.start = rig.clock();
+                            // the outgoing clip keeps its own speed under the fade
+                            st.play(clip, rig.clock(), fade.unwrap_or(0.) as f32);
                         }
                         if let Some(sp) = speed {
                             st.speed = sp as f32;
+                        }
+                        if let Some(once) = once {
+                            st.looped = !once;
                         }
                         return Ok(Value::Bool(true));
                     }
@@ -263,9 +282,9 @@ impl UserData for LuaEnt {
                     None => {}
                 }
                 let st = this.skel.clone().unwrap_or_default();
-                let g = st.globals(&sk, rig.clock());
-                let joint16 = g[index].transform_point3(glam::Vec3::ZERO) * 16.;
-                let world = entity_matrix(this).transform_point3(joint16) / 16.;
+                let to_world = crate::skeleton::unpacked(entity_matrix(this));
+                let g = st.pose(&sk, rig.clock(), &to_world);
+                let (_, q, world) = (to_world * g[index]).to_scale_rotation_translation();
                 let o = st.bone(&name).unwrap_or_default();
                 let mut t = vm.raw_table();
                 t.set_str(mc, "x", world.x as f64);
@@ -274,7 +293,60 @@ impl UserData for LuaEnt {
                 t.set_str(mc, "rx", o.rot[0] as f64);
                 t.set_str(mc, "ry", o.rot[1] as f64);
                 t.set_str(mc, "rz", o.rot[2] as f64);
+                t.set_str(mc, "qx", q.x as f64);
+                t.set_str(mc, "qy", q.y as f64);
+                t.set_str(mc, "qz", q.z as f64);
+                t.set_str(mc, "qw", q.w as f64);
                 Ok(vm.wrap_table(mc, t))
+            },
+        );
+
+        // ent:ik(bone, {x, y, z}, chain?, weight?): reverse kinematics. Turns
+        // the `chain` joints above `bone` (2: a limb) so the bone reaches that
+        // world point, on top of the clip and overrides. It holds until set
+        // again or cleared with ent:ik(bone, false); ent:ik(false) clears all.
+        methods.add_method_mut(
+            "ik",
+            |_,
+             _,
+             this_res,
+             (name, target, chain, weight): (Value, Option<Value>, Option<f64>, Option<f64>)| {
+                let this = safe_unwrap!(this_res);
+                let name = match name {
+                    Value::String(s) => s.to_string(),
+                    _ => {
+                        if let Some(st) = this.skel.as_mut() {
+                            st.reach.clear();
+                        }
+                        return Ok(Value::Bool(true));
+                    }
+                };
+                let known = crate::skeleton::vm_rig()
+                    .lookup(&this.asset)
+                    .is_some_and(|sk| sk.joint_index(&name).is_some());
+                if !known {
+                    return Ok(Value::Bool(false));
+                }
+                match target.as_ref().and_then(vec3_arg) {
+                    Some(target) => {
+                        let st = this.skel.get_or_insert_with(Default::default);
+                        st.set_reach(
+                            &name,
+                            Some(crate::skeleton::Reach {
+                                bone: name.clone(),
+                                target,
+                                chain: chain.unwrap_or(2.).clamp(1., 16.) as u8,
+                                weight: weight.unwrap_or(1.) as f32,
+                            }),
+                        );
+                    }
+                    None => {
+                        if let Some(st) = this.skel.as_mut() {
+                            st.set_reach(&name, None);
+                        }
+                    }
+                }
+                Ok(Value::Bool(true))
             },
         );
 
@@ -414,6 +486,8 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("vz", |_, _, this, vz: f64| this.vz = vz);
 
         fields.add_field_method_get("flipped", |_, _, this| this.flipped);
+        fields.add_field_method_get("zyx", |_, _, this| this.zyx);
+        fields.add_field_method_set("zyx", |_, _, this, zyx: bool| this.zyx = zyx);
 
         // Joint names of the model's skeleton (empty if it has none).
         fields.add_field_method_get("bones", |_, mc, this| {
@@ -570,7 +644,26 @@ impl LuaEnt {
             unlit: false,
             grid: None,
             skel: None,
+            bone: String::new(),
+            wear: false,
+            zyx: false,
         }
+    }
+    /// The entity's rotation, by its rotation order (see `zyx`).
+    pub fn quat(&self) -> glam::Quat {
+        let (x, y, z) = (self.rot_x as f32, self.rot_y as f32, self.rot_z as f32);
+        if self.zyx {
+            glam::Quat::from_euler(glam::EulerRot::ZYX, z, y, x)
+        } else {
+            glam::Quat::from_euler(glam::EulerRot::XYZ, x, y, z)
+        }
+    }
+    /// Ride `parent` (`lot`): its joint `bone` if named, and in its pose if
+    /// `wear`. `None` lets go.
+    pub fn attach(&mut self, parent: Option<u64>, bone: String, wear: bool) {
+        self.parent = parent;
+        self.bone = bone;
+        self.wear = wear;
     }
     // pub fn set_id(&mut self, id: u64) {
     //     self.id = id;
@@ -663,6 +756,9 @@ impl Clone for LuaEnt {
             // isn't expected to matter; revisit if it measures otherwise.
             grid: self.grid.clone(),
             skel: self.skel.clone(),
+            bone: self.bone.clone(),
+            wear: self.wear,
+            zyx: self.zyx,
         }
     }
 }

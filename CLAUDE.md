@@ -119,6 +119,19 @@ a following `make()`/`gmod()`/`mod()` already sees the result; the ack slot is n
 buffered and unread. If you add a native that must observe main-thread state,
 give it its own reply channel and wait on that — don't reintroduce the ack here.
 
+## Parenting and skeletons (`lot`, `ent_manager::Tree`, `skeleton.rs`)
+
+`lot` writes `parent`/`bone`/`wear` onto the child `LuaEnt` on the Lua thread;
+there is no main-thread command and no ordering of the entity list. Each frame
+`check_bundle_ents` builds every entity's own matrix, then `Tree` resolves
+parents, bone frames (`Skeleton::attach`: joint origin, bind-pose axes), worn
+poses (`Skeleton::worn`, by joint name) and `ik` on demand, memoized. On the web
+these fields ride `EntLook`/`EntProps`; anything new that changes how an entity
+is placed has to be added to `EntLook` or the mirror never hears of it. A pose
+is `SkelState::pose(skel, now, world)`; `world` is needed because `ik` goals are
+world points. `ent:bone()` on the Lua thread only knows the entity's own
+matrix, so it's off for an entity that rides a parent.
+
 ## Scripts load in sorted order
 
 `asset::get_script_items` sorts, so every file's top level runs in the same order

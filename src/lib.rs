@@ -3682,9 +3682,6 @@ impl Core {
                     #[cfg(target_arch = "wasm32")]
                     let _ = lent;
                 }
-                MainCommmand::Group(parent, child) => {
-                    self.ent_manager.group(id, parent, child);
-                }
                 MainCommmand::Globals(table) => self.apply_globals(id, &table),
                 MainCommmand::GetGlobal(tx) => {
                     #[cfg(feature = "headed")]

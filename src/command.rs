@@ -1231,41 +1231,47 @@ function make(asset, x, y, z, scale) end"
         Ok(Value::Nil)
     });
 
-    let pitcher = main_pitcher.clone();
     lua!(
         "lot",
-        move |_, _, pair: (Value, Value)| {
-            if let (Value::UserData(parent), Value::UserData(child)) = pair {
-                let id1 = parent
-                    .borrow()
-                    .downcast_get::<LuaEnt, _, _>(|p| Ok(p.get_id()));
-                let id2 = child
-                    .borrow()
-                    .downcast_get::<LuaEnt, _, _>(|c| Ok(c.get_id()));
-                if let (Ok(parent_id), Ok(child_id)) = (id1, id2) {
-                    // Not waited on: it rides the same queue as the child's
-                    // Spawn, so it lands after it, and the parent is set on the
-                    // shared entity before anything draws it. Waiting cost a
-                    // frame per call (a model editor parenting a handle per
-                    // vertex stalled for seconds).
-                    if pitcher
-                        .send((bundle_id, MainCommmand::Group(parent_id, child_id)))
-                        .is_err()
-                    {
-                        return Err(static_err("Unable to group entity"));
+        move |_, mc, (parent, child, how): (Value, Value, Option<Value>)| {
+            let Value::UserData(mut child) = child else {
+                return Err(static_err("lot needs an entity to group"));
+            };
+            let parent_id = match parent {
+                Value::UserData(p) => Some(
+                    p.borrow()
+                        .downcast_get::<LuaEnt, _, _>(|p| Ok(p.get_id()))
+                        .map_err(|_| static_err("lot's parent isn't an entity"))?,
+                ),
+                // nil or false: let go
+                _ => None,
+            };
+            let (bone, wear) = match how {
+                Some(Value::String(s)) => (s.to_string(), false),
+                Some(Value::Bool(true)) => (String::new(), true),
+                _ => (String::new(), false),
+            };
+            // Set on the entity itself, here on the Lua thread: the renderer
+            // reads it with the rest of the entity (and on the web it rides the
+            // entity's sync), and works the tree out each frame, so there's
+            // nothing to tell the main thread and no order to keep.
+            child
+                .borrow_mut(mc)
+                .downcast_mut::<LuaEnt, _, _>(|c| {
+                    if parent_id == Some(c.get_id()) {
+                        return Ok(());
                     }
-                } else {
-                    return Err(static_err("Could not retrieve parent or child id to group"));
-                }
-            }
-
+                    Ok(c.attach(parent_id, bone, wear))
+                })
+                .map_err(|_| static_err("lot's child isn't an entity"))?;
             Ok(())
         },
-        "Groups an entity onto another entity",
+        "Groups an entity onto another entity, or onto one of its bones",
         "
----@param parent entity
+---@param parent entity | nil nil lets the child go
 ---@param child entity
-function lot(parent, child) end"
+---@param how? string | boolean a bone of the parent to ride, or true to wear the parent's pose
+function lot(parent, child, how) end"
     );
 
     lua!(
@@ -4984,7 +4990,6 @@ pub enum MainCommmand {
     Anim(String, Vec<String>, u32),
     // Spawn(Arc<std::sync::Mutex<LuaEnt>>),
     Spawn(UserDataWrapper),
-    Group(u64, u64),
     Model(Box<ModelPacket>),
     ListModel(String, Option<u8>, SyncSender<Vec<String>>),
     Globals(Vec<(String, ValueMap)>),

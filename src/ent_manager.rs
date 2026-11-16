@@ -24,7 +24,7 @@ use wgpu::Buffer;
 
 // Collision (guide/hit.md) is core simulation, not a render concern, so this
 // runs in both headed and headless builds.
-use glam::{vec3, Mat4, Quat, Vec3};
+use glam::{vec3, Mat4, Vec3};
 
 #[cfg(feature = "headed")]
 /// Per model: the model, its instance buffer, the instance count, and for a
@@ -57,13 +57,7 @@ fn push_grid_ent(out: &mut Vec<GridEnt>, l: &LuaEnt) {
     }
     if let Some(grid) = &l.grid {
         let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
-        let quat = Quat::from_euler(
-            glam::EulerRot::XYZ,
-            l.rot_x as f32,
-            l.rot_y as f32,
-            l.rot_z as f32,
-        );
-        let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
+        let transform = Mat4::from_translation(pos) * Mat4::from_quat(l.quat());
         out.push(GridEnt {
             id: l.get_id(),
             transform,
@@ -160,6 +154,113 @@ pub fn collider_for(
             center,
             half: sz * local_half * scale,
         }
+    }
+}
+
+/// What one entity needs from the others to be placed: who it rides, and its
+/// skeleton if it has one. See `Tree`.
+#[cfg(feature = "headed")]
+struct Node {
+    parent: Option<u64>,
+    bone: String,
+    wear: bool,
+    skel: Option<(
+        std::sync::Arc<crate::skeleton::Skeleton>,
+        crate::skeleton::SkelState,
+    )>,
+}
+
+#[cfg(feature = "headed")]
+type Pose = Rc<(std::sync::Arc<crate::skeleton::Skeleton>, Vec<Mat4>)>;
+
+/// One frame's parent links (`lot`), resolved on demand and remembered, so an
+/// entity's matrix doesn't depend on where it sits in the entity list. A
+/// child's matrix is its parent's, times the frame of the joint it rides (if
+/// any), times its own. Matrices are in the renderer's packed x16 space.
+#[cfg(feature = "headed")]
+#[derive(Default)]
+struct Tree {
+    /// Each entity's own matrix, from its position, rotation and scale.
+    own: FxHashMap<u64, Mat4>,
+    nodes: FxHashMap<u64, Node>,
+    worlds: FxHashMap<u64, Mat4>,
+    poses: FxHashMap<u64, Option<Pose>>,
+}
+
+#[cfg(feature = "headed")]
+impl Tree {
+    /// A loop of parents (or a silly depth) is cut here: that entity counts as
+    /// having no parent.
+    const DEEP: u8 = 24;
+
+    fn world(&mut self, id: u64, now: f64, depth: u8) -> Mat4 {
+        if let Some(m) = self.worlds.get(&id) {
+            return *m;
+        }
+        let own = self.own.get(&id).copied().unwrap_or(Mat4::IDENTITY);
+        let link = self
+            .nodes
+            .get(&id)
+            .and_then(|n| n.parent.map(|p| (p, n.bone.clone(), n.wear)));
+        let m = match link {
+            // a parent that's gone (killed) leaves the child where its own
+            // numbers put it
+            Some((p, bone, wear)) if depth < Self::DEEP && self.own.contains_key(&p) => {
+                let mut m = self.world(p, now, depth + 1);
+                if !bone.is_empty() && !wear {
+                    if let Some(pose) = self.pose(p, now, depth + 1) {
+                        if let Some(i) = pose.0.joint_index(&bone) {
+                            m *= crate::skeleton::packed(pose.0.attach(&pose.1, i));
+                        }
+                    }
+                }
+                m * own
+            }
+            _ => own,
+        };
+        self.worlds.insert(id, m);
+        m
+    }
+
+    /// The entity's own skeleton and joint transforms this frame.
+    fn pose(&mut self, id: u64, now: f64, depth: u8) -> Option<Pose> {
+        if let Some(p) = self.poses.get(&id) {
+            return p.clone();
+        }
+        let pose = match self.nodes.get(&id).map(|n| n.skel.is_some()) {
+            Some(true) => {
+                // ik goals are world points, so the entity is placed first
+                let world = crate::skeleton::unpacked(self.world(id, now, depth));
+                let (sk, st) = self.nodes[&id].skel.as_ref().unwrap();
+                Some(Rc::new((sk.clone(), st.pose(sk, now, &world))))
+            }
+            _ => None,
+        };
+        self.poses.insert(id, pose.clone());
+        pose
+    }
+
+    /// The joint transforms to skin entity `id` with: its parent's, joint by
+    /// name, if it wears the parent's pose, else its own.
+    fn skin(
+        &mut self,
+        id: u64,
+        now: f64,
+        depth: u8,
+    ) -> Option<(std::sync::Arc<crate::skeleton::Skeleton>, Vec<Mat4>)> {
+        let node = self.nodes.get(&id)?;
+        let sk = node.skel.as_ref()?.0.clone();
+        if let (true, Some(p)) = (node.wear, node.parent) {
+            // what the parent itself is drawn with, so clothes over clothes work
+            if depth < Self::DEEP {
+                if let Some((psk, pg)) = self.skin(p, now, depth + 1) {
+                    let g = sk.worn(&psk, &pg);
+                    return Some((sk, g));
+                }
+            }
+        }
+        let pose = self.pose(id, now, depth)?;
+        Some((sk, pose.1.clone()))
     }
 }
 
@@ -505,66 +606,6 @@ impl EntManager {
         b.hash_dirty = true
     }
 
-    /** Set child as having parent.
-     * Locate and lock the lua ent in iteration, then ensure the parent is located earlier on the array.
-     *  Will reorder by placing the parent earlier on the array, just before the child.
-     * Any existing children of that parent will still process correctly as they should already be further down the array having checked the order before.
-     * It is possible to get some bad ordering if a user decides not to group in some sensible hiearchical order */
-    /// Set child as having parent, and make sure the parent is processed first.
-    ///
-    /// Scoped to the bundle that owns the child: parent matrices are resolved during
-    /// that bundle's own pass, so a parent in another bundle could never be found
-    /// anyway. Cross-bundle attachment is meant to go through `app.*` instead (an
-    /// overlay reads the target's transform and positions its own entity).
-    ///
-    /// Only the sender's bundle is searched: entity ids are counted per VM, so the
-    /// same id names an entity in every bundle, and searching them all set the
-    /// parent on whichever bundle the map happened to visit first. An overlay's
-    /// camera-parented HUD was attaching the app's entities instead of its own.
-    pub fn group(&mut self, bundle_id: u8, target_id: u64, child_id: u64) {
-        if let Some(b) = self.bundles.get_mut(&bundle_id) {
-            let mut child_index: i64 = -1;
-            let mut parent_index: i64 = -1;
-            for (i, e) in b.array.iter().enumerate() {
-                #[cfg(feature = "headed")]
-                let id =
-                    e.0.with_ref(|l: &LuaEnt| Ok(l.get_id()))
-                        .unwrap_or(u64::MAX);
-                #[cfg(not(feature = "headed"))]
-                let id = e
-                    .downcast_ref::<LuaEnt, _, _>(|l| Ok(l.get_id()))
-                    .unwrap_or(u64::MAX);
-                if id == child_id {
-                    child_index = i as i64;
-                } else if id == target_id {
-                    parent_index = i as i64;
-                }
-            }
-            if child_index < 0 {
-                return;
-            }
-
-            #[cfg(feature = "headed")]
-            let _ = b.array[child_index as usize].0.with_mut(|e| {
-                e.parent = Some(target_id);
-                Ok(())
-            });
-            #[cfg(not(feature = "headed"))]
-            let _ = b.array[child_index as usize].downcast_mut::<LuaEnt, _, _>(|e| {
-                e.parent = Some(target_id);
-                Ok(())
-            });
-
-            // The parent's matrix has to exist before the child reads it, and that is
-            // decided by position in this vec.
-            if parent_index > child_index {
-                let parent = b.array.remove(parent_index as usize);
-                b.array.insert(child_index as usize, parent);
-            }
-            return;
-        }
-    }
-
     pub fn reset(&mut self) {
         self.bundles.clear();
         #[cfg(feature = "headed")]
@@ -812,7 +853,10 @@ impl EntManager {
         palette_layout: &wgpu::BindGroupLayout,
     ) -> InstanceBuffer {
         let mut failed = 0;
-        let mut mats: FxHashMap<u64, glam::Mat4> = FxHashMap::default();
+        let mut tree = Tree::default();
+        // ids in array order, as kept (`u64::MAX`: couldn't be read this frame)
+        let mut order: Vec<u64> = Vec::with_capacity(b.array.len());
+        let now = mm.rig.clock();
 
         b.array.retain_mut(|(lent, ent, uni_ref)| {
             // Ok(false) is a killed entity: it leaves the array (and so the
@@ -820,10 +864,6 @@ impl EntManager {
             // entity kept drawing, frozen at its last transform; swapping a
             // model (an avatar's head for a new face) left the old one behind.
             match lent.with_mut(|l: &mut LuaEnt| {
-                let parent = match l.parent {
-                    Some(u) => mats.get(&u),
-                    None => None,
-                };
                 if l.is_dirty() {
                     let flags = l.get_flags();
 
@@ -874,7 +914,10 @@ impl EntManager {
                 } else {
                     // println!("not dirty");
                 }
-                let mat = ent.build_meta(&l, parent);
+                // Its own matrix for now: one that rides a parent is finished
+                // below, once every entity's is known, in whatever order
+                // they were made or grouped.
+                let mat = ent.build_meta(&l, None);
                 let mut uni = ent.get_uniforms_with_mat(&l, iteration, mat);
                 if b.hidden.contains(&l.get_id()) {
                     // collapsed to a point, and not a billboard (which would
@@ -883,24 +926,58 @@ impl EntManager {
                     uni.effects[0] = 0.;
                 }
                 uni_ref.replace(uni);
-                if ent.model.skin.is_some() {
-                    if let Some(sk) = mm.rig.lookup(&ent.model.name) {
-                        let st = l.skel.clone().unwrap_or_default();
-                        let g = st.globals(&sk, mm.rig.clock());
-                        ent.palette.replace(crate::skeleton::palette16(&sk, &g));
-                    }
+                let id = l.get_id();
+                let skel = match ent.model.skin {
+                    Some(_) => mm.rig.lookup(&ent.model.name),
+                    None => None,
+                };
+                if l.parent.is_some() || skel.is_some() {
+                    tree.nodes.insert(
+                        id,
+                        Node {
+                            parent: l.parent,
+                            bone: l.bone.clone(),
+                            wear: l.wear,
+                            skel: skel.map(|sk| (sk, l.skel.clone().unwrap_or_default())),
+                        },
+                    );
                 }
-                mats.insert(l.get_id(), mat);
+                tree.own.insert(id, mat);
+                order.push(id);
                 Ok(true)
             }) {
-                Ok(alive) => alive,
+                Ok(alive) => {
+                    if !alive {
+                        return false;
+                    }
+                    true
+                }
                 Err(_) => {
                     // couldn't lock it this frame: keep it, try again next
                     failed += 1;
+                    order.push(u64::MAX);
                     true
                 }
             }
         });
+
+        // Parents and poses. Only entities that ride something or are skinned
+        // come through here; the rest already have their matrix.
+        for ((_, ent, uni_ref), id) in b.array.iter().zip(&order) {
+            let Some(node) = tree.nodes.get(id) else {
+                continue;
+            };
+            let (has_parent, skinned) = (node.parent.is_some(), node.skel.is_some());
+            if has_parent && !b.hidden.contains(id) {
+                let m = tree.world(*id, now, 0);
+                uni_ref.borrow_mut().model = m.to_cols_array_2d();
+            }
+            if skinned {
+                if let Some((sk, g)) = tree.skin(*id, now, 0) {
+                    ent.palette.replace(crate::skeleton::palette16(&sk, &g));
+                }
+            }
+        }
 
         if failed > 0 {
             println!("failed to lock {} ents", failed);
@@ -971,13 +1048,7 @@ impl EntManager {
                     }
                     let id = l.get_id();
                     let pos = vec3(l.x as f32, l.y as f32, l.z as f32) * crate::collide::TILE_SIZE;
-                    let quat = Quat::from_euler(
-                        glam::EulerRot::XYZ,
-                        l.rot_x as f32,
-                        l.rot_y as f32,
-                        l.rot_z as f32,
-                    );
-                    let transform = Mat4::from_translation(pos) * Mat4::from_quat(quat);
+                    let transform = Mat4::from_translation(pos) * Mat4::from_quat(l.quat());
                     let Some(grid) = l.grid.as_mut() else {
                         return Ok(());
                     };

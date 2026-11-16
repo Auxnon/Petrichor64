@@ -9,7 +9,8 @@ The following fields directly modify the entity when set:
 - `z: number` - Z position
 - `rx: number` - X axis rotation
 - `ry: number` - Y axis rotation
-- `ry: number` - Z axis rotation
+- `rz: number` - Z axis rotation
+- `zyx: boolean` - rotation order. Off (the default): `rz` is applied first, then `ry`, then `rx`, each about the world's axes. On: `rx` (roll) first, then `ry` (pitch), then `rz` (heading) last, so a character turned to any heading tips about its own axes: `e.zyx = true; e.rz = heading; e.ry = -pi/2` lies it on its back with its head away from where it faced
 - `scale: number` - Scale with 1.0 being the default
 - `vx: number` - No direct correlation, a convenience field
 - `vy: number` - No direct correlation, a convenience field
@@ -27,7 +28,7 @@ The following fields directly modify the entity when set:
 
 **Methods**
 
-- `anim(animation: string, force?:boolean, speed?:number)` - set an animation created from config or via the [anim](#anim) command. On an entity whose model is a skinned glTF mesh, a name matching one of the model's clips plays that clip instead (looping; `speed` scales it, `""` returns to the rest pose). See **Skeletons** below
+- `anim(animation: string, force?:boolean, speed?:number, fade?:number, once?:boolean)` - set an animation created from config or via the [anim](#anim) command. On an entity whose model is a skinned glTF mesh, a name matching one of the model's clips plays that clip instead (looping; `speed` scales it, `""` returns to the rest pose). `fade` blends from the pose it was in over that many seconds instead of snapping (walk into run, stand into sit); `once` holds the last frame instead of looping (`false` loops again). See **Skeletons** below
 - `kill` - direct [kill](#kill) usage, destroys object from the renderer
 
 **Skeletons**
@@ -39,14 +40,27 @@ any bone overrides, so `ent:bone` reads exactly what is drawn.
 
 - `bones: string[]` - read only. The skeleton's joint names, parents first
   (empty if the model has no skeleton)
-- `ent:bone(name: string): {x, y, z, rx, ry, rz}|nil` - the bone's world
-  position (tile units, like `ent.x`) and its current override rotation; `nil`
-  if there's no such bone
+- `ent:bone(name: string): {x, y, z, rx, ry, rz, qx, qy, qz, qw}|nil` - the
+  bone's world position (tile units, like `ent.x`), its current override
+  rotation, and its world orientation as a quaternion; `nil` if there's no such
+  bone. To keep something on a bone you don't need this: `lot(ent, thing,
+  name)` does it in the engine (see [lot](#lot))
 - `ent:bone(name, rot: number[3], pos?: number[3])` - override a bone in its own
   local space, on top of whatever clip is playing: `rot` = `{rx, ry, rz}` radians
   multiplied into the animated rotation, `pos` added to its translation. Returns
   the same table as the getter
 - `ent:bone(name, false)` - clear that bone's override
+- `ent:ik(name, target: number[3], chain?: integer, weight?: number)` - reverse
+  kinematics: turn the `chain` joints above the bone (default 2, a limb: upper
+  and lower arm for a hand) so the bone reaches the world point `target`, on
+  top of the clip and overrides. The clip's pose decides which way the elbow
+  or knee bends. A point out of reach is stretched toward. `weight` 0..1 eases
+  between the clip's pose and the solve. The goal holds until you set it again
+  (do that each frame for a moving target) or clear it
+- `ent:ik(name, false)` - clear that bone's goal; `ent:ik(false)` clears all
+
+Things ride a skeleton with [lot](#lot): `lot(ent, hat, "head")` fixes an entity
+to a bone, and `lot(ent, shirt, true)` skins another model with this one's pose.
 
 Vertex data is used as authored, so export skinned models **Z-up** (Blender:
 untick "+Y Up"). Up to 64 joints per skin. A skin without inverse bind
@@ -58,10 +72,11 @@ guy = make("player", 0, 0, 0)
 guy:anim("walk")                     -- clip from player.glb
 guy:bone("head", {0, 0, 0.5})        -- look left while walking
 local hand = guy:bone("hand.r")
-sword.x = hand.x
-sword.y = hand.y
-sword.z = hand.z
 guy:bone("head", false)              -- let the clip drive it again
+lot(guy, sword, "hand.r")            -- the sword stays in the hand from here on
+guy:anim("run", false, 1, 0.2)       -- blend into the run over 0.2s
+guy:ik("hand.l", {door.x, door.y, door.z + 1})  -- reach for the handle
+guy:ik("hand.l", false)
 ```
 
 **Entity-owned tile grids**
