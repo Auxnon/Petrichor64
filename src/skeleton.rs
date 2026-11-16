@@ -172,6 +172,87 @@ impl Skeleton {
         out
     }
 
+    /// Cyclic coordinate descent: turn the `chain` joints above the goal's
+    /// bone, nearest first, until the bone's origin is on `target` (model
+    /// space). Starts from the pose it's given, so the clip decides which way
+    /// an elbow or knee bends. Only rotations change.
+    pub fn reach(&self, locals: &mut [Trs], goal: &Reach, target: Vec3) {
+        let Some(end) = self.joint_index(&goal.bone) else {
+            return;
+        };
+        let mut chain = vec![];
+        let mut up = self.joints[end].parent;
+        while let Some(p) = up {
+            if chain.len() >= goal.chain.max(1) as usize {
+                break;
+            }
+            chain.push(p);
+            up = self.joints[p].parent;
+        }
+        let before: Vec<[f32; 4]> = chain.iter().map(|&c| locals[c].r).collect();
+        'solve: for _ in 0..12 {
+            for &c in &chain {
+                let g = self.globals(locals);
+                let tip = g[end].transform_point3(Vec3::ZERO);
+                if tip.distance_squared(target) < 1e-6 {
+                    break 'solve;
+                }
+                let (_, grot, pivot) = g[c].to_scale_rotation_translation();
+                let (a, b) = (tip - pivot, target - pivot);
+                if a.length_squared() < 1e-10 || b.length_squared() < 1e-10 {
+                    continue;
+                }
+                let turn = Quat::from_rotation_arc(a.normalize(), b.normalize());
+                // global = above * local, so the turn is taken into the
+                // joint's parent space before it's applied
+                let local = Quat::from_array(locals[c].r);
+                let above = grot * local.inverse();
+                locals[c].r = (above.inverse() * turn * above * local)
+                    .normalize()
+                    .to_array();
+            }
+        }
+        let w = goal.weight.clamp(0., 1.);
+        if w < 1. {
+            for (&c, b) in chain.iter().zip(before) {
+                locals[c].r = Quat::from_array(b)
+                    .slerp(Quat::from_array(locals[c].r), w)
+                    .to_array();
+            }
+        }
+    }
+
+    /// Where something fixed to joint `index` goes (model space): the origin
+    /// is the joint, and the axes are the model's own in its bind pose, so an
+    /// attachment is placed the way the mesh was modelled, whichever way the
+    /// bone itself happens to point. It moves as a vertex weighted wholly to
+    /// that joint would.
+    pub fn attach(&self, globals: &[Mat4], index: usize) -> Mat4 {
+        let ib = Mat4::from_cols_array(&self.joints[index].inverse_bind);
+        let at = ib.inverse().transform_point3(Vec3::ZERO);
+        globals[index] * ib * Mat4::from_translation(at)
+    }
+
+    /// This skeleton's joint transforms taken from another's pose, joint by
+    /// name: clothes cut from a body's rig move with the body. A joint the
+    /// other skeleton lacks keeps its rest pose under whatever it hangs from.
+    pub fn worn(&self, other: &Skeleton, other_globals: &[Mat4]) -> Vec<Mat4> {
+        let mut out: Vec<Mat4> = Vec::with_capacity(self.joints.len());
+        for (i, j) in self.joints.iter().enumerate() {
+            // same rig, same order: the usual case, no search
+            let same = other.joints.get(i).filter(|o| o.name == j.name).map(|_| i);
+            let m = match same.or_else(|| other.joint_index(&j.name)) {
+                Some(o) => other_globals[o],
+                None => {
+                    let parent = j.parent.map(|p| out[p]).unwrap_or(Mat4::IDENTITY);
+                    parent * Mat4::from_cols_array(&j.link) * j.rest.matrix()
+                }
+            };
+            out.push(m);
+        }
+        out
+    }
+
     /// Skinning matrices: global * inverse bind, one per joint.
     pub fn palette(&self, globals: &[Mat4]) -> Vec<Mat4> {
         self.joints
@@ -442,6 +523,33 @@ pub struct SkelState {
     pub speed: f32,
     pub looped: bool,
     pub bones: Vec<(String, BoneOverride)>,
+    /// The clip being faded out of (`ent:anim(name, force, speed, fade)`):
+    /// its name, start and speed, kept so it goes on playing under the blend.
+    #[serde(default)]
+    pub prev: String,
+    #[serde(default)]
+    pub prev_start: f64,
+    #[serde(default)]
+    pub prev_speed: f32,
+    /// `clock()` when the fade began, and how long it runs; 0 is no fade.
+    #[serde(default)]
+    pub fade_start: f64,
+    #[serde(default)]
+    pub fade: f32,
+    /// Reverse kinematics goals (`ent:ik`), solved after the clip and overrides.
+    #[serde(default)]
+    pub reach: Vec<Reach>,
+}
+
+/// One reverse kinematics goal: turn the `chain` joints above `bone` so that
+/// `bone` lands on `target`, a point in the world (tile units).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reach {
+    pub bone: String,
+    pub target: [f32; 3],
+    pub chain: u8,
+    /// 0 leaves the clip's pose, 1 is the full solve.
+    pub weight: f32,
 }
 
 impl Default for SkelState {
@@ -452,27 +560,93 @@ impl Default for SkelState {
             speed: 1.,
             looped: true,
             bones: vec![],
+            prev: String::new(),
+            prev_start: 0.,
+            prev_speed: 1.,
+            fade_start: 0.,
+            fade: 0.,
+            reach: vec![],
         }
     }
 }
 
 impl SkelState {
-    /// Model-space joint transforms at `now`.
-    pub fn globals(&self, skel: &Skeleton, now: f64) -> Vec<Mat4> {
-        let clip = if self.clip.is_empty() {
-            None
-        } else {
-            skel.clip_index(&self.clip)
+    /// Local poses at `now`: the clip (blended out of the previous one while
+    /// a fade runs), then the bone overrides.
+    pub fn locals(&self, skel: &Skeleton, now: f64) -> Vec<Trs> {
+        let sample = |clip: &str, start: f64, speed: f32| {
+            let index = if clip.is_empty() {
+                None
+            } else {
+                skel.clip_index(clip)
+            };
+            skel.sample(index, ((now - start) * speed as f64) as f32, self.looped)
         };
-        let t = ((now - self.start) * self.speed as f64) as f32;
-        let mut locals = skel.sample(clip, t, self.looped);
+        let mut locals = sample(&self.clip, self.start, self.speed);
+        let f = if self.fade > 0. {
+            ((now - self.fade_start) / self.fade as f64) as f32
+        } else {
+            1.
+        };
+        if (0. ..1.).contains(&f) {
+            // smoothstep, so the blend eases at both ends
+            let f = f * f * (3. - 2. * f);
+            let from = sample(&self.prev, self.prev_start, self.prev_speed);
+            for (l, a) in locals.iter_mut().zip(from) {
+                l.t = Vec3::from(a.t).lerp(Vec3::from(l.t), f).to_array();
+                l.s = Vec3::from(a.s).lerp(Vec3::from(l.s), f).to_array();
+                l.r = Quat::from_array(a.r)
+                    .slerp(Quat::from_array(l.r), f)
+                    .to_array();
+            }
+        }
         let overrides: Vec<(usize, BoneOverride)> = self
             .bones
             .iter()
             .filter_map(|(n, o)| skel.joint_index(n).map(|i| (i, *o)))
             .collect();
         Skeleton::apply_overrides(&mut locals, &overrides);
+        locals
+    }
+
+    /// Model-space joint transforms at `now`, without the `ik` goals (which
+    /// need to know where the entity stands: see `pose`).
+    pub fn globals(&self, skel: &Skeleton, now: f64) -> Vec<Mat4> {
+        skel.globals(&self.locals(skel, now))
+    }
+
+    /// Model-space joint transforms at `now`, `ik` goals solved. `world`
+    /// takes a model-space point (tile units) to the world, so the goals,
+    /// which are world points, can be brought into the model.
+    pub fn pose(&self, skel: &Skeleton, now: f64, world: &Mat4) -> Vec<Mat4> {
+        let mut locals = self.locals(skel, now);
+        if !self.reach.is_empty() {
+            let inv = world.inverse();
+            for r in &self.reach {
+                if inv.is_finite() {
+                    skel.reach(&mut locals, r, inv.transform_point3(Vec3::from(r.target)));
+                }
+            }
+        }
         skel.globals(&locals)
+    }
+
+    /// Start `clip` now, fading from what's playing over `fade` seconds.
+    pub fn play(&mut self, clip: String, now: f64, fade: f32) {
+        self.prev = std::mem::replace(&mut self.clip, clip);
+        self.prev_start = self.start;
+        self.prev_speed = self.speed;
+        self.start = now;
+        self.fade_start = now;
+        self.fade = fade.max(0.);
+    }
+
+    /// Set, replace or (with `None`) clear the goal on `bone`.
+    pub fn set_reach(&mut self, bone: &str, r: Option<Reach>) {
+        self.reach.retain(|r| r.bone != bone);
+        if let Some(r) = r {
+            self.reach.push(r);
+        }
     }
 
     pub fn set_bone(&mut self, name: &str, o: Option<BoneOverride>) {
@@ -497,6 +671,16 @@ pub fn palette16(skel: &Skeleton, globals: &[Mat4]) -> Vec<Mat4> {
         .into_iter()
         .map(|p| up * p * down)
         .collect()
+}
+
+/// A model-space matrix (tile units) in the renderer's packed x16 space.
+pub fn packed(m: Mat4) -> Mat4 {
+    Mat4::from_scale(Vec3::splat(16.)) * m * Mat4::from_scale(Vec3::splat(1. / 16.))
+}
+
+/// The reverse: a packed matrix in tile units.
+pub fn unpacked(m: Mat4) -> Mat4 {
+    Mat4::from_scale(Vec3::splat(1. / 16.)) * m * Mat4::from_scale(Vec3::splat(16.))
 }
 
 /// One engine instance's skeletons (by model name) and animation clock. Each
@@ -686,6 +870,118 @@ mod tests {
         Skeleton::apply_overrides(&mut locals, &[(0, o)]);
         let tip = s.globals(&locals)[1].transform_point3(Vec3::ZERO);
         assert!(close(tip, Vec3::new(0., -1., 0.)), "{:?}", tip);
+    }
+
+    fn three_bone() -> Skeleton {
+        // an arm along Z: shoulder at 0, elbow at 1, hand at 2
+        let mut s = two_bone();
+        s.joints[1].name = "elbow".into();
+        s.joints.push(Joint {
+            name: "hand".into(),
+            parent: Some(1),
+            link: Mat4::IDENTITY.to_cols_array(),
+            rest: Trs {
+                t: [0., 0., 1.],
+                ..Trs::IDENTITY
+            },
+            inverse_bind: Mat4::from_translation(Vec3::new(0., 0., -2.)).to_cols_array(),
+        });
+        s
+    }
+
+    #[test]
+    fn ik_puts_the_hand_on_a_reachable_point() {
+        let s = three_bone();
+        let mut st = SkelState::default();
+        st.set_reach(
+            "hand",
+            Some(Reach {
+                bone: "hand".into(),
+                target: [1., 0.5, 1.],
+                chain: 2,
+                weight: 1.,
+            }),
+        );
+        let hand = |g: &[Mat4]| g[2].transform_point3(Vec3::ZERO);
+        let g = st.pose(&s, 0., &Mat4::IDENTITY);
+        assert!(
+            (hand(&g) - Vec3::new(1., 0.5, 1.)).length() < 1e-2,
+            "{:?}",
+            hand(&g)
+        );
+        // bone lengths hold: only rotations changed
+        let elbow = g[1].transform_point3(Vec3::ZERO);
+        assert!((elbow.length() - 1.).abs() < 1e-4);
+        assert!((hand(&g).distance(elbow) - 1.).abs() < 1e-4);
+        // the goal is a world point: an entity standing elsewhere reaches the same spot
+        let world = Mat4::from_translation(Vec3::new(5., 0., 0.))
+            * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        st.reach[0].target = world.transform_point3(Vec3::new(1., 0.5, 1.)).to_array();
+        let g = st.pose(&s, 0., &world);
+        assert!((hand(&g) - Vec3::new(1., 0.5, 1.)).length() < 1e-2);
+        // weight 0 leaves the pose alone, and an out of reach point stretches toward it
+        st.reach[0].weight = 0.;
+        let g = st.pose(&s, 0., &world);
+        assert!(close(hand(&g), Vec3::new(0., 0., 2.)));
+        st.reach[0].weight = 1.;
+        st.reach[0].target = world.transform_point3(Vec3::new(9., 0., 0.)).to_array();
+        let g = st.pose(&s, 0., &world);
+        assert!(
+            (hand(&g) - Vec3::new(2., 0., 0.)).length() < 2e-2,
+            "{:?}",
+            hand(&g)
+        );
+    }
+
+    #[test]
+    fn an_attachment_sits_on_the_joint_with_the_models_axes() {
+        let s = three_bone();
+        // rest pose: the hand's attachment frame is a plain move to the joint
+        let rest = s.globals(&s.sample(None, 0., true));
+        assert!(s
+            .attach(&rest, 2)
+            .abs_diff_eq(Mat4::from_translation(Vec3::new(0., 0., 2.)), 1e-5));
+        // bent 90 degrees about X at the root: the joint and anything on it swing to -Y
+        let g = s.globals(&s.sample(Some(0), 2., false));
+        let m = s.attach(&g, 2);
+        assert!(close(
+            m.transform_point3(Vec3::ZERO),
+            Vec3::new(0., -2., 0.)
+        ));
+        assert!(close(m.transform_vector3(Vec3::Z), Vec3::new(0., -1., 0.)));
+    }
+
+    #[test]
+    fn worn_joints_follow_by_name() {
+        let body = three_bone();
+        // a glove: the hand joint and one of its own, in another order
+        let mut glove = three_bone();
+        glove.joints[1].name = "cuff".into();
+        let g = body.globals(&body.sample(Some(0), 2., false));
+        let w = glove.worn(&body, &g);
+        assert!(w[0].abs_diff_eq(g[0], 1e-5));
+        assert!(w[2].abs_diff_eq(g[2], 1e-5));
+        // "cuff" isn't on the body: rest pose under the worn root
+        assert!(close(
+            w[1].transform_point3(Vec3::ZERO),
+            Vec3::new(0., -1., 0.)
+        ));
+    }
+
+    #[test]
+    fn a_fade_blends_out_of_the_last_clip() {
+        let s = two_bone();
+        let mut st = SkelState::default();
+        st.looped = false;
+        st.clip = "bend".into();
+        st.start = -2.; // at its end by now = 0: tip at -Y
+        st.play(String::new(), 0., 1.);
+        let tip = |now: f64| st.globals(&s, now)[1].transform_point3(Vec3::ZERO);
+        assert!(close(tip(0.), Vec3::new(0., -1., 0.)));
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(close(tip(0.5), Vec3::new(0., -h, h)), "{:?}", tip(0.5));
+        assert!(close(tip(1.), Vec3::new(0., 0., 1.)));
+        assert!(close(tip(5.), Vec3::new(0., 0., 1.)));
     }
 
     #[test]

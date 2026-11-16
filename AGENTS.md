@@ -95,9 +95,17 @@ rigid parts or sprite flipbooks. Full API: `guide/entity.md`, **Skeletons**.
   (names are lowercased). Clips loop. `e:anim("walk", true, 1.5)` restarts it at
   1.5× speed, and `e:anim("")` goes back to the rest pose. For a one-shot like a
   death, time it in your script and then switch to a held clip (`die`, then `dead`).
-- `e.bones` lists the joints. `e:bone("hand.r")` reads a bone's world position, so
-  you can attach a sprite to it. `e:bone("head", {rx, ry, rz})` adds a rotation on
+- `e.bones` lists the joints. `e:bone("head", {rx, ry, rz})` adds a rotation on
   top of the clip, which is enough for things like aiming a head at the player.
+  `e:bone("hand.r")` reads a bone's world position.
+- **Don't place attachments by hand each frame.** `lot(e, hat, "head")` fixes an
+  entity to a bone (origin at the joint, the model's rest-pose axes), `lot(e,
+  shirt, true)` skins a second model with `e`'s pose (clothes), and plain
+  `lot(head, eye)` nests. Set the child's local numbers once. `guide/lot.md`.
+- `e:anim("run", false, 1, 0.2)` crossfades; a fifth `true` plays once and holds.
+  `e:ik("hand.r", {x, y, z})` reaches a limb to a world point. `e.zyx = true`
+  makes `rz` a heading applied last, so a turned character can lie down
+  (`ry = -pi/2`) at any angle.
 - **It's true smooth skinning**: up to 4 joints and weights per vertex
   (`JOINTS_0`/`WEIGHTS_0`), up to 64 joints, with inverse bind matrices.
   Use it. If every vertex has weight 1 on a single bone, the model is a stack of
