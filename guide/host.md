@@ -6,6 +6,7 @@ _talk to the app running this cart_
 ---@class host
 ---@field send fun(msg:string)
 ---@field recv fun():string|nil
+---@field hook fun(key:string, value?:string)
 host = {}
 ```
 
@@ -14,6 +15,10 @@ launcher, a web page), that app is the **host**, and `host` is a channel of
 strings between it and the cart: [host.send](#hostsend) to tell it something,
 [host.recv](#hostrecv) to hear what it said. What the strings mean is up to the
 two of you; JSON is a fine choice.
+
+For keyed events that arrive without polling, see [hook](#hook): the engine
+calls the cart's `hook(key, value)` before `loop()`, and `host.hook(key, value)`
+sends one back.
 
 Messages from the host wait in a queue until the cart reads them, including
 ones sent before the cart finished loading. Each direction holds at most 1024
@@ -48,4 +53,4 @@ simply not there (`nil`), rather than failing when called:
   (`init()`, the cart reloading itself, stays);
 - sound: the sound commands are still there but make no sound, and `mic` and
   `midi` do nothing;
-- `host` itself.
+- `host` itself, and with it [hook](#hook) events both ways.
