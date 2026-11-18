@@ -74,6 +74,8 @@ pub enum LuaTalk {
     Resize(u32, u32),
     Die(SyncSender<()>),
     Drop(String),
+    /// A host hook event (`Instance::hook`): call the cart's `hook(key, value)`.
+    Hook(String, String),
 }
 
 // impl From<Value<'_>> for LuaResponse {
@@ -635,6 +637,18 @@ impl<'lt> LuaCore {
         Ok(())
     }
 
+    /// Call the cart's `hook(key, value)` ahead of its next loop. Hands the event
+    /// back when there's no Lua thread to take it, for the caller to keep.
+    pub fn call_hook(&self, key: String, value: String) -> Result<(), (String, String)> {
+        match &self.to_lua_tx {
+            Some(ltx) => ltx.send(LuaTalk::Hook(key, value)).map_err(|e| match e.0 {
+                LuaTalk::Hook(k, v) => (k, v),
+                _ => unreachable!(),
+            }),
+            None => Err((key, value)),
+        }
+    }
+
     /** Call loop function within lua app */
     pub fn call_loop(&self, bits: ControlState) -> Result<(), P64Error> {
         if let Some(ltx) = &self.to_lua_tx {
@@ -946,6 +960,15 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                 let msg = error_string(e.into(), &ctx.scripts);
                 ctx.async_sender
                     .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;
+            }
+        }
+        // `None` when the cart has no `hook`: it just doesn't hear them. A throwing
+        // hook is logged like a throwing loop, and the runtime carries on.
+        LuaTalk::Hook(k, v) => {
+            let args = crate::silt_str::LStrPair(k, v);
+            if let Some(Err(e)) = vm.call_global(mc, "hook", args) {
+                let s = error_string(e.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
             }
         }
     }

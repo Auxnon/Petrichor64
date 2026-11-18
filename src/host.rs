@@ -123,8 +123,22 @@ pub const HOST_QUEUE_CAP: usize = 1024;
 /// while it reloads) waits for it.
 pub type HostInbox = Arc<Mutex<VecDeque<String>>>;
 
+/// The longest hook key, in bytes (`Instance::hook`, `host.hook`). Keys name
+/// the event ("search", "show"): short words, not data.
+pub const HOOK_KEY_MAX: usize = 256;
+
+/// The longest hook value, in bytes. Room for a search string or a small JSON
+/// document, not for a file.
+pub const HOOK_VALUE_MAX: usize = 64 * 1024;
+
+/// Whether a hook event is within [`HOOK_KEY_MAX`] and [`HOOK_VALUE_MAX`].
+/// Past them it's dropped (host to cart) or an error (cart to host).
+pub fn hook_fits(key: &str, value: &str) -> bool {
+    key.len() <= HOOK_KEY_MAX && value.len() <= HOOK_VALUE_MAX
+}
+
 /// Push onto a host-channel queue, dropping the oldest past [`HOST_QUEUE_CAP`].
-pub fn push_capped(q: &mut VecDeque<String>, msg: String) {
+pub fn push_capped<T>(q: &mut VecDeque<T>, msg: T) {
     while q.len() >= HOST_QUEUE_CAP {
         q.pop_front();
     }
@@ -138,6 +152,11 @@ pub struct HostLink {
     pub(crate) inbox: HostInbox,
     /// Cart → host: what the cart `host.send`'d, until `Core::host_take`.
     pub(crate) outbox: VecDeque<String>,
+    /// Host → cart hook events (`Core::hook_post`), waiting to be handed to the
+    /// cart's `hook(key, value)` ahead of its next `loop()`.
+    pub(crate) hooks_in: VecDeque<(String, String)>,
+    /// Cart → host: what the cart `host.hook`'d, until `Core::hook_take`.
+    pub(crate) hooks_out: VecDeque<(String, String)>,
 }
 
 #[cfg(test)]
@@ -194,6 +213,17 @@ mod tests {
         }
         assert_eq!(q.len(), HOST_QUEUE_CAP);
         assert_eq!(q.front().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn hooks_fit_under_caps() {
+        assert!(hook_fits("search", "oak plank"));
+        assert!(hook_fits(
+            &"k".repeat(HOOK_KEY_MAX),
+            &"v".repeat(HOOK_VALUE_MAX)
+        ));
+        assert!(!hook_fits(&"k".repeat(HOOK_KEY_MAX + 1), ""));
+        assert!(!hook_fits("k", &"v".repeat(HOOK_VALUE_MAX + 1)));
     }
 
     #[test]

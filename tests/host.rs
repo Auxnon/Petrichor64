@@ -33,11 +33,56 @@ function loop()
 end
 "#;
 
+/// Hook events: says when each arrives and how many loops had run, says what
+/// the loop after it saw, answers `echo` with a `host.hook`, and turns the sky
+/// green on `paint` (seen even where `host` is nil, in a sandbox).
+/// silt-safe style (AGENTS.md): calls hoisted out of concatenations.
+const HOOK_CART: &str = r#"
+function main()
+    S = { loops = 0, last = 'none', fresh = false }
+    sky:fill("f00")
+    if host then
+        host.send("ready")
+    end
+end
+function hook(key, value)
+    S.last = key .. "=" .. value
+    S.fresh = true
+    if key == "paint" then
+        sky:fill("0f0")
+    end
+    if host then
+        local n = tostring(S.loops)
+        local m = "hook " .. S.last .. " at " .. n
+        host.send(m)
+        if key == "echo" then
+            host.hook("echoed", value)
+            host.hook("bare")
+        end
+    end
+end
+function loop()
+    S.loops = S.loops + 1
+    if S.fresh then
+        S.fresh = false
+        if host then
+            local n = tostring(S.loops)
+            local m = "loop " .. n .. " saw " .. S.last
+            host.send(m)
+        end
+    end
+end
+"#;
+
 fn cart_dir(name: &str) -> PathBuf {
+    cart_dir_with(name, CART)
+}
+
+fn cart_dir_with(name: &str, src: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("p64-host-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    std::fs::write(dir.join("scripts/main.lua"), CART).unwrap();
+    std::fs::write(dir.join("scripts/main.lua"), src).unwrap();
     // `pack` wants an icon in the cart's root: the png the zip rides on.
     std::fs::copy(
         concat!(
@@ -246,5 +291,227 @@ fn two_instances_side_by_side() {
 
     drop(insts);
     let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&packed);
+}
+
+/// Tick and draw one instance until `done` holds for what it said (messages)
+/// and hooked (`hooks()`), or fail.
+fn run_hooks(
+    inst: &mut Instance,
+    heard: &mut Vec<String>,
+    hooked: &mut Vec<(String, String)>,
+    start: Instant,
+    what: &str,
+    done: impl Fn(&[String], &[(String, String)]) -> bool,
+) {
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        if inst.frame(start.elapsed()) {
+            inst.render();
+        }
+        heard.extend(inst.messages());
+        hooked.extend(inst.hooks());
+        if done(heard, hooked) {
+            return;
+        }
+        assert!(
+            Instant::now() < until,
+            "timed out waiting for {what}: heard {heard:?}, hooked {hooked:?}"
+        );
+        std::thread::sleep(Duration::from_millis(4));
+    }
+}
+
+/// The loop count in "hook <k>=<v> at <n>", for the event `kv`.
+fn hook_at(heard: &[String], kv: &str) -> Option<u64> {
+    let head = format!("hook {kv} at ");
+    heard
+        .iter()
+        .find_map(|m| m.strip_prefix(&head))
+        .map(|n| n.parse().expect("a loop count"))
+}
+
+#[test]
+fn hooks_both_ways() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter: skipping the hook test");
+        return;
+    };
+    let size = (64, 48);
+    let quiet = |policy: Policy| Policy {
+        audio: false,
+        ..policy
+    };
+    let options = |cart, policy| Options {
+        cart,
+        size,
+        scale: 1.0,
+        policy,
+    };
+    let hook_dir = cart_dir_with("hooks", HOOK_CART);
+    let plain_dir = cart_dir("hookless");
+    let start = Instant::now();
+
+    let mut inst = Instance::new(
+        &gpu,
+        options(Cart::Path(hook_dir.clone()), quiet(Policy::open())),
+    )
+    .unwrap();
+    // Posted before the cart has run at all: kept for it, and after main().
+    assert!(inst.hook("early", "1"));
+    let (mut heard, mut hooked) = (Vec::new(), Vec::new());
+    run_hooks(
+        &mut inst,
+        &mut heard,
+        &mut hooked,
+        start,
+        "the early hook",
+        |h, _| {
+            h.iter()
+                .any(|m| m.starts_with("loop ") && m.ends_with(" saw early=1"))
+        },
+    );
+    assert_eq!(
+        heard.first().map(String::as_str),
+        Some("ready"),
+        "{heard:?}"
+    );
+
+    // One event: the loop right after it sees it.
+    assert!(inst.hook("search", "oak plank"));
+    run_hooks(
+        &mut inst,
+        &mut heard,
+        &mut hooked,
+        start,
+        "the search hook",
+        |h, _| h.iter().any(|m| m.ends_with(" saw search=oak plank")),
+    );
+    let at = hook_at(&heard, "search=oak plank").expect("the hook ran");
+    let next = format!("loop {} saw search=oak plank", at + 1);
+    assert!(heard.contains(&next), "wanted {next:?} in {heard:?}");
+
+    // Several between two frames: all of them, in order, before one loop.
+    heard.clear();
+    for k in ["a", "b", "c"] {
+        assert!(inst.hook(k, k.to_uppercase()));
+    }
+    run_hooks(
+        &mut inst,
+        &mut heard,
+        &mut hooked,
+        start,
+        "three hooks",
+        |h, _| h.iter().any(|m| m.ends_with(" saw c=C")),
+    );
+    let hooks: Vec<&String> = heard.iter().filter(|m| m.starts_with("hook ")).collect();
+    assert_eq!(hooks.len(), 3, "{heard:?}");
+    let at = hook_at(&heard, "a=A").unwrap();
+    for (m, kv) in hooks.iter().zip(["a=A", "b=B", "c=C"]) {
+        assert_eq!(**m, format!("hook {kv} at {at}"), "{heard:?}");
+    }
+    let next = format!("loop {} saw c=C", at + 1);
+    assert!(heard.contains(&next), "wanted {next:?} in {heard:?}");
+
+    // Out: `host.hook` reaches `hooks()`, value defaulting to "".
+    assert!(inst.hook("echo", "plank"));
+    run_hooks(
+        &mut inst,
+        &mut heard,
+        &mut hooked,
+        start,
+        "host.hook",
+        |_, k| k.len() >= 2,
+    );
+    assert_eq!(
+        hooked,
+        vec![
+            ("echoed".to_string(), "plank".to_string()),
+            ("bare".to_string(), String::new())
+        ]
+    );
+
+    // Past the caps, dropped.
+    assert!(!inst.hook("k".repeat(petrichor64::host::HOOK_KEY_MAX + 1), ""));
+    assert!(!inst.hook("k", "v".repeat(petrichor64::host::HOOK_VALUE_MAX + 1)));
+
+    // `paint` turns the sky green: the check the sandbox below relies on.
+    assert!(inst.hook("paint", ""));
+    run_hooks(
+        &mut inst,
+        &mut heard,
+        &mut hooked,
+        start,
+        "paint",
+        |h, _| h.iter().any(|m| m.ends_with(" saw paint=")),
+    );
+    for _ in 0..10 {
+        if inst.frame(start.elapsed()) {
+            inst.render();
+        }
+        std::thread::sleep(Duration::from_millis(17));
+    }
+    let px = middle_pixel(&gpu, &inst, size);
+    assert!(px[1] > 200 && px[0] < 60, "the green sky, got {px:?}");
+    drop(inst);
+
+    // Sandboxed: no host channel, so no hooks either way.
+    let packed = hook_dir.with_extension("game.png");
+    petrichor64::pack(&hook_dir.to_string_lossy(), Some(&packed.to_string_lossy()))
+        .expect("packing the hook cart");
+    let bytes = std::fs::read(&packed).unwrap();
+    let mut boxed =
+        Instance::new(&gpu, options(Cart::Bytes(bytes), quiet(Policy::sandbox()))).unwrap();
+    assert!(!boxed.hook("paint", ""), "a sandbox took a hook");
+    let until = Instant::now() + Duration::from_millis(1500);
+    let mut out = Vec::new();
+    while Instant::now() < until {
+        if boxed.frame(start.elapsed()) {
+            boxed.render();
+        }
+        assert!(!boxed.hook("paint", ""));
+        out.extend(boxed.hooks());
+        assert!(boxed.messages().is_empty());
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    assert!(out.is_empty(), "{out:?}");
+    let px = middle_pixel(&gpu, &boxed, size);
+    assert!(px[0] > 200 && px[1] < 60, "still the red sky, got {px:?}");
+    drop(boxed);
+
+    // A cart with no `hook` doesn't hear them, and carries on.
+    let mut plain = Instance::new(
+        &gpu,
+        options(Cart::Path(plain_dir.clone()), quiet(Policy::open())),
+    )
+    .unwrap();
+    let mut heard = Vec::new();
+    let mut hooked = Vec::new();
+    for k in ["search", "show"] {
+        assert!(plain.hook(k, "x"));
+    }
+    plain.post("ping".into());
+    run_hooks(
+        &mut plain,
+        &mut heard,
+        &mut hooked,
+        start,
+        "the echo",
+        |h, _| h.iter().any(|m| m == "echo ping"),
+    );
+    assert!(hooked.is_empty(), "{hooked:?}");
+    plain.post("pong".into());
+    run_hooks(
+        &mut plain,
+        &mut heard,
+        &mut hooked,
+        start,
+        "a second echo",
+        |h, _| h.iter().any(|m| m == "echo pong"),
+    );
+    drop(plain);
+
+    let _ = std::fs::remove_dir_all(&hook_dir);
+    let _ = std::fs::remove_dir_all(&plain_dir);
     let _ = std::fs::remove_file(&packed);
 }

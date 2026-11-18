@@ -3563,6 +3563,31 @@ function host.send(msg) end",
             &mut host
         );
 
+        // The keyed side of the channel: the host hears these as hook events
+        // (`Instance::hooks`, the web element's `hook` event).
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "hook",
+            move |_, _, (key, value): (String, Option<String>)| {
+                let value = value.unwrap_or_default();
+                if !crate::host::hook_fits(&key, &value) {
+                    return Err(make_err(&format!(
+                        "host.hook: key over {} bytes or value over {} bytes",
+                        crate::host::HOOK_KEY_MAX,
+                        crate::host::HOOK_VALUE_MAX
+                    )));
+                }
+                lua_err!(pitcher.send((bundle_id, MainCommmand::HostHook(key, value))));
+                Ok(())
+            },
+            "Send a keyed event (two strings) to the app hosting this cart",
+            "
+---@param key string
+---@param value? string
+function host.hook(key, value) end",
+            &mut host
+        );
+
         // Straight off the shared queue: no round trip to the main thread.
         let inbox = host_inbox.clone();
         lua_lib!(
@@ -5067,6 +5092,8 @@ pub enum MainCommmand {
     Copy(String),
     /// `host.send(msg)`: a string for the hosting app (`Core::host_take`).
     HostSend(String),
+    /// `host.hook(key, value)`: a keyed event for the hosting app (`Core::hook_take`).
+    HostHook(String, String),
     LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
@@ -5092,7 +5119,7 @@ impl MainCommmand {
             MainCommmand::Quit(u) => *u == 0 || policy.load_apps,
             // A query (`None`) never opens the mic.
             MainCommmand::MicRecord(Some(_), ..) => policy.audio && policy.mic,
-            MainCommmand::HostSend(_) => policy.host_messages,
+            MainCommmand::HostSend(_) | MainCommmand::HostHook(..) => policy.host_messages,
             _ => true,
         }
     }
@@ -5273,6 +5300,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
         }),
         MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
         MainCommmand::HostSend(s) => Some(VmToHost::Host(s)),
+        MainCommmand::HostHook(k, v) => Some(VmToHost::Hook(k, v)),
         MainCommmand::SetImg(name, img, _tx) => {
             let (w, h) = img.dimensions();
             Some(VmToHost::SetImg {

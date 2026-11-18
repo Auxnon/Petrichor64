@@ -375,6 +375,11 @@ impl Instance {
         // open: the keys are being typed into it, and must not also drive the
         // game.
         let quiet = ControlState::default();
+        // Hook events first: the cart's Lua thread takes its messages in order,
+        // so they run before the loop sent next. (On the web, the page's loop
+        // hands them to the VM worker instead: `Core::hook_inbox_drain`.)
+        #[cfg(not(target_arch = "wasm32"))]
+        core.hook_deliver();
         let feed = if core.global.console {
             &quiet
         } else {
@@ -428,6 +433,22 @@ impl Instance {
     /// cart -> host: everything the cart `host.send`'d since the last call.
     pub fn messages(&mut self) -> Vec<String> {
         self.core.host_take()
+    }
+
+    /// host -> cart: a keyed event for the cart's global `hook(key, value)`, which
+    /// the engine calls once per event, in order, ahead of the cart's next
+    /// `loop()`. Kept until the cart has loaded. A cart with no `hook` doesn't
+    /// hear it. Returns false, dropping it, when the policy has no host channel
+    /// (`host_messages`) or the key or value is too long
+    /// (`host::HOOK_KEY_MAX`, `host::HOOK_VALUE_MAX`).
+    pub fn hook(&mut self, key: impl Into<String>, value: impl Into<String>) -> bool {
+        self.core.hook_post(key.into(), value.into())
+    }
+
+    /// cart -> host: every `(key, value)` the cart `host.hook`'d since the last
+    /// call, in the order sent.
+    pub fn hooks(&mut self) -> Vec<(String, String)> {
+        self.core.hook_take()
     }
 
     /// Open or close the developer console (if the policy allows one).

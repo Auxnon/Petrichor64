@@ -1282,6 +1282,24 @@ impl ApplicationHandler for App {
                         {
                             w.post(&HostToVm::Host(m));
                         }
+                        // The element's `hook()`s, then any posted natively, ahead
+                        // of this loop: the worker runs them before it.
+                        let hooked: Vec<(String, String)> =
+                            self.web.hooks.borrow_mut().drain(..).collect();
+                        if let Some(i) = self.inst.as_mut() {
+                            for (k, v) in hooked {
+                                i.hook(k, v);
+                            }
+                        }
+                        for (k, v) in self
+                            .inst
+                            .as_mut()
+                            .map(|i| &mut i.core)
+                            .map(|c| c.hook_inbox_drain())
+                            .unwrap_or_default()
+                        {
+                            w.post(&HostToVm::Hook(k, v));
+                        }
                         // With the console open, the app must not receive input —
                         // the keys go to the console. Send a neutral snapshot.
                         let console_open = self
@@ -1313,6 +1331,10 @@ impl ApplicationHandler for App {
             if let (Some(root), Some(i)) = (self.web.root.as_ref(), self.inst.as_mut()) {
                 for m in i.messages() {
                     dispatch_detail(root, "message", &m);
+                }
+                // and a `hook` event, detail `{key, value}`, per `host.hook`
+                for (k, v) in i.hooks() {
+                    dispatch_hook(root, &k, &v);
                 }
             }
             if let Some(core) = self.inst.as_mut().map(|i| &mut i.core) {
@@ -1799,7 +1821,7 @@ pub fn start() {
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
 struct WebHost {
     /// The element the canvas goes in, and that hears this engine's events
-    /// (`message`, `title`, the gpu ones). None: the default page.
+    /// (`message`, `hook`, `title`, the gpu ones). None: the default page.
     root: Option<web_sys::Element>,
     /// A canvas to draw on instead of making one (`start(canvas, ..)`).
     canvas: Option<web_sys::HtmlCanvasElement>,
@@ -1810,6 +1832,8 @@ struct WebHost {
     policy: crate::host::Policy,
     /// host -> cart messages from `Engine::post`, handed to the instance each frame.
     inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// host -> cart hook events from `Engine::hook`, the same way.
+    hooks: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<(String, String)>>>,
 }
 
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
@@ -1822,6 +1846,7 @@ impl Default for WebHost {
             worker: "/worker.js".into(),
             policy: crate::host::Policy::open(),
             inbox: Default::default(),
+            hooks: Default::default(),
         }
     }
 }
@@ -1847,6 +1872,7 @@ fn start_web(host: WebHost) -> Result<(), wasm_bindgen::JsValue> {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub struct Engine {
     inbox: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    hooks: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<(String, String)>>>,
 }
 
 #[cfg(all(feature = "headed", target_arch = "wasm32"))]
@@ -1863,10 +1889,24 @@ impl Engine {
             q.remove(0);
         }
     }
+
+    /// host -> cart: a keyed event for the cart's `hook(key, value)`, run ahead
+    /// of its next `loop()` (`Instance::hook`). The cart's `host.hook`s come
+    /// back as `hook` events on the root, `detail` `{key, value}`. Returns
+    /// false, dropping it, when the key or value is too long
+    /// (`host::HOOK_KEY_MAX`, `host::HOOK_VALUE_MAX`); a policy with no host
+    /// channel drops it later, silently.
+    pub fn hook(&self, key: String, value: String) -> bool {
+        if !crate::host::hook_fits(&key, &value) {
+            return false;
+        }
+        crate::host::push_capped(&mut self.hooks.borrow_mut(), (key, value));
+        true
+    }
 }
 
 /// Start an engine in `root`: an element the canvas goes in (and that hears
-/// its `message`, `title` and `petrichor-gpu-*` events), or a `<canvas>` to
+/// its `message`, `hook`, `title` and `petrichor-gpu-*` events), or a `<canvas>` to
 /// draw on. `opts`: `{ cart, worker, policy }`, all optional. `cart` and
 /// `worker` are URLs (default `/game.game.png`, `/worker.js`). `policy` is
 /// `"open"`, `"sandbox"`, or an object or JSON string of `host::Policy`
@@ -1918,6 +1958,7 @@ pub fn start_on(
     host.root = Some(root);
     let engine = Engine {
         inbox: host.inbox.clone(),
+        hooks: host.hooks.clone(),
     };
     start_web(host)?;
     Ok(engine)
@@ -1954,6 +1995,19 @@ fn dispatch_detail(el: &web_sys::Element, name: &str, detail: &str) {
     let init = web_sys::CustomEventInit::new();
     init.set_detail(&detail.into());
     if let Ok(e) = web_sys::CustomEvent::new_with_event_init_dict(name, &init) {
+        let _ = el.dispatch_event(&e);
+    }
+}
+
+/// A `hook` `CustomEvent` on `el`, `detail` `{key, value}`.
+#[cfg(all(feature = "headed", target_arch = "wasm32"))]
+fn dispatch_hook(el: &web_sys::Element, key: &str, value: &str) {
+    let detail = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&detail, &"key".into(), &key.into());
+    let _ = js_sys::Reflect::set(&detail, &"value".into(), &value.into());
+    let init = web_sys::CustomEventInit::new();
+    init.set_detail(&detail);
+    if let Ok(e) = web_sys::CustomEvent::new_with_event_init_dict("hook", &init) {
         let _ = el.dispatch_event(&e);
     }
 }
@@ -3382,6 +3436,9 @@ impl Core {
             VmToHost::Host(s) => {
                 crate::host::push_capped(&mut self.host.outbox, s);
             }
+            VmToHost::Hook(k, v) => {
+                crate::host::push_capped(&mut self.host.hooks_out, (k, v));
+            }
         }
     }
 
@@ -4143,6 +4200,9 @@ impl Core {
                 }
                 MainCommmand::HostSend(s) => {
                     crate::host::push_capped(&mut self.host.outbox, s);
+                }
+                MainCommmand::HostHook(k, v) => {
+                    crate::host::push_capped(&mut self.host.hooks_out, (k, v));
                 }
                 MainCommmand::LuaClose() => {
                     // println!("close lua channel {}",id);

@@ -37,6 +37,9 @@ pub enum HostToVm {
     },
     /// A host → cart message for the cart's `host.recv()` (`Core::host_post`).
     Host(String),
+    /// A host → cart hook event for the cart's `hook(key, value)`
+    /// (`Core::hook_post`), run ahead of the next `Loop`.
+    Hook(String, String),
     /// Compile + run a script into the VM (e.g. a bundle's main.lua).
     Load { name: String, content: String },
     /// Call the app's `main()` once (after scripts are loaded).
@@ -178,6 +181,8 @@ pub enum VmToHost {
     Sound(crate::sound::SoundCommand),
     /// `host.send(msg)`: a cart → host message (`Core::host_take`).
     Host(String),
+    /// `host.hook(key, value)`: a cart → host hook event (`Core::hook_take`).
+    Hook(String, String),
 }
 
 impl VmToHost {
@@ -187,7 +192,7 @@ impl VmToHost {
     /// worker's own commands pass through first).
     pub fn allowed_by(&self, policy: &crate::host::Policy) -> bool {
         match self {
-            VmToHost::Host(_) => policy.host_messages,
+            VmToHost::Host(_) | VmToHost::Hook(..) => policy.host_messages,
             #[cfg(feature = "audio")]
             VmToHost::Sound(_) => policy.audio,
             _ => true,

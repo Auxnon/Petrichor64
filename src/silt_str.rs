@@ -59,3 +59,17 @@ impl<'a> silt_lua::value::ToLua<'a> for LStr {
         Ok(lstr(mc, self.0))
     }
 }
+
+/// Two owned strings that become two silt string arguments, for
+/// `call_global` (silt's tuple impls want values made already).
+pub struct LStrPair(pub String, pub String);
+
+impl<'a> silt_lua::value::ToLuaMulti<'a> for LStrPair {
+    fn to_lua_multi(
+        self,
+        _: &silt_lua::lua::VM<'a>,
+        mc: &Mutation<'a>,
+    ) -> Result<Vec<Value<'a>>, silt_lua::LuaError> {
+        Ok(vec![lstr(mc, self.0), lstr(mc, self.1)])
+    }
+}

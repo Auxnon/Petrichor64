@@ -677,6 +677,57 @@ impl Core {
         self.host.outbox.drain(..).collect()
     }
 
+    /// host -> cart: queue a hook event for the cart's `hook(key, value)`, called
+    /// ahead of its next `loop()`. Kept until the cart is loaded to hear it (the
+    /// oldest go past `host::HOST_QUEUE_CAP`). Dropped, returning false, when the
+    /// policy has no host channel or the event is past `host::hook_fits`.
+    pub fn hook_post(&mut self, key: String, value: String) -> bool {
+        if !self.policy.host_messages || !crate::host::hook_fits(&key, &value) {
+            return false;
+        }
+        crate::host::push_capped(&mut self.host.hooks_in, (key, value));
+        true
+    }
+
+    /// cart -> host: every `(key, value)` the cart `host.hook`'d since the last
+    /// call, in order.
+    pub fn hook_take(&mut self) -> Vec<(String, String)> {
+        self.host.hooks_out.drain(..).collect()
+    }
+
+    /// Hand the queued hook events to the cart's Lua thread, which runs them
+    /// ahead of the next loop it's sent (its channel is in order). Kept while
+    /// there's no cart to take them (not loaded yet). On the web the VM is in
+    /// a worker instead, and `hook_inbox_drain` hands them to it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn hook_deliver(&mut self) {
+        if self.host.hooks_in.is_empty() {
+            return;
+        }
+        // The app, never an overlay: hooks are the cart's, like `host`.
+        let Some(lua) = self
+            .bundle_manager
+            .edit_target()
+            .and_then(|id| self.bundle_manager.bundles.get(&id))
+            .map(|b| &b.lua)
+        else {
+            return;
+        };
+        while let Some((k, v)) = self.host.hooks_in.pop_front() {
+            if let Err(back) = lua.call_hook(k, v) {
+                self.host.hooks_in.push_front(back);
+                return;
+            }
+        }
+    }
+
+    /// The posted hook events not yet handed to the VM worker
+    /// (`HostToVm::Hook`). Wasm only: natively `hook_deliver` hands them over.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn hook_inbox_drain(&mut self) -> Vec<(String, String)> {
+        self.host.hooks_in.drain(..).collect()
+    }
+
     /// The posted messages not yet handed to the VM worker, for it to queue on
     /// its side (`HostToVm::Host`). Wasm only: natively the VM shares the inbox.
     #[cfg(target_arch = "wasm32")]
