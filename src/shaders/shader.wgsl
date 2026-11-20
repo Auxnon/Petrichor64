@@ -18,6 +18,12 @@ struct VertexOutput {
 	@location(8) shade: vec3<f32>,
 	// effects.w > 0: unlit — the texel as-is, no shading or fog (guide/entity.md).
 	@location(9) @interpolate(flat) unlit: f32,
+	// effects.z: the entity's `dither` (guide/entity.md): shade bands, and the
+	// fraction times 64 its cell size in pixels.
+	@location(10) @interpolate(flat) dither: f32,
+	// The entity's headlamp ambient (x, 0 off) and 1 - door (y), as
+	// InstanceInput.look.
+	@location(11) @interpolate(flat) look: vec4<f32>,
 };
 
 struct InstanceInput {
@@ -28,6 +34,7 @@ struct InstanceInput {
 	@location(8) model_matrix_1: vec4<f32>,
 	@location(9) model_matrix_2: vec4<f32>,
 	@location(10) model_matrix_3: vec4<f32>,
+	@location(13) look: vec4<f32>,
 };
 
 struct Globals {
@@ -300,6 +307,8 @@ fn vs_common(
 	out.time=globals.adjustments[0][0];
 	out.tint=instance.color;
 	out.unlit=instance.effects[3];
+	out.dither=instance.effects[2];
+	out.look=instance.look;
 	// Gouraud (guide/gour.md): always computed, cheap relative to
 	// per-fragment — fs_main picks this or its own per-fragment shade based
 	// on gour()'s toggle (shadow_on.y), no shader permutation needed.
@@ -395,6 +404,15 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	let direct = max(shade - ambient, vec3<f32>(0.0));
 	shade = ambient + direct * lit;
 
+	// An entity's `headlamp` (guide/entity.md): its own white light, fixed to
+	// the camera above and left of the eye, in place of the scene's.
+	if (in.look.x > 0.) {
+		let vr = mat3x3<f32>(globals.view_mat[0].xyz, globals.view_mat[1].xyz, globals.view_mat[2].xyz);
+		let to_lamp = normalize(transpose(vr) * vec3<f32>(-0.45, 0.6, 0.66));
+		let a = in.look.x;
+		shade = vec3<f32>(a + (1. - a) * max(dot(norm, to_lamp), 0.));
+	}
+
 	// R30 chip: snap>0 also selects affine (screen-space linear) UVs instead of
 	// perspective-correct ones — the PS1's characteristic texture warp.
 	let snap=globals.adjustments[3][3];
@@ -421,6 +439,35 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	let e3: vec4<f32> = f_color;
 	if (e3.a < 0.1) {
 		discard;
+	}
+	// An entity's `door` (guide/entity.md): screen-door see-through, dropping
+	// pixels in an ordered pattern rather than blending them.
+	if (in.look.y > 0.) {
+		let dp = vec2<i32>(floor(in.proj_position.xy));
+		let didx = (dp.x & 3) + (dp.y & 3) * 4;
+		if ((BAYER4[didx] + 0.5) / 16. < in.look.y) {
+			discard;
+		}
+	}
+
+	// An entity's `dither` (guide/entity.md): the shade's brightness in a few
+	// flat bands, the step between two bands an ordered dither in screen-space
+	// cells, as a palette-limited machine would shade. The hue of the light
+	// stays; only how bright it is is stepped.
+	if (in.dither >= 1. && in.unlit < 0.5) {
+		let bands = floor(in.dither);
+		var cell = floor(fract(in.dither) * 64. + 0.5);
+		if (cell < 1.) {
+			cell = 2.;
+		}
+		let l = max(max(shade.r, shade.g), shade.b);
+		if (l > 0.0001) {
+			let px = vec2<i32>(floor(in.proj_position.xy / cell));
+			let bidx = (px.x & 3) + (px.y & 3) * 4;
+			let t = (BAYER4[bidx] + 0.5) / 16.;
+			let q = clamp(floor(l * bands + t) / bands, 0., 1.5);
+			shade = shade * (q / l);
+		}
 	}
 
 	// Vertex-colour tint (guide/entity.md): {1,1,1,1} default is a no-op.

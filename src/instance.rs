@@ -286,7 +286,18 @@ impl Instance {
                 if core.global.boot_state && core.policy.load_apps {
                     core.global.pending_load = Some(path.clone());
                 }
-                let _ = core.bundle_manager.get_main_bundle().lua.call_drop(path);
+                // to whoever has the input: an overlay over the app, if one's up
+                if core.bundle_manager.has_bundles() {
+                    let owner = core.bundle_manager.input_owner();
+                    match core.bundle_manager.get(owner) {
+                        Some(b) => {
+                            let _ = b.lua.call_drop(path);
+                        }
+                        None => {
+                            let _ = core.bundle_manager.get_main_bundle().lua.call_drop(path);
+                        }
+                    }
+                }
             }
         }
     }

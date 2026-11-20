@@ -629,6 +629,28 @@ fn parse_steps<'v>(tb: &Table<'v>) -> (Vec<Step>, f32) {
     (out, cursor)
 }
 
+/// A dropped image file for `dimg`, shrunk to fit `max` pixels on its longer
+/// side (8 to 2048). None if it can't be read as an image.
+#[cfg(not(target_arch = "wasm32"))]
+fn dropped_image(path: &str, max: u32) -> Option<RgbaImage> {
+    let im = image::open(path).ok()?.into_rgba8();
+    let m = max.clamp(8, 2048);
+    let (w, h) = im.dimensions();
+    if w <= m && h <= m {
+        return Some(im);
+    }
+    let k = m as f32 / w.max(h) as f32;
+    let nw = ((w as f32 * k).round() as u32).max(1);
+    let nh = ((h as f32 * k).round() as u32).max(1);
+    Some(image::imageops::resize(&im, nw, nh, image::imageops::FilterType::Triangle))
+}
+
+/// The web has no paths to open.
+#[cfg(target_arch = "wasm32")]
+fn dropped_image(_path: &str, _max: u32) -> Option<RgbaImage> {
+    None
+}
+
 thread_local! {
     /// Every command `init_lua_sys` last registered on this thread, as (name,
     /// (description, LSP stub)): what `ignore.lua` is made of (`command_docs`).
@@ -2735,6 +2757,30 @@ function gimg(asset) end"
 ---@param h integer
 ---@return image
 function nimg(w, h) end"
+    );
+
+    let gui = gui_in.clone();
+    lua!(
+        "dimg",
+        move |vm, mc, (path, max): (String, Option<u32>)| {
+            if !crate::lua_define::DROPPED.with(|d| d.borrow().contains(&path)) {
+                return Ok(Value::Nil);
+            }
+            match dropped_image(&path, max.unwrap_or(512)) {
+                Some(im) => {
+                    let (w, h) = im.dimensions();
+                    let lua_img = LuaImg::new(bundle_id, im, w, h, gui.borrow().letters.clone());
+                    Ok(vm.create_userdata(mc, lua_img))
+                }
+                None => Ok(Value::Nil),
+            }
+        },
+        "Open an image file dropped on the window (the path drop() was given), as an image no bigger than max (default 512) on its longer side; nil for any other path, or one that isn't an image",
+        "
+---@param path string
+---@param max? integer
+---@return image?
+function dimg(path, max) end"
     );
 
     let pitcher = main_pitcher.clone();
@@ -6146,5 +6192,23 @@ mod policy_tests {
         };
         assert!(!MainCommmand::MicRecord(Some(1), 1.0, tx.clone()).allowed_by(&muted));
         assert!(MainCommmand::MicRecord(None, 1.0, tx).allowed_by(&muted));
+    }
+
+    /// A dropped image is opened, and shrunk to fit `max` keeping its shape.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dropped_image_fits() {
+        let dir = std::env::temp_dir().join(format!("p64-dimg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wide.png");
+        image::RgbaImage::from_pixel(400, 100, image::Rgba([200, 10, 10, 255]))
+            .save(&path)
+            .unwrap();
+        let p = path.to_str().unwrap();
+        let small = super::dropped_image(p, 100).unwrap();
+        assert_eq!(small.dimensions(), (100, 25));
+        assert_eq!(super::dropped_image(p, 1000).unwrap().dimensions(), (400, 100));
+        assert!(super::dropped_image(dir.join("none.png").to_str().unwrap(), 100).is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

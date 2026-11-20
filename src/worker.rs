@@ -90,6 +90,9 @@ struct EntLook {
     offset: [f64; 3],
     tint: [f64; 4],
     unlit: bool,
+    dither: f64,
+    headlamp: f64,
+    door: f64,
 }
 
 impl EntLook {
@@ -107,6 +110,9 @@ impl EntLook {
             offset: l.offset,
             tint: l.tint,
             unlit: l.unlit,
+            dither: l.dither,
+            headlamp: l.headlamp,
+            door: l.door,
         }
     }
 }

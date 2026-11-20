@@ -17,13 +17,16 @@ pub struct EntityUniforms {
     pub color: [f32; 4],
     pub effects: [f32; 4],
     pub model: [[f32; 4]; 4],
+    /// x: `headlamp` (its own ambient, 0 off), y: 1 - `door` (0 solid).
+    pub look: [f32; 4],
 }
 
 impl EntityUniforms {
-    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    // 11 and 12 are the skinned vertex's joints and weights (skeleton.rs)
+    const ATTRIBS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
         4=>Float32x4,5=>Float32x4,
     6=>Float32x4,
-    7 => Float32x4, 8 => Float32x4, 9=> Float32x4,10=>Float32x4];
+    7 => Float32x4, 8 => Float32x4, 9=> Float32x4,10=>Float32x4, 13=>Float32x4];
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         // let vertex_attr = ;
         wgpu::VertexBufferLayout {
@@ -214,11 +217,12 @@ impl<'lua> Ent {
     ) -> EntityUniforms {
         let flipped = lua.flipped;
         // self.matrix = model;
-        // effects.w: 1 draws unlit (fs_main skips shading and fog).
+        // effects.z: dither bands (and cell size), effects.w: 1 draws unlit
+        // (fs_main skips shading and fog).
         let effects = [
             self.effects.x * lua.scale as f32,
             lua.rot_z as f32,
-            self.effects.z,
+            lua.dither as f32,
             if lua.unlit { 1. } else { self.effects.w },
         ];
         let uv_mod = match &self.anim {
@@ -267,6 +271,7 @@ impl<'lua> Ent {
             uv_mod,
             effects,
             model: model.to_cols_array_2d(),
+            look: [lua.headlamp as f32, 1. - lua.door as f32, 0., 0.],
         }
     }
 
@@ -304,6 +309,7 @@ impl<'lua> Ent {
             uv_mod,
             effects,
             model: mat.to_cols_array_2d(),
+            look: [0.; 4],
         }
     }
 

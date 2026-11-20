@@ -758,6 +758,7 @@ impl ChunkModel {
             uv_mod: [0., 0., 1., 1.],
             effects: [0.; 4],
             model: model.to_cols_array_2d(),
+            look: [0.; 4],
         }
     }
 
@@ -775,6 +776,7 @@ impl ChunkModel {
             uv_mod: [0., 0., 1., 1.],
             effects: [0.; 4],
             model: mat.to_cols_array_2d(),
+            look: [0.; 4],
         };
         queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&[e]));
     }

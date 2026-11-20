@@ -62,6 +62,22 @@ pub struct LuaEnt {
     /// lives in the 3D scene (an editor's panels, signage). See guide/entity.md.
     #[serde(default)]
     pub unlit: bool,
+    /// Shade in this many flat bands, mixed by an ordered (Bayer) dither in
+    /// screen space, for a retro look; 0 (the default) shades smoothly. The
+    /// fraction, times 64, is the dither's cell size in pixels (0 means 2).
+    /// See guide/entity.md.
+    #[serde(default)]
+    pub dither: f64,
+    /// Lit by its own lamp, fixed to the camera up and to the left of the eye,
+    /// with this much ambient fill, instead of the scene's light; 0 (the
+    /// default) is off. For an editor's model, shaded the same over any app.
+    #[serde(default)]
+    pub headlamp: f64,
+    /// Screen-door opacity, 0..1: below 1, that share of its pixels is drawn,
+    /// in an ordered (Bayer) pattern, the rest left out, so what's behind
+    /// shows through. 1 (the default) is solid. See guide/entity.md.
+    #[serde(default = "solid")]
+    pub door: f64,
     /// This entity's own tile grid, if it has one — set by calling `tile`/
     /// `ent:tile(...)` on a grid-less entity, which lazily creates one (see
     /// `TileGrid`, `guide/entity.md`). `Box` keeps this off the common
@@ -533,6 +549,12 @@ impl UserData for LuaEnt {
         fields.add_field_method_set("tint", |_, _, this, tint: [f64; 4]| Ok(this.tint = tint));
         fields.add_field_method_get("unlit", |_, _, this| Ok(this.unlit));
         fields.add_field_method_set("unlit", |_, _, this, unlit: bool| Ok(this.unlit = unlit));
+        fields.add_field_method_get("dither", |_, _, this| Ok(this.dither));
+        fields.add_field_method_set("dither", |_, _, this, dither: f64| Ok(this.dither = dither.max(0.)));
+        fields.add_field_method_get("headlamp", |_, _, this| Ok(this.headlamp));
+        fields.add_field_method_set("headlamp", |_, _, this, a: f64| Ok(this.headlamp = a.clamp(0., 1.)));
+        fields.add_field_method_get("door", |_, _, this| Ok(this.door));
+        fields.add_field_method_set("door", |_, _, this, d: f64| Ok(this.door = d.clamp(0., 1.)));
 
         fields.add_field_method_set("scale", |_, _, this, scale: f64| Ok(this.scale = scale));
 
@@ -642,6 +664,9 @@ impl LuaEnt {
             hit_offset: [0., 0., 0.],
             tint: [1., 1., 1., 1.],
             unlit: false,
+            dither: 0.,
+            headlamp: 0.,
+            door: 1.,
             grid: None,
             skel: None,
             bone: String::new(),
@@ -750,6 +775,9 @@ impl Clone for LuaEnt {
             hit_offset: self.hit_offset,
             tint: self.tint,
             unlit: self.unlit,
+            dither: self.dither,
+            headlamp: self.headlamp,
+            door: self.door,
             // Deep clone, same as everything else here — cheap when None
             // (the common case), and grids are expected to be moving-
             // platform-sized (small, sparse), not world-sized, so this
@@ -770,4 +798,9 @@ impl ToString for LuaEnt {
             self.id, self.asset, self.tex, self.x, self.y, self.z, self.vx, self.vy, self.vz, self.rot_x, self.rot_y, self.rot_z, self.scale, self.dirty, self.anim, self.flipped, self.parent.is_some(), self.bundle_id, self.offset, self.flags
         )
     }
+}
+
+/// serde's default for `LuaEnt::door`: solid.
+fn solid() -> f64 {
+    1.
 }

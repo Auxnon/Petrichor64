@@ -95,6 +95,14 @@ pub enum LuaTalk {
 //     }
 // }
 
+thread_local! {
+    /// Every file dropped on the window that reached a bundle on this thread
+    /// (`drop(path)`), and so may be read by `dimg`: a script can open what the
+    /// user handed it, never any other path.
+    pub(crate) static DROPPED: RefCell<std::collections::HashSet<String>> =
+        RefCell::new(std::collections::HashSet::new());
+}
+
 /// Format a P64Error, rendering Lua run errors as source snippets. The erroring
 /// source is looked up in `scripts` by the index silt stamped onto the error
 /// (via ErrorOut.source_index → LuaRunError). A missing/untracked index (e.g.
@@ -942,6 +950,7 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
             }
         }
         LuaTalk::Drop(s) => {
+            DROPPED.with(|d| d.borrow_mut().insert(s.clone()));
             if let Some(Err(e)) = vm.call_global(mc, "drop", crate::silt_str::LStr(s)) {
                 let msg = error_string(e.into(), &ctx.scripts);
                 ctx.async_sender
