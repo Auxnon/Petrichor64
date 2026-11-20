@@ -64,7 +64,8 @@ pub struct LuaEnt {
     pub unlit: bool,
     /// Shade in this many flat bands, mixed by an ordered (Bayer) dither in
     /// screen space, for a retro look; 0 (the default) shades smoothly. The
-    /// fraction, times 64, is the dither's cell size in pixels (0 means 2).
+    /// fraction, times 64, is the dither's cell size in the scene's pixels
+    /// (0 means 1: the engine's own resolution).
     /// See guide/entity.md.
     #[serde(default)]
     pub dither: f64,

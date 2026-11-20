@@ -451,15 +451,14 @@ fn fs_main( in: VertexOutput) -> FragmentOutput {
 	}
 
 	// An entity's `dither` (guide/entity.md): the shade's brightness in a few
-	// flat bands, the step between two bands an ordered dither in screen-space
-	// cells, as a palette-limited machine would shade. The hue of the light
-	// stays; only how bright it is is stepped.
+	// flat bands, the step between two bands an ordered dither, as a
+	// palette-limited machine would shade. Its cells are the scene's own
+	// pixels (it renders crt_resolution wide), one by default, so the pattern
+	// is as coarse as the chip's resolution, in phase with the R30 colour
+	// dither. The hue of the light stays; only how bright it is is stepped.
 	if (in.dither >= 1. && in.unlit < 0.5) {
 		let bands = floor(in.dither);
-		var cell = floor(fract(in.dither) * 64. + 0.5);
-		if (cell < 1.) {
-			cell = 2.;
-		}
+		let cell = max(floor(fract(in.dither) * 64. + 0.5), 1.);
 		let l = max(max(shade.r, shade.g), shade.b);
 		if (l > 0.0001) {
 			let px = vec2<i32>(floor(in.proj_position.xy / cell));
