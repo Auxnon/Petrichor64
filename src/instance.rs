@@ -375,11 +375,11 @@ impl Instance {
         // open: the keys are being typed into it, and must not also drive the
         // game.
         let quiet = ControlState::default();
-        // Hook events first: the cart's Lua thread takes its messages in order,
+        // The host's calls first: the cart's Lua thread takes its messages in order,
         // so they run before the loop sent next. (On the web, the page's loop
-        // hands them to the VM worker instead: `Core::hook_inbox_drain`.)
+        // hands them to the VM worker instead: `Core::call_inbox_drain`.)
         #[cfg(not(target_arch = "wasm32"))]
-        core.hook_deliver();
+        core.call_deliver();
         let feed = if core.global.console {
             &quiet
         } else {
@@ -435,20 +435,29 @@ impl Instance {
         self.core.host_take()
     }
 
-    /// host -> cart: a keyed event for the cart's global `hook(key, value)`, which
-    /// the engine calls once per event, in order, ahead of the cart's next
-    /// `loop()`. Kept until the cart has loaded. A cart with no `hook` doesn't
-    /// hear it. Returns false, dropping it, when the policy has no host channel
-    /// (`host_messages`) or the key or value is too long
-    /// (`host::HOOK_KEY_MAX`, `host::HOOK_VALUE_MAX`).
-    pub fn hook(&mut self, key: impl Into<String>, value: impl Into<String>) -> bool {
-        self.core.hook_post(key.into(), value.into())
+    /// host -> cart: call the cart's global function `name` with `args`
+    /// (strings, numbers, booleans), the way the engine calls `main` and
+    /// `loop`. Calls run in the order made, ahead of the cart's next `loop()`,
+    /// and are kept until the cart has loaded. A cart with no such global
+    /// doesn't hear it; nothing comes back (see `calls`). Returns false,
+    /// dropping it, when the policy has no host channel (`host_messages`) or
+    /// the call is too big (`host::call_fits`).
+    ///
+    /// ```ignore
+    /// inst.call("search", ["oak plank".into(), 3.into()]);
+    /// ```
+    pub fn call(
+        &mut self,
+        name: impl Into<String>,
+        args: impl IntoIterator<Item = crate::host::Arg>,
+    ) -> bool {
+        self.core.call_post(name.into(), args.into_iter().collect())
     }
 
-    /// cart -> host: every `(key, value)` the cart `host.hook`'d since the last
+    /// cart -> host: every `(name, args)` the cart `host.call`'d since the last
     /// call, in the order sent.
-    pub fn hooks(&mut self) -> Vec<(String, String)> {
-        self.core.hook_take()
+    pub fn calls(&mut self) -> Vec<crate::host::Call> {
+        self.core.call_take()
     }
 
     /// Open or close the developer console (if the policy allows one).

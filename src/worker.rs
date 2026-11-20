@@ -301,8 +301,8 @@ fn dispatch(worker: &mut WorkerVm, msg: HostToVm) -> (Vec<VmToHost>, Vec<u8>) {
         HostToVm::Drop(s) => Some(LuaTalk::Drop(s)),
         // Main drops these under a policy with no host channel already; so does
         // the worker, whose VM has no `host` then either.
-        HostToVm::Hook(k, v) if policy.host_messages => Some(LuaTalk::Hook(k, v)),
-        HostToVm::Hook(..) => None,
+        HostToVm::Call(k, v) if policy.host_messages => Some(LuaTalk::Call(k, v)),
+        HostToVm::Call(..) => None,
         HostToVm::Host(msg) => {
             // Queued for `host.recv()`; the next Loop reads it.
             crate::host::push_capped(&mut host_inbox.lock(), msg);

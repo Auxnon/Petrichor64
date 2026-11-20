@@ -74,8 +74,9 @@ pub enum LuaTalk {
     Resize(u32, u32),
     Die(SyncSender<()>),
     Drop(String),
-    /// A host hook event (`Instance::hook`): call the cart's `hook(key, value)`.
-    Hook(String, String),
+    /// A call from the host (`Instance::call`): run the cart's global of that
+    /// name with these arguments.
+    Call(String, Vec<crate::host::Arg>),
 }
 
 // impl From<Value<'_>> for LuaResponse {
@@ -637,15 +638,19 @@ impl<'lt> LuaCore {
         Ok(())
     }
 
-    /// Call the cart's `hook(key, value)` ahead of its next loop. Hands the event
+    /// Call a global of the cart by name ahead of its next loop. Hands the call
     /// back when there's no Lua thread to take it, for the caller to keep.
-    pub fn call_hook(&self, key: String, value: String) -> Result<(), (String, String)> {
+    pub fn call_named(
+        &self,
+        name: String,
+        args: Vec<crate::host::Arg>,
+    ) -> Result<(), crate::host::Call> {
         match &self.to_lua_tx {
-            Some(ltx) => ltx.send(LuaTalk::Hook(key, value)).map_err(|e| match e.0 {
-                LuaTalk::Hook(k, v) => (k, v),
+            Some(ltx) => ltx.send(LuaTalk::Call(name, args)).map_err(|e| match e.0 {
+                LuaTalk::Call(k, v) => (k, v),
                 _ => unreachable!(),
             }),
-            None => Err((key, value)),
+            None => Err((name, args)),
         }
     }
 
@@ -962,11 +967,12 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                     .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;
             }
         }
-        // `None` when the cart has no `hook`: it just doesn't hear them. A throwing
-        // hook is logged like a throwing loop, and the runtime carries on.
-        LuaTalk::Hook(k, v) => {
-            let args = crate::silt_str::LStrPair(k, v);
-            if let Some(Err(e)) = vm.call_global(mc, "hook", args) {
+        // `None` when the cart has no such global: it just doesn't hear the call.
+        // One that throws is logged like a throwing loop, and the runtime
+        // carries on.
+        LuaTalk::Call(name, args) => {
+            let args = crate::silt_str::LArgs(args);
+            if let Some(Err(e)) = vm.call_global(mc, &name, args) {
                 let s = error_string(e.into(), &ctx.scripts);
                 ctx.loggy.send((LogType::LuaError, s))?;
             }
