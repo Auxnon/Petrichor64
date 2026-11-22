@@ -29,6 +29,12 @@ pub fn run_tool_cli() -> bool {
         if !crate::builtin::MODEL_REV.is_empty() {
             println!("model-chor {}", crate::builtin::MODEL_REV);
         }
+        if !crate::builtin::EDIT_REV.is_empty() {
+            println!("edit-chor {}", crate::builtin::EDIT_REV);
+        }
+        if !crate::builtin::SOUND_REV.is_empty() {
+            println!("sound-chor {}", crate::builtin::SOUND_REV);
+        }
         return true;
     }
     if args.first().map(|a| a.as_str()) == Some("ignore") {

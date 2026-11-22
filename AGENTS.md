@@ -294,9 +294,37 @@ the app's own tiles and entities: click one and `app.mesh` hands it over with
 its textures; it's saved back as a glb/gltf in `assets/` or as a `mod()` script
 in `scripts/`. model-chor's `tests/overlay.sh` runs it end to end.
 
+**Ctrl+E** opens the built-in source editor,
+[edit-chor](https://github.com/Auxnon/edit-chor) (locally
+`~/projects/edit-chor`, `EDIT_CHOR_DIR`, `--overlay builtin:edit`): the app's
+scripts on a pane in front of the camera, highlighted by the engine's own
+analysis, saved with `app.swap` so only the functions that changed reload, and
+a move mode that drags entities and writes constant positions back to source.
+It's the worked example for an overlay with its own 3D UI: read its AGENTS.md
+before building another (mesh corners snap to 1/16 unit, entities don't blend,
+an app reload drops the overlay's models too). **Ctrl+N** opens
+[sound-chor](https://github.com/Auxnon/sound-chor) the same way
+(`SOUND_CHOR_DIR`, `--overlay builtin:sound`); it was written as a standalone
+app and hasn't been adapted to sit over another one yet.
+
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
 `view.md`, `drive.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
-`info.md`, `texinfo.md`, `newtex.md`, `mesh.md`, `hide.md`, `png.md`):
+`info.md`, `texinfo.md`, `newtex.md`, `mesh.md`, `hide.md`, `png.md`,
+`swap.md`, `lex.md`, `lint.md`, `names.md`, `ents.md`, `put.md`):
+
+- `app.swap(path, source)` writes a script and reloads as little as the edit
+  allows: an edit inside top-level functions redefines just those, keeping
+  every global, entity and the camera (`kind = "fn"`); anything else reloads
+  the app (`"root"`); a script that doesn't compile is written but not applied
+  (`"err"`). `app.reload()` still reloads the lot.
+- `app.lex(source)` and `app.lint(source)` are the language server's tokens
+  and diagnostics for a source string, without running it. `app.names()` lists
+  the app's textures, models and sound files, for an editor that wants to know
+  what a string names.
+- `app.ents()` lists the app's entities and `app.put(id, {x=, y=, z=, rx=,
+  ry=, rz=, scale=})` places one. Nothing records where an entity's numbers
+  came from, so an editor that wants to write a move back into source has to
+  find the `make()` call itself (edit-chor's `source.lua` does).
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit

@@ -63,11 +63,14 @@ im:pixel(5, 5, c)
 
 ### text
 
-draw text on the image. Font spaces automatically.
+draw text on the image. Font spaces automatically. The font draws `a`-`z` as
+capitals unless `cased` is true, which uses its lowercase glyphs: for text
+where case carries meaning, such as source code.
 
 ```lua
---- @field text fun(self:image, txt:string, x?:gunit, y?:gunit, rgb?:rgb)
+--- @field text fun(self:image, txt:string, x?:gunit, y?:gunit, rgb?:rgb, cased?:boolean)
 im:text("message",x,y,"555")
+im:text("local x = Foo", x, y, "ddd", true) -- lowercase stays lowercase
 ```
 
 ### pixel

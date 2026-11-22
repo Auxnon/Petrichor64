@@ -42,6 +42,8 @@ web/dist/
 # the editors studio builds in, cloned here by build.rs (see `just editors`)
 /image-chor/
 /model-chor/
+/edit-chor/
+/sound-chor/
 
 # locally-built native binary
 /p64

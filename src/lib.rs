@@ -47,6 +47,7 @@ mod gltf_io;
 mod gpu_loss;
 mod gui;
 pub mod host;
+mod hot;
 #[cfg(feature = "headed")]
 mod instance;
 #[cfg(feature = "headed")]
@@ -2671,6 +2672,177 @@ impl Core {
     /// alone and just not drawn or picked; a tile is emptied in the app's world
     /// and put back as it was. Everything hidden comes back when the overlay
     /// closes (`unhide_all`).
+    /// `app.swap`: write `file` into the edited app, then make the running app
+    /// pick it up with as little disturbance as the change allows. A script
+    /// whose edit stayed inside top-level functions has just those run again
+    /// (`hot::plan`), keeping every global; anything else reloads the app.
+    pub fn app_swap(&mut self, id: u8, file: &str, contents: &str) -> crate::command::SwapOut {
+        use crate::command::SwapOut;
+        use crate::hot::Plan;
+        let out = |kind, msg: &str, names| SwapOut {
+            kind,
+            msg: msg.to_string(),
+            names,
+        };
+        let (target, dir) = match self.overlay_files(id) {
+            Ok(t) => t,
+            Err(e) => return out("err", &e, vec![]),
+        };
+        let script =
+            file.starts_with("scripts/") && (file.ends_with(".lua") || file.ends_with(".silt"));
+        // What the VM is running: what the last swap left, else the file as it
+        // was loaded.
+        let key = (target, file.to_string());
+        let old = self
+            .live_src
+            .get(&key)
+            .cloned()
+            .or_else(|| crate::file_util::get_file_string_scrubbed(&dir, file).ok());
+        if let Err(e) = crate::file_util::write_file_string_scrubbed(&dir, file, contents) {
+            return out("err", &e.to_string(), vec![]);
+        }
+        if !script {
+            return out("same", "written", vec![]);
+        }
+        // A script that doesn't compile is saved but not applied: the app keeps
+        // running what it had.
+        if let Some(d) = silt_lua::lsp::diagnostics(contents)
+            .iter()
+            .find(|d| matches!(d.severity, silt_lua::lsp::Severity::Error))
+        {
+            let msg = format!("line {}: {}", d.range.start.line + 1, d.message);
+            return out("err", &msg, vec![]);
+        }
+        let plan = match &old {
+            Some(old) => crate::hot::plan(old, contents),
+            None => Plan::Root("a new script"),
+        };
+        match plan {
+            Plan::Same => {
+                self.live_src.insert(key, contents.to_string());
+                out("same", "", vec![])
+            }
+            Plan::Fns { names, chunk } => {
+                let name = file.rsplit('/').next().unwrap_or(file).to_string();
+                let res = match self.bundle_manager.bundles.get(&target) {
+                    Some(b) => b.lua.load(name, &mut chunk.as_bytes()),
+                    None => return out("err", "the app is gone", vec![]),
+                };
+                match res {
+                    Ok(crate::lua_define::LuaResponse::String(e)) if !e.is_empty() => {
+                        out("err", &e, vec![])
+                    }
+                    Err(e) => out("err", &format!("{:?}", e), vec![]),
+                    Ok(_) => {
+                        self.live_src.insert(key, contents.to_string());
+                        out("fn", "", names)
+                    }
+                }
+            }
+            Plan::Root(why) => {
+                self.live_src.retain(|k, _| k.0 != target);
+                self.world.hidden.retain(|h| h.0 != target);
+                crate::command::reload(self, target);
+                out("root", why, vec![])
+            }
+        }
+    }
+
+    /// `app.names`: the edited app's textures, models and sound files.
+    pub fn app_names(&self, id: u8) -> Option<[Vec<String>; 3]> {
+        let (target, dir) = self.overlay_edit_target(id)?;
+        let mut tex: Vec<String> = self
+            .tex_manager
+            .bundle_lookup
+            .get(&target)
+            .map(|v| v.iter().map(|(n, _)| n.clone()).collect())
+            .unwrap_or_default();
+        let mut models: Vec<String> = self
+            .model_manager
+            .DICTIONARY
+            .keys()
+            .filter(|k| !k.contains(':'))
+            .cloned()
+            .collect();
+        let mut snd: Vec<String> =
+            std::fs::read_dir(crate::asset::resolve_app_path(&dir).join("sounds"))
+                .map(|rd| {
+                    rd.flatten()
+                        .filter_map(|e| {
+                            let p = e.path();
+                            (p.extension()? == "ogg")
+                                .then(|| p.file_stem()?.to_str().map(String::from))?
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        for l in [&mut tex, &mut models, &mut snd] {
+            l.sort();
+            l.dedup();
+        }
+        Some([tex, models, snd])
+    }
+
+    /// `app.ents`: the edited app's live entities.
+    pub fn app_ents(&self, id: u8) -> Vec<crate::command::EntOut> {
+        let mut out = vec![];
+        let Some((target, _)) = self.overlay_edit_target(id) else {
+            return out;
+        };
+        let Some(b) = self.ent_manager.bundles.get(&target) else {
+            return out;
+        };
+        for (eref, _, _) in b.array.iter() {
+            let _ = eref.with_ref(|l: &crate::lua_ent::LuaEnt| {
+                if !l.is_dead() {
+                    out.push(crate::command::EntOut {
+                        id: l.get_id(),
+                        asset: l.get_asset(),
+                        at: [l.x, l.y, l.z, l.rot_x, l.rot_y, l.rot_z, l.scale],
+                    });
+                }
+                Ok(())
+            });
+        }
+        out
+    }
+
+    /// `app.put`: place one of the edited app's entities.
+    pub fn app_put(&mut self, id: u8, ent: u64, at: [Option<f64>; 7]) -> bool {
+        let Some((target, _)) = self.overlay_edit_target(id) else {
+            return false;
+        };
+        let Some(b) = self.ent_manager.bundles.get_mut(&target) else {
+            return false;
+        };
+        for (eref, _, _) in b.array.iter_mut() {
+            let hit = eref.with_mut(|l: &mut crate::lua_ent::LuaEnt| {
+                if l.get_id() != ent {
+                    return Ok(false);
+                }
+                let [x, y, z, rx, ry, rz, scale] = at;
+                for (slot, v) in [
+                    (&mut l.x, x),
+                    (&mut l.y, y),
+                    (&mut l.z, z),
+                    (&mut l.rot_x, rx),
+                    (&mut l.rot_y, ry),
+                    (&mut l.rot_z, rz),
+                    (&mut l.scale, scale),
+                ] {
+                    if let Some(v) = v {
+                        *slot = v;
+                    }
+                }
+                Ok(true)
+            });
+            if hit.unwrap_or(false) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn app_hide(&mut self, id: u8, req: &crate::command::MeshIn, on: bool) -> bool {
         let Some((target, _)) = self.overlay_edit_target(id) else {
             return false;
@@ -4005,6 +4177,25 @@ impl Core {
                 }
                 MainCommmand::AppClose => {
                     crate::command::close_overlay(self, id);
+                }
+                MainCommmand::AppSwap(file, contents, tx) => {
+                    let out = self.app_swap(id, &file, &contents);
+                    if out.kind == "err" {
+                        self.log(LogType::IoError, &format!("!!app.swap: {}", out.msg));
+                    }
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppNames(tx) => {
+                    let out = self.app_names(id);
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppEnts(tx) => {
+                    let out = self.app_ents(id);
+                    self.log_check(tx.send(out));
+                }
+                MainCommmand::AppPut(ent, at, tx) => {
+                    let out = self.app_put(id, ent, at);
+                    self.log_check(tx.send(out));
                 }
                 MainCommmand::AppSource(name, tx) => {
                     let out = self.overlay_files(id).and_then(|(target, dir)| {
