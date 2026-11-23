@@ -2790,8 +2790,14 @@ impl Core {
         let Some(b) = self.ent_manager.bundles.get(&target) else {
             return out;
         };
-        for (eref, _, _) in b.array.iter() {
-            let _ = eref.with_ref(|l: &crate::lua_ent::LuaEnt| {
+        for item in b.array.iter() {
+            // headed keeps (wrapper, drawable, uniforms); the terminal build
+            // keeps the bare wrapper
+            #[cfg(feature = "headed")]
+            let read = |f| item.0.with_ref(f);
+            #[cfg(not(feature = "headed"))]
+            let read = |f| item.downcast_ref::<crate::lua_ent::LuaEnt, _, _>(f);
+            let _ = read(|l: &crate::lua_ent::LuaEnt| {
                 if !l.is_dead() {
                     out.push(crate::command::EntOut {
                         id: l.get_id(),
@@ -2814,8 +2820,12 @@ impl Core {
         let Some(b) = self.ent_manager.bundles.get_mut(&target) else {
             return false;
         };
-        for (eref, _, _) in b.array.iter_mut() {
-            let hit = eref.with_mut(|l: &mut crate::lua_ent::LuaEnt| {
+        for item in b.array.iter_mut() {
+            #[cfg(feature = "headed")]
+            let mut write = |f| item.0.with_mut(f);
+            #[cfg(not(feature = "headed"))]
+            let mut write = |f| item.downcast_mut::<crate::lua_ent::LuaEnt, _, _>(f);
+            let hit = write(|l: &mut crate::lua_ent::LuaEnt| {
                 if l.get_id() != ent {
                     return Ok(false);
                 }
