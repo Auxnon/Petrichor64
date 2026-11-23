@@ -47,7 +47,6 @@ mod gltf_io;
 mod gpu_loss;
 mod gui;
 pub mod host;
-mod hot;
 #[cfg(feature = "headed")]
 mod instance;
 #[cfg(feature = "headed")]
@@ -2675,10 +2674,9 @@ impl Core {
     /// `app.swap`: write `file` into the edited app, then make the running app
     /// pick it up with as little disturbance as the change allows. A script
     /// whose edit stayed inside top-level functions has just those run again
-    /// (`hot::plan`), keeping every global; anything else reloads the app.
+    /// (silt's `hotswap_functions`), keeping every global; anything else reloads the app.
     pub fn app_swap(&mut self, id: u8, file: &str, contents: &str) -> crate::command::SwapOut {
         use crate::command::SwapOut;
-        use crate::hot::Plan;
         let out = |kind, msg: &str, names| SwapOut {
             kind,
             msg: msg.to_string(),
@@ -2713,38 +2711,38 @@ impl Core {
             let msg = format!("line {}: {}", d.range.start.line + 1, d.message);
             return out("err", &msg, vec![]);
         }
-        let plan = match &old {
-            Some(old) => crate::hot::plan(old, contents),
-            None => Plan::Root("a new script"),
+        let root = |core: &mut Self, why: &str| {
+            core.world.hidden.retain(|h| h.0 != target);
+            crate::command::reload(core, target);
+            out("root", why, vec![])
         };
-        match plan {
-            Plan::Same => {
+        let Some(old) = old else {
+            return root(self, "a new script");
+        };
+        // The chunk name the loader gave this script, so call sites and error
+        // messages keep naming the same file.
+        let name = file.rsplit('/').next().unwrap_or(file).to_string();
+        let res = match self.bundle_manager.bundles.get(&target) {
+            Some(b) => b.lua.swap(name, old, contents.to_string()),
+            None => return out("err", "the app is gone", vec![]),
+        };
+        use crate::lua_define::SwapReply;
+        match res {
+            Ok(SwapReply::Same) => {
                 self.live_src.insert(key, contents.to_string());
                 out("same", "", vec![])
             }
-            Plan::Fns { names, chunk } => {
-                let name = file.rsplit('/').next().unwrap_or(file).to_string();
-                let res = match self.bundle_manager.bundles.get(&target) {
-                    Some(b) => b.lua.load(name, &mut chunk.as_bytes()),
-                    None => return out("err", "the app is gone", vec![]),
-                };
-                match res {
-                    Ok(crate::lua_define::LuaResponse::String(e)) if !e.is_empty() => {
-                        out("err", &e, vec![])
-                    }
-                    Err(e) => out("err", &format!("{:?}", e), vec![]),
-                    Ok(_) => {
-                        self.live_src.insert(key, contents.to_string());
-                        out("fn", "", names)
-                    }
+            Ok(SwapReply::Fns(mut names)) => {
+                self.live_src.insert(key, contents.to_string());
+                // silt has no name for a function literal
+                for n in names.iter_mut().filter(|n| n.is_empty()) {
+                    *n = "(anonymous)".to_string();
                 }
+                out("fn", "", names)
             }
-            Plan::Root(why) => {
-                self.live_src.retain(|k, _| k.0 != target);
-                self.world.hidden.retain(|h| h.0 != target);
-                crate::command::reload(self, target);
-                out("root", why, vec![])
-            }
+            Ok(SwapReply::Root) => root(self, "more than function bodies changed"),
+            Ok(SwapReply::Err(e)) => out("err", &e, vec![]),
+            Err(e) => out("err", &format!("{:?}", e), vec![]),
         }
     }
 
@@ -2799,6 +2797,7 @@ impl Core {
                         id: l.get_id(),
                         asset: l.get_asset(),
                         at: [l.x, l.y, l.z, l.rot_x, l.rot_y, l.rot_z, l.scale],
+                        origin: l.origin.clone(),
                     });
                 }
                 Ok(())

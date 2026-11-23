@@ -132,20 +132,23 @@ is `SkelState::pose(skel, now, world)`; `world` is needed because `ik` goals are
 world points. `ent:bone()` on the Lua thread only knows the entity's own
 matrix, so it's off for an entity that rides a parent.
 
-## Function-scoped reload (`app.swap`, `src/hot.rs`)
+## Function-scoped reload (`app.swap`)
 
-`hot::plan(old, new)` compares two versions of one script with its own small
-Lua scanner and says whether only top-level function bodies changed. If so,
-`Core::app_swap` runs just those definitions in the app's VM (the new source
-with every other line blanked, so error lines still match) and nothing else is
-disturbed; otherwise it reloads the app. `Core::live_src` remembers what each
-script's VM is really running, since the file on disk may be newer.
+`Core::app_swap` hands the old and new source of one script to the app's Lua
+thread (`LuaTalk::Swap`), which calls silt's `hotswap_functions`: changed
+function bodies are replaced in place (globals rebound with their upvalues
+kept, nested prototypes redirected), and anything else comes back as "root
+changed" with nothing run, which `app_swap` answers by reloading the app.
+`Core::live_src` remembers what each script's VM is really running, since the
+file on disk may be newer; `command::reload` clears it for the bundle.
 
-silt's own `hot-swap` feature is deliberately not used: it diffs lines by
-position (an inserted line marks everything after it changed), assumes one
-root chunk where an app here is many files in one VM, and on a root change it
-replaces the globals table, which would drop the engine's natives. If silt
-grows a safe function-only entry point, `app_swap` is the one place to switch.
+The swap is given the script's file name as its chunk name, while the loader
+names chunks by full path. `make` stamps entities with the file name only
+(`LuaEnt::origin`, from `vm.call_site()`) so both agree.
+
+silt's `hotswap` (no `_functions`) would rerun the file's top level over the
+live globals instead of reloading. It isn't used: an app's `main()` wouldn't
+run again, so entities and tiles made there would be stale.
 
 `command::reload` (and so a `"root"` swap) resets the camera and clears
 **every** model (`ModelManager::reset`), an open overlay's included, and

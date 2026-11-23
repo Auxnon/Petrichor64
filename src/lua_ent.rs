@@ -62,6 +62,11 @@ pub struct LuaEnt {
     /// lives in the 3D scene (an editor's panels, signage). See guide/entity.md.
     #[serde(default)]
     pub unlit: bool,
+    /// Where the `make` call that created this entity sits in the app's
+    /// source: chunk name, then the call's first line and column (1-based).
+    /// For editors (`app.ents`); nothing in the engine reads it.
+    #[serde(default)]
+    pub origin: Option<(String, u32, u32)>,
     /// This entity's own tile grid, if it has one — set by calling `tile`/
     /// `ent:tile(...)` on a grid-less entity, which lazily creates one (see
     /// `TileGrid`, `guide/entity.md`). `Box` keeps this off the common
@@ -642,6 +647,7 @@ impl LuaEnt {
             hit_offset: [0., 0., 0.],
             tint: [1., 1., 1., 1.],
             unlit: false,
+            origin: None,
             grid: None,
             skel: None,
             bone: String::new(),
@@ -750,6 +756,7 @@ impl Clone for LuaEnt {
             hit_offset: self.hit_offset,
             tint: self.tint,
             unlit: self.unlit,
+            origin: self.origin.clone(),
             // Deep clone, same as everything else here — cheap when None
             // (the common case), and grids are expected to be moving-
             // platform-sized (small, sparse), not world-sized, so this

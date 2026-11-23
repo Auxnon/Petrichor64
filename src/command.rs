@@ -1167,7 +1167,7 @@ function abtn(button) end"
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
-            let ent = crate::lua_ent::LuaEnt::new(
+            let mut ent = crate::lua_ent::LuaEnt::new(
                 id,
                 asset.unwrap_or("plane".to_string()),
                 x.unwrap_or(0.),
@@ -1175,6 +1175,15 @@ function abtn(button) end"
                 z.unwrap_or(0.),
                 s.unwrap_or(1.),
             );
+            // Remember the line that made it, so an editor can open or
+            // rewrite that call (`app.ents`).
+            // The chunk name is a full path from the loader and a bare file
+            // name after a swap; the file name is what both agree on.
+            ent.origin = vm.call_site().and_then(|c| {
+                let chunk = c.chunk?;
+                let file = chunk.rsplit(['/', '\\']).next().unwrap_or(&chunk);
+                Some((file.to_string(), c.line as u32, c.column as u32))
+            });
             let wrapper = vm.create_userdata_raw(mc, ent);
             let wrapper_clone = wrapper.clone();
             // let wrapped = Arc::new(std::sync::Mutex::new(ent));
@@ -4217,13 +4226,18 @@ function app.names() end",
                     for (k, v) in ["x", "y", "z", "rx", "ry", "rz", "scale"].into_iter().zip(e.at) {
                         o.set_str(mc, k, v);
                     }
+                    if let Some((file, line, col)) = e.origin {
+                        o.set_str(mc, "file", lstr(mc, file));
+                        o.set_str(mc, "line", line as i64);
+                        o.set_str(mc, "col", col as i64);
+                    }
                     t.set(i as i64 + 1, vm.wrap_table(mc, o));
                 }
                 Ok(vm.wrap_table(mc, t))
             },
             "overlay only: every entity the app has, with where it is",
             "
----@return {id:integer, asset:string, x:number, y:number, z:number, rx:number, ry:number, rz:number, scale:number}[]
+---@return {id:integer, asset:string, x:number, y:number, z:number, rx:number, ry:number, rz:number, scale:number, file:string?, line:integer?, col:integer?}[]
 function app.ents() end",
             &mut app
         );
@@ -4867,6 +4881,9 @@ async fn async_load_app(
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
 pub fn reload(core: &mut Core, bundle_id: u8) {
+    // The VM is about to run the files as they are on disk again, so what
+    // `app.swap` remembered it running is no longer true.
+    core.live_src.retain(|k, _| k.0 != bundle_id);
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
         block_on(load_app_and_log(core, None, None, Some(bundle_id), None));
@@ -5245,7 +5262,7 @@ pub enum MainCommmand {
     /// `app.save(texture)`: write a texture's pixels back into that file.
     AppSave(String, SyncSender<Result<String, String>>),
     /// `app.swap(path, source)`: write a script, then reload as little as the
-    /// change allows (`hot::plan`).
+    /// change allows (silt's `hotswap_functions`).
     AppSwap(String, String, SyncSender<SwapOut>),
     /// `app.names()`: the app's texture, model and sound-file names.
     AppNames(SyncSender<Option<[Vec<String>; 3]>>),
@@ -5374,6 +5391,8 @@ pub struct EntOut {
     pub id: u64,
     pub asset: String,
     pub at: [f64; 7],
+    /// The `make` call that created it: chunk name, line, column.
+    pub origin: Option<(String, u32, u32)>,
 }
 
 /// `app.info()`.
