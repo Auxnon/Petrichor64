@@ -232,7 +232,13 @@ impl UserData for LuaImg {
             |_,
              _,
              this_res,
-             (txt, x, y, rgb): (String, Option<Value>, Option<Value>, Option<Value>)| {
+             (txt, x, y, rgb, cased): (
+                String,
+                Option<Value>,
+                Option<Value>,
+                Option<Value>,
+                Option<bool>,
+            )| {
                 let this = safe_unwrap!(this_res);
                 this.dirty = true;
                 let c = match rgb {
@@ -248,6 +254,7 @@ impl UserData for LuaImg {
                     numop(x),
                     numop(y),
                     c,
+                    cased.unwrap_or(false),
                 );
                 Ok(())
             },

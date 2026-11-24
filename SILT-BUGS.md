@@ -1,5 +1,13 @@
 # silt bugs found writing the editor overlay
 
+> **Re-checked 2026-11-23 on silt `main` @ `beffd55` (the engine's pin):** every
+> numbered bug here is fixed, #5 and #15 included, and float keys now equal
+> integer keys. Checked in a cart: nested calls in arguments and constructors,
+> constructors assigned into an index, anonymous and arrow functions,
+> `table.insert` / `table.remove` / `t[k] = nil`, `ents[i].z = 0`, a one-line
+> body with a local. Still open: scientific notation (`1e30` doesn't parse) and
+> read-only vec3 fields (#12, not re-checked). Kept as history.
+
 > **Status re-checked 2026-10-14 against `../silt-stable` `main` @ `30fb16b`:** #1,
 > #2, #3, #8, #9, #10, #11, #13 and #14 no longer reproduce. #5 and its relative #15
 > (a field assigned a constructor holding locals) are fixed on silt branch

@@ -20,41 +20,29 @@ examples of everything below.
    frame with `Value nil is not callable@1:1` if `draw` is missing, so define an
    empty one if you target them.)
 3. **Z is up.** x/y are the ground plane.
-4. silt (the Lua VM) miscompiles some ordinary Lua. Write in the restricted style
-   below from the first line. Retrofitting it later is the slow part.
+4. silt (the Lua VM) is not stock Lua. The short list of differences is below;
+   the long list of miscompiles older notes warn about is fixed.
 5. Test with a `TEST_HOOK(dt)` script on a hidden monitor (see *Testing* below).
    Don't wait for a human to click around.
 
-## Write Lua in this style (silt workarounds)
+## silt, the Lua VM
 
-Full details and repros are in `SILT-BUGS.md`. These rules avoid all of the open bugs.
-Follow them everywhere, not only where something already broke. The failures show up
-far from their cause (`Value: 0.76… is not callable`, `Invalid chunk due compilation
-corruption`, or a whole file silently not loading).
+The engine's pinned silt (`beffd55`, 2026-11) runs ordinary Lua: calls nested in
+argument lists and constructors, anonymous and arrow functions (`n -> n * 2`),
+`table.insert` / `table.remove`, `t[k] = nil`, `ents[i].z = 0`,
+`string.find` / `match` / `gmatch` / `gsub`, and `t[6/2]` is `t[3]`. Each was a
+miscompile once and was re-checked in a cart on this pin. Code written in the old
+restricted style (every call hoisted to a local, named globals only, hand-kept
+counts) still runs; new code doesn't need it. `SILT-BUGS.md` is the history.
 
-- **Hoist every call out of argument lists and constructors.**
-  `local c = cos(a)` then `f(c * r, x)`, never `f(cos(a) * r, x)`. This covers
-  #1 and #14. It applies to string concatenation with calls too:
-  `local name = "crop" .. tostring(s)`.
-- **Table constructors that mention locals get their own statement:**
-  `local p = { x, y, z }` then `arr[n] = p`. Never `arr[#arr + 1] = { x, y }` (#5).
-- **No anonymous functions**, not even `pcall(function() … end)` (#10). Use named
-  global functions and dispatch on strings or tables of names.
-- **Don't write one-line function bodies that declare a local.** Split them over lines.
-- **Never delete from tables.** `table.remove`/`table.insert(t, pos, v)`, `t[#t] = nil`
-  and `t[k] = nil` all misbehave (#2, #3, #8, #9). Keep a count (`N = N + 1; T[N] = v`),
-  flag dead entries (`it.dead = true`), or rebuild the array with a filter loop.
-  Store sets as `true`/`false` and test with `== true`.
-- **Entities in arrays:** `local e = ents[i]; e.z = 0` works. `ents[i].z = 0` errors (#11).
-- **Float keys are not int keys.** `t[6/2]` is not `t[3]`. Use `flr()` (it returns an
-  int) or `//` for anything used as a key or grid index.
-- No `1e30` literals. vec3 fields are read-only. `break` works.
-- Keep files small and split by topic. Each chunk has limits on constants and
-  top-level globals (#4, #6). A dozen 150–400 line files is a comfortable size.
-  Put shared state in a few global tables (`P`, `G`, `UI`, ...), not hundreds of
-  loose globals.
+What still differs:
+
+- No `1e30` literals (scientific notation doesn't parse). vec3 fields are read-only.
 - Scripts load in sorted filename order. Keep top level to definitions and
   constants, and do all setup inside `main()`, so load order never matters.
+- Put shared state in a few global tables (`P`, `G`, `UI`, ...), not hundreds of
+  loose globals, and keep files split by topic: it is what lets a save swap one
+  function instead of reloading the app (`app.swap`).
 
 ## World, camera, meshes
 
@@ -294,9 +282,37 @@ the app's own tiles and entities: click one and `app.mesh` hands it over with
 its textures; it's saved back as a glb/gltf in `assets/` or as a `mod()` script
 in `scripts/`. model-chor's `tests/overlay.sh` runs it end to end.
 
+**Ctrl+E** opens the built-in source editor,
+[edit-chor](https://github.com/Auxnon/edit-chor) (locally
+`~/projects/edit-chor`, `EDIT_CHOR_DIR`, `--overlay builtin:edit`): the app's
+scripts on a pane in front of the camera, highlighted by the engine's own
+analysis, saved with `app.swap` so only the functions that changed reload, and
+a move mode that drags entities and writes constant positions back to source.
+It's the worked example for an overlay with its own 3D UI: read its AGENTS.md
+before building another (mesh corners snap to 1/16 unit, entities don't blend,
+an app reload drops the overlay's models too). **Ctrl+N** opens
+[sound-chor](https://github.com/Auxnon/sound-chor) the same way
+(`SOUND_CHOR_DIR`, `--overlay builtin:sound`); it was written as a standalone
+app and hasn't been adapted to sit over another one yet.
+
 Overlays get a privileged `app.*` table (guide: `pick.md`, `pause.md`,
 `view.md`, `drive.md`, `colors.md`, `project.md`, `close.md`, `source.md`, `save.md`,
-`info.md`, `texinfo.md`, `newtex.md`, `mesh.md`, `hide.md`, `png.md`):
+`info.md`, `texinfo.md`, `newtex.md`, `mesh.md`, `hide.md`, `png.md`,
+`swap.md`, `lex.md`, `lint.md`, `names.md`, `ents.md`, `put.md`):
+
+- `app.swap(path, source)` writes a script and reloads as little as the edit
+  allows: changed function bodies are replaced in place by silt's hot swap,
+  keeping every global, upvalue, entity and the camera (`kind = "fn"`);
+  anything else reloads the app (`"root"`); a script that doesn't compile is
+  written but not applied (`"err"`). `app.reload()` still reloads the lot.
+- `app.lex(source)` and `app.lint(source)` are the language server's tokens
+  and diagnostics for a source string, without running it. `app.names()` lists
+  the app's textures, models and sound files, for an editor that wants to know
+  what a string names.
+- `app.ents()` lists the app's entities and `app.put(id, {x=, y=, z=, rx=,
+  ry=, rz=, scale=})` places one. Nothing records where an entity's numbers
+  came from, so an editor that wants to write a move back into source has to
+  find the `make()` call itself (edit-chor's `source.lua` does).
 
 - `app.pick()` ray-casts what's actually drawn (model triangles, billboard
   sprites, tiles) and reports the texture and texel under the pointer. Edit

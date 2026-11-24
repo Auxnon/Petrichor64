@@ -97,6 +97,10 @@ pub struct Core {
     pub requests: Vec<crate::host::Request>,
     /// The host channel's main-thread end (`host_post` / `host_take`).
     pub host: crate::host::HostLink,
+    /// What `app.swap` last applied to each script of an edited app, by
+    /// (bundle, path): the source its VM is really running, which the next swap
+    /// is compared against. Empty until an editor swaps something.
+    pub live_src: std::collections::HashMap<(u8, String), String>,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
@@ -316,6 +320,7 @@ impl<'core> Core {
             policy: policy,
             requests: Vec::new(),
             host: Default::default(),
+            live_src: Default::default(),
             loggy,
             gfx,
             completed_bundles: FxHashMap::default(),
@@ -416,6 +421,7 @@ impl<'core> Core {
             policy: crate::host::Policy::open(),
             requests: Vec::new(),
             host: Default::default(),
+            live_src: Default::default(),
             loggy,
             completed_bundles: FxHashMap::default(),
             instance_buffers: (),

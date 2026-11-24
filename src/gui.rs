@@ -842,6 +842,7 @@ impl Gui {
                                 } else {
                                     vec4(1., 0., 0., 1.)
                                 },
+                                false,
                             );
                         }
                     }
@@ -1313,10 +1314,11 @@ pub fn direct_text(
     x: LuaResponse,
     y: LuaResponse,
     c: Vec4,
+    cased: bool,
 ) -> u32 {
     let xx = eval(x, width);
     let yy = eval(y, height);
-    direct_text_raw(target, letters.borrow(), txt, xx, yy, c)
+    direct_text_raw(target, letters.borrow(), txt, xx, yy, c, cased)
 }
 
 /** Even rawer! Just hand us the i32 positions. Returns the line count */
@@ -1327,6 +1329,9 @@ pub fn direct_text_raw(
     xx: i32,
     yy: i32,
     color: Vec4,
+    // Draw a-z with the font's own lowercase glyphs (kept in the sheet's last
+    // two rows, at the letter's code + 0x80) instead of as capitals.
+    cased: bool,
 ) -> u32 {
     let map = TextMap {
         new_color: image::Rgba([
@@ -1344,6 +1349,9 @@ pub fn direct_text_raw(
             let mut ind = c as u32;
             if ind > 255 {
                 ind = 255;
+            }
+            if cased && c.is_ascii_lowercase() {
+                ind += 0x80;
             }
             let index_x = ind % 16;
             let index_y = ind / 16;

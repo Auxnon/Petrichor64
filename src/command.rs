@@ -1167,7 +1167,7 @@ function abtn(button) end"
             let id = *ent_counter.lock();
             *ent_counter.lock() += 1;
 
-            let ent = crate::lua_ent::LuaEnt::new(
+            let mut ent = crate::lua_ent::LuaEnt::new(
                 id,
                 asset.unwrap_or("plane".to_string()),
                 x.unwrap_or(0.),
@@ -1175,6 +1175,15 @@ function abtn(button) end"
                 z.unwrap_or(0.),
                 s.unwrap_or(1.),
             );
+            // Remember the line that made it, so an editor can open or
+            // rewrite that call (`app.ents`).
+            // The chunk name is a full path from the loader and a bare file
+            // name after a swap; the file name is what both agree on.
+            ent.origin = vm.call_site().and_then(|c| {
+                let chunk = c.chunk?;
+                let file = chunk.rsplit(['/', '\\']).next().unwrap_or(&chunk);
+                Some((file.to_string(), c.line as u32, c.column as u32))
+            });
             let wrapper = vm.create_userdata_raw(mc, ent);
             let wrapper_clone = wrapper.clone();
             // let wrapped = Arc::new(std::sync::Mutex::new(ent));
@@ -4096,6 +4105,175 @@ function app.project(x, y, z) end",
             &mut app
         );
 
+        // What a source editor needs of the language itself. Pure analysis of the
+        // text it's given (silt's `lsp` module): nothing is run, and nothing of
+        // the app is read, so these answer on this thread.
+        lua_lib!(
+            "lex",
+            move |vm, mc, src: String| {
+                let mut t = vm.raw_table();
+                let mut n = 0i64;
+                for (line, col, len, kind) in silt_lua::lsp::semantic_tokens(&src) {
+                    for v in [line + 1, col + 1, len, kind + 1] {
+                        n += 1;
+                        t.set(n, v as i64);
+                    }
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the tokens of some source, for highlighting",
+            "
+---@param source string
+---@return integer[] flat: line, column, length, kind, ...
+function app.lex(source) end",
+            &mut app
+        );
+
+        lua_lib!(
+            "lint",
+            move |vm, mc, src: String| {
+                let mut t = vm.raw_table();
+                for (i, d) in silt_lua::lsp::diagnostics(&src).iter().enumerate() {
+                    let mut e = vm.raw_table();
+                    e.set_str(mc, "line", d.range.start.line as i64 + 1);
+                    e.set_str(mc, "col", d.range.start.character as i64 + 1);
+                    e.set_str(mc, "line2", d.range.end.line as i64 + 1);
+                    e.set_str(mc, "col2", d.range.end.character as i64 + 1);
+                    e.set_str(
+                        mc,
+                        "error",
+                        matches!(d.severity, silt_lua::lsp::Severity::Error),
+                    );
+                    e.set_str(mc, "msg", lstr(mc, d.message.clone()));
+                    t.set(i as i64 + 1, vm.wrap_table(mc, e));
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: what's wrong with some source, without running it",
+            "
+---@param source string
+---@return {line:integer, col:integer, line2:integer, col2:integer, error:boolean, msg:string}[]
+function app.lint(source) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "swap",
+            move |vm, mc, (file, contents): (String, String)| {
+                let (tx, rx) = sync_channel::<SwapOut>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppSwap(file, contents, tx))));
+                let Ok(o) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                t.set_str(mc, "kind", lstr(mc, o.kind));
+                t.set_str(mc, "msg", lstr(mc, o.msg));
+                let mut names = vm.raw_table();
+                for (i, n) in o.names.into_iter().enumerate() {
+                    names.set(i as i64 + 1, lstr(mc, n));
+                }
+                t.set_str(mc, "names", vm.wrap_table(mc, names));
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: write a script and reload only the functions that changed",
+            "
+---@param path string
+---@param contents string
+---@return {kind:string, msg:string, names:string[]}|nil
+function app.swap(path, contents) end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "names",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Option<[Vec<String>; 3]>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppNames(tx))));
+                let Ok(Some(lists)) = rx.recv() else {
+                    return Ok(Value::Nil);
+                };
+                let mut t = vm.raw_table();
+                for (key, list) in ["tex", "mod", "snd"].into_iter().zip(lists) {
+                    let mut l = vm.raw_table();
+                    for (i, n) in list.into_iter().enumerate() {
+                        l.set(i as i64 + 1, lstr(mc, n));
+                    }
+                    t.set_str(mc, key, vm.wrap_table(mc, l));
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: the names of the app's textures, models and sound files",
+            "
+---@return {tex:string[], mod:string[], snd:string[]}|nil
+function app.names() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "ents",
+            move |vm, mc, (): ()| {
+                let (tx, rx) = sync_channel::<Vec<EntOut>>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppEnts(tx))));
+                let list = rx.recv().unwrap_or_default();
+                let mut t = vm.raw_table();
+                for (i, e) in list.into_iter().enumerate() {
+                    let mut o = vm.raw_table();
+                    o.set_str(mc, "id", e.id as i64);
+                    o.set_str(mc, "asset", lstr(mc, e.asset));
+                    for (k, v) in ["x", "y", "z", "rx", "ry", "rz", "scale"].into_iter().zip(e.at) {
+                        o.set_str(mc, k, v);
+                    }
+                    if let Some((file, line, col)) = e.origin {
+                        o.set_str(mc, "file", lstr(mc, file));
+                        o.set_str(mc, "line", line as i64);
+                        o.set_str(mc, "col", col as i64);
+                    }
+                    t.set(i as i64 + 1, vm.wrap_table(mc, o));
+                }
+                Ok(vm.wrap_table(mc, t))
+            },
+            "overlay only: every entity the app has, with where it is",
+            "
+---@return {id:integer, asset:string, x:number, y:number, z:number, rx:number, ry:number, rz:number, scale:number, file:string?, line:integer?, col:integer?}[]
+function app.ents() end",
+            &mut app
+        );
+
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "put",
+            move |_, _, (id, t): (f64, Value)| {
+                let Value::Table(t) = t else {
+                    return Err(make_err("app.put: the second argument is a table"));
+                };
+                let t = t.borrow();
+                let mut at = [None; 7];
+                for (slot, k) in at
+                    .iter_mut()
+                    .zip(["x", "y", "z", "rx", "ry", "rz", "scale"])
+                {
+                    *slot = match t.get_str(k) {
+                        Some(Value::Number(n)) => Some(*n),
+                        Some(Value::Integer(i)) => Some(*i as f64),
+                        _ => None,
+                    };
+                }
+                let (tx, rx) = sync_channel::<bool>(0);
+                lua_err!(pitcher.send((bundle_id, MainCommmand::AppPut(id as u64, at, tx))));
+                Ok(Value::Bool(rx.recv().unwrap_or(false)))
+            },
+            "overlay only: move, turn or scale one of the app's entities",
+            "
+---@param id integer
+---@param at {x?:number, y?:number, z?:number, rx?:number, ry?:number, rz?:number, scale?:number}
+---@return boolean
+function app.put(id, at) end",
+            &mut app
+        );
+
         let pitcher = main_pitcher.clone();
         lua_lib!(
             "close",
@@ -4333,6 +4511,10 @@ pub fn close_overlay(core: &mut Core, id: u8) -> bool {
 pub const PAINT_OVERLAY: &str = "builtin:paint";
 /// Directory name of the built-in model editor overlay (`src/builtin.rs`).
 pub const MODEL_OVERLAY: &str = "builtin:model";
+/// Directory name of the built-in source editor overlay (`src/builtin.rs`).
+pub const EDIT_OVERLAY: &str = "builtin:edit";
+/// Directory name of the built-in sound tool overlay (`src/builtin.rs`).
+pub const SOUND_OVERLAY: &str = "builtin:sound";
 
 /// Ctrl+P: open the paint overlay over the running app, or close it if it's
 /// up. Refused while the app has `attr{lock=true}` — locking out the engine's
@@ -4353,6 +4535,26 @@ pub fn toggle_model_overlay(core: &mut Core) {
         core,
         MODEL_OVERLAY,
         "the model editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/model-chor at build time)",
+    );
+}
+
+/// Ctrl+E: the source editor overlay (github.com/Auxnon/edit-chor), the same
+/// way: the app's scripts on a pane in front of the camera, saved with
+/// `app.swap` so only the functions that changed reload.
+pub fn toggle_edit_overlay(core: &mut Core) {
+    toggle_builtin_overlay(
+        core,
+        EDIT_OVERLAY,
+        "the source editor isn't built into this chor (it needs the studio feature, and github.com/Auxnon/edit-chor at build time)",
+    );
+}
+
+/// Ctrl+N: the sound tool overlay (github.com/Auxnon/sound-chor), the same way.
+pub fn toggle_sound_overlay(core: &mut Core) {
+    toggle_builtin_overlay(
+        core,
+        SOUND_OVERLAY,
+        "the sound tool isn't built into this chor (it needs the studio feature, and github.com/Auxnon/sound-chor at build time)",
     );
 }
 
@@ -4679,6 +4881,9 @@ async fn async_load_app(
 
 /** reset and load previously loaded game, OR reload the binary binded game if compiled with it*/
 pub fn reload(core: &mut Core, bundle_id: u8) {
+    // The VM is about to run the files as they are on disk again, so what
+    // `app.swap` remembered it running is no longer true.
+    core.live_src.retain(|k, _| k.0 != bundle_id);
     if soft_reset(core, bundle_id) {
         println!("reload from current bundle");
         block_on(load_app_and_log(core, None, None, Some(bundle_id), None));
@@ -5056,6 +5261,15 @@ pub enum MainCommmand {
     AppSource(String, SyncSender<Result<String, String>>),
     /// `app.save(texture)`: write a texture's pixels back into that file.
     AppSave(String, SyncSender<Result<String, String>>),
+    /// `app.swap(path, source)`: write a script, then reload as little as the
+    /// change allows (silt's `hotswap_functions`).
+    AppSwap(String, String, SyncSender<SwapOut>),
+    /// `app.names()`: the app's texture, model and sound-file names.
+    AppNames(SyncSender<Option<[Vec<String>; 3]>>),
+    /// `app.ents()`: the app's live entities.
+    AppEnts(SyncSender<Vec<EntOut>>),
+    /// `app.put(id, at)`: set an entity's x, y, z, rx, ry, rz, scale (those given).
+    AppPut(u64, [Option<f64>; 7], SyncSender<bool>),
     /// `app.info()`: where the edited app lives and whether its files can be
     /// written at all (a packed game can't).
     AppInfo(SyncSender<Option<AppInfoOut>>),
@@ -5161,6 +5375,24 @@ pub struct MeshOut {
     pub pos: Vec<[f32; 3]>,
     pub uv: Vec<[f32; 2]>,
     pub tex: Vec<String>,
+}
+
+/// `app.swap()`: what happened. `kind` is "same" (nothing that runs changed),
+/// "fn" (only `names` were redefined, state kept), "root" (the app reloaded;
+/// `msg` says why) or "err" (nothing was applied; `msg` says why).
+pub struct SwapOut {
+    pub kind: &'static str,
+    pub msg: String,
+    pub names: Vec<String>,
+}
+
+/// `app.ents()`: one entity. `at` is x, y, z, rx, ry, rz, scale.
+pub struct EntOut {
+    pub id: u64,
+    pub asset: String,
+    pub at: [f64; 7],
+    /// The `make` call that created it: chunk name, line, column.
+    pub origin: Option<(String, u32, u32)>,
 }
 
 /// `app.info()`.

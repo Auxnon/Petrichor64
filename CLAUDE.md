@@ -132,6 +132,37 @@ is `SkelState::pose(skel, now, world)`; `world` is needed because `ik` goals are
 world points. `ent:bone()` on the Lua thread only knows the entity's own
 matrix, so it's off for an entity that rides a parent.
 
+## Function-scoped reload (`app.swap`)
+
+`Core::app_swap` hands the old and new source of one script to the app's Lua
+thread (`LuaTalk::Swap`), which calls silt's `hotswap_functions`: changed
+function bodies are replaced in place (globals rebound with their upvalues
+kept, nested prototypes redirected), and anything else comes back as "root
+changed" with nothing run, which `app_swap` answers by reloading the app.
+`Core::live_src` remembers what each script's VM is really running, since the
+file on disk may be newer; `command::reload` clears it for the bundle.
+
+The swap is given the script's file name as its chunk name, while the loader
+names chunks by full path. `make` stamps entities with the file name only
+(`LuaEnt::origin`, from `vm.call_site()`) so both agree.
+
+silt's `hotswap` (no `_functions`) would rerun the file's top level over the
+live globals instead of reloading. It isn't used: an app's `main()` wouldn't
+run again, so entities and tiles made there would be stale.
+
+`command::reload` (and so a `"root"` swap) resets the camera and clears
+**every** model (`ModelManager::reset`), an open overlay's included, and
+repacks the atlas. An overlay with 3D of its own has to rebuild after it
+(edit-chor's `pane_restore`).
+
+## Built-in tools (`src/builtin.rs`, `build.rs` `editors`)
+
+image-chor (Ctrl+P), model-chor (Ctrl+M), edit-chor (Ctrl+E) and sound-chor
+(Ctrl+N) are separate repos compiled in as overlays. Adding one is an entry in
+`editors::ALL` (build.rs), a module and match arm in `builtin.rs`, a
+`*_OVERLAY` constant and toggle in `command.rs`, and a key in
+`controls_evaluate`. Only `scripts/` ships: no assets, no sounds.
+
 ## Scripts load in sorted order
 
 `asset::get_script_items` sorts, so every file's top level runs in the same order

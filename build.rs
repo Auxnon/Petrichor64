@@ -109,16 +109,19 @@ fn nested_command(
 ///
 /// - the image editor (Ctrl+P), github.com/Auxnon/image-chor
 /// - the model editor (Ctrl+M), github.com/Auxnon/model-chor
+/// - the source editor (Ctrl+E), github.com/Auxnon/edit-chor
+/// - the sound tool (Ctrl+N), github.com/Auxnon/sound-chor
 ///
 /// Each is a git clone in the engine's own folder (`image-chor/`,
-/// `model-chor/`, both gitignored), made by the first build that doesn't find
+/// `model-chor/`, `edit-chor/`, `sound-chor/`, all gitignored), made by the first build that doesn't find
 /// it; after that the build never fetches, it compiles whatever that checkout
 /// holds. Its `scripts/` (`.lua` and `.silt`; `ignore.lua`, the LSP stubs, is
 /// left out) go in, and editing them, pulling, or switching branches there
 /// rebuilds. `just editors` pulls both.
 ///
-/// - `IMAGE_CHOR_DIR` / `MODEL_CHOR_DIR`: use this checkout instead.
-/// - `IMAGE_CHOR_REF` / `MODEL_CHOR_REF`: the branch, tag or commit the first
+/// - `IMAGE_CHOR_DIR` / `MODEL_CHOR_DIR` / `EDIT_CHOR_DIR` / `SOUND_CHOR_DIR`:
+///   use this checkout instead.
+/// - `IMAGE_CHOR_REF` / `MODEL_CHOR_REF` / `EDIT_CHOR_REF` / `SOUND_CHOR_REF`: the branch, tag or commit the first
 ///   clone checks out instead of `main`. An existing clone is left as it is.
 /// - Offline with no clone yet, the build still succeeds, with a warning, and
 ///   the shortcut says the editor isn't built in; the next build tries again.
@@ -137,7 +140,7 @@ mod editors {
         rev_const: &'static str,
     }
 
-    pub const ALL: [Editor; 2] = [
+    pub const ALL: [Editor; 4] = [
         Editor {
             name: "image-chor",
             dir_env: "IMAGE_CHOR_DIR",
@@ -153,6 +156,22 @@ mod editors {
             url: "https://github.com/Auxnon/model-chor",
             scripts_static: "MODEL",
             rev_const: "MODEL_REV",
+        },
+        Editor {
+            name: "edit-chor",
+            dir_env: "EDIT_CHOR_DIR",
+            ref_env: "EDIT_CHOR_REF",
+            url: "https://github.com/Auxnon/edit-chor",
+            scripts_static: "EDIT",
+            rev_const: "EDIT_REV",
+        },
+        Editor {
+            name: "sound-chor",
+            dir_env: "SOUND_CHOR_DIR",
+            ref_env: "SOUND_CHOR_REF",
+            url: "https://github.com/Auxnon/sound-chor",
+            scripts_static: "SOUND",
+            rev_const: "SOUND_REV",
         },
     ];
 

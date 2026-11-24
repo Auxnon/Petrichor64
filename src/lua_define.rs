@@ -74,6 +74,19 @@ pub enum LuaTalk {
     Resize(u32, u32),
     Die(SyncSender<()>),
     Drop(String),
+    /// `app.swap`: chunk name, the source the VM is running, the new source.
+    Swap(Box<(String, String, String)>, SyncSender<SwapReply>),
+}
+
+/// What silt's function-only hot swap did with an edited script.
+pub enum SwapReply {
+    /// Nothing runs differently (spacing, comments, moved lines).
+    Same,
+    /// These function bodies were replaced in place.
+    Fns(Vec<String>),
+    /// More than function bodies changed; nothing was run.
+    Root,
+    Err(String),
 }
 
 // impl From<Value<'_>> for LuaResponse {
@@ -594,6 +607,20 @@ impl<'lt> LuaCore {
         }
     }
 
+    /// Swap changed function bodies of one script in place (silt's
+    /// `hotswap_functions`). `Root` means nothing was touched.
+    pub fn swap(&self, name: String, old: String, new: String) -> Result<SwapReply, P64Error> {
+        let (tx, rx) = sync_channel::<SwapReply>(0);
+        let ltx = self.to_lua_tx.as_ref().ok_or(P64Error::LuaClosed)?;
+        ltx.send(LuaTalk::Swap(Box::new((name, old, new)), tx))
+            .map_err(|_| P64Error::ChannelDisconnectedError)?;
+        rx.recv_timeout(Duration::from_millis(10000))
+            .map_err(|e| match e {
+                RecvTimeoutError::Timeout => P64Error::ChannelTimeoutError(2),
+                RecvTimeoutError::Disconnected => P64Error::LuaClosed,
+            })
+    }
+
     /** Call resize function with resolution within lua app */
     pub fn resize(&self, w: u32, h: u32) {
         if let Some(ltx) = &self.to_lua_tx {
@@ -811,6 +838,29 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                     format!("load reply dropped (caller gone): {}", e),
                 ))?;
             }
+        }
+        LuaTalk::Swap(code, sync) => {
+            let (name, old, new) = *code;
+            // silt compiles the new source and then the old one inside the swap.
+            // An empty compile first tells us which source indices those get,
+            // so errors from swapped functions still render a snippet.
+            let at = ctx
+                .compiler
+                .try_compile(mc, None, "")
+                .map(|f| f.source_index)
+                .unwrap_or(usize::MAX);
+            if at != usize::MAX {
+                store_script(&mut ctx.scripts, at + 1, &new);
+                store_script(&mut ctx.scripts, at + 2, &old);
+            }
+            use silt_lua::lua::HotswapResult;
+            let reply = match vm.hotswap_functions(mc, Some(&name), &old, &new, &mut ctx.compiler) {
+                Ok(HotswapResult::NoChange) => SwapReply::Same,
+                Ok(HotswapResult::FunctionChanged(names)) => SwapReply::Fns(names),
+                Ok(HotswapResult::RootChanged) => SwapReply::Root,
+                Err(e) => SwapReply::Err(error_string(e.into(), &ctx.scripts)),
+            };
+            let _ = sync.send(reply);
         }
         LuaTalk::AsyncLoad(code) => {
             println!(

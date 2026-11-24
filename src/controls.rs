@@ -159,6 +159,12 @@ pub fn controls_evaluate(
             } else if key_pressed(KeyCode::KeyM) {
                 // The model editor, the same way.
                 crate::command::toggle_model_overlay(core);
+            } else if key_pressed(KeyCode::KeyE) {
+                // The source editor, the same way.
+                crate::command::toggle_edit_overlay(core);
+            } else if key_pressed(KeyCode::KeyN) {
+                // The sound tool, the same way.
+                crate::command::toggle_sound_overlay(core);
             } else if key_pressed(KeyCode::KeyR) {
                 crate::command::reload(core, core.bundle_manager.console_bundle_target);
             } else if key_pressed(KeyCode::Enter) {

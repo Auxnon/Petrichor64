@@ -159,12 +159,13 @@ install-tui:
     ln -sf ~/.local/chor-tui/bin/chor ~/.local/bin/chor-tui
     @echo "Installed as chor-tui"
 
-# Pull the latest editors into their clones (./image-chor, ./model-chor); the
+# Pull the latest editors into their clones (./image-chor, ./model-chor,
+# ./edit-chor, ./sound-chor); the
 # next build compiles them in. A missing clone is made by the next build. To
 # build with another checkout instead: IMAGE_CHOR_DIR=~/projects/image-chor or
 # MODEL_CHOR_DIR=~/projects/model-chor cargo build
 editors:
-    for d in image-chor model-chor; do if [ -d $d ]; then git -C $d pull --ff-only; fi; done
+    for d in image-chor model-chor edit-chor sound-chor; do if [ -d $d ]; then git -C $d pull --ff-only; fi; done
 
 # Old name for `editors`.
 image-chor: editors
