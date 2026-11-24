@@ -137,7 +137,31 @@ function draw()
     local t1 = "Drag and drop game file"
     local t2 = "` opens console, type 'help'"
     text(t1, "=50% -" .. flr(t1:len() * 10 / 2), 8)
+    -- io.open is missing where the app may not load another (a sandbox)
+    if io and io.open then
+        local t3 = "or click the console"
+        text(t3, "=50% -" .. flr(t3:len() * 10 / 2), 20)
+    end
     text(t2, "=50% -" .. flr(t2:len() * 10 / 2), "=100% - 12")
+end
+
+-- A press that just landed on the console: the pointer's ray from the camera
+-- (0, -8, 3) against a ball around the console's middle (0, 0, 1.375), a
+-- little bigger than it is so a finger finds it.
+was_down = false
+function clicked()
+    local m = mus()
+    local down = m.m1
+    local hit = false
+    if down and not was_down then
+        local oy = -8
+        local oz = 3 - 1.375
+        local b = oy * m.vy + oz * m.vz
+        local c = oy * oy + oz * oz - 0.75 * 0.75
+        hit = b < 0 and b * b - c >= 0
+    end
+    was_down = down
+    return hit
 end
 
 function drop()
@@ -174,6 +198,11 @@ end
 function loop()
     floor_loop()
     rain_loop()
+    -- still waiting for a game: clicking the console asks for one with the
+    -- system's file dialog, and what's chosen arrives at drop()
+    if state == -1 and io and io.open and clicked() then
+        io.open()
+    end
     if state == 0 then
         logo3.z = logo3.z - 0.05
         if logo3.z <= 1.125 then

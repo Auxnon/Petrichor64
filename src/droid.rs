@@ -304,3 +304,109 @@ pub fn share(path: &Path, mime: &str) -> Result<(), String> {
         )),
     }
 }
+
+// --- The Java bridge: drags from other apps, and the document picker -------
+
+/// `android/Bridge.java`, compiled by build.rs. Empty when the build had no
+/// Android SDK or JDK to compile it with (`just check-android`), and then
+/// drags and the picker do nothing.
+const DEX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bridge.dex"));
+
+/// Paths Java has handed over, waiting for the engine's thread.
+static FILES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static BRIDGE: OnceLock<Option<jni::objects::GlobalRef>> = OnceLock::new();
+
+/// `Bridge.onFile(path)`, called on a Java thread.
+extern "system" fn on_file(
+    mut env: JNIEnv,
+    _class: jni::objects::JClass,
+    path: jni::objects::JString,
+) {
+    if let Ok(s) = env.get_string(&path) {
+        if let Ok(mut files) = FILES.lock() {
+            files.push(s.into());
+        }
+    }
+}
+
+/// Load the bridge class out of memory (the APK holds no dex, and a class
+/// loader over a byte buffer needs none) and hook up `onFile`.
+fn bridge() -> Option<&'static jni::objects::GlobalRef> {
+    BRIDGE
+        .get_or_init(|| {
+            if DEX.is_empty() {
+                ::log::warn!("petrichor64: built without the Java bridge: no drag and drop, no file picker");
+                return None;
+            }
+            with_activity("java bridge", |env, activity| {
+                // The loader keeps reading the buffer, so it is never freed.
+                let bytes: &'static mut [u8] = Box::leak(DEX.to_vec().into_boxed_slice());
+                // Safety: the slice lives for the rest of the process.
+                let buffer =
+                    unsafe { env.new_direct_byte_buffer(bytes.as_mut_ptr(), bytes.len())? };
+                let parent = env
+                    .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+                    .l()?;
+                let loader = env.new_object(
+                    "dalvik/system/InMemoryDexClassLoader",
+                    "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
+                    &[(&buffer).into(), (&parent).into()],
+                )?;
+                let name = env.new_string("com.makeavoy.petrichor64.Bridge")?;
+                let class = env
+                    .call_method(
+                        &loader,
+                        "loadClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[(&name).into()],
+                    )?
+                    .l()?;
+                let class = jni::objects::JClass::from(class);
+                env.register_native_methods(
+                    &class,
+                    &[jni::NativeMethod {
+                        name: "onFile".into(),
+                        sig: "(Ljava/lang/String;)V".into(),
+                        fn_ptr: on_file as *mut std::ffi::c_void,
+                    }],
+                )?;
+                env.new_global_ref(class)
+            })
+        })
+        .as_ref()
+}
+
+/// Call one of the bridge's `static void name(Activity)` methods.
+fn bridge_call(name: &'static str) {
+    let Some(class) = bridge() else { return };
+    with_activity(name, |env, activity| {
+        let class: &jni::objects::JClass = class.as_obj().into();
+        env.call_static_method(
+            class,
+            name,
+            "(Landroid/app/Activity;)V",
+            &[activity.into()],
+        )?
+        .v()
+    });
+}
+
+/// Start taking drags from other apps as drops. Called once the window is up.
+pub fn accept_drops() {
+    bridge_call("install");
+}
+
+/// Show the system's document picker (`io.open`). What's chosen turns up in
+/// `files`.
+pub fn pick() {
+    bridge_call("pick");
+}
+
+/// Files dragged in or picked since the last call, as paths in the app's
+/// cache. Called every frame, so it takes the lock only to look.
+pub fn files() -> Vec<String> {
+    match FILES.try_lock() {
+        Ok(mut files) if !files.is_empty() => std::mem::take(&mut *files),
+        _ => Vec::new(),
+    }
+}

@@ -262,6 +262,9 @@ pub struct App {
     /// happens on the first frame, so window activation isn't blocked by unpacking.
     #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
     deferred_auto: bool,
+    /// The file dialog (`Request::Open`) and what it has come back with.
+    #[cfg(desktop)]
+    picked: Picked,
     /// Whether the worker has been sent its Init + initial Load.
     #[cfg(target_arch = "wasm32")]
     worker_inited: bool,
@@ -311,6 +314,8 @@ impl Default for App {
             worker: None,
             #[cfg(all(not(target_arch = "wasm32"), feature = "include_auto"))]
             deferred_auto: false,
+            #[cfg(desktop)]
+            picked: Picked::default(),
             #[cfg(not(target_arch = "wasm32"))]
             deferred_overlay: None,
             surface_lost: false,
@@ -368,6 +373,75 @@ fn window_attributes() -> WindowAttributes {
     WindowAttributes::default()
         .with_title("Petrichor64")
         .with_inner_size(winit::dpi::LogicalSize::new(640i32, 548i32))
+}
+
+/// The desktop's file dialog, off the event loop's thread: on Linux it is a
+/// `zenity`/`kdialog` process, and waiting on it here would freeze the window
+/// behind it. One at a time; asking again while one is up does nothing.
+#[cfg(all(feature = "headed", desktop))]
+struct Picked {
+    tx: std::sync::mpsc::Sender<Option<String>>,
+    rx: std::sync::mpsc::Receiver<Option<String>>,
+    asking: bool,
+}
+
+#[cfg(all(feature = "headed", desktop))]
+impl Default for Picked {
+    fn default() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self {
+            tx,
+            rx,
+            asking: false,
+        }
+    }
+}
+
+#[cfg(all(feature = "headed", desktop))]
+impl Picked {
+    fn show() -> Option<String> {
+        match native_dialog::DialogBuilder::file()
+            .set_title("Open a game")
+            .open_single_file()
+            .show()
+        {
+            Ok(path) => path.map(|p| p.to_string_lossy().to_string()),
+            Err(e) => {
+                eprintln!("(couldn't show the file dialog: {})", e);
+                None
+            }
+        }
+    }
+
+    fn ask(&mut self) {
+        if self.asking {
+            return;
+        }
+        self.asking = true;
+        // AppKit only shows a panel from the main thread, where it runs its
+        // own modal loop, so there it is simply waited for.
+        #[cfg(target_os = "macos")]
+        {
+            let _ = self.tx.send(Self::show());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Self::show());
+            });
+        }
+    }
+
+    /// What has been chosen since the last call.
+    fn take(&mut self) -> Vec<String> {
+        let mut out = vec![];
+        while let Ok(answer) = self.rx.try_recv() {
+            self.asking = false;
+            out.extend(answer);
+        }
+        out
+    }
 }
 
 #[cfg(feature = "headed")]
@@ -435,6 +509,12 @@ impl App {
                     }
                     #[cfg(not(target_os = "android"))]
                     let _ = (path, mime);
+                }
+                Request::Open => {
+                    #[cfg(target_os = "android")]
+                    crate::droid::pick();
+                    #[cfg(desktop)]
+                    self.picked.ask();
                 }
                 Request::Clipboard(_text) => {
                     #[cfg(all(desktop, not(target_arch = "wasm32")))]
@@ -686,6 +766,10 @@ impl ApplicationHandler for App {
                 "we built core".on_red()
             );
             self.inst = Some(Instance::wrap(core, catcher));
+            // A game dragged over from another app (split screen, a files
+            // app) lands as a drop, like a file dragged onto a desktop window.
+            #[cfg(target_os = "android")]
+            crate::droid::accept_drops();
         }
 
         // --- Web: attach the canvas to the DOM, then build Core asynchronously.
@@ -1394,6 +1478,17 @@ impl ApplicationHandler for App {
                         0.
                     };
                 }
+            }
+
+            // A file chosen in the system's dialog, or (Android) dragged in
+            // from another app, arrives like one dropped on the window.
+            #[cfg(desktop)]
+            let chosen = self.picked.take();
+            #[cfg(target_os = "android")]
+            let chosen = crate::droid::files();
+            #[cfg(any(desktop, target_os = "android"))]
+            for path in chosen {
+                inst.input(Input::Drop(path));
             }
 
             // One engine tick, then whatever it asked of the window.
@@ -4375,6 +4470,10 @@ impl Core {
                 // The clipboard is the host's: `chor` grants it (`App::grant`).
                 MainCommmand::Copy(s) => {
                     self.requests.push(crate::host::Request::Clipboard(s));
+                }
+                // So is the file dialog; what's chosen comes back as a drop.
+                MainCommmand::Open => {
+                    self.requests.push(crate::host::Request::Open);
                 }
                 MainCommmand::HostSend(s) => {
                     crate::host::push_capped(&mut self.host.outbox, s);

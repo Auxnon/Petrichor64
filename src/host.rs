@@ -237,6 +237,10 @@ pub enum Request {
     Quit,
     /// Put this text on the system clipboard.
     Clipboard(String),
+    /// `io.open()`: let the person choose a file with the system's own file
+    /// dialog. The host hands what they chose back as `Input::Drop`, as if it
+    /// had been dragged in; nothing comes back if they cancel.
+    Open,
     /// Bring up (`true`) or put away the on-screen keyboard: the console
     /// opened or closed by the gear. Nothing to do where there is a real one.
     Keyboard(bool),

@@ -69,9 +69,15 @@ bundle-mac-cart:
 dist-mac:
     ./build.sh
 
-# Linux/SteamDeck AppImage (needs `cargo install cargo-appimage`).
+# Linux/SteamDeck AppImage of the studio, in target/appimage. Fetches
+# appimagetool on first use unless one is on PATH.
 appimage:
-    cargo appimage
+    build-tools/appimage.sh
+
+# The terminal `chor` as a Flatpak bundle, in target/flatpak. Needs `flatpak`
+# and the runtime (see the script).
+flatpak-tui:
+    build-tools/flatpak-tui.sh
 
 # ---------------------------------------------------------------------------
 # Web (wasm) — via Trunk. Output name is fixed (filehash=false) so worker.js
@@ -271,7 +277,9 @@ android profile="debug":
 #
 # The game is compiled *into* the library via `include_auto`, so the APK needs no
 # assets and no AssetManager work. `just android-apk -` builds the studio
-# instead (see `android-studio`), which loads apps from its own storage.
+# instead (see `android-studio`), which loads apps from its own storage, and
+# `just android-apk +` the standalone player (see `android-player`), which
+# has no game either and plays what it is given.
 android-apk game profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -280,8 +288,11 @@ android-apk game profile="release":
     NDK="${ANDROID_NDK_HOME:-$(ls -1d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}"
     [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "no NDK under $SDK/ndk"; exit 1; }
 
-    # A JDK: system first, else Android Studio's bundled runtime.
-    if ! /usr/libexec/java_home >/dev/null 2>&1; then
+    # A JDK: system first, else Android Studio's bundled runtime. (macOS has a
+    # `java` stub on PATH even with no JDK, hence java_home there.)
+    if [ "$(uname)" != Darwin ] && command -v keytool >/dev/null; then
+      echo "java: $(command -v java)"
+    elif ! /usr/libexec/java_home >/dev/null 2>&1; then
       JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
       [ -d "$JBR" ] || { echo "no JDK found; install one or Android Studio"; exit 1; }
       export JAVA_HOME="$JBR"
@@ -298,7 +309,13 @@ android-apk game profile="release":
       echo "sdk platform: android-$TSDK"
       export ANDROID_HOME="$SDK"
     else
-      NEWEST="$(ls -1d "$SDK"/platforms/* | sort -V | tail -1)"
+      # The newest whole-numbered platform the NDK supports, else the newest of
+      # any kind (a CI runner also carries betas like `android-37.2-beta3`).
+      NEWEST="$(for d in "$SDK"/platforms/android-*; do
+          n="${d##*/android-}"
+          case "$n" in *[!0-9]*) ;; *) [ "$n" -le "$MAX" ] && echo "$d" ;; esac
+        done | sort -V | tail -1)"
+      [ -n "$NEWEST" ] || NEWEST="$(ls -1d "$SDK"/platforms/* | sort -V | tail -1)"
       SHIM="$PWD/target/android-sdk-shim"
       echo "no platforms/android-$TSDK; shimming $(basename "$NEWEST") under target/ (install API $TSDK in Android Studio to stop needing this)"
       rm -rf "$SHIM"; mkdir -p "$SHIM/platforms/android-$TSDK"
@@ -311,6 +328,9 @@ android-apk game profile="release":
       export ANDROID_HOME="$SHIM"
     fi
     export ANDROID_NDK_HOME="$NDK"
+    # cargo-apk prefers the deprecated ANDROID_SDK_ROOT when it is set (GitHub's
+    # runners set it), which would point it past the shim.
+    unset ANDROID_SDK_ROOT
 
     # A release build must be signed, and cargo-apk only auto-generates a key for
     # dev profiles. This makes a throwaway one under target/ (gitignored, not a
@@ -334,6 +354,10 @@ android-apk game profile="release":
       # The studio: no game baked in. It starts at the console, with the gear
       # and command strip, and keeps the apps it makes in its own storage.
       cargo apk build --lib $FLAG
+    elif [ "{{game}}" = "+" ]; then
+      # The standalone player: no game and no studio. It starts on the console
+      # app and plays what is dragged onto it, or chosen by tapping the console.
+      cargo apk build --lib --no-default-features --features silt,headed,audio $FLAG
     else
       # A player: one game baked in (include_bytes! needs the file present at
       # compile time) and no studio, so no gear, strip or editors.
@@ -341,11 +365,21 @@ android-apk game profile="release":
       cargo apk build --lib --no-default-features --features silt,headed,audio,include_auto $FLAG
     fi
     find target/{{profile}}/apk -name '*.apk' -exec ls -la {} \;
+    # android/Bridge.java, compiled by build.rs. Empty means it found no SDK
+    # platform, d8 or javac, and the APK takes no drags and has no file picker.
+    # (PETRICHOR_BRIDGE=require makes that a build failure instead.)
+    DEX="$(find target/aarch64-linux-android/{{profile}}/build -name bridge.dex -size +0 | head -1)"
+    [ -n "$DEX" ] || echo "warning: built without the Java bridge (see cargo's warnings above)"
 
 # The studio on a phone: make and edit apps on the device. No game is baked in;
 # it opens at the console. The gear in the bottom right corner brings up the
 # keyboard, the console and the command strip (the editors, and share).
 android-studio profile="release": (android-apk "-" profile)
+    @just android-install {{profile}}
+
+# The standalone player on a phone: no game baked in and no studio. Drag a
+# `.game.png` onto it from another app, or tap the console to pick one.
+android-player profile="release": (android-apk "+" profile)
     @just android-install {{profile}}
 
 # Build, install and launch a game in one step: `just android-run sounder`.
