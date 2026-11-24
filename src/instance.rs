@@ -142,6 +142,28 @@ impl Instance {
     pub fn input(&mut self, ev: Input) {
         let (w, h) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
         let core = &mut self.core;
+        // The gear and command strip take a press before the app can.
+        #[cfg(feature = "studio")]
+        {
+            let at = match &ev {
+                Input::Button {
+                    button: Button::Left,
+                    pressed: true,
+                } => Some((core.global.mouse_pos.x, core.global.mouse_pos.y)),
+                Input::Touch {
+                    phase: TouchPhase::Start,
+                    x,
+                    y,
+                    ..
+                } => Some((x / w, y / h)),
+                _ => None,
+            };
+            if let Some((x, y)) = at {
+                if core.strip_press(x, y) {
+                    return;
+                }
+            }
+        }
         match ev {
             Input::Key { code, pressed } => {
                 let state = if pressed {
@@ -366,6 +388,9 @@ impl Instance {
 
         // System shortcuts and console keys.
         controls::controls_evaluate(core, &self.bits, &self.bits_prev, Some(catcher));
+
+        #[cfg(feature = "studio")]
+        core.strip_tick();
 
         // Per-tick deltas, now read.
         core.global.mouse_delta = vec2(0., 0.);

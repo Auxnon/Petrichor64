@@ -101,6 +101,8 @@ pub struct Core {
     /// (bundle, path): the source its VM is really running, which the next swap
     /// is compared against. Empty until an editor swaps something.
     pub live_src: std::collections::HashMap<(u8, String), String>,
+    /// The gear and command strip (strip.rs).
+    pub strip: crate::strip::State,
 }
 
 //DEV consider atomics such as AtomicU8 for switch_board or lazy static primatives
@@ -321,6 +323,7 @@ impl<'core> Core {
             requests: Vec::new(),
             host: Default::default(),
             live_src: Default::default(),
+            strip: Default::default(),
             loggy,
             gfx,
             completed_bundles: FxHashMap::default(),
@@ -422,6 +425,7 @@ impl<'core> Core {
             requests: Vec::new(),
             host: Default::default(),
             live_src: Default::default(),
+            strip: Default::default(),
             loggy,
             completed_bundles: FxHashMap::default(),
             instance_buffers: (),

@@ -126,6 +126,50 @@ pub async fn pack_folder(dir: &str, out: Option<&str>, loggy: &mut Loggy) -> Res
     crate::file_util::pack_zip(sources, icon, &pack_name, loggy).await
 }
 
+/// Pack an app folder for sending to someone: `<name>.game.png` (the icon
+/// with the files zipped behind it, which loads as a game) or a plain
+/// `<name>.zip`, written beside the folder. Returns the file. Entries are
+/// `<name>/assets/..`, `<name>/scripts/..`, `<name>/sounds/..`, which is the
+/// layout the unpacker reads and what a person expects on unzipping. An app
+/// with no `icon.png` gets the engine's own.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn export_app(dir: &Path, zip: bool, loggy: &mut Loggy) -> Result<PathBuf, P64Error> {
+    let dir = dir.to_path_buf();
+    let asset_items = get_asset_items(&dir, loggy)?;
+    let script_items = get_script_items(&dir, loggy)?;
+    let sound_items = get_sound_items(&dir);
+    let sources = collect_packable_sources(&asset_items, &script_items, &sound_items);
+    if sources.is_empty() {
+        return Err(P64Error::MissingAssets);
+    }
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("app")
+        .to_string();
+    let mut entries = Vec::with_capacity(sources.len());
+    for source in sources {
+        let p = Path::new(source);
+        let rel = p.strip_prefix(&dir).unwrap_or(p);
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        entries.push((
+            format!("{}/{}", name, rel),
+            crate::file_util::get_file_buffer(source)?,
+        ));
+    }
+    let header = if zip {
+        None
+    } else {
+        let own = crate::file_util::get_file_buffer_from_path(dir.join("icon.png"))
+            .ok()
+            .filter(|b| !b.is_empty());
+        Some(own.unwrap_or_else(|| include_bytes!("../petrichor-icon.png").to_vec()))
+    };
+    let out = dir.with_file_name(format!("{}.{}", name, if zip { "zip" } else { "game.png" }));
+    crate::file_util::write_bundle(entries, header, &out)?;
+    Ok(out)
+}
+
 pub fn super_pack(name: &str) -> Result<&str, P64Error> {
     // let sources = walk_files(None);
     // crate::zip_pal::pack_zip(sources, &"icon.png".to_string(), &name)
@@ -635,7 +679,22 @@ pub fn check_for_auto() -> Option<String> {
     }
 }
 
+static APP_HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Give apps a home other than the person's home directory: on a phone, the
+/// storage the system gives this app (`droid::home`). Set once at startup.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub fn set_app_home(home: PathBuf) {
+    let _ = APP_HOME.set(home);
+}
+
 pub fn determine_path(directory: Option<&str>) -> PathBuf {
+    if let Some(home) = APP_HOME.get() {
+        return match directory {
+            Some(s) => home.join(s),
+            None => home.clone(),
+        };
+    }
     #[cfg(not(debug_assertions))]
     let current = match dirs::home_dir() {
         Some(cur) => cur,

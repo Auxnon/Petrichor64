@@ -248,6 +248,10 @@ android-activity = "0.6"
 # Routes `log` to logcat. Android has no stdout to read, so without this every
 # `log::info!` in the engine goes nowhere and a failure to start is invisible.
 android_logger = "0.14"
+# Calls into the Android framework for what NativeActivity has no native call
+# for: the soft keyboard, its height, and the share sheet (src/droid.rs).
+# Already in the tree via cpal.
+jni = "0.21"
 
 # ---------------------------------------------------------------------------
 # wasm-only dependencies: browser glue for the web build.

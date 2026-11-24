@@ -270,7 +270,8 @@ android profile="debug":
 #    (API 33-36) and the shim stops being used.
 #
 # The game is compiled *into* the library via `include_auto`, so the APK needs no
-# assets and no AssetManager work — dynamic loading comes later.
+# assets and no AssetManager work. `just android-apk -` builds the studio
+# instead (see `android-studio`), which loads apps from its own storage.
 android-apk game profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -328,11 +329,24 @@ android-apk game profile="release":
       export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
     fi
 
-    # Bake the game in. include_bytes! needs the file present at compile time.
-    cargo run --release -- pack {{game}} auto.game.png
     FLAG=""; [ "{{profile}}" = "release" ] && FLAG="--release"
-    cargo apk build --lib --features include_auto $FLAG
+    if [ "{{game}}" = "-" ]; then
+      # The studio: no game baked in. It starts at the console, with the gear
+      # and command strip, and keeps the apps it makes in its own storage.
+      cargo apk build --lib $FLAG
+    else
+      # A player: one game baked in (include_bytes! needs the file present at
+      # compile time) and no studio, so no gear, strip or editors.
+      cargo run --release -- pack {{game}} auto.game.png
+      cargo apk build --lib --no-default-features --features silt,headed,audio,include_auto $FLAG
+    fi
     find target/{{profile}}/apk -name '*.apk' -exec ls -la {} \;
+
+# The studio on a phone: make and edit apps on the device. No game is baked in;
+# it opens at the console. The gear in the bottom right corner brings up the
+# keyboard, the console and the command strip (the editors, and share).
+android-studio profile="release": (android-apk "-" profile)
+    @just android-install {{profile}}
 
 # Build, install and launch a game in one step: `just android-run sounder`.
 # The game is baked into the APK, so switching games is a rebuild — this is the
@@ -360,6 +374,7 @@ android-install profile="release":
 # check` so that recipe still works for anyone who hasn't added the target.
 check-android:
     cargo check --target aarch64-linux-android --lib
+    cargo check --target aarch64-linux-android --lib --no-default-features --features silt,headed,audio
 
 # Add the other ABIs (32-bit phones, and the x86_64 emulator).
 android-targets:
