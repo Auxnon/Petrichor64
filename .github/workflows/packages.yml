@@ -7,11 +7,9 @@
 #   linux appimage   the studio, windowed (`just appimage`)
 #   linux flatpak    the terminal `chor` (`just flatpak-tui`)
 #
-# A release is made by changing `version` in Cargo.toml: on a push to main
-# whose version has no `v<version>` tag yet, everything is built and published
-# as a GitHub release of that name, tagged at that commit, with that version's
-# section of CHANGELOG.md as its notes. A push that leaves the version alone
-# builds nothing. Pushing a `v*` tag by hand does the same for that tag.
+# Pushing a `v*` tag makes the release: everything is built and published as
+# a GitHub release of that name, with that version's section of CHANGELOG.md
+# as its notes (`git tag v0.5.0 && git push origin v0.5.0`).
 #
 # It also runs without releasing when asked (Actions -> Packages -> Run
 # workflow, which can take a game to bake into the player) and on any `ci/**`
@@ -33,7 +31,7 @@ on:
         default: ""
   push:
     tags: ["v*"]
-    branches: [main, "ci/**"]
+    branches: ["ci/**"]
 
 concurrency:
   group: packages-${{ github.ref }}
@@ -47,41 +45,8 @@ env:
     libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
 
 jobs:
-  plan:
-    name: what to do
-    runs-on: ubuntu-latest
-    outputs:
-      build: ${{ steps.plan.outputs.build }}
-      release: ${{ steps.plan.outputs.release }}
-      tag: ${{ steps.plan.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v5
-      - id: plan
-        run: |
-          VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
-          BUILD=true; RELEASE=false; TAG="v$VERSION"
-          case "$GITHUB_REF" in
-            refs/tags/*)
-              RELEASE=true; TAG="$GITHUB_REF_NAME" ;;
-            refs/heads/main)
-              if [ "$GITHUB_EVENT_NAME" = push ]; then
-                if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
-                  echo "$TAG is already released: nothing to build"
-                  BUILD=false
-                else
-                  echo "$TAG has no tag yet: releasing it"
-                  RELEASE=true
-                fi
-              fi ;;
-          esac
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
-          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
   android:
     name: android ${{ matrix.variant }}
-    needs: plan
-    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -152,8 +117,6 @@ jobs:
     name: linux studio appimage
     # The oldest runner there is, for the oldest glibc: the AppImage runs on
     # anything at least that new.
-    needs: plan
-    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -170,8 +133,6 @@ jobs:
 
   flatpak:
     name: linux tui flatpak
-    needs: plan
-    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -193,8 +154,8 @@ jobs:
 
   release:
     name: publish the release
-    needs: [plan, android, appimage, flatpak]
-    if: needs.plan.outputs.release == 'true'
+    needs: [android, appimage, flatpak]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -206,7 +167,7 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.plan.outputs.tag }}
+          TAG: ${{ github.ref_name }}
         run: |
           # The version's own section of the changelog, if it has one.
           awk -v want="## ${TAG#v}" '
@@ -215,8 +176,8 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "$TAG exists: replacing its files"
           elif [ -s notes.md ]; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes-file notes.md
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md
           else
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+            gh release create "$TAG" --title "$TAG" --generate-notes
           fi
           gh release upload "$TAG" --clobber files/*
