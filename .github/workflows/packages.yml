@@ -1,0 +1,154 @@
+# Installable builds: two Android APKs and two Linux packages.
+#
+#   android studio   the studio, no game baked in (`just android-apk -`)
+#   android player   one game baked in, no studio (`just android-apk <game>`)
+#   linux appimage   the studio, windowed (`just appimage`)
+#   linux flatpak    the terminal `chor` (`just flatpak-tui`)
+#
+# Runs when asked (Actions -> Packages -> Run workflow, which also takes the
+# game for the player), on a `v*` tag (the files are attached to a release of
+# that name), and on any `ci/**` branch, for working on this file.
+#
+# The APKs are signed with a throwaway key made during the run unless the
+# repository has these secrets, in which case that key is used and one build
+# can be installed over another:
+#   ANDROID_KEYSTORE_BASE64     `base64 -w0 your.keystore`
+#   ANDROID_KEYSTORE_PASSWORD
+# Both APKs have the same package id, so a phone holds one of them at a time.
+name: Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: Game folder baked into the Android player
+        default: games/witch
+  push:
+    tags: ["v*"]
+    branches: ["ci/**"]
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # What a windowed or audio build of `chor` needs to compile on Ubuntu.
+  LINUX_DEPS: >-
+    pkg-config libasound2-dev libudev-dev libxcb1-dev libxcb-shape0-dev
+    libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev
+
+jobs:
+  android:
+    name: android ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [studio, player]
+    env:
+      GAME: ${{ inputs.game || 'games/witch' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        # The player packs its game with a host `chor` before cross-compiling.
+        if: matrix.variant == 'player'
+        run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
+      - run: rustup target add aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-${{ matrix.variant }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-apk
+      - name: Signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE" ]; then
+            echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "CARGO_APK_RELEASE_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "no ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key"
+          fi
+      - name: Build
+        run: |
+          if [ "${{ matrix.variant }}" = studio ]; then
+            just android-apk -
+          else
+            just android-apk "$GAME"
+          fi
+      - name: Name the APK
+        run: |
+          VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          NAME="petrichor64-studio-$VERSION"
+          [ "${{ matrix.variant }}" = player ] && NAME="petrichor64-player-$(basename "$GAME")-$VERSION"
+          mkdir -p out
+          cp "$(find target/release/apk -name '*.apk' | head -1)" "out/$NAME.apk"
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.variant }}
+          path: out/*.apk
+          if-no-files-found: error
+
+  appimage:
+    name: linux studio appimage
+    # The oldest runner there is, for the oldest glibc: the AppImage runs on
+    # anything at least that new.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: appimage
+      - run: build-tools/appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: target/appimage/*.AppImage
+          if-no-files-found: error
+
+  flatpak:
+    name: linux tui flatpak
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS flatpak
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: flatpak
+          workspaces: ". -> target/tui"
+      - name: Flatpak runtime
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//25.08
+      - run: build-tools/flatpak-tui.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-flatpak
+          path: target/flatpak/*.flatpak
+          if-no-files-found: error
+
+  release:
+    name: attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, appimage, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber files/*

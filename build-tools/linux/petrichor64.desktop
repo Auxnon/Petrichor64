@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Petrichor64
+Comment=A fantasy game console and game engine
+Exec=chor %F
+Icon=petrichor64
+Categories=Development;Game;
+Terminal=false

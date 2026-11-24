@@ -69,9 +69,15 @@ bundle-mac-cart:
 dist-mac:
     ./build.sh
 
-# Linux/SteamDeck AppImage (needs `cargo install cargo-appimage`).
+# Linux/SteamDeck AppImage of the studio, in target/appimage. Fetches
+# appimagetool on first use unless one is on PATH.
 appimage:
-    cargo appimage
+    build-tools/appimage.sh
+
+# The terminal `chor` as a Flatpak bundle, in target/flatpak. Needs `flatpak`
+# and the runtime (see the script).
+flatpak-tui:
+    build-tools/flatpak-tui.sh
 
 # ---------------------------------------------------------------------------
 # Web (wasm) — via Trunk. Output name is fixed (filehash=false) so worker.js
@@ -280,8 +286,11 @@ android-apk game profile="release":
     NDK="${ANDROID_NDK_HOME:-$(ls -1d "$SDK"/ndk/* 2>/dev/null | sort -V | tail -1)}"
     [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "no NDK under $SDK/ndk"; exit 1; }
 
-    # A JDK: system first, else Android Studio's bundled runtime.
-    if ! /usr/libexec/java_home >/dev/null 2>&1; then
+    # A JDK: system first, else Android Studio's bundled runtime. (macOS has a
+    # `java` stub on PATH even with no JDK, hence java_home there.)
+    if [ "$(uname)" != Darwin ] && command -v keytool >/dev/null; then
+      echo "java: $(command -v java)"
+    elif ! /usr/libexec/java_home >/dev/null 2>&1; then
       JBR="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
       [ -d "$JBR" ] || { echo "no JDK found; install one or Android Studio"; exit 1; }
       export JAVA_HOME="$JBR"
