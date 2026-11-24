@@ -240,6 +240,12 @@ windowless device.
 - **`Policy` is enforced by construction** in `init_lua_sys` (a forbidden global
   is never registered) and again by `MainCommmand::allowed_by` on the main
   thread. A new native that reaches outside the instance needs both.
+- **A host calls cart globals by name** (`Instance::call`, the element's
+  `el.call`; `host.call` the other way), riding the host channel and its
+  `host_messages` policy. It is `call_global` on the cart's Lua thread
+  (`LuaTalk::Call`), queued ahead of the next loop, so don't add a per-event
+  native or dispatcher for host events: define a global. Arguments are
+  `host::Arg` (nil, bool, number, string).
 - A hosted instance's texture is remade at once on `resize` (the host
   re-binds it); a window's resize stays debounced.
 - `Instance::new` is native-only: on the web the VM runs in a worker that `App`

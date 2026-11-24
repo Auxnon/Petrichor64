@@ -59,3 +59,27 @@ impl<'a> silt_lua::value::ToLua<'a> for LStr {
         Ok(lstr(mc, self.0))
     }
 }
+
+/// A host call's arguments (`host::Arg`), made into silt values when they
+/// reach the VM, for `call_global`.
+pub struct LArgs(pub Vec<crate::host::Arg>);
+
+impl<'a> silt_lua::value::ToLuaMulti<'a> for LArgs {
+    fn to_lua_multi(
+        self,
+        _: &silt_lua::lua::VM<'a>,
+        mc: &Mutation<'a>,
+    ) -> Result<Vec<Value<'a>>, silt_lua::LuaError> {
+        use crate::host::Arg;
+        Ok(self
+            .0
+            .into_iter()
+            .map(|a| match a {
+                Arg::Nil => Value::Nil,
+                Arg::Bool(b) => Value::Bool(b),
+                Arg::Num(n) => Value::Number(n),
+                Arg::Str(s) => lstr(mc, s),
+            })
+            .collect())
+    }
+}

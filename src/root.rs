@@ -687,6 +687,57 @@ impl Core {
         self.host.outbox.drain(..).collect()
     }
 
+    /// host -> cart: queue a call of the cart's global `name`, run ahead of its
+    /// next `loop()`. Kept until the cart is loaded to hear it (the oldest go
+    /// past `host::HOST_QUEUE_CAP`). Dropped, returning false, when the policy
+    /// has no host channel or the call is past `host::call_fits`.
+    pub fn call_post(&mut self, name: String, args: Vec<crate::host::Arg>) -> bool {
+        if !self.policy.host_messages || !crate::host::call_fits(&name, &args) {
+            return false;
+        }
+        crate::host::push_capped(&mut self.host.calls_in, (name, args));
+        true
+    }
+
+    /// cart -> host: every `(name, args)` the cart `host.call`'d since the last
+    /// call, in order.
+    pub fn call_take(&mut self) -> Vec<crate::host::Call> {
+        self.host.calls_out.drain(..).collect()
+    }
+
+    /// Hand the queued calls to the cart's Lua thread, which runs them
+    /// ahead of the next loop it's sent (its channel is in order). Kept while
+    /// there's no cart to take them (not loaded yet). On the web the VM is in
+    /// a worker instead, and `call_inbox_drain` hands them to it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn call_deliver(&mut self) {
+        if self.host.calls_in.is_empty() {
+            return;
+        }
+        // The app, never an overlay: calls are the cart's, like `host`.
+        let Some(lua) = self
+            .bundle_manager
+            .edit_target()
+            .and_then(|id| self.bundle_manager.bundles.get(&id))
+            .map(|b| &b.lua)
+        else {
+            return;
+        };
+        while let Some((k, v)) = self.host.calls_in.pop_front() {
+            if let Err(back) = lua.call_named(k, v) {
+                self.host.calls_in.push_front(back);
+                return;
+            }
+        }
+    }
+
+    /// The posted calls not yet handed to the VM worker
+    /// (`HostToVm::Call`). Wasm only: natively `call_deliver` hands them over.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn call_inbox_drain(&mut self) -> Vec<crate::host::Call> {
+        self.host.calls_in.drain(..).collect()
+    }
+
     /// The posted messages not yet handed to the VM worker, for it to queue on
     /// its side (`HostToVm::Host`). Wasm only: natively the VM shares the inbox.
     #[cfg(target_arch = "wasm32")]

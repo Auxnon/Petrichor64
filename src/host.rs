@@ -123,8 +123,85 @@ pub const HOST_QUEUE_CAP: usize = 1024;
 /// while it reloads) waits for it.
 pub type HostInbox = Arc<Mutex<VecDeque<String>>>;
 
+/// One argument of a call between the host and a cart: what crosses the
+/// boundary by value. Tables don't; send JSON in a string for those.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Arg {
+    Nil,
+    Bool(bool),
+    Num(f64),
+    Str(String),
+}
+
+impl From<bool> for Arg {
+    fn from(b: bool) -> Self {
+        Arg::Bool(b)
+    }
+}
+impl From<f64> for Arg {
+    fn from(n: f64) -> Self {
+        Arg::Num(n)
+    }
+}
+impl From<f32> for Arg {
+    fn from(n: f32) -> Self {
+        Arg::Num(n as f64)
+    }
+}
+impl From<i32> for Arg {
+    fn from(n: i32) -> Self {
+        Arg::Num(n as f64)
+    }
+}
+impl From<u32> for Arg {
+    fn from(n: u32) -> Self {
+        Arg::Num(n as f64)
+    }
+}
+impl From<&str> for Arg {
+    fn from(s: &str) -> Self {
+        Arg::Str(s.to_string())
+    }
+}
+impl From<String> for Arg {
+    fn from(s: String) -> Self {
+        Arg::Str(s)
+    }
+}
+
+/// A call by name with its arguments: a cart global the host calls
+/// (`Instance::call`), or what a cart `host.call`'d (`Instance::calls`).
+pub type Call = (String, Vec<Arg>);
+
+/// The longest name of a call, in bytes.
+pub const CALL_NAME_MAX: usize = 256;
+
+/// The most arguments a call carries.
+pub const CALL_ARGS_MAX: usize = 16;
+
+/// The most bytes of string a call's arguments hold between them. Room for a
+/// search string or a small JSON document, not for a file.
+pub const CALL_BYTES_MAX: usize = 64 * 1024;
+
+/// Whether a call is within [`CALL_NAME_MAX`], [`CALL_ARGS_MAX`] and
+/// [`CALL_BYTES_MAX`]. Past them it's dropped (host to cart) or an error
+/// (cart to host).
+pub fn call_fits(name: &str, args: &[Arg]) -> bool {
+    let bytes: usize = args
+        .iter()
+        .map(|a| match a {
+            Arg::Str(s) => s.len(),
+            _ => 0,
+        })
+        .sum();
+    !name.is_empty()
+        && name.len() <= CALL_NAME_MAX
+        && args.len() <= CALL_ARGS_MAX
+        && bytes <= CALL_BYTES_MAX
+}
+
 /// Push onto a host-channel queue, dropping the oldest past [`HOST_QUEUE_CAP`].
-pub fn push_capped(q: &mut VecDeque<String>, msg: String) {
+pub fn push_capped<T>(q: &mut VecDeque<T>, msg: T) {
     while q.len() >= HOST_QUEUE_CAP {
         q.pop_front();
     }
@@ -138,6 +215,11 @@ pub struct HostLink {
     pub(crate) inbox: HostInbox,
     /// Cart → host: what the cart `host.send`'d, until `Core::host_take`.
     pub(crate) outbox: VecDeque<String>,
+    /// Host → cart calls (`Core::call_post`), waiting to be handed to the
+    /// cart's Lua thread ahead of its next `loop()`.
+    pub(crate) calls_in: VecDeque<Call>,
+    /// Cart → host: what the cart `host.call`'d, until `Core::call_take`.
+    pub(crate) calls_out: VecDeque<Call>,
 }
 
 #[cfg(test)]
@@ -194,6 +276,20 @@ mod tests {
         }
         assert_eq!(q.len(), HOST_QUEUE_CAP);
         assert_eq!(q.front().map(String::as_str), Some("5"));
+    }
+
+    #[test]
+    fn calls_fit_under_caps() {
+        let big = |n: usize| Arg::Str("v".repeat(n));
+        assert!(call_fits("search", &["oak plank".into(), 3.into()]));
+        assert!(call_fits(
+            &"k".repeat(CALL_NAME_MAX),
+            &[big(CALL_BYTES_MAX)]
+        ));
+        assert!(!call_fits("", &[]));
+        assert!(!call_fits(&"k".repeat(CALL_NAME_MAX + 1), &[]));
+        assert!(!call_fits("k", &[big(CALL_BYTES_MAX), big(1)]));
+        assert!(!call_fits("k", &vec![Arg::Nil; CALL_ARGS_MAX + 1]));
     }
 
     #[test]

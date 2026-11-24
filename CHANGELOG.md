@@ -6,6 +6,7 @@
 - `include_auto` no longer turns `studio` on, so a build with a game compiled in really has no gear, strip or editors unless `studio` is asked for too
 - Packages built by GitHub Actions (`.github/workflows/packages.yml`): the Android studio APK, an Android player APK with one game baked in, the studio as a Linux AppImage, and the terminal `chor` as a Flatpak (`flatpak run com.makeavoy.petrichor64.tui <game dir>`). It runs on demand, and pushing a `v*` tag publishes the files as a GitHub release with that version's section of this file as the notes. `just appimage` and `just flatpak-tui` make the Linux ones locally
 - `just android-apk` finds a JDK on Linux
+- Calls by name between a host and its cart. The host calls any global function of the cart, with arguments, the way the engine calls `main` and `loop`: `Instance::call(name, args)` in Rust, `el.call(name, ...args)` on a `<petrichor-64>` element (`Engine.call`). They run in order before that frame's `loop()` (no polling), and a cart with no such global ignores them. `host.call(name, ...)` calls the host back (`Instance::calls()`, a `call` event with `detail` `{name, args}`). Arguments are strings, numbers, booleans or nil; names up to 256 bytes, 16 arguments and 64 KiB of string per call, 1024 queued per direction; gated by `host_messages` like `host.send`/`host.recv`, which are unchanged
 
 ## 0.5.0
 

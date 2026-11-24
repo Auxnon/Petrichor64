@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use petrichor64::host::{Cart, HostGpu, Input, Options, Policy, Request};
+use petrichor64::host::{Arg, Call, Cart, HostGpu, Input, Options, Policy, Request};
 use petrichor64::winit::keyboard::KeyCode;
 use petrichor64::{wgpu, Instance};
 
@@ -33,11 +33,73 @@ function loop()
 end
 "#;
 
+/// Calls by name: each global says when it ran and how many loops had run,
+/// the loop after says what it saw, `kinds` reports its argument types and
+/// calls the host back, `echo` answers with `host.call`s, and `paint` turns
+/// the sky green (seen even where `host` is nil, in a sandbox).
+/// silt-safe style (AGENTS.md): calls hoisted out of concatenations.
+const CALL_CART: &str = r#"
+function main()
+    S = { loops = 0, last = 'none', fresh = false }
+    sky:fill("f00")
+    if host then
+        host.send("ready")
+    end
+end
+function said(what)
+    S.last = what
+    S.fresh = true
+    if host then
+        local n = tostring(S.loops)
+        local m = "call " .. what .. " at " .. n
+        host.send(m)
+    end
+end
+function mark(k, v)
+    local w = k .. "=" .. v
+    said(w)
+end
+function kinds(s, n, b, z)
+    local ts = type(s)
+    local tn = type(n)
+    local tb = type(b)
+    local tz = type(z)
+    local w = ts .. " " .. tn .. " " .. tb .. " " .. tz
+    said(w)
+    local more = n + 1
+    local flip = not b
+    host.call("kinds", s, more, flip, z)
+end
+function paint()
+    sky:fill("0f0")
+    said("paint")
+end
+function echo(v)
+    host.call("echoed", v)
+    host.call("bare")
+end
+function loop()
+    S.loops = S.loops + 1
+    if S.fresh then
+        S.fresh = false
+        if host then
+            local n = tostring(S.loops)
+            local m = "loop " .. n .. " saw " .. S.last
+            host.send(m)
+        end
+    end
+end
+"#;
+
 fn cart_dir(name: &str) -> PathBuf {
+    cart_dir_with(name, CART)
+}
+
+fn cart_dir_with(name: &str, src: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("p64-host-test-{}-{name}", std::process::id()));
     std::fs::create_dir_all(dir.join("assets")).unwrap();
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    std::fs::write(dir.join("scripts/main.lua"), CART).unwrap();
+    std::fs::write(dir.join("scripts/main.lua"), src).unwrap();
     // `pack` wants an icon in the cart's root: the png the zip rides on.
     std::fs::copy(
         concat!(
@@ -512,4 +574,258 @@ fn clicking_the_console_asks_for_a_file() {
         !asked.contains(&Request::Open),
         "no file dialog without load_apps: {asked:?}"
     );
+}
+
+/// Tick and draw one instance until `done` holds for what it said (messages)
+/// and called (`calls()`), or fail.
+fn run_calls(
+    inst: &mut Instance,
+    heard: &mut Vec<String>,
+    called: &mut Vec<Call>,
+    start: Instant,
+    what: &str,
+    done: impl Fn(&[String], &[Call]) -> bool,
+) {
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        if inst.frame(start.elapsed()) {
+            inst.render();
+        }
+        heard.extend(inst.messages());
+        called.extend(inst.calls());
+        if done(heard, called) {
+            return;
+        }
+        assert!(
+            Instant::now() < until,
+            "timed out waiting for {what}: heard {heard:?}, called {called:?}"
+        );
+        std::thread::sleep(Duration::from_millis(4));
+    }
+}
+
+/// The loop count in "call <what> at <n>", for the call that said `kv`.
+fn call_at(heard: &[String], kv: &str) -> Option<u64> {
+    let head = format!("call {kv} at ");
+    heard
+        .iter()
+        .find_map(|m| m.strip_prefix(&head))
+        .map(|n| n.parse().expect("a loop count"))
+}
+
+#[test]
+fn calls_both_ways() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter: skipping the call test");
+        return;
+    };
+    let size = (64, 48);
+    let quiet = |policy: Policy| Policy {
+        audio: false,
+        ..policy
+    };
+    let options = |cart, policy| Options {
+        cart,
+        size,
+        scale: 1.0,
+        policy,
+    };
+    let call_dir = cart_dir_with("calls", CALL_CART);
+    let plain_dir = cart_dir("callless");
+    let start = Instant::now();
+
+    let mut inst = Instance::new(
+        &gpu,
+        options(Cart::Path(call_dir.clone()), quiet(Policy::open())),
+    )
+    .unwrap();
+    // Posted before the cart has run at all: kept for it, and after main().
+    assert!(inst.call("mark", ["early".into(), "1".into()]));
+    let (mut heard, mut called) = (Vec::new(), Vec::new());
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "the early call",
+        |h, _| {
+            h.iter()
+                .any(|m| m.starts_with("loop ") && m.ends_with(" saw early=1"))
+        },
+    );
+    assert_eq!(
+        heard.first().map(String::as_str),
+        Some("ready"),
+        "{heard:?}"
+    );
+
+    // One event: the loop right after it sees it.
+    assert!(inst.call("mark", ["search".into(), "oak plank".into()]));
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "the search call",
+        |h, _| h.iter().any(|m| m.ends_with(" saw search=oak plank")),
+    );
+    let at = call_at(&heard, "search=oak plank").expect("the call ran");
+    let next = format!("loop {} saw search=oak plank", at + 1);
+    assert!(heard.contains(&next), "wanted {next:?} in {heard:?}");
+
+    // Several between two frames: all of them, in order, before one loop.
+    heard.clear();
+    for k in ["a", "b", "c"] {
+        assert!(inst.call("mark", [k.into(), k.to_uppercase().into()]));
+    }
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "three calls",
+        |h, _| h.iter().any(|m| m.ends_with(" saw c=C")),
+    );
+    let ran: Vec<&String> = heard.iter().filter(|m| m.starts_with("call ")).collect();
+    assert_eq!(ran.len(), 3, "{heard:?}");
+    let at = call_at(&heard, "a=A").unwrap();
+    for (m, kv) in ran.iter().zip(["a=A", "b=B", "c=C"]) {
+        assert_eq!(**m, format!("call {kv} at {at}"), "{heard:?}");
+    }
+    let next = format!("loop {} saw c=C", at + 1);
+    assert!(heard.contains(&next), "wanted {next:?} in {heard:?}");
+
+    // Out: `host.call` reaches `calls()`, with or without arguments.
+    assert!(inst.call("echo", ["plank".into()]));
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "host.call",
+        |_, k| k.len() >= 2,
+    );
+    assert_eq!(
+        called,
+        vec![
+            ("echoed".to_string(), vec![Arg::Str("plank".into())]),
+            ("bare".to_string(), vec![])
+        ]
+    );
+
+    // Strings, numbers, booleans and nil arrive as themselves, and go back so.
+    called.clear();
+    assert!(inst.call("kinds", ["s".into(), 3.into(), true.into(), Arg::Nil]));
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "kinds",
+        |_, k| !k.is_empty(),
+    );
+    assert!(
+        heard
+            .iter()
+            .any(|m| m.starts_with("call string number boolean nil at ")),
+        "{heard:?}"
+    );
+    assert_eq!(
+        called,
+        vec![(
+            "kinds".to_string(),
+            vec![
+                Arg::Str("s".into()),
+                Arg::Num(4.0),
+                Arg::Bool(false),
+                Arg::Nil
+            ]
+        )]
+    );
+
+    // Past the caps, dropped.
+    use petrichor64::host::{CALL_ARGS_MAX, CALL_BYTES_MAX, CALL_NAME_MAX};
+    assert!(!inst.call("k".repeat(CALL_NAME_MAX + 1), []));
+    assert!(!inst.call("mark", ["v".repeat(CALL_BYTES_MAX + 1).into()]));
+    assert!(!inst.call("mark", vec![Arg::Nil; CALL_ARGS_MAX + 1]));
+
+    // `paint` turns the sky green: the check the sandbox below relies on.
+    assert!(inst.call("paint", []));
+    run_calls(
+        &mut inst,
+        &mut heard,
+        &mut called,
+        start,
+        "paint",
+        |h, _| h.iter().any(|m| m.ends_with(" saw paint")),
+    );
+    for _ in 0..10 {
+        if inst.frame(start.elapsed()) {
+            inst.render();
+        }
+        std::thread::sleep(Duration::from_millis(17));
+    }
+    let px = middle_pixel(&gpu, &inst, size);
+    assert!(px[1] > 200 && px[0] < 60, "the green sky, got {px:?}");
+    drop(inst);
+
+    // Sandboxed: no host channel, so no calls either way.
+    let packed = call_dir.with_extension("game.png");
+    petrichor64::pack(&call_dir.to_string_lossy(), Some(&packed.to_string_lossy()))
+        .expect("packing the call cart");
+    let bytes = std::fs::read(&packed).unwrap();
+    let mut boxed =
+        Instance::new(&gpu, options(Cart::Bytes(bytes), quiet(Policy::sandbox()))).unwrap();
+    assert!(!boxed.call("paint", []), "a sandbox took a call");
+    let until = Instant::now() + Duration::from_millis(1500);
+    let mut out = Vec::new();
+    while Instant::now() < until {
+        if boxed.frame(start.elapsed()) {
+            boxed.render();
+        }
+        assert!(!boxed.call("paint", []));
+        out.extend(boxed.calls());
+        assert!(boxed.messages().is_empty());
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    assert!(out.is_empty(), "{out:?}");
+    let px = middle_pixel(&gpu, &boxed, size);
+    assert!(px[0] > 200 && px[1] < 60, "still the red sky, got {px:?}");
+    drop(boxed);
+
+    // A cart with no such global doesn't hear them, and carries on.
+    let mut plain = Instance::new(
+        &gpu,
+        options(Cart::Path(plain_dir.clone()), quiet(Policy::open())),
+    )
+    .unwrap();
+    let mut heard = Vec::new();
+    let mut called = Vec::new();
+    for k in ["search", "show"] {
+        assert!(plain.call(k, ["x".into()]));
+    }
+    plain.post("ping".into());
+    run_calls(
+        &mut plain,
+        &mut heard,
+        &mut called,
+        start,
+        "the echo",
+        |h, _| h.iter().any(|m| m == "echo ping"),
+    );
+    assert!(called.is_empty(), "{called:?}");
+    plain.post("pong".into());
+    run_calls(
+        &mut plain,
+        &mut heard,
+        &mut called,
+        start,
+        "a second echo",
+        |h, _| h.iter().any(|m| m == "echo pong"),
+    );
+    drop(plain);
+
+    let _ = std::fs::remove_dir_all(&call_dir);
+    let _ = std::fs::remove_dir_all(&plain_dir);
+    let _ = std::fs::remove_file(&packed);
 }

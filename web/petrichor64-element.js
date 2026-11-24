@@ -20,6 +20,13 @@
 //   el.post(str)  host -> cart, read by the cart's `host.recv()`. Posts made
 //                 before the engine is up are kept and sent once it is.
 //   "message"     CustomEvent per cart `host.send(str)`; `detail` is the string.
+//   el.call(name, ...args)  host -> cart: the engine calls the cart's global
+//                 function `name` with the arguments before its next `loop()`.
+//                 Strings, numbers and booleans go as they are, null/undefined
+//                 as nil, anything else as its JSON in a string. Kept until the
+//                 engine is up, like posts. A cart with no such global ignores it.
+//   "call"        CustomEvent per cart `host.call(name, ...)`; `detail` is
+//                 `{ name, args }`.
 //   "title"       CustomEvent when the cart asks for a window title (`detail`);
 //                 the element leaves document.title alone.
 //   "petrichor-gpu-lost" / "petrichor-gpu-restored"  plain Events (also on window).
@@ -44,6 +51,7 @@ class Petrichor64Element extends HTMLElement {
     super();
     this.engine = null;
     this._pending = [];
+    this._pendingCalls = [];
     this.ready = new Promise((resolve, reject) => {
       this._resolve = resolve;
       this._reject = reject;
@@ -74,6 +82,8 @@ class Petrichor64Element extends HTMLElement {
     this.engine = mod.start(this, opts);
     for (const m of this._pending) this.engine.post(m);
     this._pending.length = 0;
+    for (const c of this._pendingCalls) this.engine.call(...c);
+    this._pendingCalls.length = 0;
     this._resolve(this.engine);
   }
 
@@ -81,6 +91,14 @@ class Petrichor64Element extends HTMLElement {
     msg = String(msg);
     if (this.engine) this.engine.post(msg);
     else this._pending.push(msg);
+  }
+
+  call(name, ...args) {
+    name = String(name);
+    if (this.engine) return this.engine.call(name, ...args);
+    this._pendingCalls.push([name, ...args]);
+    if (this._pendingCalls.length > 1024) this._pendingCalls.shift();
+    return true;
   }
 }
 

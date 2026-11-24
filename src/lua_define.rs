@@ -76,6 +76,9 @@ pub enum LuaTalk {
     Drop(String),
     /// `app.swap`: chunk name, the source the VM is running, the new source.
     Swap(Box<(String, String, String)>, SyncSender<SwapReply>),
+    /// A call from the host (`Instance::call`): run the cart's global of that
+    /// name with these arguments.
+    Call(String, Vec<crate::host::Arg>),
 }
 
 /// What silt's function-only hot swap did with an edited script.
@@ -662,6 +665,22 @@ impl<'lt> LuaCore {
         Ok(())
     }
 
+    /// Call a global of the cart by name ahead of its next loop. Hands the call
+    /// back when there's no Lua thread to take it, for the caller to keep.
+    pub fn call_named(
+        &self,
+        name: String,
+        args: Vec<crate::host::Arg>,
+    ) -> Result<(), crate::host::Call> {
+        match &self.to_lua_tx {
+            Some(ltx) => ltx.send(LuaTalk::Call(name, args)).map_err(|e| match e.0 {
+                LuaTalk::Call(k, v) => (k, v),
+                _ => unreachable!(),
+            }),
+            None => Err((name, args)),
+        }
+    }
+
     /** Call loop function within lua app */
     pub fn call_loop(&self, bits: ControlState) -> Result<(), P64Error> {
         if let Some(ltx) = &self.to_lua_tx {
@@ -996,6 +1015,16 @@ pub(crate) fn handle_lua_talk<'gc, 'a>(
                 let msg = error_string(e.into(), &ctx.scripts);
                 ctx.async_sender
                     .send((ctx.bundle_id, MainCommmand::AsyncError(msg)))?;
+            }
+        }
+        // `None` when the cart has no such global: it just doesn't hear the call.
+        // One that throws is logged like a throwing loop, and the runtime
+        // carries on.
+        LuaTalk::Call(name, args) => {
+            let args = crate::silt_str::LArgs(args);
+            if let Some(Err(e)) = vm.call_global(mc, &name, args) {
+                let s = error_string(e.into(), &ctx.scripts);
+                ctx.loggy.send((LogType::LuaError, s))?;
             }
         }
     }

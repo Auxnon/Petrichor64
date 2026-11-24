@@ -3589,6 +3589,52 @@ function host.send(msg) end",
             &mut host
         );
 
+        // Calls by name: the host hears these as `(name, args)`
+        // (`Instance::calls`, the web element's `call` event).
+        let pitcher = main_pitcher.clone();
+        lua_lib!(
+            "call",
+            move |_, _, args: Variadic| {
+                use crate::host::Arg;
+                let mut it = args.iter();
+                let name = match it.next() {
+                    Some(Value::String(s)) => s.to_string(),
+                    _ => return Err(make_err("host.call: a name (string) comes first")),
+                };
+                let mut out = Vec::new();
+                for v in it {
+                    out.push(match v {
+                        Value::Nil => Arg::Nil,
+                        Value::Bool(b) => Arg::Bool(*b),
+                        Value::Number(n) => Arg::Num(*n),
+                        Value::Integer(i) => Arg::Num(*i as f64),
+                        Value::String(s) => Arg::Str(s.to_string()),
+                        _ => {
+                            return Err(make_err(
+                                "host.call: arguments are strings, numbers, booleans or nil",
+                            ))
+                        }
+                    });
+                }
+                if !crate::host::call_fits(&name, &out) {
+                    return Err(make_err(&format!(
+                        "host.call: a name up to {} bytes, {} arguments and {} bytes of string",
+                        crate::host::CALL_NAME_MAX,
+                        crate::host::CALL_ARGS_MAX,
+                        crate::host::CALL_BYTES_MAX
+                    )));
+                }
+                lua_err!(pitcher.send((bundle_id, MainCommmand::HostCall(name, out))));
+                Ok(())
+            },
+            "Call a function of the app hosting this cart by name",
+            "
+---@param name string
+---@param ... string|number|boolean|nil
+function host.call(name, ...) end",
+            &mut host
+        );
+
         // Straight off the shared queue: no round trip to the main thread.
         let inbox = host_inbox.clone();
         lua_lib!(
@@ -5300,6 +5346,8 @@ pub enum MainCommmand {
     Open,
     /// `host.send(msg)`: a string for the hosting app (`Core::host_take`).
     HostSend(String),
+    /// `host.call(name, ...)`: a call by name for the hosting app (`Core::call_take`).
+    HostCall(String, Vec<crate::host::Arg>),
     LuaClose(),
     //for testing
     // Meta(crate::gui::ScreenIndex),
@@ -5327,7 +5375,7 @@ impl MainCommmand {
             MainCommmand::Quit(u) => *u == 0 || policy.load_apps,
             // A query (`None`) never opens the mic.
             MainCommmand::MicRecord(Some(_), ..) => policy.audio && policy.mic,
-            MainCommmand::HostSend(_) => policy.host_messages,
+            MainCommmand::HostSend(_) | MainCommmand::HostCall(..) => policy.host_messages,
             _ => true,
         }
     }
@@ -5526,6 +5574,7 @@ pub fn main_command_to_host(cmd: MainCommmand) -> Option<crate::worker_protocol:
         }),
         MainCommmand::AsyncError(s) => Some(VmToHost::Error(s)),
         MainCommmand::HostSend(s) => Some(VmToHost::Host(s)),
+        MainCommmand::HostCall(k, v) => Some(VmToHost::Call(k, v)),
         MainCommmand::SetImg(name, img, _tx) => {
             let (w, h) = img.dimensions();
             Some(VmToHost::SetImg {
