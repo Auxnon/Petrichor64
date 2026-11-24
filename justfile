@@ -307,7 +307,13 @@ android-apk game profile="release":
       echo "sdk platform: android-$TSDK"
       export ANDROID_HOME="$SDK"
     else
-      NEWEST="$(ls -1d "$SDK"/platforms/* | sort -V | tail -1)"
+      # The newest whole-numbered platform the NDK supports, else the newest of
+      # any kind (a CI runner also carries betas like `android-37.2-beta3`).
+      NEWEST="$(for d in "$SDK"/platforms/android-*; do
+          n="${d##*/android-}"
+          case "$n" in *[!0-9]*) ;; *) [ "$n" -le "$MAX" ] && echo "$d" ;; esac
+        done | sort -V | tail -1)"
+      [ -n "$NEWEST" ] || NEWEST="$(ls -1d "$SDK"/platforms/* | sort -V | tail -1)"
       SHIM="$PWD/target/android-sdk-shim"
       echo "no platforms/android-$TSDK; shimming $(basename "$NEWEST") under target/ (install API $TSDK in Android Studio to stop needing this)"
       rm -rf "$SHIM"; mkdir -p "$SHIM/platforms/android-$TSDK"
@@ -320,6 +326,9 @@ android-apk game profile="release":
       export ANDROID_HOME="$SHIM"
     fi
     export ANDROID_NDK_HOME="$NDK"
+    # cargo-apk prefers the deprecated ANDROID_SDK_ROOT when it is set (GitHub's
+    # runners set it), which would point it past the shim.
+    unset ANDROID_SDK_ROOT
 
     # A release build must be signed, and cargo-apk only auto-generates a key for
     # dev profiles. This makes a throwaway one under target/ (gitignored, not a
