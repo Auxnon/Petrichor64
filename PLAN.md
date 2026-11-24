@@ -432,10 +432,15 @@ unaffected by COOP/COEP. Ultra is an upgrade to the transport, not a prerequisit
 
 ### Where it stands
 
-The engine **type-checks for `aarch64-linux-android`** (`cargo check --target
-aarch64-linux-android`), touch input works through the existing mouse API, and
-`android_main` exists. It has **not been built into an APK or run on a device** —
-that needs an Android SDK + NDK, which the dev machine doesn't have (see below).
+Two builds. **The player** (`just android-apk <game>`): one game baked in, no
+studio. Run on a Galaxy Z Fold 5 (see below). **The studio**
+(`just android-studio`): no game, starts at the console, with the gear and
+command strip, the system keyboard, app storage for `new` / `load`, and share.
+The studio **type-checks for `aarch64-linux-android` and has not been run on a
+device**: the keyboard, the keyboard's height, storage and the share sheet are
+all JNI that only a phone can exercise. First things to try on one, in order:
+the gear raises the keyboard; typed keys reach the console; the strip sits on
+the keyboard; `new test` then `load test`; share a `.game.png`.
 
 ### `desktop` is not the same as `not(wasm)`
 
@@ -829,10 +834,17 @@ author marks, and a per-chart scale for spending texels on what's seen most.
 ### A mobile wrinkle for the source editor
 
 Text editing needs a keyboard, and the Android build uses `native-activity`, which
-has no soft-keyboard plumbing. Either switch to `game-activity` (a feature swap plus
-a Gradle project, see the Android section) or have the overlay **draw its own
-keyboard** — which is cheap here, fits a fantasy console, and works identically on
-desktop and phone. The second option is more in keeping with the engine.
+has no soft-keyboard plumbing of its own. Decided 2026-11: use the system keyboard
+anyway, asked for through JNI (`src/droid.rs`), with the gear and command strip
+(`src/strip.rs`) as the way to reach the console and the tools by touch. An
+in-engine keyboard would fit the console better but the system one is what people
+can already type on. The console gets its text from key events, which is what a
+soft keyboard sends a view with no input connection; anything past plain ASCII
+(composing, emoji, swipe typing on some keyboards) would need `game-activity`.
+
+The overlays themselves still expect a keyboard for their shortcuts (the source
+editor most of all). Opening them from the strip works; using them by touch is
+their own work to do.
 
 ## `chor --web` and the embedded web build
 

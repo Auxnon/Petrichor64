@@ -97,6 +97,10 @@ fn has(heard: &[String], msg: &str) -> bool {
 
 /// The middle pixel of an instance's texture.
 fn middle_pixel(gpu: &HostGpu, inst: &Instance, size: (u32, u32)) -> [u8; 4] {
+    pixel_at(gpu, inst, (size.0 / 2, size.1 / 2))
+}
+
+fn pixel_at(gpu: &HostGpu, inst: &Instance, at: (u32, u32)) -> [u8; 4] {
     let texture = inst.texture().texture();
     let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -110,8 +114,8 @@ fn middle_pixel(gpu: &HostGpu, inst: &Instance, size: (u32, u32)) -> [u8; 4] {
             texture,
             mip_level: 0,
             origin: wgpu::Origin3d {
-                x: size.0 / 2,
-                y: size.1 / 2,
+                x: at.0,
+                y: at.1,
                 z: 0,
             },
             aspect: wgpu::TextureAspect::All,
@@ -247,4 +251,187 @@ fn two_instances_side_by_side() {
     drop(insts);
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_file(&packed);
+}
+
+/// A click at a pixel of the instance.
+#[cfg(feature = "studio")]
+fn click(inst: &mut Instance, x: f32, y: f32) {
+    use petrichor64::host::Button;
+    inst.input(Input::PointerMoved { x, y });
+    for pressed in [true, false] {
+        inst.input(Input::Button {
+            button: Button::Left,
+            pressed,
+        });
+    }
+}
+
+/// Tick and draw a few frames, collecting what the instance asked for.
+#[cfg(feature = "studio")]
+fn settle(inst: &mut Instance, start: Instant) -> Vec<Request> {
+    let mut asked = vec![];
+    let until = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < until {
+        if inst.frame(start.elapsed()) {
+            inst.render();
+        }
+        asked.extend(inst.requests());
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    asked
+}
+
+/// The gear in the corner opens the console and the command strip and asks
+/// for the keyboard; the strip's share button packs the app. A cart with no
+/// console gets no gear.
+#[cfg(feature = "studio")]
+#[test]
+fn the_gear_opens_the_console_and_strip() {
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter: skipping the strip test");
+        return;
+    };
+    let size = (320u32, 240u32);
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let dir = cart_dir("strip");
+    let options = |policy| Options {
+        cart: Cart::Path(dir.clone()),
+        size,
+        scale: 1.0,
+        policy,
+    };
+    let quiet = |policy: Policy| Policy {
+        audio: false,
+        ..policy
+    };
+    let mut inst = Instance::new(&gpu, options(quiet(Policy::open()))).unwrap();
+    let start = Instant::now();
+    let mut heard = vec![Vec::new()];
+    run(
+        std::slice::from_mut(&mut inst),
+        &mut heard,
+        start,
+        "the cart to start",
+        |h| h[0].iter().any(|m| m.starts_with("reach")),
+    );
+    settle(&mut inst, start);
+    // The far left of the bottom row is the app's red sky until the strip
+    // is out, and the strip's dark bar after.
+    let bar = (3, size.1 - 3);
+    let red = |px: [u8; 4]| px[0] > 150 && px[1] < 80;
+    assert!(red(pixel_at(&gpu, &inst, bar)), "sky before the gear");
+
+    // The gear: bottom right corner.
+    click(&mut inst, w - 4., h - 4.);
+    let asked = settle(&mut inst, start);
+    assert!(
+        asked.contains(&Request::Keyboard(true)),
+        "the gear asks for the keyboard: {asked:?}"
+    );
+    let px = pixel_at(&gpu, &inst, bar);
+    assert!(!red(px), "the strip's bar is drawn, got {px:?}");
+
+    // Share is the last of five centred tools; its choices are three, with
+    // the zip in the middle. Cells are 12 gui pixels: find how wide that is
+    // here by trying, since the gui layer needn't be the window's size.
+    let mut shared = None;
+    for cell in [12., 16., 20., 24., 28.] {
+        click(&mut inst, w / 2. + cell * 2., h - 4.);
+        settle(&mut inst, start);
+        click(&mut inst, w / 2., h - 4.);
+        let asked = settle(&mut inst, start);
+        shared = asked.into_iter().find_map(|r| match r {
+            Request::Share { path, mime } => Some((path, mime)),
+            _ => None,
+        });
+        if shared.is_some() {
+            break;
+        }
+    }
+    let (path, mime) = shared.expect("share then zip asks the host to share a file");
+    assert_eq!(mime, "application/zip");
+    assert_eq!(path, dir.with_extension("zip"));
+    let zip = std::fs::read(&path).expect("the zip was written");
+    assert_eq!(&zip[..2], b"PK");
+    let name = format!(
+        "{}/scripts/main.lua",
+        dir.file_name().unwrap().to_string_lossy()
+    );
+    assert!(
+        zip.windows(name.len()).any(|w| w == name.as_bytes()),
+        "the zip holds {name}"
+    );
+
+    // The picture next to it is a game: the icon with the same files zipped
+    // behind it, which another instance loads from bytes.
+    let cell = (0..5)
+        .map(|i| 12. + 4. * i as f32)
+        .find(|cell| {
+            click(&mut inst, w / 2. + cell * 2., h - 4.);
+            settle(&mut inst, start);
+            click(&mut inst, w / 2. - cell, h - 4.);
+            let asked = settle(&mut inst, start);
+            asked
+                .iter()
+                .any(|r| matches!(r, Request::Share { mime, .. } if *mime == "image/png"))
+        })
+        .expect("share then picture asks the host to share a png");
+    let _ = cell;
+    let game = dir.with_extension("game.png");
+    let bytes = std::fs::read(&game).expect("the game.png was written");
+    assert_eq!(&bytes[1..4], b"PNG");
+    let mut loaded = Instance::new(
+        &gpu,
+        Options {
+            cart: Cart::Bytes(bytes),
+            size,
+            scale: 1.0,
+            policy: quiet(Policy::open()),
+        },
+    )
+    .unwrap();
+    let mut heard2 = vec![Vec::new()];
+    run(
+        std::slice::from_mut(&mut loaded),
+        &mut heard2,
+        start,
+        "the exported game to start",
+        |h| h[0].iter().any(|m| m.starts_with("reach")),
+    );
+    drop(loaded);
+    let _ = std::fs::remove_file(&game);
+
+    // The gear again puts it all away.
+    click(&mut inst, w - 4., h - 4.);
+    let asked = settle(&mut inst, start);
+    assert!(asked.contains(&Request::Keyboard(false)), "{asked:?}");
+    assert!(red(pixel_at(&gpu, &inst, bar)), "sky after closing");
+    drop(inst);
+
+    // No console, no gear: the press goes to the cart and nothing is asked.
+    let mut inst = Instance::new(
+        &gpu,
+        options(quiet(Policy {
+            host_messages: true,
+            ..Policy::sandbox()
+        })),
+    )
+    .unwrap();
+    let mut heard = vec![Vec::new()];
+    run(
+        std::slice::from_mut(&mut inst),
+        &mut heard,
+        start,
+        "the sandboxed cart to start",
+        |h| h[0].iter().any(|m| m.starts_with("reach")),
+    );
+    click(&mut inst, w - 4., h - 4.);
+    let asked = settle(&mut inst, start);
+    assert!(
+        !asked.iter().any(|r| matches!(r, Request::Keyboard(_))),
+        "{asked:?}"
+    );
+    drop(inst);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&path);
 }

@@ -32,6 +32,8 @@ mod collide;
 mod command;
 #[cfg(feature = "headed")]
 mod controls;
+#[cfg(target_os = "android")]
+mod droid;
 #[cfg(feature = "headed")]
 mod ent;
 mod ent_manager;
@@ -87,6 +89,7 @@ mod skeleton;
 mod snap;
 #[cfg(feature = "audio")]
 mod sound;
+mod strip;
 #[cfg(all(feature = "tui-embed", desktop))]
 mod tui_embed;
 #[cfg(feature = "ws")]
@@ -420,6 +423,19 @@ impl App {
                     ));
                 }
                 Request::Quit => event_loop.exit(),
+                // Only a phone has a keyboard to bring up, or a share sheet.
+                Request::Keyboard(_show) => {
+                    #[cfg(target_os = "android")]
+                    crate::droid::keyboard(_show);
+                }
+                Request::Share { path, mime } => {
+                    #[cfg(target_os = "android")]
+                    if let Err(e) = crate::droid::share(&path, mime) {
+                        ::log::error!("petrichor64: {}", e);
+                    }
+                    #[cfg(not(target_os = "android"))]
+                    let _ = (path, mime);
+                }
                 Request::Clipboard(_text) => {
                     #[cfg(all(desktop, not(target_arch = "wasm32")))]
                     {
@@ -1368,6 +1384,16 @@ impl ApplicationHandler for App {
                     ::log::info!("petrichor64: inset (top right bottom left) {:?}", inset);
                     inst.core.global.safe_inset = inset;
                 }
+                // The strip rests on a docked soft keyboard: keep its height
+                // current while the console (and so the strip) is out.
+                #[cfg(feature = "studio")]
+                {
+                    inst.core.strip.keyboard_px = if inst.core.global.console {
+                        crate::droid::keyboard_height()
+                    } else {
+                        0.
+                    };
+                }
             }
 
             // One engine tick, then whatever it asked of the window.
@@ -1522,6 +1548,15 @@ pub extern "C" fn android_main(app: android_activity::AndroidApp) {
         android_logger::Config::default().with_max_level(::log::LevelFilter::Info),
     );
     ::log::info!("petrichor64: android_main");
+    // App storage: where `new` makes apps and `load` finds them. Also the
+    // working directory, so a bare name resolves there everywhere.
+    crate::droid::init(&app);
+    if let Some(home) = crate::droid::home() {
+        let _ = std::fs::create_dir_all(&home);
+        let _ = std::env::set_current_dir(&home);
+        ::log::info!("petrichor64: app storage {}", home.display());
+        crate::asset::set_app_home(home);
+    }
 
     let event_loop = match EventLoop::<()>::builder().with_android_app(app).build() {
         Ok(el) => el,

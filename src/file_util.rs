@@ -364,6 +364,31 @@ pub async fn pack_zip(
     Ok(())
 }
 
+/// A stored (uncompressed) zip of `entries`, after `header` if there is one:
+/// a PNG in front makes it a `.game.png`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_bundle(
+    entries: Vec<(String, Vec<u8>)>,
+    header: Option<Vec<u8>>,
+    out: &Path,
+) -> Result<(), P64Error> {
+    use pollster::FutureExt;
+    // Built in memory, so this needs no tokio runtime: it's called from the
+    // main thread of whichever host owns the instance.
+    let mut bytes = header.unwrap_or_default();
+    async {
+        let mut writer = ZipFileWriter::with_tokio(&mut bytes);
+        for (name, data) in entries {
+            let builder = ZipEntryBuilder::new(name.into(), async_zip::Compression::Stored);
+            writer.write_entry_whole(builder, &data).await?;
+        }
+        writer.close().await?;
+        Ok::<(), P64Error>(())
+    }
+    .block_on()?;
+    std::fs::write(out, bytes).map_err(P64Error::IoError)
+}
+
 impl From<ZipError> for P64Error {
     fn from(e: ZipError) -> Self {
         handle_zip_error(e)

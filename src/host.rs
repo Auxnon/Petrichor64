@@ -237,6 +237,16 @@ pub enum Request {
     Quit,
     /// Put this text on the system clipboard.
     Clipboard(String),
+    /// Bring up (`true`) or put away the on-screen keyboard: the console
+    /// opened or closed by the gear. Nothing to do where there is a real one.
+    Keyboard(bool),
+    /// A file the engine just wrote for the person to send somewhere (the
+    /// strip's share button): a `.game.png` or a `.zip` of the app. A phone
+    /// shows its share sheet; a desktop has nothing to add, the file is there.
+    Share {
+        path: std::path::PathBuf,
+        mime: &'static str,
+    },
 }
 
 /// Which pointer button, as `mus()` numbers them.

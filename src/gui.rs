@@ -264,6 +264,9 @@ pub struct Gui {
     notifcations_enabled: bool,
     notifications_dirty: bool,
     pub local_gui_params: GuiParams,
+    /// The gear and command strip to draw over the system layer (strip.rs),
+    /// when this instance shows them.
+    chrome: Option<crate::strip::Frame>,
 }
 
 impl Gui {
@@ -372,6 +375,7 @@ impl Gui {
             output_console: false,
             console_background_color: image::Rgba([47, 47, 47, 255]),
             local_gui_params: GuiParams::new(),
+            chrome: None,
             active_notifs: vec![],
             notifcations_enabled: true,
             notifications_dirty: true,
@@ -388,6 +392,7 @@ impl Gui {
             output_console: false,
             console_background_color: image::Rgba([47, 47, 47, 255]),
             local_gui_params: GuiParams::new(),
+            chrome: None,
             active_notifs: vec![],
             notifcations_enabled: false,
             notifications_dirty: true,
@@ -470,6 +475,16 @@ impl Gui {
         self.console_background_color = image::Rgba([r, g, b, a])
     }
 
+    /// What the gear and strip look like now, or `None` for neither. Repaints
+    /// the system layer when it changed.
+    #[cfg(feature = "headed")]
+    pub fn set_chrome(&mut self, chrome: Option<crate::strip::Frame>) {
+        if self.chrome != chrome {
+            self.chrome = chrome;
+            self.apply_console_out_text();
+        }
+    }
+
     #[cfg(feature = "headed")]
     pub fn apply_console_out_text(&mut self) {
         let im = RgbaImage::new(self.size[0], self.size[1]);
@@ -507,6 +522,9 @@ impl Gui {
                     x += (LETTER_SIZE - 1) as i64;
                 }
             }
+            if let Some(chrome) = &self.chrome {
+                crate::strip::paint(sys_ref, chrome);
+            }
         }
 
         // self.console =
@@ -515,10 +533,17 @@ impl Gui {
     }
 
     pub fn get_console_size(&self) -> (u32, u32) {
-        (
-            (self.size[0] / (LETTER_SIZE + 1) - 2),
-            (self.size[1] / (LETTER_SIZE + 1) - 8),
-        )
+        let rows = self.size[1] / (LETTER_SIZE + 1) - 8;
+        // With the strip out (and maybe a keyboard under it) the console
+        // keeps to the rows above it. Lines are LETTER_SIZE + 2 apart.
+        let rows = match &self.chrome {
+            Some(c) if c.open => {
+                let fit = crate::strip::top(c) / (LETTER_SIZE + 2);
+                rows.min(fit.saturating_sub(1)).max(2)
+            }
+            _ => rows,
+        };
+        ((self.size[0] / (LETTER_SIZE + 1) - 2), rows)
     }
 
     #[cfg(feature = "headed")]
@@ -857,6 +882,12 @@ impl Gui {
         }
 
         if should {
+            // the notifications cleared the layer: put the gear back
+            if let (Some(chrome), Some(mut sys_im)) =
+                (&self.chrome, self.system_layer.image.try_borrow_mut())
+            {
+                crate::strip::paint(&mut *sys_im, chrome);
+            }
             self.system_layer.dirty = true;
             self.notifications_dirty = true;
             // self.main.dr(&self.notif, 0, 0);

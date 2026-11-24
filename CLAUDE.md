@@ -155,6 +155,33 @@ run again, so entities and tiles made there would be stale.
 repacks the atlas. An overlay with 3D of its own has to rebuild after it
 (edit-chor's `pane_restore`).
 
+## The gear and command strip (`src/strip.rs`, `src/droid.rs`)
+
+Studio builds draw a gear in the bottom right corner of the system gui layer
+(the console's), and a strip of tool icons along the bottom while the console
+is open. `strip.rs` is layout, hit testing and pixels with no engine in it
+(unit-tested); the `impl Core` at its end holds the behaviour:
+
+- `strip_press` is called from `Instance::input` for a left press or a finger
+  landing, before the app's input state changes. True means the strip took it.
+- `strip_tick` runs once a tick after `controls_evaluate`. The strip has no
+  open flag of its own: it is out exactly when `global.console` is, so the
+  backtick, a load closing the console and `Policy` all carry it along.
+- The gui paints it at the end of `apply_console_out_text` and after
+  notifications clear the layer; `get_console_size` keeps the console's rows
+  above it.
+
+What needs a window or a phone goes out as a `Request`: `Keyboard(bool)` and
+`Share { path, mime }`. On Android `App::grant` answers them through
+`droid.rs`, which is JNI into the framework (the app is a `NativeActivity`
+with no Java of its own): the input method manager, the IME's window inset
+(`strip.keyboard_px`, polled while the console is open), and a copy into
+MediaStore Downloads followed by an `ACTION_SEND` chooser. `droid::home()` is
+the app's external files folder; `android_main` makes it the working directory
+and `asset::set_app_home`, so `new` and `load` use it.
+
+None of `droid.rs` has run on a device. It type-checks (`just check-android`).
+
 ## Built-in tools (`src/builtin.rs`, `build.rs` `editors`)
 
 image-chor (Ctrl+P), model-chor (Ctrl+M), edit-chor (Ctrl+E) and sound-chor
