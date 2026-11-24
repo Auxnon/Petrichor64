@@ -24,6 +24,11 @@ fn main() {
         println!("cargo::rustc-cfg=desktop");
     }
 
+    println!("cargo::rerun-if-changed=android/Bridge.java");
+    if os == "android" {
+        bridge::run();
+    }
+
     // Before the embeds: their nested builds reuse the checkout this fetches.
     for ed in editors::ALL {
         if std::env::var_os("CARGO_FEATURE_STUDIO").is_some() {
@@ -528,5 +533,148 @@ mod tui_embed {
             ),
         )
         .unwrap();
+    }
+}
+
+/// Android: `android/Bridge.java` compiled to a dex and left in OUT_DIR as
+/// `bridge.dex` for src/droid.rs to embed (it explains why there is Java at
+/// all). cargo-apk builds an APK with no dex in it, so this does what Gradle
+/// would: `javac` against the SDK's `android.jar`, then `d8`.
+///
+/// Needs the Android SDK (`ANDROID_HOME`, with a platform and build-tools)
+/// and a JDK, which a build that makes an APK has anyway. Without them the
+/// dex is left empty and a warning says so: `just check-android` only
+/// type-checks and shouldn't need either.
+mod bridge {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    pub fn run() {
+        let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+        let dex = out.join("bridge.dex");
+        println!("cargo::rerun-if-env-changed=ANDROID_HOME");
+        println!("cargo::rerun-if-env-changed=JAVA_HOME");
+        println!("cargo::rerun-if-env-changed=PETRICHOR_BRIDGE");
+        match build(&out) {
+            Ok(built) => {
+                std::fs::copy(built, &dex).expect("copy bridge.dex");
+            }
+            // CI: an APK without the bridge is a failed build, not a warning.
+            Err(why) if std::env::var_os("PETRICHOR_BRIDGE").is_some_and(|v| v == "require") => {
+                panic!("the Java bridge didn't build: {}", why)
+            }
+            Err(why) => {
+                println!(
+                    "cargo::warning=no Java bridge (drag and drop, file picker): {}",
+                    why
+                );
+                std::fs::write(&dex, b"").expect("write bridge.dex");
+            }
+        }
+    }
+
+    /// The numbers in a name like `android-36` or `35.0.1`, for picking the newest.
+    fn version(p: &Path) -> Vec<u32> {
+        let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+        name.split(|c: char| !c.is_ascii_digit())
+            .filter_map(|n| n.parse().ok())
+            .collect()
+    }
+
+    /// The newest entry of `dir` that holds `file`.
+    fn newest(dir: &Path, file: &str) -> Option<PathBuf> {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join(file).is_file())
+            .collect();
+        found.sort_by_key(|p| version(p));
+        found.pop().map(|p| p.join(file))
+    }
+
+    fn run_tool(c: &mut Command, what: &str) -> Result<(), String> {
+        let o = c.output().map_err(|e| format!("{}: {}", what, e))?;
+        if o.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} failed: {}",
+                what,
+                String::from_utf8_lossy(&o.stderr).trim().replace('\n', " | ")
+            ))
+        }
+    }
+
+    fn build(out: &Path) -> Result<PathBuf, String> {
+        let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let sdk = std::env::var_os("ANDROID_HOME")
+            .or_else(|| std::env::var_os("ANDROID_SDK_ROOT"))
+            .map(PathBuf::from)
+            .ok_or("ANDROID_HOME isn't set")?;
+        let jar = newest(&sdk.join("platforms"), "android.jar")
+            .ok_or("no platform with an android.jar in the SDK")?;
+        let windows = cfg!(windows);
+        let d8 = newest(&sdk.join("build-tools"), if windows { "d8.bat" } else { "d8" })
+            .ok_or("no build-tools with d8 in the SDK")?;
+        let javac = match std::env::var_os("JAVA_HOME") {
+            Some(home) => PathBuf::from(home)
+                .join("bin")
+                .join(if windows { "javac.exe" } else { "javac" }),
+            None => PathBuf::from("javac"),
+        };
+
+        let classes = out.join("bridge-classes");
+        let dexdir = out.join("bridge-dex");
+        for d in [&classes, &dexdir] {
+            let _ = std::fs::remove_dir_all(d);
+            std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+        }
+        // Java 8 source and bytecode: what `-bootclasspath` still accepts, and
+        // plenty for one file. -Xlint:-options hushes the JDK about how old that is.
+        run_tool(
+            Command::new(&javac)
+                .args(["-source", "8", "-target", "8", "-Xlint:-options", "-nowarn"])
+                .arg("-bootclasspath")
+                .arg(&jar)
+                .arg("-d")
+                .arg(&classes)
+                .arg(manifest.join("android").join("Bridge.java")),
+            "javac",
+        )?;
+        let mut files = vec![];
+        collect(&classes, &mut files);
+        if files.is_empty() {
+            return Err("javac wrote no classes".into());
+        }
+        // 26: the app's minimum, and the first Android that can load a dex
+        // from memory.
+        run_tool(
+            Command::new(&d8)
+                .args(["--release", "--min-api", "26"])
+                .arg("--lib")
+                .arg(&jar)
+                .arg("--output")
+                .arg(&dexdir)
+                .args(&files),
+            "d8",
+        )?;
+        let dex = dexdir.join("classes.dex");
+        if dex.is_file() {
+            Ok(dex)
+        } else {
+            Err("d8 wrote no classes.dex".into())
+        }
+    }
+
+    fn collect(dir: &Path, into: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect(&p, into);
+            } else if p.extension().is_some_and(|x| x == "class") {
+                into.push(p);
+            }
+        }
     }
 }

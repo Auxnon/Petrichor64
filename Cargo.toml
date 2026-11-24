@@ -39,7 +39,9 @@ inherits = "release"
 
 [features]
 default=[ "silt","headed","audio","studio","bin"] # "online_capable" ,  "headed" , "include_auto"
-include_auto=["studio"]
+# A game compiled in (./auto.game.png). On its own that is a player: add
+# `studio` for the editors and command strip over it.
+include_auto=[]
 # Builds the `chor` executable. Default on; the web build leaves it off
 # (see [[bin]]).
 bin=["dep:libc"]

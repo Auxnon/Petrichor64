@@ -3518,6 +3518,23 @@ function get() end",
             &mut io
         );
 
+        // `load_apps: false`: no `io.open` (what it's for is loading a cart).
+        if policy.load_apps {
+            let pitcher = main_pitcher.clone();
+            lua_lib!(
+                "open",
+                move |_, _, (): ()| {
+                    lua_err!(pitcher.send((bundle_id, MainCommmand::Open)));
+                    Ok(())
+                },
+                "Ask for a file with the system's file dialog; it arrives at drop(path)",
+                "
+---@type fun()
+function io.open() end",
+                &mut io
+            );
+        }
+
         // `clipboard: false`: no `io.copy`.
         if policy.clipboard {
             let pitcher = main_pitcher.clone();
@@ -5279,6 +5296,8 @@ pub enum MainCommmand {
     /// unwrapping its mesh onto it.
     AppNewTex(Box<NewTexIn>, SyncSender<Result<NewTexOut, String>>),
     Copy(String),
+    /// `io.open()`: ask the host for its file dialog (`Request::Open`).
+    Open,
     /// `host.send(msg)`: a string for the hosting app (`Core::host_take`).
     HostSend(String),
     LuaClose(),
@@ -5301,6 +5320,8 @@ impl MainCommmand {
             | MainCommmand::GlbRead(..)
             | MainCommmand::GlbWrite(..) => policy.files.is_some(),
             MainCommmand::Copy(_) => policy.clipboard,
+            // What's chosen comes back as a drop, which only loads a cart.
+            MainCommmand::Open => policy.load_apps,
             // `quit(n > 0)` loads the queued cart, or the boot app.
             MainCommmand::Subload(..) | MainCommmand::Load(_) => policy.load_apps,
             MainCommmand::Quit(u) => *u == 0 || policy.load_apps,
@@ -6314,6 +6335,7 @@ mod policy_tests {
             assert_eq!(type_of(&p, g), "table", "{g} under open");
         }
         assert_eq!(type_of(&p, "io.copy"), "function");
+        assert_eq!(type_of(&p, "io.open"), "function");
     }
 
     #[test]
@@ -6324,6 +6346,11 @@ mod policy_tests {
         };
         assert_eq!(type_of(&no_clip, "io.get"), "function");
         assert_eq!(type_of(&no_clip, "io.copy"), "nil");
+        let no_load = Policy {
+            load_apps: false,
+            ..Policy::open()
+        };
+        assert_eq!(type_of(&no_load, "io.open"), "nil");
         let no_net = Policy {
             network: false,
             ..Policy::open()

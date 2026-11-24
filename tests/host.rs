@@ -435,3 +435,81 @@ fn the_gear_opens_the_console_and_strip() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_file(&path);
 }
+
+/// The console app a build with no game starts on: clicking the console asks
+/// the host for its file dialog, clicking beside it doesn't, and an instance
+/// that may not load other apps never asks.
+#[cfg(feature = "studio")]
+#[test]
+fn clicking_the_console_asks_for_a_file() {
+    use petrichor64::host::Button;
+    let Some(gpu) = gpu() else {
+        eprintln!("no GPU adapter: skipping the console test");
+        return;
+    };
+    let size = (320u32, 240u32);
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    // The packed copy the engine embeds, not apps/logo it is packed from
+    // (`chor pack apps/logo logo.game.png`): a stale pack fails here.
+    let packed = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/logo.game.png")).unwrap();
+    let options = |policy: Policy| Options {
+        cart: Cart::Bytes(packed.clone()),
+        size,
+        scale: 1.0,
+        policy: Policy {
+            audio: false,
+            ..policy
+        },
+    };
+    // Held across a few ticks: the app reads the button once a tick.
+    let press = |inst: &mut Instance, start: Instant, x: f32, y: f32| {
+        inst.input(Input::PointerMoved { x, y });
+        settle(inst, start);
+        inst.input(Input::Button {
+            button: Button::Left,
+            pressed: true,
+        });
+        let mut asked = settle(inst, start);
+        inst.input(Input::Button {
+            button: Button::Left,
+            pressed: false,
+        });
+        asked.extend(settle(inst, start));
+        asked
+    };
+
+    let mut inst = Instance::new(&gpu, options(Policy::open())).unwrap();
+    let start = Instant::now();
+    for _ in 0..3 {
+        settle(&mut inst, start);
+    }
+    let asked = press(&mut inst, start, 6., 6.);
+    assert!(
+        !asked.contains(&Request::Open),
+        "a click on the sky asks for nothing: {asked:?}"
+    );
+    let asked = press(&mut inst, start, w * 0.5, h * 0.6);
+    assert_eq!(
+        asked.iter().filter(|r| **r == Request::Open).count(),
+        1,
+        "a click on the console asks once: {asked:?}"
+    );
+
+    let mut shut = Instance::new(
+        &gpu,
+        options(Policy {
+            load_apps: false,
+            ..Policy::open()
+        }),
+    )
+    .unwrap();
+    let start = Instant::now();
+    for _ in 0..3 {
+        settle(&mut shut, start);
+    }
+    let asked = press(&mut shut, start, w * 0.5, h * 0.6);
+    assert!(
+        !asked.contains(&Request::Open),
+        "no file dialog without load_apps: {asked:?}"
+    );
+}

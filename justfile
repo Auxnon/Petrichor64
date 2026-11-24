@@ -277,7 +277,9 @@ android profile="debug":
 #
 # The game is compiled *into* the library via `include_auto`, so the APK needs no
 # assets and no AssetManager work. `just android-apk -` builds the studio
-# instead (see `android-studio`), which loads apps from its own storage.
+# instead (see `android-studio`), which loads apps from its own storage, and
+# `just android-apk +` the standalone player (see `android-player`), which
+# has no game either and plays what it is given.
 android-apk game profile="release":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -352,6 +354,10 @@ android-apk game profile="release":
       # The studio: no game baked in. It starts at the console, with the gear
       # and command strip, and keeps the apps it makes in its own storage.
       cargo apk build --lib $FLAG
+    elif [ "{{game}}" = "+" ]; then
+      # The standalone player: no game and no studio. It starts on the console
+      # app and plays what is dragged onto it, or chosen by tapping the console.
+      cargo apk build --lib --no-default-features --features silt,headed,audio $FLAG
     else
       # A player: one game baked in (include_bytes! needs the file present at
       # compile time) and no studio, so no gear, strip or editors.
@@ -359,11 +365,21 @@ android-apk game profile="release":
       cargo apk build --lib --no-default-features --features silt,headed,audio,include_auto $FLAG
     fi
     find target/{{profile}}/apk -name '*.apk' -exec ls -la {} \;
+    # android/Bridge.java, compiled by build.rs. Empty means it found no SDK
+    # platform, d8 or javac, and the APK takes no drags and has no file picker.
+    # (PETRICHOR_BRIDGE=require makes that a build failure instead.)
+    DEX="$(find target/aarch64-linux-android/{{profile}}/build -name bridge.dex -size +0 | head -1)"
+    [ -n "$DEX" ] || echo "warning: built without the Java bridge (see cargo's warnings above)"
 
 # The studio on a phone: make and edit apps on the device. No game is baked in;
 # it opens at the console. The gear in the bottom right corner brings up the
 # keyboard, the console and the command strip (the editors, and share).
 android-studio profile="release": (android-apk "-" profile)
+    @just android-install {{profile}}
+
+# The standalone player on a phone: no game baked in and no studio. Drag a
+# `.game.png` onto it from another app, or tap the console to pick one.
+android-player profile="release": (android-apk "+" profile)
     @just android-install {{profile}}
 
 # Build, install and launch a game in one step: `just android-run sounder`.

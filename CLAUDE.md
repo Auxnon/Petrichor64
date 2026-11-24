@@ -180,7 +180,27 @@ MediaStore Downloads followed by an `ACTION_SEND` chooser. `droid::home()` is
 the app's external files folder; `android_main` makes it the working directory
 and `asset::set_app_home`, so `new` and `load` use it.
 
-None of `droid.rs` has run on a device. It type-checks (`just check-android`).
+Two things only reach a Java object: a drag from another app (a View's drag
+listener) and the document picker's answer (`onActivityResult`). The APK has
+no dex, so `android/Bridge.java` is compiled by build.rs (`javac` + `d8` from
+the SDK) into `OUT_DIR/bridge.dex`, embedded, and loaded at startup through
+`InMemoryDexClassLoader`; its one native method, `onFile(path)`, is registered
+from Rust. Both paths copy the content URI into the app's cache and queue the
+path, which `App` drains each frame into `Input::Drop`. With no SDK or JDK at
+build time the dex is empty and both do nothing (a cargo warning says so;
+`PETRICHOR_BRIDGE=require`, set in CI, makes it an error).
+
+None of `droid.rs` has run on a device. It type-checks (`just check-android`),
+and CI compiles the Java.
+
+## The file dialog (`io.open`, `Request::Open`)
+
+`io.open()` sends `MainCommmand::Open`, which becomes `Request::Open`. `App`
+answers with native-dialog on a thread (inline on macOS) or `droid::pick()`,
+and feeds the chosen path back as `Input::Drop`, so there is one way a file
+arrives. It is gated on `Policy::load_apps`. The boot app (`apps/logo`, packed
+to `logo.game.png` and embedded: repack it after editing, `tests/host.rs`
+runs the packed copy) calls it when its console is clicked.
 
 ## Built-in tools (`src/builtin.rs`, `build.rs` `editors`)
 

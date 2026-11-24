@@ -1345,11 +1345,15 @@ pub fn get_logo() -> Vec<u8> {
         };
     }
 
-    #[cfg(not(feature = "studio"))]
+    // A build with its game compiled in only shows this between loads: "no
+    // signal". Any other build starts here and needs a way to be given a
+    // game, which is the console app: drop a file on it, or click it for the
+    // file dialog.
+    #[cfg(all(feature = "include_auto", not(feature = "studio")))]
     {
         include_bytes!(concat!("..", sp!(), "nil.game.png")).to_vec()
     }
-    #[cfg(feature = "studio")]
+    #[cfg(not(all(feature = "include_auto", not(feature = "studio"))))]
     {
         include_bytes!(concat!("..", sp!(), "logo.game.png")).to_vec()
     }

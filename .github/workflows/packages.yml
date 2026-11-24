@@ -1,12 +1,14 @@
 # Installable builds: two Android APKs and two Linux packages.
 #
 #   android studio   the studio, no game baked in (`just android-apk -`)
-#   android player   one game baked in, no studio (`just android-apk <game>`)
+#   android player   no studio; plays a game dragged onto it or picked with
+#                    the file dialog (`just android-apk +`), or has one baked
+#                    in when the run is given a game (`just android-apk <game>`)
 #   linux appimage   the studio, windowed (`just appimage`)
 #   linux flatpak    the terminal `chor` (`just flatpak-tui`)
 #
-# Runs when asked (Actions -> Packages -> Run workflow, which also takes the
-# game for the player), on a `v*` tag (the files are attached to a release of
+# Runs when asked (Actions -> Packages -> Run workflow, which can also take a
+# game to bake into the player), on a `v*` tag (the files are attached to a release of
 # that name), and on any `ci/**` branch, for working on this file.
 #
 # The APKs are signed with a throwaway key made during the run unless the
@@ -21,8 +23,8 @@ on:
   workflow_dispatch:
     inputs:
       game:
-        description: Game folder baked into the Android player
-        default: games/witch
+        description: Game folder to bake into the Android player (empty for the standalone player)
+        default: ""
   push:
     tags: ["v*"]
     branches: ["ci/**"]
@@ -47,12 +49,15 @@ jobs:
       matrix:
         variant: [studio, player]
     env:
-      GAME: ${{ inputs.game || 'games/witch' }}
+      GAME: ${{ inputs.game }}
+      # android/Bridge.java must compile: an APK without it takes no drags
+      # and has no file picker.
+      PETRICHOR_BRIDGE: require
     steps:
       - uses: actions/checkout@v5
       - name: System libraries
-        # The player packs its game with a host `chor` before cross-compiling.
-        if: matrix.variant == 'player'
+        # A baked-in game is packed with a host `chor` before cross-compiling.
+        if: matrix.variant == 'player' && inputs.game != ''
         run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
       - run: rustup target add aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
@@ -78,7 +83,7 @@ jobs:
         run: |
           set -o pipefail
           TARGET=-
-          [ "${{ matrix.variant }}" = player ] && TARGET="$GAME"
+          [ "${{ matrix.variant }}" = player ] && TARGET="${GAME:-+}"
           just android-apk "$TARGET" 2>&1 | tee build.log
       - name: Why it failed
         # The end of the build log as an annotation, so it shows on the run's
@@ -93,7 +98,8 @@ jobs:
         run: |
           VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
           NAME="petrichor64-studio-$VERSION"
-          [ "${{ matrix.variant }}" = player ] && NAME="petrichor64-player-$(basename "$GAME")-$VERSION"
+          [ "${{ matrix.variant }}" = player ] && NAME="petrichor64-player-$VERSION"
+          [ "${{ matrix.variant }}" = player ] && [ -n "$GAME" ] && NAME="petrichor64-$(basename "$GAME")-$VERSION"
           mkdir -p out
           cp "$(find target/release/apk -name '*.apk' | head -1)" "out/$NAME.apk"
           ls -la out

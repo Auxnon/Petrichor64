@@ -442,6 +442,14 @@ all JNI that only a phone can exercise. First things to try on one, in order:
 the gear raises the keyboard; typed keys reach the console; the strip sits on
 the keyboard; `new test` then `load test`; share a `.game.png`.
 
+**The standalone player** (`just android-player`): no game, no studio. It
+starts on the console app and takes a game by drag from another app or from
+the document picker (tap the console). Both go through `android/Bridge.java`,
+loaded from memory, and are **untested on a device** as well. To try: tap the
+console and pick a `.game.png`; put a files app beside it in split screen and
+drag one over. Known soft spot: if Android kills the app while the picker is
+open, restoring the picker's fragment fails and the app starts over.
+
 ### `desktop` is not the same as `not(wasm)`
 
 The assumption that "native" implies clipboard, native dialogs and a terminal is
