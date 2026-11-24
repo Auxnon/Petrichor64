@@ -1,4 +1,4 @@
-## UNRELEASED
+## 0.5.0
 
 - **A gear and a command strip, for working without a keyboard.** Studio builds show a small gear in the bottom right corner. Pressing it opens the console and a strip of icons along the bottom: the image, model, source and sound tools, and share. Pressing a tool puts the console and strip away and opens that tool; the backtick key brings the strip up with the console too. Share packs the open app into a `.game.png` or a `.zip` beside its folder. Builds without `studio` have neither, and the backtick opens the console alone as before
 - **A studio for Android** (`just android-studio`): no game baked in, it starts at the console. The gear brings up the system keyboard, the strip rests on top of it, apps made with `new` live in the app's own storage (where `load` looks), and share copies the packed app to Downloads and opens the share sheet. `just android-apk <game>` now builds a player without the studio. Type-checked only: this has not been run on a device yet
