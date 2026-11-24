@@ -49,7 +49,7 @@ jobs:
     env:
       GAME: ${{ inputs.game || 'games/witch' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: System libraries
         # The player packs its game with a host `chor` before cross-compiling.
         if: matrix.variant == 'player'
@@ -74,12 +74,21 @@ jobs:
             echo "no ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key"
           fi
       - name: Build
+        shell: bash
         run: |
-          if [ "${{ matrix.variant }}" = studio ]; then
-            just android-apk -
-          else
-            just android-apk "$GAME"
-          fi
+          set -o pipefail
+          TARGET=-
+          [ "${{ matrix.variant }}" = player ] && TARGET="$GAME"
+          just android-apk "$TARGET" 2>&1 | tee build.log
+      - name: Why it failed
+        # The end of the build log as an annotation, so it shows on the run's
+        # summary page without opening the job's log.
+        if: failure()
+        run: |
+          [ -f build.log ] || exit 0
+          TAIL="$(tail -n 40 build.log | sed 's/\x1b\[[0-9;]*m//g')"
+          TAIL="${TAIL//'%'/'%25'}"; TAIL="${TAIL//$'\n'/'%0A'}"; TAIL="${TAIL//$'\r'/}"
+          echo "::error title=android ${{ matrix.variant }}::$TAIL"
       - name: Name the APK
         run: |
           VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
@@ -88,7 +97,7 @@ jobs:
           mkdir -p out
           cp "$(find target/release/apk -name '*.apk' | head -1)" "out/$NAME.apk"
           ls -la out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: android-${{ matrix.variant }}
           path: out/*.apk
@@ -100,13 +109,13 @@ jobs:
     # anything at least that new.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS
       - uses: Swatinem/rust-cache@v2
         with:
           key: appimage
       - run: build-tools/appimage.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-appimage
           path: target/appimage/*.AppImage
@@ -116,7 +125,7 @@ jobs:
     name: linux tui flatpak
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y $LINUX_DEPS flatpak
       - uses: Swatinem/rust-cache@v2
         with:
@@ -127,7 +136,7 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.freedesktop.Platform//25.08
       - run: build-tools/flatpak-tui.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-flatpak
           path: target/flatpak/*.flatpak
@@ -141,7 +150,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: files
           merge-multiple: true

@@ -1,3 +1,8 @@
+## UNRELEASED
+
+- Packages built by GitHub Actions (`.github/workflows/packages.yml`): the Android studio APK, an Android player APK with one game baked in, the studio as a Linux AppImage, and the terminal `chor` as a Flatpak (`flatpak run com.makeavoy.petrichor64.tui <game dir>`). It runs on demand and on a `v*` tag, where the files are attached to the release. `just appimage` and `just flatpak-tui` make the Linux ones locally
+- `just android-apk` finds a JDK on Linux
+
 ## 0.5.0
 
 - **A gear and a command strip, for working without a keyboard.** Studio builds show a small gear in the bottom right corner. Pressing it opens the console and a strip of icons along the bottom: the image, model, source and sound tools, and share. Pressing a tool puts the console and strip away and opens that tool; the backtick key brings the strip up with the console too. Share packs the open app into a `.game.png` or a `.zip` beside its folder. Builds without `studio` have neither, and the backtick opens the console alone as before
